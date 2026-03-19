@@ -5,6 +5,15 @@ import { fileURLToPath } from "node:url";
 const configDir = path.dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
+  trailingSlash: true,
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "cdn.discordapp.com",
+      },
+    ],
+  },
   turbopack: {
     root: configDir,
   },

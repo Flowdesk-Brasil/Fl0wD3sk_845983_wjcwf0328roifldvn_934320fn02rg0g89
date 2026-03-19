@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { authConfig, isSecureRequest } from "@/lib/auth/config";
-import { exchangeCodeForToken, fetchDiscordUser } from "@/lib/auth/discord";
+import {
+  authConfig,
+  buildLoginSuccessLocation,
+  isSecureRequest,
+} from "@/lib/auth/config";
+import {
+  exchangeCodeForToken,
+  fetchDiscordUser,
+} from "@/lib/auth/discord";
 import { createUserSessionFromDiscordUser } from "@/lib/auth/session";
 
 function buildLoginRedirect(request: NextRequest) {
@@ -18,6 +25,15 @@ function clearOAuthCookies(response: NextResponse) {
   response.cookies.delete(authConfig.oauthRedirectUriCookieName);
 }
 
+function redirectWithLocation(location: string) {
+  return new NextResponse(null, {
+    status: 302,
+    headers: {
+      Location: location,
+    },
+  });
+}
+
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
   const state = request.nextUrl.searchParams.get("state");
@@ -33,20 +49,27 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const accessToken = await exchangeCodeForToken({
+    const tokenPayload = await exchangeCodeForToken({
       code,
       redirectUri: redirectUriCookie,
     });
 
-    const discordUser = await fetchDiscordUser(accessToken);
+    const discordUser = await fetchDiscordUser(tokenPayload.access_token);
+    const discordTokenExpiresAt = new Date(
+      Date.now() + tokenPayload.expires_in * 1000,
+    ).toISOString();
 
     const { session } = await createUserSessionFromDiscordUser(discordUser, {
       ipAddress: extractClientIp(request),
       userAgent: request.headers.get("user-agent"),
+    }, {
+      discordAccessToken: tokenPayload.access_token,
+      discordRefreshToken: tokenPayload.refresh_token || null,
+      discordTokenExpiresAt,
     });
 
-    const successUrl = new URL(authConfig.loginSuccessPath, request.nextUrl.origin);
-    const response = NextResponse.redirect(successUrl);
+    const successLocation = buildLoginSuccessLocation(request.nextUrl.origin);
+    const response = redirectWithLocation(successLocation);
 
     response.cookies.set(authConfig.sessionCookieName, session.sessionToken, {
       httpOnly: true,

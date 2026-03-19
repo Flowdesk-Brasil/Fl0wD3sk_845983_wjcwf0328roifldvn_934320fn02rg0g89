@@ -24,3 +24,21 @@ body {
   color: var(--foreground);
   font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
 }
+
+.thin-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #2e2e2e transparent;
+}
+
+.thin-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.thin-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.thin-scrollbar::-webkit-scrollbar-thumb {
+  background-color: #2e2e2e;
+  border-radius: 999px;
+}

@@ -1,12 +1,24 @@
 import crypto from "node:crypto";
 import { cookies } from "next/headers";
-import type { DiscordUser } from "@/lib/auth/discord";
+import type { DiscordGuild, DiscordUser } from "@/lib/auth/discord";
 import { authConfig } from "@/lib/auth/config";
+import type { ConfigDraft, ConfigStep } from "@/lib/auth/configContext";
+import {
+  createEmptyConfigDraft,
+  normalizeConfigStep,
+  sanitizeConfigDraft,
+} from "@/lib/auth/configContext";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 type CreateSessionContext = {
   ipAddress: string | null;
   userAgent: string | null;
+};
+
+type DiscordSessionTokens = {
+  discordAccessToken: string;
+  discordRefreshToken: string | null;
+  discordTokenExpiresAt: string | null;
 };
 
 type AuthUserRecord = {
@@ -16,6 +28,34 @@ type AuthUserRecord = {
   global_name: string | null;
   display_name: string;
   avatar: string | null;
+};
+
+type AuthSessionRecord = {
+  id: string;
+  discord_access_token: string | null;
+  discord_refresh_token: string | null;
+  discord_token_expires_at: string | null;
+  active_guild_id: string | null;
+  discord_guilds_cache: unknown;
+  discord_guilds_cached_at: string | null;
+  config_current_step: number | null;
+  config_draft: unknown;
+  config_context_updated_at: string | null;
+  user: AuthUserRecord | AuthUserRecord[] | null;
+};
+
+export type CurrentAuthSession = {
+  id: string;
+  user: AuthUserRecord;
+  discordAccessToken: string | null;
+  discordRefreshToken: string | null;
+  discordTokenExpiresAt: string | null;
+  activeGuildId: string | null;
+  discordGuildsCache: DiscordGuild[] | null;
+  discordGuildsCachedAt: string | null;
+  configCurrentStep: ConfigStep;
+  configDraft: ConfigDraft;
+  configContextUpdatedAt: string | null;
 };
 
 function buildDisplayName(discordUser: DiscordUser) {
@@ -32,6 +72,31 @@ export function createOAuthState() {
 
 function createSessionToken() {
   return crypto.randomBytes(48).toString("base64url");
+}
+
+function unwrapUser(user: AuthSessionRecord["user"]) {
+  if (!user) return null;
+  if (Array.isArray(user)) return user[0] || null;
+  return user;
+}
+
+function parseDiscordGuildsCache(cache: unknown): DiscordGuild[] | null {
+  if (!Array.isArray(cache)) return null;
+
+  const guilds = cache.filter((item): item is DiscordGuild => {
+    if (!item || typeof item !== "object") return false;
+
+    const guild = item as Partial<DiscordGuild>;
+    return (
+      typeof guild.id === "string" &&
+      typeof guild.name === "string" &&
+      typeof guild.owner === "boolean" &&
+      typeof guild.permissions === "string"
+    );
+  });
+
+  if (guilds.length) return guilds;
+  return cache.length === 0 ? [] : null;
 }
 
 async function upsertAuthUser(discordUser: DiscordUser) {
@@ -63,7 +128,11 @@ async function upsertAuthUser(discordUser: DiscordUser) {
   return result.data;
 }
 
-async function createSession(userId: number, context: CreateSessionContext) {
+async function createSession(
+  userId: number,
+  context: CreateSessionContext,
+  tokens: DiscordSessionTokens,
+) {
   const sessionToken = createSessionToken();
   const sessionTokenHash = hashToken(sessionToken);
   const expiresAt = new Date(
@@ -78,6 +147,9 @@ async function createSession(userId: number, context: CreateSessionContext) {
     ip_address: context.ipAddress,
     user_agent: context.userAgent,
     expires_at: expiresAt,
+    discord_access_token: tokens.discordAccessToken,
+    discord_refresh_token: tokens.discordRefreshToken,
+    discord_token_expires_at: tokens.discordTokenExpiresAt,
   });
 
   if (result.error) {
@@ -93,9 +165,10 @@ async function createSession(userId: number, context: CreateSessionContext) {
 export async function createUserSessionFromDiscordUser(
   discordUser: DiscordUser,
   context: CreateSessionContext,
+  tokens: DiscordSessionTokens,
 ) {
   const user = await upsertAuthUser(discordUser);
-  const session = await createSession(user.id, context);
+  const session = await createSession(user.id, context, tokens);
 
   return {
     user,
@@ -103,7 +176,7 @@ export async function createUserSessionFromDiscordUser(
   };
 }
 
-export async function getCurrentUserFromSessionCookie() {
+export async function getCurrentAuthSessionFromCookie(): Promise<CurrentAuthSession | null> {
   const cookieStore = await cookies();
   const sessionCookie = cookieStore.get(authConfig.sessionCookieName)?.value;
 
@@ -116,12 +189,12 @@ export async function getCurrentUserFromSessionCookie() {
   const result = await supabase
     .from("auth_sessions")
     .select(
-      "id, expires_at, revoked_at, user:auth_users(id, discord_user_id, username, global_name, display_name, avatar)",
+      "id, discord_access_token, discord_refresh_token, discord_token_expires_at, active_guild_id, discord_guilds_cache, discord_guilds_cached_at, config_current_step, config_draft, config_context_updated_at, user:auth_users(id, discord_user_id, username, global_name, display_name, avatar)",
     )
     .eq("session_token_hash", sessionTokenHash)
     .is("revoked_at", null)
     .gt("expires_at", nowIso)
-    .maybeSingle();
+    .maybeSingle<AuthSessionRecord>();
 
   if (result.error) {
     throw new Error(`Erro ao validar sessao: ${result.error.message}`);
@@ -129,10 +202,162 @@ export async function getCurrentUserFromSessionCookie() {
 
   if (!result.data) return null;
 
-  const userData = result.data.user as AuthUserRecord | AuthUserRecord[] | null;
+  const user = unwrapUser(result.data.user);
+  if (!user) return null;
 
-  if (!userData) return null;
-  if (Array.isArray(userData)) return userData[0] || null;
+  return {
+    id: result.data.id,
+    user,
+    discordAccessToken: result.data.discord_access_token,
+    discordRefreshToken: result.data.discord_refresh_token,
+    discordTokenExpiresAt: result.data.discord_token_expires_at,
+    activeGuildId: result.data.active_guild_id,
+    discordGuildsCache: parseDiscordGuildsCache(result.data.discord_guilds_cache),
+    discordGuildsCachedAt: result.data.discord_guilds_cached_at,
+    configCurrentStep: normalizeConfigStep(result.data.config_current_step) || 1,
+    configDraft: sanitizeConfigDraft(result.data.config_draft),
+    configContextUpdatedAt: result.data.config_context_updated_at,
+  };
+}
 
-  return userData;
+export async function updateSessionDiscordTokens(
+  sessionId: string,
+  tokens: DiscordSessionTokens,
+) {
+  const supabase = getSupabaseAdminClientOrThrow();
+
+  const result = await supabase
+    .from("auth_sessions")
+    .update({
+      discord_access_token: tokens.discordAccessToken,
+      discord_refresh_token: tokens.discordRefreshToken,
+      discord_token_expires_at: tokens.discordTokenExpiresAt,
+    })
+    .eq("id", sessionId);
+
+  if (result.error) {
+    throw new Error(`Erro ao atualizar token da sessao: ${result.error.message}`);
+  }
+}
+
+export async function updateSessionGuildsCache(
+  sessionId: string,
+  guilds: DiscordGuild[],
+) {
+  const supabase = getSupabaseAdminClientOrThrow();
+
+  const result = await supabase
+    .from("auth_sessions")
+    .update({
+      discord_guilds_cache: guilds,
+      discord_guilds_cached_at: new Date().toISOString(),
+    })
+    .eq("id", sessionId);
+
+  if (result.error) {
+    throw new Error(`Erro ao atualizar cache de servidores: ${result.error.message}`);
+  }
+}
+
+export async function updateSessionActiveGuild(
+  sessionId: string,
+  guildId: string | null,
+) {
+  const supabase = getSupabaseAdminClientOrThrow();
+
+  const result = await supabase
+    .from("auth_sessions")
+    .update({
+      active_guild_id: guildId,
+      config_context_updated_at: new Date().toISOString(),
+    })
+    .eq("id", sessionId);
+
+  if (result.error) {
+    throw new Error(`Erro ao atualizar servidor ativo da sessao: ${result.error.message}`);
+  }
+}
+
+type UpdateSessionConfigContextInput = {
+  activeGuildId?: string | null;
+  configCurrentStep?: ConfigStep;
+  configDraft?: ConfigDraft;
+};
+
+type SessionConfigContextRecord = {
+  active_guild_id: string | null;
+  config_current_step: number | null;
+  config_draft: unknown;
+  config_context_updated_at: string | null;
+};
+
+export async function updateSessionConfigContext(
+  sessionId: string,
+  input: UpdateSessionConfigContextInput,
+) {
+  const updates: Record<string, unknown> = {
+    config_context_updated_at: new Date().toISOString(),
+  };
+
+  if (Object.prototype.hasOwnProperty.call(input, "activeGuildId")) {
+    updates.active_guild_id = input.activeGuildId ?? null;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, "configCurrentStep")) {
+    updates.config_current_step = input.configCurrentStep ?? 1;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, "configDraft")) {
+    updates.config_draft = input.configDraft ?? createEmptyConfigDraft();
+  }
+
+  const supabase = getSupabaseAdminClientOrThrow();
+  const result = await supabase
+    .from("auth_sessions")
+    .update(updates)
+    .eq("id", sessionId)
+    .select("active_guild_id, config_current_step, config_draft, config_context_updated_at")
+    .single<SessionConfigContextRecord>();
+
+  if (result.error) {
+    throw new Error(`Erro ao atualizar contexto da sessao: ${result.error.message}`);
+  }
+
+  return {
+    activeGuildId: result.data.active_guild_id,
+    configCurrentStep: normalizeConfigStep(result.data.config_current_step) || 1,
+    configDraft: sanitizeConfigDraft(result.data.config_draft),
+    configContextUpdatedAt: result.data.config_context_updated_at,
+  };
+}
+
+export async function getCurrentUserFromSessionCookie() {
+  const session = await getCurrentAuthSessionFromCookie();
+  return session?.user || null;
+}
+
+export async function revokeCurrentSessionFromCookie() {
+  const cookieStore = await cookies();
+  const sessionCookie = cookieStore.get(authConfig.sessionCookieName)?.value;
+
+  if (!sessionCookie) {
+    return false;
+  }
+
+  const sessionTokenHash = hashToken(sessionCookie);
+  const supabase = getSupabaseAdminClientOrThrow();
+
+  const result = await supabase
+    .from("auth_sessions")
+    .update({
+      revoked_at: new Date().toISOString(),
+    })
+    .eq("session_token_hash", sessionTokenHash)
+    .is("revoked_at", null);
+
+  if (result.error) {
+    throw new Error(`Erro ao revogar sessao: ${result.error.message}`);
+  }
+
+  return true;
 }

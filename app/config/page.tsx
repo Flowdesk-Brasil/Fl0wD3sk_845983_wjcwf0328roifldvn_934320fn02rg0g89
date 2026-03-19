@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getCurrentUserFromSessionCookie } from "@/lib/auth/session";
+import { ConfigFlow } from "@/components/config/ConfigFlow";
 
 export default async function ConfigPage() {
   const user = await getCurrentUserFromSessionCookie();
@@ -8,9 +9,5 @@ export default async function ConfigPage() {
     redirect("/login");
   }
 
-  return (
-    <main className="flex min-h-screen items-center justify-center bg-black text-white">
-      <span className="text-2xl font-medium">{user.display_name}</span>
-    </main>
-  );
+  return <ConfigFlow displayName={user.display_name} />;
 }
