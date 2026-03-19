@@ -29,6 +29,11 @@ type CreateCardPaymentInput = {
   issuerId?: string | null;
 };
 
+type PayerNameParts = {
+  firstName: string;
+  lastName?: string;
+};
+
 type MercadoPagoTransactionData = {
   qr_code?: string;
   qr_code_base64?: string;
@@ -43,6 +48,9 @@ export type MercadoPagoPaymentResponse = {
   id: number | string;
   status?: string;
   status_detail?: string;
+  external_reference?: string | null;
+  metadata?: Record<string, unknown> | null;
+  transaction_amount?: number;
   date_approved?: string | null;
   date_of_expiration?: string | null;
   point_of_interaction?: MercadoPagoPointOfInteraction | null;
@@ -57,31 +65,51 @@ function getMercadoPagoAccessTokenOrThrow() {
   return token;
 }
 
-function getMercadoPagoCardTestAccessTokenOrThrow() {
-  const token = process.env.MERCADO_PAGO_CARD_TEST_ACCESS_TOKEN;
-  if (!token) {
-    throw new Error(
-      "MERCADO_PAGO_CARD_TEST_ACCESS_TOKEN nao configurado no ambiente.",
-    );
+function resolveMercadoPagoCardAccessToken() {
+  const candidates = [
+    process.env.MERCADO_PAGO_CARD_ACCESS_TOKEN,
+    process.env.MERCADO_PAGO_CARD_PRODUCTION_ACCESS_TOKEN,
+    process.env.MERCADO_PAGO_ACCESS_TOKEN,
+    process.env.MERCADO_PAGO_CARD_TEST_ACCESS_TOKEN,
+  ]
+    .map((token) => (typeof token === "string" ? token.trim() : ""))
+    .filter(Boolean);
+
+  if (candidates.length === 0) {
+    return null;
   }
 
-  if (!token.startsWith("TEST-")) {
+  return candidates.find((token) => !token.startsWith("TEST-")) || candidates[0];
+}
+
+function getMercadoPagoCardAccessTokenOrThrow() {
+  const token = resolveMercadoPagoCardAccessToken();
+  if (!token) {
     throw new Error(
-      "MERCADO_PAGO_CARD_TEST_ACCESS_TOKEN invalido. Para cartao em ambiente de teste, use um token TEST-.",
+      "MERCADO_PAGO_CARD_ACCESS_TOKEN/MERCADO_PAGO_ACCESS_TOKEN nao configurado no ambiente.",
     );
   }
 
   return token;
 }
 
+export function resolveMercadoPagoCardEnvironment() {
+  const token = resolveMercadoPagoCardAccessToken() || "";
+
+  return token.startsWith("TEST-") ? "test" : "production";
+}
+
 function buildRequestBody(input: CreatePixPaymentInput) {
+  const payerName = splitPayerName(input.payerName);
+
   return {
     transaction_amount: input.amount,
     description: input.description,
     payment_method_id: "pix",
     payer: {
       email: input.payerEmail,
-      first_name: input.payerName,
+      first_name: payerName.firstName,
+      last_name: payerName.lastName,
       identification: {
         type: input.payerIdentification.type,
         number: input.payerIdentification.number,
@@ -93,6 +121,8 @@ function buildRequestBody(input: CreatePixPaymentInput) {
 }
 
 function buildCardRequestBody(input: CreateCardPaymentInput) {
+  const payerName = splitPayerName(input.payerName);
+
   return {
     transaction_amount: input.amount,
     description: input.description,
@@ -102,7 +132,8 @@ function buildCardRequestBody(input: CreateCardPaymentInput) {
     issuer_id: input.issuerId || undefined,
     payer: {
       email: input.payerEmail,
-      first_name: input.payerName,
+      first_name: payerName.firstName,
+      last_name: payerName.lastName,
       identification: {
         type: input.payerIdentification.type,
         number: input.payerIdentification.number,
@@ -110,6 +141,23 @@ function buildCardRequestBody(input: CreateCardPaymentInput) {
     },
     external_reference: input.externalReference,
     metadata: input.metadata,
+  };
+}
+
+function splitPayerName(value: string): PayerNameParts {
+  const normalized = value.trim().replace(/\s+/g, " ");
+  if (!normalized) {
+    return { firstName: "Cliente" };
+  }
+
+  const words = normalized.split(" ").filter(Boolean);
+  if (words.length === 1) {
+    return { firstName: words[0] };
+  }
+
+  return {
+    firstName: words[0],
+    lastName: words.slice(1).join(" "),
   };
 }
 
@@ -141,15 +189,26 @@ function parseMercadoPagoErrorMessage(payload: unknown) {
 export function resolvePaymentStatus(status: string | null | undefined) {
   if (!status) return "pending";
 
-  switch (status) {
+  const normalizedStatus = status.toLowerCase();
+
+  switch (normalizedStatus) {
     case "approved":
       return "approved";
     case "rejected":
       return "rejected";
+    case "canceled":
     case "cancelled":
+    case "refunded":
+    case "charged_back":
+    case "reverted":
       return "cancelled";
     case "expired":
       return "expired";
+    case "authorized":
+    case "in_process":
+    case "in_mediation":
+    case "pending_waiting_transfer":
+      return "pending";
     default:
       return "pending";
   }
@@ -198,7 +257,7 @@ export async function createMercadoPagoPixPayment(input: CreatePixPaymentInput) 
 }
 
 export async function createMercadoPagoCardPayment(input: CreateCardPaymentInput) {
-  const accessToken = getMercadoPagoCardTestAccessTokenOrThrow();
+  const accessToken = getMercadoPagoCardAccessTokenOrThrow();
   const idempotencyKey = crypto.randomUUID();
 
   const response = await fetch("https://api.mercadopago.com/v1/payments", {
@@ -232,4 +291,85 @@ export async function createMercadoPagoCardPayment(input: CreateCardPaymentInput
   }
 
   return payload as MercadoPagoPaymentResponse;
+}
+
+export async function fetchMercadoPagoPaymentById(
+  paymentId: string | number,
+  options?: { useCardToken?: boolean; useCardTestToken?: boolean },
+) {
+  const useCardToken = Boolean(options?.useCardToken || options?.useCardTestToken);
+  const token = useCardToken
+    ? getMercadoPagoCardAccessTokenOrThrow()
+    : getMercadoPagoAccessTokenOrThrow();
+
+  const response = await fetch(
+    `https://api.mercadopago.com/v1/payments/${encodeURIComponent(String(paymentId))}`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+    },
+  );
+
+  const rawText = await response.text();
+  let payload: unknown = null;
+
+  if (rawText) {
+    try {
+      payload = JSON.parse(rawText) as unknown;
+    } catch {
+      payload = rawText;
+    }
+  }
+
+  if (!response.ok) {
+    const providerMessage =
+      parseMercadoPagoErrorMessage(payload) ||
+      "Falha ao consultar pagamento no Mercado Pago.";
+
+    throw new Error(`Mercado Pago: ${providerMessage}`);
+  }
+
+  return payload as MercadoPagoPaymentResponse;
+}
+
+export async function refundMercadoPagoPixPayment(paymentId: string | number) {
+  const accessToken = getMercadoPagoAccessTokenOrThrow();
+  const idempotencyKey = crypto.randomUUID();
+
+  const response = await fetch(
+    `https://api.mercadopago.com/v1/payments/${encodeURIComponent(String(paymentId))}/refunds`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        "X-Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify({}),
+      cache: "no-store",
+    },
+  );
+
+  const rawText = await response.text();
+  let payload: unknown = null;
+
+  if (rawText) {
+    try {
+      payload = JSON.parse(rawText) as unknown;
+    } catch {
+      payload = rawText;
+    }
+  }
+
+  if (!response.ok) {
+    const providerMessage =
+      parseMercadoPagoErrorMessage(payload) ||
+      "Falha ao estornar pagamento PIX no Mercado Pago.";
+    throw new Error(`Mercado Pago: ${providerMessage}`);
+  }
+
+  return payload;
 }

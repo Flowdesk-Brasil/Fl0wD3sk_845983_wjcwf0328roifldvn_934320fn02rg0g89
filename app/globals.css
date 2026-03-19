@@ -84,3 +84,64 @@ body {
 .flowdesk-slide-down {
   animation: flowdesk-slide-down 180ms ease-out;
 }
+
+@keyframes flowdesk-fade-up-soft {
+  0% {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.flowdesk-fade-up-soft {
+  animation: flowdesk-fade-up-soft 360ms ease-out both;
+}
+
+@keyframes flowdesk-scale-in-soft {
+  0% {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.flowdesk-scale-in-soft {
+  animation: flowdesk-scale-in-soft 220ms ease-out both;
+}
+
+@keyframes flowdesk-shimmer {
+  0% {
+    transform: translateX(-120%);
+  }
+
+  100% {
+    transform: translateX(140%);
+  }
+}
+
+.flowdesk-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.flowdesk-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-120%);
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.08) 45%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  animation: flowdesk-shimmer 1.2s ease-in-out infinite;
+}

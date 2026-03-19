@@ -37,7 +37,7 @@ type BotPresenceApiResponse = {
 
 const DEFAULT_NEXT_STEP_URL = "/config/#/step/2";
 const BOT_CHECK_INTERVAL_MS = 4_000;
-const GUILDS_CACHE_STORAGE_KEY = "flowdesk_step1_guilds_cache_v1";
+const GUILDS_CACHE_STORAGE_KEY = "flowdesk_step1_guilds_cache_v2";
 const GUILDS_CACHE_TTL_MS = 5 * 60 * 1000;
 
 type GuildsCachePayload = {
@@ -111,7 +111,9 @@ export function ConfigStepOne({
       }
 
       try {
-        const response = await fetch("/api/auth/me/guilds", { cache: "no-store" });
+        const response = await fetch("/api/auth/me/guilds?excludePaid=1", {
+          cache: "no-store",
+        });
         const payload = (await response.json()) as GuildsApiResponse;
 
         if (!isMounted) return;
@@ -314,13 +316,17 @@ export function ConfigStepOne({
   }, [selectedGuildId]);
 
   useEffect(() => {
-    onSelectedGuildChange?.(selectedGuildId);
-  }, [onSelectedGuildChange, selectedGuildId]);
-
-  useEffect(() => {
-    if (!initialSelectedGuildId) return;
+    if (initialSelectedGuildId === undefined) return;
     setSelectedGuildId(initialSelectedGuildId);
   }, [initialSelectedGuildId]);
+
+  const handleSelectGuild = useCallback(
+    (guildId: string) => {
+      setSelectedGuildId(guildId);
+      onSelectedGuildChange?.(guildId);
+    },
+    [onSelectedGuildChange],
+  );
 
   const botModalTitle =
     botBlockReason === "missing_admin_permission"
@@ -368,7 +374,7 @@ export function ConfigStepOne({
           <GuildSelect
             guilds={guilds}
             selectedGuildId={selectedGuildId}
-            onSelect={setSelectedGuildId}
+            onSelect={handleSelectGuild}
             isOpen={isOpen}
             onToggle={() => setIsOpen((value) => !value)}
             isLoading={isLoadingGuilds}

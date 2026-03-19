@@ -3,6 +3,7 @@ import {
   getAccessibleGuildsForSession,
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
+import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 function buildGuildIconUrl(guildId: string, icon: string | null) {
   if (!icon) return null;
@@ -11,9 +12,29 @@ function buildGuildIconUrl(guildId: string, icon: string | null) {
   return `https://cdn.discordapp.com/icons/${guildId}/${icon}.${extension}?size=64`;
 }
 
-export async function GET() {
+async function getPaidGuildIdsForUser(userId: number) {
+  const supabase = getSupabaseAdminClientOrThrow();
+  const result = await supabase
+    .from("payment_orders")
+    .select("guild_id")
+    .eq("user_id", userId)
+    .eq("status", "approved")
+    .returns<Array<{ guild_id: string }>>();
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  return new Set((result.data || []).map((item) => item.guild_id));
+}
+
+export async function GET(request: Request) {
   try {
     const sessionData = await resolveSessionAccessToken();
+    const url = new URL(request.url);
+    const excludePaid =
+      url.searchParams.get("excludePaid") === "1" ||
+      url.searchParams.get("excludePaid") === "true";
 
     if (!sessionData?.authSession) {
       return NextResponse.json(
@@ -29,7 +50,7 @@ export async function GET() {
       );
     }
 
-    const guilds = (await getAccessibleGuildsForSession({
+    let guilds = (await getAccessibleGuildsForSession({
       authSession: sessionData.authSession,
       accessToken: sessionData.accessToken,
     })).map((guild) => ({
@@ -39,6 +60,13 @@ export async function GET() {
       owner: guild.owner,
       admin: true,
     }));
+
+    if (excludePaid) {
+      const paidGuildIds = await getPaidGuildIdsForUser(
+        sessionData.authSession.user.id,
+      );
+      guilds = guilds.filter((guild) => !paidGuildIds.has(guild.id));
+    }
 
     return NextResponse.json({
       ok: true,

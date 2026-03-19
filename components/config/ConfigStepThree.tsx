@@ -12,6 +12,7 @@ import { hasStepThreeDraftValues } from "@/lib/auth/configContext";
 type ConfigStepThreeProps = {
   displayName: string;
   guildId: string | null;
+  guildLicenseStatus?: "paid" | "expired" | "off" | "not_paid";
   initialDraft?: StepThreeDraft | null;
   onDraftChange?: (guildId: string, draft: StepThreeDraft) => void;
   onProceedToStepFour?: () => void;
@@ -40,7 +41,7 @@ type StaffSettingsApiResponse = {
   } | null;
 };
 
-const DEFAULT_NEXT_STEP_URL = "/config/#/step/4";
+const DEFAULT_NEXT_STEP_URL = "/config/#/payment";
 
 function buildStepThreeDraft(
   value: Partial<StepThreeDraft> | null | undefined,
@@ -63,6 +64,7 @@ function filterRoleIdList(roleIds: string[], allowedRoleIds: Set<string>) {
 export function ConfigStepThree({
   displayName,
   guildId,
+  guildLicenseStatus = "not_paid",
   initialDraft = null,
   onDraftChange,
   onProceedToStepFour,
@@ -76,6 +78,7 @@ export function ConfigStepThree({
   const [notifyRoleIds, setNotifyRoleIds] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const isPlanLocked = guildLicenseStatus === "expired" || guildLicenseStatus === "off";
 
   useEffect(() => {
     if (!guildId) {
@@ -182,6 +185,7 @@ export function ConfigStepThree({
           closeRoleIds.length &&
           notifyRoleIds.length &&
           !isLoadingRoles &&
+          !isPlanLocked &&
           !isSaving,
       ),
     [
@@ -190,6 +194,7 @@ export function ConfigStepThree({
       closeRoleIds.length,
       guildId,
       isLoadingRoles,
+      isPlanLocked,
       isSaving,
       notifyRoleIds.length,
     ],
@@ -322,7 +327,7 @@ export function ConfigStepThree({
                 value={adminRoleId}
                 onChange={setAdminRoleId}
                 loading={isLoadingRoles}
-                disabled={isSaving}
+                disabled={isSaving || isPlanLocked}
               />
 
               <ConfigStepMultiSelect
@@ -332,7 +337,7 @@ export function ConfigStepThree({
                 values={claimRoleIds}
                 onChange={setClaimRoleIds}
                 loading={isLoadingRoles}
-                disabled={isSaving}
+                disabled={isSaving || isPlanLocked}
               />
 
               <ConfigStepMultiSelect
@@ -342,7 +347,7 @@ export function ConfigStepThree({
                 values={closeRoleIds}
                 onChange={setCloseRoleIds}
                 loading={isLoadingRoles}
-                disabled={isSaving}
+                disabled={isSaving || isPlanLocked}
               />
 
               <ConfigStepMultiSelect
@@ -352,7 +357,7 @@ export function ConfigStepThree({
                 values={notifyRoleIds}
                 onChange={setNotifyRoleIds}
                 loading={isLoadingRoles}
-                disabled={isSaving}
+                disabled={isSaving || isPlanLocked}
               />
             </div>
           </div>
@@ -381,6 +386,12 @@ export function ConfigStepThree({
 
           {errorMessage ? (
             <p className="text-center text-[12px] text-[#C2C2C2]">{errorMessage}</p>
+          ) : null}
+
+          {isPlanLocked ? (
+            <p className="text-center text-[12px] text-[#C2C2C2]">
+              Este servidor esta com plano expirado/desligado. Renove para liberar alteracoes.
+            </p>
           ) : null}
 
           <span className="sr-only">{displayName}</span>

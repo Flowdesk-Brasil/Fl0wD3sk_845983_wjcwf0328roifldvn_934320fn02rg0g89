@@ -28,6 +28,7 @@ type AuthUserRecord = {
   global_name: string | null;
   display_name: string;
   avatar: string | null;
+  email: string | null;
 };
 
 type AuthSessionRecord = {
@@ -117,7 +118,7 @@ async function upsertAuthUser(discordUser: DiscordUser) {
     .from("auth_users")
     .upsert(payload, { onConflict: "discord_user_id" })
     .select(
-      "id, discord_user_id, username, global_name, display_name, avatar",
+      "id, discord_user_id, username, global_name, display_name, avatar, email",
     )
     .single<AuthUserRecord>();
 
@@ -189,7 +190,7 @@ export async function getCurrentAuthSessionFromCookie(): Promise<CurrentAuthSess
   const result = await supabase
     .from("auth_sessions")
     .select(
-      "id, discord_access_token, discord_refresh_token, discord_token_expires_at, active_guild_id, discord_guilds_cache, discord_guilds_cached_at, config_current_step, config_draft, config_context_updated_at, user:auth_users(id, discord_user_id, username, global_name, display_name, avatar)",
+      "id, discord_access_token, discord_refresh_token, discord_token_expires_at, active_guild_id, discord_guilds_cache, discord_guilds_cached_at, config_current_step, config_draft, config_context_updated_at, user:auth_users(id, discord_user_id, username, global_name, display_name, avatar, email)",
     )
     .eq("session_token_hash", sessionTokenHash)
     .is("revoked_at", null)

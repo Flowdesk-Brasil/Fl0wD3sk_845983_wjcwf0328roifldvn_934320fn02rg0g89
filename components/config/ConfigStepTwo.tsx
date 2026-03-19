@@ -11,6 +11,7 @@ import { hasStepTwoDraftValues } from "@/lib/auth/configContext";
 type ConfigStepTwoProps = {
   displayName: string;
   guildId: string | null;
+  guildLicenseStatus?: "paid" | "expired" | "off" | "not_paid";
   initialDraft?: StepTwoDraft | null;
   onDraftChange?: (guildId: string, draft: StepTwoDraft) => void;
   onProceedToStepThree?: () => void;
@@ -70,6 +71,7 @@ function buildStepTwoDraft(
 export function ConfigStepTwo({
   displayName,
   guildId,
+  guildLicenseStatus = "not_paid",
   initialDraft = null,
   onDraftChange,
   onProceedToStepThree,
@@ -84,6 +86,7 @@ export function ConfigStepTwo({
   const [logsClosedChannelId, setLogsClosedChannelId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const isPlanLocked = guildLicenseStatus === "expired" || guildLicenseStatus === "off";
 
   useEffect(() => {
     if (!guildId) {
@@ -215,6 +218,7 @@ export function ConfigStepTwo({
           logsCreatedChannelId &&
           logsClosedChannelId &&
           !isLoadingChannels &&
+          !isPlanLocked &&
           !isSaving,
       ),
     [
@@ -224,6 +228,7 @@ export function ConfigStepTwo({
       logsCreatedChannelId,
       logsClosedChannelId,
       isLoadingChannels,
+      isPlanLocked,
       isSaving,
     ],
   );
@@ -356,7 +361,7 @@ export function ConfigStepTwo({
                 value={menuChannelId}
                 onChange={setMenuChannelId}
                 loading={isLoadingChannels}
-                disabled={isSaving}
+                disabled={isSaving || isPlanLocked}
               />
 
               <ConfigStepSelect
@@ -366,7 +371,7 @@ export function ConfigStepTwo({
                 value={ticketsCategoryId}
                 onChange={setTicketsCategoryId}
                 loading={isLoadingChannels}
-                disabled={isSaving}
+                disabled={isSaving || isPlanLocked}
               />
 
               <ConfigStepSelect
@@ -376,7 +381,7 @@ export function ConfigStepTwo({
                 value={logsCreatedChannelId}
                 onChange={setLogsCreatedChannelId}
                 loading={isLoadingChannels}
-                disabled={isSaving}
+                disabled={isSaving || isPlanLocked}
               />
 
               <ConfigStepSelect
@@ -386,7 +391,7 @@ export function ConfigStepTwo({
                 value={logsClosedChannelId}
                 onChange={setLogsClosedChannelId}
                 loading={isLoadingChannels}
-                disabled={isSaving}
+                disabled={isSaving || isPlanLocked}
               />
             </div>
           </div>
@@ -415,6 +420,12 @@ export function ConfigStepTwo({
 
           {errorMessage ? (
             <p className="text-center text-[12px] text-[#C2C2C2]">{errorMessage}</p>
+          ) : null}
+
+          {isPlanLocked ? (
+            <p className="text-center text-[12px] text-[#C2C2C2]">
+              Este servidor esta com plano expirado/desligado. Renove para liberar alteracoes.
+            </p>
           ) : null}
 
           <span className="sr-only">{displayName}</span>

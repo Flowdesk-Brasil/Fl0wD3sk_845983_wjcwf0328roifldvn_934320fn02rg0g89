@@ -9,6 +9,7 @@ import {
   fetchDiscordUser,
 } from "@/lib/auth/discord";
 import { createUserSessionFromDiscordUser } from "@/lib/auth/session";
+import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 function buildLoginRedirect(request: NextRequest) {
   return new URL("/login", request.url);
@@ -32,6 +33,24 @@ function redirectWithLocation(location: string) {
       Location: location,
     },
   });
+}
+
+async function hasApprovedServerForUser(userId: number) {
+  const supabase = getSupabaseAdminClientOrThrow();
+
+  const result = await supabase
+    .from("payment_orders")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("status", "approved")
+    .limit(1)
+    .maybeSingle<{ id: number }>();
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  return Boolean(result.data?.id);
 }
 
 export async function GET(request: NextRequest) {
@@ -59,7 +78,7 @@ export async function GET(request: NextRequest) {
       Date.now() + tokenPayload.expires_in * 1000,
     ).toISOString();
 
-    const { session } = await createUserSessionFromDiscordUser(discordUser, {
+    const { user, session } = await createUserSessionFromDiscordUser(discordUser, {
       ipAddress: extractClientIp(request),
       userAgent: request.headers.get("user-agent"),
     }, {
@@ -68,7 +87,15 @@ export async function GET(request: NextRequest) {
       discordTokenExpiresAt,
     });
 
-    const successLocation = buildLoginSuccessLocation(request.nextUrl.origin);
+    let hasApprovedServer = false;
+    try {
+      hasApprovedServer = await hasApprovedServerForUser(user.id);
+    } catch {
+      hasApprovedServer = false;
+    }
+    const successLocation = hasApprovedServer
+      ? `${request.nextUrl.origin}/servers`
+      : buildLoginSuccessLocation(request.nextUrl.origin);
     const response = redirectWithLocation(successLocation);
 
     response.cookies.set(authConfig.sessionCookieName, session.sessionToken, {

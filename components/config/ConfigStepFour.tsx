@@ -54,6 +54,10 @@ type PixPaymentApiResponse = {
   ok: boolean;
   message?: string;
   reused?: boolean;
+  blockedByActiveLicense?: boolean;
+  licenseActive?: boolean;
+  licenseExpiresAt?: string | null;
+  fromOrderCode?: boolean;
   order?: PixOrder | null;
 };
 
@@ -64,6 +68,8 @@ type MercadoPagoCardTokenPayload = {
   message?: string;
   cause?: Array<{ description?: string }>;
 };
+
+type UnknownErrorObject = Record<string, unknown>;
 
 type MercadoPagoInstance = {
   createCardToken: (input: {
@@ -208,6 +214,7 @@ const BRAND_ICON_BY_TYPE: Record<Exclude<CardBrand, null>, string> = {
 const MERCADO_PAGO_SDK_URL = "https://sdk.mercadopago.com/js/v2";
 let mercadoPagoSdkPromise: Promise<void> | null = null;
 const PAYMENT_ORDER_CACHE_STORAGE_KEY = "flowdesk_payment_order_cache_v1";
+const CHECKOUT_STATUS_QUERY_KEYS = ["status", "code", "guild"] as const;
 
 const EMPTY_STEP_FOUR_DRAFT: StepFourDraft = {
   visited: false,
@@ -350,10 +357,96 @@ function removeCachedOrderByGuild(guildId: string) {
   }
 }
 
+function formatLicenseExpiresAt(value: string | null | undefined) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function buildActiveLicenseMessage(licenseExpiresAt: string | null | undefined) {
+  const formattedExpiresAt = formatLicenseExpiresAt(licenseExpiresAt);
+  if (formattedExpiresAt) {
+    return `Licenca ativa para este servidor ate ${formattedExpiresAt}.`;
+  }
+
+  return "Licenca ativa para este servidor. Pagamento bloqueado ate o fim do periodo.";
+}
+
+function readCheckoutStatusQuery() {
+  if (typeof window === "undefined") {
+    return {
+      code: null as number | null,
+      status: null as string | null,
+      guild: null as string | null,
+    };
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const rawCode = params.get("code");
+  const code =
+    rawCode && /^\d{1,12}$/.test(rawCode.trim()) ? Number(rawCode.trim()) : null;
+  const status = params.get("status")?.trim().toLowerCase() || null;
+  const guild = params.get("guild")?.trim() || null;
+
+  return { code, status, guild };
+}
+
+function setCheckoutStatusQuery(input: {
+  order: PixOrder;
+  guildId: string | null;
+}) {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  url.searchParams.set("status", input.order.status);
+  url.searchParams.set("code", String(input.order.orderNumber));
+
+  if (input.guildId) {
+    url.searchParams.set("guild", input.guildId);
+  } else {
+    url.searchParams.delete("guild");
+  }
+
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
+function clearCheckoutStatusQuery() {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  const hadAnyKey = CHECKOUT_STATUS_QUERY_KEYS.some((key) =>
+    url.searchParams.has(key),
+  );
+  if (!hadAnyKey) return;
+
+  for (const key of CHECKOUT_STATUS_QUERY_KEYS) {
+    url.searchParams.delete(key);
+  }
+
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
 function resolveCardPublicKey() {
-  const key = process.env.NEXT_PUBLIC_MERCADO_PAGO_CARD_TEST_PUBLIC_KEY || null;
+  const candidates = [
+    process.env.NEXT_PUBLIC_MERCADO_PAGO_CARD_PUBLIC_KEY ||
+      null,
+    process.env.NEXT_PUBLIC_MERCADO_PAGO_CARD_PRODUCTION_PUBLIC_KEY || null,
+    process.env.NEXT_PUBLIC_MERCADO_PAGO_PUBLIC_KEY || null,
+    process.env.NEXT_PUBLIC_MERCADO_PAGO_CARD_TEST_PUBLIC_KEY || null,
+  ]
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .filter(Boolean);
+
+  const key =
+    candidates.find((value) => !value.startsWith("TEST-")) ||
+    candidates[0] ||
+    null;
   if (!key) return null;
-  if (!key.startsWith("TEST-")) return null;
+  if (!key.startsWith("APP_USR-") && !key.startsWith("TEST-")) {
+    return null;
+  }
   return key;
 }
 
@@ -381,6 +474,47 @@ function parseMercadoPagoCardTokenError(payload: MercadoPagoCardTokenPayload) {
     const description = payload.cause[0]?.description;
     if (typeof description === "string" && description.trim()) {
       return description.trim();
+    }
+  }
+
+  return null;
+}
+
+function parseUnknownErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    const message = error.message?.trim();
+    return message || null;
+  }
+
+  if (typeof error === "string") {
+    const message = error.trim();
+    return message || null;
+  }
+
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+
+  const data = error as UnknownErrorObject;
+
+  const directMessage = data.message;
+  if (typeof directMessage === "string" && directMessage.trim()) {
+    return directMessage.trim();
+  }
+
+  const errorMessage = data.errorMessage;
+  if (typeof errorMessage === "string" && errorMessage.trim()) {
+    return errorMessage.trim();
+  }
+
+  const cause = data.cause;
+  if (Array.isArray(cause) && cause.length > 0) {
+    const firstCause = cause[0];
+    if (firstCause && typeof firstCause === "object") {
+      const description = (firstCause as UnknownErrorObject).description;
+      if (typeof description === "string" && description.trim()) {
+        return description.trim();
+      }
     }
   }
 
@@ -468,9 +602,9 @@ function normalizePersonName(value: string) {
 
 function isValidPersonName(value: string) {
   const normalized = normalizePersonName(value);
-  if (normalized.length < 3) return false;
+  if (normalized.length < 2) return false;
   const words = normalized.split(" ").filter(Boolean);
-  return words.length >= 2 && words.every((word) => word.length >= 2);
+  return words.length >= 1 && words.every((word) => word.length >= 2);
 }
 
 function normalizeCardDigits(value: string) {
@@ -580,20 +714,87 @@ function normalizeCardCvv(value: string) {
   return value.replace(/\D/g, "").slice(0, 4);
 }
 
-function paymentStatusLabel(status: string | null | undefined) {
+function summarizeMercadoPagoStatusDetail(
+  statusDetail: string | null | undefined,
+  providerStatus: string | null | undefined,
+) {
+  const detail = statusDetail?.trim().toLowerCase() || "";
+  const status = providerStatus?.trim().toLowerCase() || "";
+  const key = detail || status;
+
+  if (!key) return null;
+
+  switch (key) {
+    case "cc_rejected_insufficient_amount":
+      return "saldo insuficiente";
+    case "cc_rejected_bad_filled_card_number":
+      return "numero do cartao invalido";
+    case "cc_rejected_bad_filled_date":
+      return "data de validade invalida";
+    case "cc_rejected_bad_filled_security_code":
+      return "codigo de seguranca invalido";
+    case "cc_rejected_bad_filled_other":
+      return "dados do cartao invalidos";
+    case "cc_rejected_call_for_authorize":
+      return "autorizacao necessaria no banco";
+    case "cc_rejected_card_disabled":
+      return "cartao desabilitado";
+    case "cc_rejected_duplicated_payment":
+      return "pagamento duplicado";
+    case "cc_rejected_high_risk":
+      return "recusado por seguranca";
+    case "cc_rejected_invalid_installments":
+      return "parcelamento invalido";
+    case "cc_rejected_max_attempts":
+      return "limite de tentativas excedido";
+    case "cc_rejected_blacklist":
+      return "pagamento bloqueado por seguranca";
+    case "cc_rejected_other_reason":
+      return "recusado pelo banco emissor";
+    case "pending_contingency":
+      return "em analise de seguranca";
+    case "pending_review_manual":
+      return "em revisao manual";
+    case "pending_waiting_payment":
+      return "aguardando pagamento";
+    case "pending_waiting_transfer":
+      return "aguardando compensacao";
+    case "cancelled":
+    case "canceled":
+      return "cancelado no provedor";
+    case "expired":
+      return "prazo expirado";
+    default: {
+      const compact = key.replace(/[_\s]+/g, " ").trim();
+      if (!compact) return null;
+      if (compact.length <= 46) return compact;
+      return `${compact.slice(0, 43)}...`;
+    }
+  }
+}
+
+function paymentStatusLabel(order: PixOrder | null | undefined) {
+  const status = order?.status || "pending";
+  const reason = summarizeMercadoPagoStatusDetail(
+    order?.providerStatusDetail || null,
+    order?.providerStatus || null,
+  );
+
   switch (status) {
     case "approved":
       return "Pagamento aprovado";
     case "cancelled":
     case "rejected":
-      return "Pagamento Cancelado";
+      return reason
+        ? `Pagamento cancelado: ${reason}`
+        : "Pagamento cancelado";
     case "expired":
-      return "Pagamento Expirado";
+      return reason ? `Pagamento expirado: ${reason}` : "Pagamento expirado";
     case "failed":
-      return "Falha no pagamento";
+      return reason ? `Falha no pagamento: ${reason}` : "Falha no pagamento";
     case "pending":
     default:
-      return "Pagamento pendente";
+      return reason ? `Pagamento pendente: ${reason}` : "Pagamento pendente";
   }
 }
 
@@ -1062,7 +1263,6 @@ export function ConfigStepFour({
   );
   const [copied, setCopied] = useState(false);
   const [isLoadingOrder, setIsLoadingOrder] = useState(true);
-  const [orderReloadNonce, setOrderReloadNonce] = useState(0);
 
   const documentDigits = useMemo(() => normalizeBrazilDocumentDigits(payerDocument), [payerDocument]);
   const cardDocumentDigits = useMemo(() => normalizeBrazilDocumentDigits(cardDocument), [cardDocument]);
@@ -1073,6 +1273,7 @@ export function ConfigStepFour({
 
   useEffect(() => {
     if (!guildId) {
+      clearCheckoutStatusQuery();
       setView("methods");
       setMethodMessage(null);
       setPayerDocument("");
@@ -1092,7 +1293,25 @@ export function ConfigStepFour({
     const activeGuildId = guildId;
     const guildDraft = buildStepFourDraft(initialDraft);
     const hasStoredDraft = hasStepFourDraftValues(initialDraft);
+    const checkoutQuery = readCheckoutStatusQuery();
+    const shouldLoadOrderByCode =
+      checkoutQuery.code !== null &&
+      (!checkoutQuery.guild || checkoutQuery.guild === activeGuildId);
+    if (
+      checkoutQuery.code !== null &&
+      checkoutQuery.guild &&
+      checkoutQuery.guild !== activeGuildId
+    ) {
+      clearCheckoutStatusQuery();
+    }
+
     const cachedOrder = readCachedOrderByGuild(activeGuildId);
+    const cachedPendingOrder =
+      cachedOrder && cachedOrder.status === "pending" ? cachedOrder : null;
+
+    if (cachedOrder && cachedOrder.status !== "pending") {
+      removeCachedOrderByGuild(activeGuildId);
+    }
 
     setView(guildDraft.view);
     setMethodMessage(null);
@@ -1105,16 +1324,21 @@ export function ConfigStepFour({
     setCardDocument(guildDraft.cardDocument);
     setLastKnownOrderNumber(guildDraft.lastKnownOrderNumber);
     setCopied(false);
-    if (cachedOrder) {
-      setPixOrder(cachedOrder);
-      setLastKnownOrderNumber(cachedOrder.orderNumber);
+    if (cachedPendingOrder) {
+      setPixOrder(cachedPendingOrder);
+      setLastKnownOrderNumber(cachedPendingOrder.orderNumber);
       setView(
         resolveRestoredView({
           hasStoredDraft,
           preferredView: guildDraft.view,
-          order: cachedOrder,
+          order: cachedPendingOrder,
         }),
       );
+    } else if (cachedOrder) {
+      setPixOrder(null);
+      setLastKnownOrderNumber(cachedOrder.orderNumber);
+      setView("methods");
+      setMethodMessage("Pagamento anterior finalizado. Escolha um novo metodo.");
     }
 
     let isMounted = true;
@@ -1126,7 +1350,12 @@ export function ConfigStepFour({
 
     async function loadLatestPixOrder() {
       try {
-        const response = await fetch(`/api/auth/me/payments/pix?guildId=${activeGuildId}`, {
+        const queryParams = new URLSearchParams({ guildId: activeGuildId });
+        if (shouldLoadOrderByCode && checkoutQuery.code !== null) {
+          queryParams.set("code", String(checkoutQuery.code));
+        }
+
+        const response = await fetch(`/api/auth/me/payments/pix?${queryParams.toString()}`, {
           cache: "no-store",
           signal: controller.signal,
         });
@@ -1135,11 +1364,40 @@ export function ConfigStepFour({
 
         const remoteOrder =
           response.ok && payload.ok && payload.order ? payload.order : null;
-        const order = remoteOrder || cachedOrder || null;
+        if (shouldLoadOrderByCode && !remoteOrder) {
+          clearCheckoutStatusQuery();
+        }
+
+        if (remoteOrder && remoteOrder.status === "approved") {
+          setPixOrder(remoteOrder);
+          setLastKnownOrderNumber(remoteOrder.orderNumber);
+          setView("methods");
+          setMethodMessage(
+            payload.licenseActive
+              ? buildActiveLicenseMessage(payload.licenseExpiresAt)
+              : "Pagamento aprovado para este servidor.",
+          );
+          setCheckoutStatusQuery({ order: remoteOrder, guildId: activeGuildId });
+          writeCachedOrderByGuild(activeGuildId, remoteOrder);
+          return;
+        }
+
+        if (remoteOrder && remoteOrder.status !== "pending") {
+          removeCachedOrderByGuild(activeGuildId);
+          setLastKnownOrderNumber(remoteOrder.orderNumber);
+          setPixOrder(null);
+          setView("methods");
+          setMethodMessage("Pagamento anterior finalizado. Escolha um novo metodo.");
+          clearCheckoutStatusQuery();
+          return;
+        }
+
+        const order = remoteOrder || cachedPendingOrder || null;
 
         if (remoteOrder) {
           writeCachedOrderByGuild(activeGuildId, remoteOrder);
           setLastKnownOrderNumber(remoteOrder.orderNumber);
+          clearCheckoutStatusQuery();
         }
 
         setPixOrder(order);
@@ -1152,17 +1410,23 @@ export function ConfigStepFour({
         );
       } catch {
         if (!isMounted) return;
-        setPixOrder(cachedOrder || null);
-        if (cachedOrder) {
+        setPixOrder(cachedPendingOrder || null);
+        if (cachedPendingOrder) {
+          setLastKnownOrderNumber(cachedPendingOrder.orderNumber);
+          setView(
+            resolveRestoredView({
+              hasStoredDraft,
+              preferredView: guildDraft.view,
+              order: cachedPendingOrder,
+            }),
+          );
+        } else if (cachedOrder) {
           setLastKnownOrderNumber(cachedOrder.orderNumber);
+          setView("methods");
+          setMethodMessage("Pagamento anterior finalizado. Escolha um novo metodo.");
+        } else {
+          setView("methods");
         }
-        setView(
-          resolveRestoredView({
-            hasStoredDraft,
-            preferredView: guildDraft.view,
-            order: cachedOrder || null,
-          }),
-        );
       } finally {
         if (!isMounted) return;
         window.clearTimeout(timeoutId);
@@ -1177,7 +1441,7 @@ export function ConfigStepFour({
       window.clearTimeout(timeoutId);
       controller.abort();
     };
-  }, [guildId, orderReloadNonce]);
+  }, [guildId]);
 
   useEffect(() => {
     if (!guildId || isLoadingOrder) return;
@@ -1212,14 +1476,19 @@ export function ConfigStepFour({
   useEffect(() => {
     if (!guildId || !pixOrder || pixOrder.status !== "pending") return;
     const activeGuildId = guildId;
+    const activeOrderCode = pixOrder.orderNumber;
 
     let isMounted = true;
 
     const intervalId = window.setInterval(() => {
       void (async () => {
         try {
+          const queryParams = new URLSearchParams({
+            guildId: activeGuildId,
+            code: String(activeOrderCode),
+          });
           const response = await fetch(
-            `/api/auth/me/payments/pix?guildId=${activeGuildId}`,
+            `/api/auth/me/payments/pix?${queryParams.toString()}`,
             { cache: "no-store" },
           );
           const payload = (await response.json()) as PixPaymentApiResponse;
@@ -1231,6 +1500,16 @@ export function ConfigStepFour({
 
           if (payload.order.status && payload.order.status !== "pending") {
             setView("methods");
+            if (payload.order.status === "approved") {
+              setMethodMessage(
+                payload.licenseActive
+                  ? buildActiveLicenseMessage(payload.licenseExpiresAt)
+                  : "Pagamento aprovado para este servidor.",
+              );
+              setCheckoutStatusQuery({ order: payload.order, guildId: activeGuildId });
+            } else {
+              clearCheckoutStatusQuery();
+            }
           }
         } catch {
           // polling silencioso
@@ -1242,7 +1521,7 @@ export function ConfigStepFour({
       isMounted = false;
       window.clearInterval(intervalId);
     };
-  }, [guildId, pixOrder?.id, pixOrder?.status]);
+  }, [guildId, pixOrder?.id, pixOrder?.orderNumber, pixOrder?.status]);
 
   useEffect(() => {
     if (!documentDigits) {
@@ -1394,7 +1673,7 @@ export function ConfigStepFour({
   const paymentStatus = pixOrder?.status || "pending";
   const resolvedOrderNumber = pixOrder?.orderNumber || lastKnownOrderNumber || null;
   const orderNumberLabel = resolvedOrderNumber ? `#${resolvedOrderNumber}` : null;
-  const currentPaymentStatusLabel = paymentStatusLabel(pixOrder?.status || null);
+  const currentPaymentStatusLabel = paymentStatusLabel(pixOrder);
   const statusVisual = resolveStatusVisual(paymentStatus);
   const canChoosePaymentMethod = Boolean(
     !isLoadingOrder &&
@@ -1473,6 +1752,7 @@ export function ConfigStepFour({
     setCardFormHasInputError(false);
     setCardFormError(null);
     setCopied(false);
+    clearCheckoutStatusQuery();
 
     if (method === "pix") {
       setView("pix_form");
@@ -1491,7 +1771,7 @@ export function ConfigStepFour({
     }
 
     if (pixNameStatus !== "valid") {
-      triggerPixFormValidationError("Nome completo invalido. Informe nome e sobrenome.");
+      triggerPixFormValidationError("Nome invalido. Verifique e tente novamente.");
       return;
     }
 
@@ -1522,7 +1802,19 @@ export function ConfigStepFour({
       setPixOrder(payload.order);
       setLastKnownOrderNumber(payload.order.orderNumber);
       writeCachedOrderByGuild(guildId, payload.order);
-      setView("pix_checkout");
+
+      if (payload.order.status === "approved" || payload.blockedByActiveLicense) {
+        setView("methods");
+        setMethodMessage(
+          payload.licenseActive
+            ? buildActiveLicenseMessage(payload.licenseExpiresAt)
+            : "Pagamento aprovado para este servidor.",
+        );
+        setCheckoutStatusQuery({ order: payload.order, guildId });
+      } else {
+        setView("pix_checkout");
+        setCheckoutStatusQuery({ order: payload.order, guildId });
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro inesperado ao gerar pagamento PIX.";
       const normalizedMessage = message.toLowerCase();
@@ -1559,12 +1851,10 @@ export function ConfigStepFour({
     const publicKey = resolveCardPublicKey();
     if (!publicKey) {
       triggerCardFormValidationError(
-        "Chave publica de teste do Mercado Pago nao configurada para cartao.",
+        "Chave publica do Mercado Pago nao configurada para cartao.",
       );
       return;
     }
-
-    const isTestCardEnvironment = publicKey.startsWith("TEST-");
 
     const fallbackPaymentMethodId = resolveCardPaymentMethodIdFromBrand(cardBrand);
     if (!fallbackPaymentMethodId) {
@@ -1590,19 +1880,23 @@ export function ConfigStepFour({
         locale: "pt-BR",
       });
 
-      const tokenizedCardholderName = isTestCardEnvironment
-        ? "APRO"
-        : normalizePersonName(cardHolderName);
-
-      const tokenPayload = await mercadoPago.createCardToken({
-        cardNumber: cardNumberDigits,
-        cardholderName: tokenizedCardholderName,
-        identificationType: documentType,
-        identificationNumber: cardDocumentDigits,
-        securityCode: cardCvvDigits,
-        cardExpirationMonth: cardExpiryDigits.slice(0, 2),
-        cardExpirationYear: `20${cardExpiryDigits.slice(2, 4)}`,
-      });
+      let tokenPayload: MercadoPagoCardTokenPayload;
+      try {
+        tokenPayload = await mercadoPago.createCardToken({
+          cardNumber: cardNumberDigits,
+          cardholderName: normalizePersonName(cardHolderName),
+          identificationType: documentType,
+          identificationNumber: cardDocumentDigits,
+          securityCode: cardCvvDigits,
+          cardExpirationMonth: cardExpiryDigits.slice(0, 2),
+          cardExpirationYear: `20${cardExpiryDigits.slice(2, 4)}`,
+        });
+      } catch (tokenizationError) {
+        throw new Error(
+          parseUnknownErrorMessage(tokenizationError) ||
+            "Falha ao tokenizar o cartao. Verifique os dados e tente novamente.",
+        );
+      }
 
       const cardToken = tokenPayload?.id?.trim() || null;
       if (!cardToken) {
@@ -1649,20 +1943,27 @@ export function ConfigStepFour({
       setCardFormHasInputError(false);
       setCardFormError(null);
 
-      if (payload.order.status === "approved") {
-        setMethodMessage("Pagamento com cartao aprovado.");
+      if (payload.order.status === "approved" || payload.blockedByActiveLicense) {
+        setMethodMessage(
+          payload.licenseActive
+            ? buildActiveLicenseMessage(payload.licenseExpiresAt)
+            : "Pagamento com cartao aprovado.",
+        );
+        setCheckoutStatusQuery({ order: payload.order, guildId });
       } else if (payload.order.status === "pending") {
         setMethodMessage("Pagamento com cartao em analise.");
+        clearCheckoutStatusQuery();
       } else if (payload.order.status === "rejected") {
         setMethodMessage("Pagamento com cartao rejeitado.");
+        clearCheckoutStatusQuery();
       } else {
         setMethodMessage("Pagamento com cartao processado.");
+        clearCheckoutStatusQuery();
       }
     } catch (error) {
       const message =
-        error instanceof Error
-          ? error.message
-          : "Erro inesperado ao processar pagamento com cartao.";
+        parseUnknownErrorMessage(error) ||
+        "Erro inesperado ao processar pagamento com cartao.";
 
       const normalizedMessage = message.toLowerCase();
       const shouldFlagInputError =
@@ -1713,22 +2014,145 @@ export function ConfigStepFour({
   }, [pixOrder?.qrCodeText]);
 
   const handleRegeneratePayment = useCallback(() => {
-    if (guildId) {
-      removeCachedOrderByGuild(guildId);
-    }
+    if (!guildId) return;
+
+    const activeGuildId = guildId;
+    const lastMethod: PaymentMethod = pixOrder?.method === "card" ? "card" : "pix";
+    const normalizedName = normalizePersonName(payerName);
+    const canReusePixData =
+      resolveDocumentStatus(documentDigits) === "valid" &&
+      isValidPersonName(normalizedName);
 
     setIsLoadingOrder(true);
-    setMethodMessage("Selecione o metodo para gerar um novo pagamento.");
+    setMethodMessage("Regerando pagamento...");
     setCopied(false);
-    setPixOrder(null);
-    setLastKnownOrderNumber(null);
     setPixFormError(null);
     setPixFormHasInputError(false);
     setCardFormError(null);
     setCardFormHasInputError(false);
     setView("methods");
-    setOrderReloadNonce((current) => current + 1);
-  }, [guildId]);
+    clearCheckoutStatusQuery();
+
+    void (async () => {
+      try {
+        removeCachedOrderByGuild(activeGuildId);
+        setPixOrder(null);
+        setLastKnownOrderNumber(null);
+
+        const refreshOrderResponse = await fetch(
+          `/api/auth/me/payments/pix?guildId=${activeGuildId}&forceNew=1`,
+          { cache: "no-store" },
+        );
+        const refreshOrderPayload =
+          (await refreshOrderResponse.json()) as PixPaymentApiResponse;
+
+        if (
+          !refreshOrderResponse.ok ||
+          !refreshOrderPayload.ok ||
+          !refreshOrderPayload.order
+        ) {
+          throw new Error(
+            refreshOrderPayload.message ||
+              "Nao foi possivel regerar o pedido de pagamento.",
+          );
+        }
+
+        setPixOrder(refreshOrderPayload.order);
+        setLastKnownOrderNumber(refreshOrderPayload.order.orderNumber);
+        writeCachedOrderByGuild(activeGuildId, refreshOrderPayload.order);
+
+        if (
+          refreshOrderPayload.order.status === "approved" ||
+          refreshOrderPayload.blockedByActiveLicense
+        ) {
+          setView("methods");
+          setMethodMessage(
+            refreshOrderPayload.licenseActive
+              ? buildActiveLicenseMessage(refreshOrderPayload.licenseExpiresAt)
+              : "Pagamento ja aprovado para este servidor.",
+          );
+          setCheckoutStatusQuery({
+            order: refreshOrderPayload.order,
+            guildId: activeGuildId,
+          });
+          return;
+        }
+
+        if (lastMethod === "card") {
+          setView("card_form");
+          setMethodMessage("Pedido regerado. Continue com o cartao.");
+          return;
+        }
+
+        if (!canReusePixData) {
+          setView("pix_form");
+          setMethodMessage(
+            "Pedido regerado. Confira os dados PIX para gerar novo QR Code.",
+          );
+          return;
+        }
+
+        const pixPaymentResponse = await fetch("/api/auth/me/payments/pix", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            guildId: activeGuildId,
+            payerDocument: documentDigits,
+            payerName: normalizedName,
+          }),
+        });
+
+        const pixPaymentPayload =
+          (await pixPaymentResponse.json()) as PixPaymentApiResponse;
+
+        if (!pixPaymentResponse.ok || !pixPaymentPayload.ok || !pixPaymentPayload.order) {
+          setView("pix_form");
+          setMethodMessage(
+            pixPaymentPayload.message ||
+              "Pedido regerado. Confirme os dados para gerar novo QR Code PIX.",
+          );
+          return;
+        }
+
+        setPixOrder(pixPaymentPayload.order);
+        setLastKnownOrderNumber(pixPaymentPayload.order.orderNumber);
+        writeCachedOrderByGuild(activeGuildId, pixPaymentPayload.order);
+
+        if (
+          pixPaymentPayload.order.status === "approved" ||
+          pixPaymentPayload.blockedByActiveLicense
+        ) {
+          setView("methods");
+          setMethodMessage(
+            pixPaymentPayload.licenseActive
+              ? buildActiveLicenseMessage(pixPaymentPayload.licenseExpiresAt)
+              : "Pagamento ja aprovado para este servidor.",
+          );
+          setCheckoutStatusQuery({
+            order: pixPaymentPayload.order,
+            guildId: activeGuildId,
+          });
+        } else {
+          setView("pix_checkout");
+          setMethodMessage("Novo QR Code PIX gerado com os dados anteriores.");
+          setCheckoutStatusQuery({
+            order: pixPaymentPayload.order,
+            guildId: activeGuildId,
+          });
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Falha ao regerar pagamento.";
+
+        setMethodMessage(message);
+        setView(lastMethod === "card" ? "card_form" : "pix_form");
+      } finally {
+        setIsLoadingOrder(false);
+      }
+    })();
+  }, [documentDigits, guildId, payerName, pixOrder?.method]);
 
   const rightPanel = useMemo(() => {
     if (isLoadingOrder) {
@@ -2040,7 +2464,10 @@ export function ConfigStepFour({
             </p>
 
             <div className="mt-[26px] flex h-[51px] w-full items-center justify-between rounded-[3px] border border-[#2E2E2E] bg-[#0A0A0A] px-6">
-              <span className={`text-[16px] ${statusVisual.colorClassName}`}>
+              <span
+                className={`max-w-[calc(100%-42px)] truncate pr-3 text-[16px] ${statusVisual.colorClassName}`}
+                title={currentPaymentStatusLabel}
+              >
                 {currentPaymentStatusLabel}
               </span>
               <ButtonLoader size={24} colorClassName={statusVisual.colorClassName} />

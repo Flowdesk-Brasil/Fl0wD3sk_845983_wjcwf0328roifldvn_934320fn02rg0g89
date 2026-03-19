@@ -6,6 +6,10 @@ import { ConfigStepTwo } from "@/components/config/ConfigStepTwo";
 import { ConfigStepThree } from "@/components/config/ConfigStepThree";
 import { ConfigStepFour } from "@/components/config/ConfigStepFour";
 import { ConfigLogoutButton } from "@/components/config/ConfigLogoutButton";
+import {
+  ConfigServerSwitcher,
+  type ConfigGuildItem,
+} from "@/components/config/ConfigServerSwitcher";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 import type {
   ConfigDraft,
@@ -19,6 +23,9 @@ import {
   CONFIG_CONTEXT_STORAGE_KEY,
   LEGACY_GUILD_STORAGE_KEY,
   createEmptyConfigDraft,
+  hasStepFourDraftValues,
+  hasStepThreeDraftValues,
+  hasStepTwoDraftValues,
   mergeConfigDraft,
   sanitizeStoredConfigContext,
 } from "@/lib/auth/configContext";
@@ -41,20 +48,91 @@ type ConfigContextApiResponse = {
   updatedAt?: string | null;
 };
 
+type GuildsApiResponse = {
+  ok: boolean;
+  guilds?: ConfigGuildItem[];
+};
+
+type ManagedServerStatus = "paid" | "expired" | "off";
+
+type ServersApiResponse = {
+  ok: boolean;
+  servers?: Array<{
+    guildId: string;
+    status: ManagedServerStatus;
+  }>;
+};
+
+type PaymentStateOrder = {
+  orderNumber: number;
+  guildId: string;
+  method: "pix" | "card";
+  status: string;
+  providerStatus: string | null;
+  providerStatusDetail: string | null;
+  hasPixQr: boolean;
+  paidAt: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  licenseExpiresAt?: string;
+};
+
+type PaymentStateApiResponse = {
+  ok: boolean;
+  guildId?: string;
+  activeLicense?: PaymentStateOrder | null;
+  latestOrder?: PaymentStateOrder | null;
+};
+
+const STEP_ONE_HASH = "#/step/1";
 const STEP_TWO_HASH = "#/step/2";
 const STEP_THREE_HASH = "#/step/3";
-const STEP_FOUR_HASH = "#/step/4";
+const STEP_FOUR_LEGACY_HASH = "#/step/4";
+const PAYMENT_HASH = "#/payment";
 const CONTEXT_SYNC_DEBOUNCE_MS = 420;
+const CHECKOUT_QUERY_KEYS = ["status", "code", "guild"] as const;
+
+function resolveHashForStep(step: ConfigStep) {
+  if (step === 4) return PAYMENT_HASH;
+  return `#/step/${step}`;
+}
+
+function normalizeStepHash(hash: string) {
+  return hash.trim().toLowerCase().split("?")[0].replace(/\/+$/, "");
+}
 
 function parseStepFromHash(hash: string): ConfigStep {
-  if (hash === STEP_TWO_HASH) return 2;
-  if (hash === STEP_THREE_HASH) return 3;
-  if (hash === STEP_FOUR_HASH) return 4;
+  const normalized = normalizeStepHash(hash);
+  if (normalized === STEP_ONE_HASH) return 1;
+  if (normalized === STEP_TWO_HASH) return 2;
+  if (normalized === STEP_THREE_HASH) return 3;
+  if (normalized === STEP_FOUR_LEGACY_HASH || normalized === PAYMENT_HASH) return 4;
+
+  const dynamicStepMatch = normalized.match(/^#\/step\/([1-4])$/);
+  if (dynamicStepMatch) {
+    return Number(dynamicStepMatch[1]) as ConfigStep;
+  }
+
   return 1;
 }
 
+function normalizeGuildIdFromQuery(value: string | null) {
+  if (!value) return null;
+  const guildId = value.trim();
+  return /^\d{10,25}$/.test(guildId) ? guildId : null;
+}
+
 function hasStepHash(hash: string) {
-  return hash === "#/step/1" || hash === STEP_TWO_HASH || hash === STEP_THREE_HASH || hash === STEP_FOUR_HASH;
+  const normalized = normalizeStepHash(hash);
+  return (
+    normalized === STEP_ONE_HASH ||
+    normalized === STEP_TWO_HASH ||
+    normalized === STEP_THREE_HASH ||
+    normalized === STEP_FOUR_LEGACY_HASH ||
+    normalized === PAYMENT_HASH ||
+    /^#\/step\/[1-4]$/.test(normalized)
+  );
 }
 
 function parseContextUpdatedAtMs(context: StoredConfigContext | null) {
@@ -89,10 +167,15 @@ function mergeStoredContexts(
 
   const primary = localIsPrimary ? safeLocal : safeServer;
   const secondary = localIsPrimary ? safeServer : safeLocal;
+  const mergedActiveGuildId = primary.activeGuildId || secondary.activeGuildId || null;
+  const mergedStep =
+    mergedActiveGuildId && primary.activeStep === 1 && secondary.activeStep > 1
+      ? secondary.activeStep
+      : primary.activeStep;
 
   return toStoredConfigContext({
-    activeGuildId: primary.activeGuildId,
-    activeStep: primary.activeStep,
+    activeGuildId: mergedActiveGuildId,
+    activeStep: mergedStep,
     draft: mergeConfigDraft(secondary.draft, primary.draft),
     updatedAt: primary.updatedAt || secondary.updatedAt || null,
   });
@@ -166,19 +249,61 @@ function mergeContextPatch(
 }
 
 function setStepHash(step: ConfigStep) {
-  const normalizedPath = window.location.pathname.endsWith("/")
-    ? window.location.pathname
-    : `${window.location.pathname}/`;
+  const targetHash = resolveHashForStep(step);
+  const currentHash = window.location.hash;
+  if (normalizeStepHash(currentHash) === normalizeStepHash(targetHash)) return;
 
-  if (normalizedPath !== window.location.pathname) {
-    window.history.replaceState(
-      null,
-      "",
-      `${normalizedPath}${window.location.search}${window.location.hash}`,
-    );
+  const url = new URL(window.location.href);
+  url.hash = targetHash;
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+
+  // Fallback extra para navegadores/estados que nao refletirem o replaceState de hash.
+  if (normalizeStepHash(window.location.hash) !== normalizeStepHash(targetHash)) {
+    window.location.hash = targetHash.replace(/^#/, "");
+  }
+}
+
+function normalizePaymentStatusForQuery(status: string | null | undefined) {
+  const normalized = (status || "").trim().toLowerCase();
+  if (!normalized) return "pending";
+  return normalized;
+}
+
+function updateCheckoutStatusQuery(
+  input:
+    | {
+        status: string;
+        code: number;
+        guildId: string;
+      }
+    | null,
+) {
+  const url = new URL(window.location.href);
+
+  if (!input) {
+    for (const key of CHECKOUT_QUERY_KEYS) {
+      url.searchParams.delete(key);
+    }
+  } else {
+    url.searchParams.set("status", normalizePaymentStatusForQuery(input.status));
+    url.searchParams.set("code", String(input.code));
+    url.searchParams.set("guild", input.guildId);
   }
 
-  window.location.hash = `/step/${step}`;
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
+function resolvePreferredStepForGuild(draft: ConfigDraft, guildId: string): ConfigStep {
+  const stepFourDraft = draft.stepFourByGuild[guildId];
+  if (hasStepFourDraftValues(stepFourDraft)) return 4;
+
+  const stepThreeDraft = draft.stepThreeByGuild[guildId];
+  if (hasStepThreeDraftValues(stepThreeDraft)) return 3;
+
+  const stepTwoDraft = draft.stepTwoByGuild[guildId];
+  if (hasStepTwoDraftValues(stepTwoDraft)) return 2;
+
+  return 1;
 }
 
 export function ConfigFlow({ displayName }: ConfigFlowProps) {
@@ -189,6 +314,12 @@ export function ConfigFlow({ displayName }: ConfigFlowProps) {
   const [configDraft, setConfigDraft] = useState<ConfigDraft>(createEmptyConfigDraft());
   const [isConfigContextLoading, setIsConfigContextLoading] = useState(true);
   const [isContextHydrated, setIsContextHydrated] = useState(false);
+  const [availableGuilds, setAvailableGuilds] = useState<ConfigGuildItem[]>([]);
+  const [isGuildListLoading, setIsGuildListLoading] = useState(true);
+  const [isSwitchingGuild, setIsSwitchingGuild] = useState(false);
+  const [managedServerStatusByGuild, setManagedServerStatusByGuild] = useState<
+    Record<string, ManagedServerStatus>
+  >({});
 
   const contextSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingContextPatchRef = useRef<ConfigContextPatch | null>(null);
@@ -310,6 +441,10 @@ export function ConfigFlow({ displayName }: ConfigFlowProps) {
       const initialHash = window.location.hash;
       const initialHashStep = parseStepFromHash(initialHash);
       const shouldRespectHash = hasStepHash(initialHash);
+      const initialUrl = new URL(window.location.href);
+      const queryGuildId = normalizeGuildIdFromQuery(
+        initialUrl.searchParams.get("guild"),
+      );
       let serverContext: StoredConfigContext | null = null;
 
       try {
@@ -340,9 +475,18 @@ export function ConfigFlow({ displayName }: ConfigFlowProps) {
         if (!isMounted) return;
 
         const mergedContext = mergeStoredContexts(localContext, serverContext);
+        const resolvedActiveGuildId = queryGuildId || mergedContext.activeGuildId;
+        const resolvedActiveStep =
+          shouldRespectHash && resolvedActiveGuildId
+            ? initialHashStep
+            : shouldRespectHash && !resolvedActiveGuildId
+              ? 1
+              : queryGuildId
+                ? 2
+                : mergedContext.activeStep;
         const hydratedContext = toStoredConfigContext({
-          activeGuildId: mergedContext.activeGuildId,
-          activeStep: shouldRespectHash ? initialHashStep : mergedContext.activeStep,
+          activeGuildId: resolvedActiveGuildId,
+          activeStep: resolvedActiveStep,
           draft: mergedContext.draft,
           updatedAt: mergedContext.updatedAt,
         });
@@ -351,18 +495,37 @@ export function ConfigFlow({ displayName }: ConfigFlowProps) {
         setSelectedGuildId(hydratedContext.activeGuildId);
         setConfigDraft(hydratedContext.draft);
 
-        if (shouldRespectHash) {
-          setCurrentStep(initialHashStep);
-        } else {
-          setCurrentStep(hydratedContext.activeStep);
-          if (hydratedContext.activeStep !== 1) {
-            setStepHash(hydratedContext.activeStep);
-          }
+        setCurrentStep(hydratedContext.activeStep);
+        if (!shouldRespectHash && hydratedContext.activeStep !== 1) {
+          setStepHash(hydratedContext.activeStep);
         }
 
         writeLocalConfigContext(hydratedContext);
         setIsContextHydrated(true);
         setIsConfigContextLoading(false);
+
+        const shouldBackfillServerActiveGuild =
+          Boolean(
+            hydratedContext.activeGuildId &&
+              (!serverContext?.activeGuildId ||
+                serverContext.activeGuildId !== hydratedContext.activeGuildId),
+          );
+
+        if (shouldBackfillServerActiveGuild) {
+          void fetch("/api/auth/me/config-context", {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              activeGuildId: hydratedContext.activeGuildId,
+              activeStep: hydratedContext.activeStep,
+            }),
+            keepalive: true,
+          }).catch(() => {
+            // Melhor esforco para manter o servidor ativo sincronizado.
+          });
+        }
       }
     }
 
@@ -373,6 +536,69 @@ export function ConfigFlow({ displayName }: ConfigFlowProps) {
     return () => {
       isMounted = false;
       window.removeEventListener("hashchange", syncStepFromHash);
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadGuilds() {
+      try {
+        const response = await fetch("/api/auth/me/guilds", {
+          cache: "no-store",
+        });
+        const payload = (await response.json()) as GuildsApiResponse;
+
+        if (!isMounted) return;
+        if (response.ok && payload.ok) {
+          setAvailableGuilds(payload.guilds || []);
+          return;
+        }
+      } catch {
+        // Ignora erro temporario; card permanece sem lista.
+      } finally {
+        if (isMounted) {
+          setIsGuildListLoading(false);
+        }
+      }
+    }
+
+    void loadGuilds();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadManagedServerStatuses() {
+      try {
+        const response = await fetch("/api/auth/me/servers", {
+          cache: "no-store",
+        });
+        const payload = (await response.json()) as ServersApiResponse;
+
+        if (!isMounted || !response.ok || !payload.ok || !payload.servers) {
+          return;
+        }
+
+        const nextStatusMap: Record<string, ManagedServerStatus> = {};
+        for (const server of payload.servers) {
+          nextStatusMap[server.guildId] = server.status;
+        }
+
+        setManagedServerStatusByGuild(nextStatusMap);
+      } catch {
+        // Mantem fallback local em caso de falha de rede.
+      }
+    }
+
+    void loadManagedServerStatuses();
+
+    return () => {
+      isMounted = false;
     };
   }, []);
 
@@ -399,6 +625,19 @@ export function ConfigFlow({ displayName }: ConfigFlowProps) {
     setConfigDraft(next.draft);
     scheduleContextSync({ activeStep: currentStep });
   }, [currentStep, isContextHydrated, scheduleContextSync, updateLocalContext]);
+
+  useEffect(() => {
+    if (!isContextHydrated) return;
+
+    const currentHash = window.location.hash;
+    const expectedHash = resolveHashForStep(currentStep);
+    const isLegacyStepFourHash =
+      currentStep === 4 && currentHash === STEP_FOUR_LEGACY_HASH;
+
+    if (currentHash === expectedHash || isLegacyStepFourHash) return;
+
+    setStepHash(currentStep);
+  }, [currentStep, isContextHydrated]);
 
   useEffect(() => {
     return () => {
@@ -439,6 +678,9 @@ export function ConfigFlow({ displayName }: ConfigFlowProps) {
 
   const handleGuildSelectionChange = useCallback(
     (guildId: string | null) => {
+      if (currentStep !== 1) return;
+
+      updateCheckoutStatusQuery(null);
       setAndSyncContext(
         {
           activeGuildId: guildId,
@@ -447,11 +689,12 @@ export function ConfigFlow({ displayName }: ConfigFlowProps) {
         false,
       );
     },
-    [setAndSyncContext],
+    [currentStep, setAndSyncContext],
   );
 
   const handleProceedToStepTwo = useCallback(
     (guildId: string) => {
+      updateCheckoutStatusQuery(null);
       setAndSyncContext(
         {
           activeGuildId: guildId,
@@ -467,21 +710,97 @@ export function ConfigFlow({ displayName }: ConfigFlowProps) {
   );
 
   const handleProceedToStepThree = useCallback(() => {
+    updateCheckoutStatusQuery(null);
     setAndSyncContext({ activeStep: 3 }, true);
     setIsTransitioningStep(true);
     setStepHash(3);
   }, [setAndSyncContext]);
 
   const handleProceedToStepFour = useCallback(() => {
+    updateCheckoutStatusQuery(null);
     setAndSyncContext({ activeStep: 4 }, true);
     setIsTransitioningStep(true);
     setStepHash(4);
   }, [setAndSyncContext]);
 
   const handleGoBackToStepOne = useCallback(() => {
+    updateCheckoutStatusQuery(null);
     setAndSyncContext({ activeStep: 1 }, true);
     setStepHash(1);
   }, [setAndSyncContext]);
+
+  const handleServerSwitcherSelect = useCallback(
+    async (guildId: string) => {
+      if (!guildId) return;
+
+      if (selectedGuildId === guildId && !isConfigContextLoading) {
+        return;
+      }
+
+      setIsSwitchingGuild(true);
+
+      try {
+        let paymentState: PaymentStateApiResponse | null = null;
+        try {
+          const response = await fetch(
+            `/api/auth/me/payments/state?guildId=${guildId}`,
+            {
+              cache: "no-store",
+            },
+          );
+          const payload = (await response.json()) as PaymentStateApiResponse;
+          if (response.ok && payload.ok) {
+            paymentState = payload;
+          }
+        } catch {
+          paymentState = null;
+        }
+
+        const preferredStep = resolvePreferredStepForGuild(contextRef.current.draft, guildId);
+        const activeLicenseOrder = paymentState?.activeLicense || null;
+        const latestOrder = paymentState?.latestOrder || null;
+
+        let targetStep = preferredStep;
+        let checkoutQuery: { status: string; code: number; guildId: string } | null = null;
+
+        if (activeLicenseOrder?.orderNumber) {
+          targetStep = 4;
+          checkoutQuery = {
+            status: activeLicenseOrder.status || "approved",
+            code: activeLicenseOrder.orderNumber,
+            guildId,
+          };
+        } else if (latestOrder?.orderNumber) {
+          targetStep = 4;
+          checkoutQuery = {
+            status: latestOrder.status || "pending",
+            code: latestOrder.orderNumber,
+            guildId,
+          };
+        } else if (preferredStep === 1) {
+          targetStep = 1;
+        }
+
+        updateCheckoutStatusQuery(checkoutQuery);
+        setAndSyncContext(
+          {
+            activeGuildId: guildId,
+            activeStep: targetStep,
+          },
+          true,
+        );
+
+        if (targetStep !== currentStep) {
+          setIsTransitioningStep(true);
+        }
+
+        setStepHash(targetStep);
+      } finally {
+        setIsSwitchingGuild(false);
+      }
+    },
+    [currentStep, isConfigContextLoading, selectedGuildId, setAndSyncContext],
+  );
 
   const handleStepTwoDraftChange = useCallback(
     (guildId: string, draft: StepTwoDraft) => {
@@ -565,6 +884,11 @@ export function ConfigFlow({ displayName }: ConfigFlowProps) {
     return draft || null;
   }, [configDraft.stepFourByGuild, selectedGuildId]);
 
+  const selectedGuildLicenseStatus = useMemo(() => {
+    if (!selectedGuildId) return "not_paid" as const;
+    return managedServerStatusByGuild[selectedGuildId] || "not_paid";
+  }, [managedServerStatusByGuild, selectedGuildId]);
+
   const stepContent = useMemo(() => {
     if (isConfigContextLoading && currentStep !== 1) {
       return (
@@ -590,6 +914,7 @@ export function ConfigFlow({ displayName }: ConfigFlowProps) {
         <ConfigStepThree
           displayName={displayName}
           guildId={selectedGuildId}
+          guildLicenseStatus={selectedGuildLicenseStatus}
           initialDraft={stepThreeDraft}
           onDraftChange={handleStepThreeDraftChange}
           onProceedToStepFour={handleProceedToStepFour}
@@ -603,6 +928,7 @@ export function ConfigFlow({ displayName }: ConfigFlowProps) {
         <ConfigStepTwo
           displayName={displayName}
           guildId={selectedGuildId}
+          guildLicenseStatus={selectedGuildLicenseStatus}
           initialDraft={stepTwoDraft}
           onDraftChange={handleStepTwoDraftChange}
           onProceedToStepThree={handleProceedToStepThree}
@@ -632,6 +958,7 @@ export function ConfigFlow({ displayName }: ConfigFlowProps) {
     handleStepTwoDraftChange,
     isConfigContextLoading,
     selectedGuildId,
+    selectedGuildLicenseStatus,
     stepFourDraft,
     stepThreeDraft,
     stepTwoDraft,
@@ -639,7 +966,21 @@ export function ConfigFlow({ displayName }: ConfigFlowProps) {
 
   return (
     <>
-      {stepContent}
+      {currentStep !== 1 ? (
+        <ConfigServerSwitcher
+          guilds={availableGuilds}
+          selectedGuildId={selectedGuildId}
+          isLoading={isGuildListLoading}
+          isSwitching={isSwitchingGuild}
+          onSelectGuild={(guildId) => {
+            void handleServerSwitcherSelect(guildId);
+          }}
+        />
+      ) : null}
+
+      <div className={currentStep !== 1 ? "max-[960px]:pt-[92px]" : undefined}>
+        {stepContent}
+      </div>
 
       <ConfigLogoutButton
         onClick={() => {

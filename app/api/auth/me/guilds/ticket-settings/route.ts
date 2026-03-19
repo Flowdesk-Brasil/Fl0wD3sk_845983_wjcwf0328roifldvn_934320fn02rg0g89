@@ -5,6 +5,7 @@ import {
   isGuildId,
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
+import { getGuildLicenseStatus } from "@/lib/payments/licenseStatus";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 const GUILD_CATEGORY = 4;
@@ -225,6 +226,18 @@ export async function POST(request: Request) {
     const access = await ensureGuildAccess(guildId);
     if (!access.ok) {
       return access.response;
+    }
+
+    const licenseStatus = await getGuildLicenseStatus(guildId);
+    if (licenseStatus === "expired" || licenseStatus === "off") {
+      return NextResponse.json(
+        {
+          ok: false,
+          message:
+            "Servidor com plano expirado/desligado. Renove o pagamento para editar configuracoes.",
+        },
+        { status: 403 },
+      );
     }
 
     const rawChannels = await fetchGuildChannelsByBot(guildId);

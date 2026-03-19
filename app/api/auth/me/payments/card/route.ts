@@ -11,6 +11,7 @@ import {
 } from "@/lib/payments/brazilDocument";
 import {
   createMercadoPagoCardPayment,
+  resolveMercadoPagoCardEnvironment,
   resolvePaymentStatus,
   toQrDataUri,
 } from "@/lib/payments/mercadoPago";
@@ -53,6 +54,8 @@ type PaymentOrderEventPayload = Record<string, unknown>;
 
 const DEFAULT_AMOUNT = 9.99;
 const DEFAULT_CURRENCY = "BRL";
+const LICENSE_VALIDITY_DAYS = 30;
+const LICENSE_VALIDITY_MS = LICENSE_VALIDITY_DAYS * 24 * 60 * 60 * 1000;
 const PAYMENT_ORDER_SELECT_COLUMNS =
   "id, order_number, guild_id, payment_method, status, amount, currency, payer_name, payer_document, payer_document_type, provider_payment_id, provider_qr_code, provider_qr_base64, provider_ticket_url, provider_status, provider_status_detail, paid_at, expires_at, created_at, updated_at";
 
@@ -114,6 +117,14 @@ function normalizeIssuerId(value: unknown) {
   return issuerId;
 }
 
+function normalizePayerEmail(value: unknown) {
+  if (typeof value !== "string") return null;
+  const email = value.trim().toLowerCase();
+  if (!email || email.length > 254) return null;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
+  return email;
+}
+
 function maskPayerDocument(document: string | null) {
   if (!document) return null;
 
@@ -122,10 +133,39 @@ function maskPayerDocument(document: string | null) {
   return `${"*".repeat(digits.length - 4)}${digits.slice(-4)}`;
 }
 
+function maskEmail(email: string | null) {
+  if (!email) return null;
+  const [localPart, domainPart] = email.split("@");
+  if (!localPart || !domainPart) return null;
+  if (localPart.length <= 2) return `**@${domainPart}`;
+  return `${localPart.slice(0, 2)}***@${domainPart}`;
+}
+
 function parseAmount(amount: string | number) {
   if (typeof amount === "number") return amount;
   const numeric = Number(amount);
   return Number.isFinite(numeric) ? numeric : DEFAULT_AMOUNT;
+}
+
+function resolveLicenseBaseTimestamp(order: PaymentOrderRecord) {
+  const paidAtMs = order.paid_at ? Date.parse(order.paid_at) : Number.NaN;
+  if (Number.isFinite(paidAtMs)) return paidAtMs;
+
+  const createdAtMs = Date.parse(order.created_at);
+  if (Number.isFinite(createdAtMs)) return createdAtMs;
+
+  return Date.now();
+}
+
+function resolveLicenseExpiresAt(order: PaymentOrderRecord) {
+  return new Date(
+    resolveLicenseBaseTimestamp(order) + LICENSE_VALIDITY_MS,
+  ).toISOString();
+}
+
+function isLicenseActiveForOrder(order: PaymentOrderRecord) {
+  if (order.status !== "approved") return false;
+  return Date.now() < Date.parse(resolveLicenseExpiresAt(order));
 }
 
 function resolveAmount() {
@@ -193,6 +233,26 @@ function isProviderCardFieldErrorMessage(message: string) {
   );
 }
 
+function isProviderPayerEmailErrorMessage(message: string) {
+  const normalizedMessage = message.toLowerCase();
+  return (
+    normalizedMessage.includes("payer email forbidden") ||
+    (normalizedMessage.includes("payer email") &&
+      normalizedMessage.includes("forbidden")) ||
+    (normalizedMessage.includes("email") &&
+      normalizedMessage.includes("forbidden"))
+  );
+}
+
+function isProviderInvalidUsersMessage(message: string) {
+  const normalizedMessage = message.toLowerCase();
+  return (
+    normalizedMessage.includes("invalid users involved") ||
+    (normalizedMessage.includes("invalid user") &&
+      normalizedMessage.includes("involved"))
+  );
+}
+
 async function ensureGuildAccess(guildId: string) {
   const sessionData = await resolveSessionAccessToken();
   if (!sessionData?.authSession) {
@@ -212,6 +272,15 @@ async function ensureGuildAccess(guildId: string) {
         { ok: false, message: "Token OAuth ausente na sessao." },
         { status: 401 },
       ),
+    };
+  }
+
+  if (sessionData.authSession.activeGuildId === guildId) {
+    return {
+      ok: true as const,
+      context: {
+        sessionData,
+      },
     };
   }
 
@@ -283,11 +352,35 @@ async function getLatestOrderForUserAndGuild(userId: number, guildId: string) {
   return result.data || null;
 }
 
+async function getActiveLicenseOrderForGuild(guildId: string) {
+  const supabase = getSupabaseAdminClientOrThrow();
+
+  const result = await supabase
+    .from("payment_orders")
+    .select(PAYMENT_ORDER_SELECT_COLUMNS)
+    .eq("guild_id", guildId)
+    .eq("status", "approved")
+    .order("paid_at", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false })
+    .limit(30)
+    .returns<PaymentOrderRecord[]>();
+
+  if (result.error) {
+    throw new Error(
+      `Erro ao carregar licenca ativa do servidor: ${result.error.message}`,
+    );
+  }
+
+  const orders = result.data || [];
+  return orders.find((order) => isLicenseActiveForOrder(order)) || null;
+}
+
 async function createDraftOrderForCheckout(input: {
   userId: number;
   guildId: string;
   amount: number;
   currency: string;
+  cardChannel: string;
 }) {
   const supabase = getSupabaseAdminClientOrThrow();
 
@@ -304,7 +397,7 @@ async function createDraftOrderForCheckout(input: {
       provider_payload: {
         source: "flowdesk_checkout",
         step: 4,
-        channel: "card_test",
+        channel: input.cardChannel,
         precreated: true,
       },
     })
@@ -380,11 +473,25 @@ export async function POST(request: Request) {
     }
 
     const user = access.context.sessionData.authSession.user;
+    const activeLicenseOrder = await getActiveLicenseOrderForGuild(guildId);
+    if (activeLicenseOrder) {
+      return NextResponse.json({
+        ok: true,
+        blockedByActiveLicense: true,
+        licenseActive: true,
+        licenseExpiresAt: resolveLicenseExpiresAt(activeLicenseOrder),
+        order: toApiOrder(activeLicenseOrder),
+      });
+    }
+
     const supabase = getSupabaseAdminClientOrThrow();
     const latestOrder = await getLatestOrderForUserAndGuild(user.id, guildId);
 
     const amount = resolveAmount();
     const currency = resolveCurrency();
+    const cardEnvironment = resolveMercadoPagoCardEnvironment();
+    const cardChannel =
+      cardEnvironment === "production" ? "card_production" : "card_test";
 
     let createdOrder: PaymentOrderRecord;
     const canReuseDraftOrderForPayment =
@@ -431,6 +538,7 @@ export async function POST(request: Request) {
         guildId,
         amount,
         currency,
+        cardChannel,
       });
 
       const preparedOrderResult = await supabase
@@ -453,17 +561,24 @@ export async function POST(request: Request) {
     }
 
     const externalReference = `flowdesk-order-${createdOrder.order_number}`;
+    const discordPayerEmail = normalizePayerEmail(user.email);
+    if (!discordPayerEmail) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message:
+            "Nao foi possivel identificar um e-mail valido da conta Discord para pagamento com cartao.",
+        },
+        { status: 400 },
+      );
+    }
 
     try {
-      const payerEmailForCardTest =
-        process.env.MERCADO_PAGO_CARD_TEST_PAYER_EMAIL?.trim() ||
-        "test_user_123456@testuser.com";
-
       const mercadoPagoPayment = await createMercadoPagoCardPayment({
         amount,
         description: `Flowdesk pagamento #${createdOrder.order_number}`,
         payerName,
-        payerEmail: payerEmailForCardTest,
+        payerEmail: discordPayerEmail,
         payerIdentification: {
           type: payerDocument.type,
           number: payerDocument.normalized,
@@ -474,7 +589,7 @@ export async function POST(request: Request) {
           flowdesk_user_id: String(user.id),
           flowdesk_discord_user_id: user.discord_user_id,
           flowdesk_guild_id: guildId,
-          flowdesk_payment_channel: "card_test",
+          flowdesk_payment_channel: cardChannel,
         },
         token: cardToken,
         paymentMethodId,
@@ -505,7 +620,9 @@ export async function POST(request: Request) {
           provider_payload: {
             source: "flowdesk_checkout",
             step: 4,
-            channel: "card_test",
+            channel: cardChannel,
+            payer_email_source: "discord",
+            payer_email_masked: maskEmail(discordPayerEmail),
             mercado_pago: mercadoPagoPayment,
           },
           paid_at: paidAt,
@@ -526,6 +643,9 @@ export async function POST(request: Request) {
         providerPaymentId,
         providerStatus,
         providerStatusDetail: mercadoPagoPayment.status_detail || null,
+        payerEmailSource: "discord",
+        payerEmailMasked: maskEmail(discordPayerEmail),
+        cardEnvironment,
         method: "card",
       });
 
@@ -565,6 +685,28 @@ export async function POST(request: Request) {
       if (isProviderCardFieldErrorMessage(message)) {
         return NextResponse.json(
           { ok: false, message: "Dados do cartao invalidos para pagamento." },
+          { status: 400 },
+        );
+      }
+
+      if (isProviderPayerEmailErrorMessage(message)) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              "O e-mail da conta Discord nao foi aceito pelo provedor de pagamento. Verifique o e-mail da conta e tente novamente.",
+          },
+          { status: 400 },
+        );
+      }
+
+      if (isProviderInvalidUsersMessage(message)) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              "Nao foi possivel validar os dados do pagador no provedor. Confira os dados do titular e tente novamente.",
+          },
           { status: 400 },
         );
       }
