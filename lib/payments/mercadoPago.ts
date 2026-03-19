@@ -27,6 +27,7 @@ type CreateCardPaymentInput = {
   paymentMethodId: string;
   installments: number;
   issuerId?: string | null;
+  deviceSessionId?: string | null;
 };
 
 type PayerNameParts = {
@@ -259,14 +260,19 @@ export async function createMercadoPagoPixPayment(input: CreatePixPaymentInput) 
 export async function createMercadoPagoCardPayment(input: CreateCardPaymentInput) {
   const accessToken = getMercadoPagoCardAccessTokenOrThrow();
   const idempotencyKey = crypto.randomUUID();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${accessToken}`,
+    "X-Idempotency-Key": idempotencyKey,
+  };
+  const deviceSessionId = input.deviceSessionId?.trim() || null;
+  if (deviceSessionId) {
+    headers["X-meli-session-id"] = deviceSessionId;
+  }
 
   const response = await fetch("https://api.mercadopago.com/v1/payments", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
-      "X-Idempotency-Key": idempotencyKey,
-    },
+    headers,
     body: JSON.stringify(buildCardRequestBody(input)),
     cache: "no-store",
   });

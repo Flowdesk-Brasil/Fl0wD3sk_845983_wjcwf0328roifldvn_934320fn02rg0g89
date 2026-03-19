@@ -11,6 +11,7 @@ import {
 } from "@/lib/payments/brazilDocument";
 import {
   createMercadoPagoCardPayment,
+  fetchMercadoPagoPaymentById,
   resolveMercadoPagoCardEnvironment,
   resolvePaymentStatus,
   toQrDataUri,
@@ -25,6 +26,7 @@ type CreateCardPaymentBody = {
   paymentMethodId?: unknown;
   installments?: unknown;
   issuerId?: unknown;
+  deviceSessionId?: unknown;
 };
 
 type PaymentOrderRecord = {
@@ -54,6 +56,7 @@ type PaymentOrderEventPayload = Record<string, unknown>;
 
 const DEFAULT_AMOUNT = 9.99;
 const DEFAULT_CURRENCY = "BRL";
+const CARD_RETRY_COOLDOWN_MS = 2 * 60 * 1000;
 const LICENSE_VALIDITY_DAYS = 30;
 const LICENSE_VALIDITY_MS = LICENSE_VALIDITY_DAYS * 24 * 60 * 60 * 1000;
 const PAYMENT_ORDER_SELECT_COLUMNS =
@@ -117,6 +120,15 @@ function normalizeIssuerId(value: unknown) {
   return issuerId;
 }
 
+function normalizeDeviceSessionId(value: unknown) {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string") return null;
+  const sessionId = value.trim();
+  if (!sessionId) return null;
+  if (!/^[a-zA-Z0-9:_-]{8,200}$/.test(sessionId)) return null;
+  return sessionId;
+}
+
 function normalizePayerEmail(value: unknown) {
   if (typeof value !== "string") return null;
   const email = value.trim().toLowerCase();
@@ -145,6 +157,54 @@ function parseAmount(amount: string | number) {
   if (typeof amount === "number") return amount;
   const numeric = Number(amount);
   return Number.isFinite(numeric) ? numeric : DEFAULT_AMOUNT;
+}
+
+function normalizeNameForComparison(value: string | null | undefined) {
+  if (!value) return "";
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function resolveCardRetryCooldownSeconds(input: {
+  latestCardOrder: PaymentOrderRecord | null;
+  payerDocument: string;
+  payerName: string;
+}) {
+  const latestCardOrder = input.latestCardOrder;
+  if (!latestCardOrder) return null;
+  if (latestCardOrder.payment_method !== "card") return null;
+  if (latestCardOrder.status === "approved") return null;
+
+  if (
+    latestCardOrder.payer_document &&
+    latestCardOrder.payer_document !== input.payerDocument
+  ) {
+    return null;
+  }
+
+  if (
+    latestCardOrder.payer_name &&
+    normalizeNameForComparison(latestCardOrder.payer_name) !==
+      normalizeNameForComparison(input.payerName)
+  ) {
+    return null;
+  }
+
+  const referenceTimeMs =
+    Date.parse(latestCardOrder.updated_at) ||
+    Date.parse(latestCardOrder.created_at) ||
+    Date.now();
+
+  if (!Number.isFinite(referenceTimeMs)) return null;
+
+  const elapsedMs = Date.now() - referenceTimeMs;
+  if (elapsedMs >= CARD_RETRY_COOLDOWN_MS) return null;
+
+  return Math.max(1, Math.ceil((CARD_RETRY_COOLDOWN_MS - elapsedMs) / 1000));
 }
 
 function resolveLicenseBaseTimestamp(order: PaymentOrderRecord) {
@@ -352,6 +412,26 @@ async function getLatestOrderForUserAndGuild(userId: number, guildId: string) {
   return result.data || null;
 }
 
+async function getLatestCardOrderForUserAndGuild(userId: number, guildId: string) {
+  const supabase = getSupabaseAdminClientOrThrow();
+
+  const result = await supabase
+    .from("payment_orders")
+    .select(PAYMENT_ORDER_SELECT_COLUMNS)
+    .eq("user_id", userId)
+    .eq("guild_id", guildId)
+    .eq("payment_method", "card")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<PaymentOrderRecord>();
+
+  if (result.error) {
+    throw new Error(`Erro ao carregar pagamento com cartao: ${result.error.message}`);
+  }
+
+  return result.data || null;
+}
+
 async function getActiveLicenseOrderForGuild(guildId: string) {
   const supabase = getSupabaseAdminClientOrThrow();
 
@@ -438,6 +518,7 @@ export async function POST(request: Request) {
     const paymentMethodId = normalizePaymentMethodId(body.paymentMethodId);
     const installments = normalizeInstallments(body.installments);
     const issuerId = normalizeIssuerId(body.issuerId);
+    const deviceSessionId = normalizeDeviceSessionId(body.deviceSessionId);
 
     if (!guildId) {
       return NextResponse.json(
@@ -486,6 +567,46 @@ export async function POST(request: Request) {
 
     const supabase = getSupabaseAdminClientOrThrow();
     const latestOrder = await getLatestOrderForUserAndGuild(user.id, guildId);
+    const latestCardOrder = await getLatestCardOrderForUserAndGuild(
+      user.id,
+      guildId,
+    );
+
+    const retryCooldownSeconds = resolveCardRetryCooldownSeconds({
+      latestCardOrder,
+      payerDocument: payerDocument.normalized,
+      payerName,
+    });
+    if (retryCooldownSeconds && latestCardOrder) {
+      try {
+        await createPaymentOrderEvent(
+          latestCardOrder.id,
+          "card_retry_blocked_by_cooldown",
+          {
+            userId: user.id,
+            guildId,
+            retryAfterSeconds: retryCooldownSeconds,
+            status: latestCardOrder.status,
+            providerStatus: latestCardOrder.provider_status,
+            providerStatusDetail: latestCardOrder.provider_status_detail,
+          },
+        );
+      } catch {
+        // nao bloquear o fluxo em caso de falha ao gravar evento
+      }
+
+      const response = NextResponse.json(
+        {
+          ok: false,
+          message: `Para reduzir bloqueio antifraude, aguarde ${retryCooldownSeconds}s antes de tentar novamente com cartao.`,
+          retryAfterSeconds: retryCooldownSeconds,
+          order: toApiOrder(latestCardOrder),
+        },
+        { status: 429 },
+      );
+      response.headers.set("Retry-After", String(retryCooldownSeconds));
+      return response;
+    }
 
     const amount = resolveAmount();
     const currency = resolveCurrency();
@@ -595,16 +716,35 @@ export async function POST(request: Request) {
         paymentMethodId,
         installments,
         issuerId,
+        deviceSessionId,
       });
 
       const providerPaymentId = String(mercadoPagoPayment.id);
-      const providerStatus = mercadoPagoPayment.status || null;
-      const resolvedStatus = resolvePaymentStatus(mercadoPagoPayment.status);
+      let latestProviderPayment = mercadoPagoPayment;
+      try {
+        const snapshot = await fetchMercadoPagoPaymentById(providerPaymentId, {
+          useCardToken: true,
+        });
+        if (snapshot && typeof snapshot === "object") {
+          latestProviderPayment = snapshot;
+        }
+      } catch {
+        // fallback para retorno inicial quando a consulta imediata ainda nao estiver disponivel
+      }
+
+      const providerStatus =
+        latestProviderPayment.status || mercadoPagoPayment.status || null;
+      const resolvedStatus = resolvePaymentStatus(providerStatus);
       const paidAt =
         resolvedStatus === "approved"
-          ? mercadoPagoPayment.date_approved || new Date().toISOString()
+          ? latestProviderPayment.date_approved ||
+            mercadoPagoPayment.date_approved ||
+            new Date().toISOString()
           : null;
-      const expiresAt = mercadoPagoPayment.date_of_expiration || null;
+      const expiresAt =
+        latestProviderPayment.date_of_expiration ||
+        mercadoPagoPayment.date_of_expiration ||
+        null;
 
       const updatedOrderResult = await supabase
         .from("payment_orders")
@@ -616,14 +756,19 @@ export async function POST(request: Request) {
           provider_qr_base64: null,
           provider_ticket_url: null,
           provider_status: providerStatus,
-          provider_status_detail: mercadoPagoPayment.status_detail || null,
+          provider_status_detail:
+            latestProviderPayment.status_detail ||
+            mercadoPagoPayment.status_detail ||
+            null,
           provider_payload: {
             source: "flowdesk_checkout",
             step: 4,
             channel: cardChannel,
             payer_email_source: "discord",
             payer_email_masked: maskEmail(discordPayerEmail),
-            mercado_pago: mercadoPagoPayment,
+            device_session_id_present: Boolean(deviceSessionId),
+            mercado_pago: latestProviderPayment,
+            mercado_pago_initial: mercadoPagoPayment,
           },
           paid_at: paidAt,
           expires_at: expiresAt,
@@ -642,10 +787,14 @@ export async function POST(request: Request) {
       await createPaymentOrderEvent(createdOrder.id, "provider_payment_created", {
         providerPaymentId,
         providerStatus,
-        providerStatusDetail: mercadoPagoPayment.status_detail || null,
+        providerStatusDetail:
+          latestProviderPayment.status_detail ||
+          mercadoPagoPayment.status_detail ||
+          null,
         payerEmailSource: "discord",
         payerEmailMasked: maskEmail(discordPayerEmail),
         cardEnvironment,
+        deviceSessionIdPresent: Boolean(deviceSessionId),
         method: "card",
       });
 

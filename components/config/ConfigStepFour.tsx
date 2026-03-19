@@ -89,6 +89,8 @@ declare global {
       publicKey: string,
       options?: { locale?: string },
     ) => MercadoPagoInstance;
+    MP_DEVICE_SESSION_ID?: string;
+    flowdeskDeviceSessionId?: string;
   }
 }
 
@@ -212,7 +214,9 @@ const BRAND_ICON_BY_TYPE: Record<Exclude<CardBrand, null>, string> = {
 };
 
 const MERCADO_PAGO_SDK_URL = "https://sdk.mercadopago.com/js/v2";
+const MERCADO_PAGO_SECURITY_SDK_URL = "https://www.mercadopago.com/v2/security.js";
 let mercadoPagoSdkPromise: Promise<void> | null = null;
+let mercadoPagoSecuritySdkPromise: Promise<void> | null = null;
 const PAYMENT_ORDER_CACHE_STORAGE_KEY = "flowdesk_payment_order_cache_v1";
 const CHECKOUT_STATUS_QUERY_KEYS = ["status", "code", "guild"] as const;
 
@@ -568,6 +572,68 @@ async function loadMercadoPagoSdk() {
   }
 }
 
+async function loadMercadoPagoSecuritySdk() {
+  if (typeof window === "undefined") return;
+
+  if (!mercadoPagoSecuritySdkPromise) {
+    mercadoPagoSecuritySdkPromise = new Promise<void>((resolve, reject) => {
+      const existingScript = document.querySelector<HTMLScriptElement>(
+        "script[data-mp-sdk='security-v2']",
+      );
+
+      if (existingScript) {
+        if (window.MP_DEVICE_SESSION_ID || window.flowdeskDeviceSessionId) {
+          resolve();
+          return;
+        }
+
+        existingScript.addEventListener("load", () => resolve(), {
+          once: true,
+        });
+        existingScript.addEventListener(
+          "error",
+          () => reject(new Error("Falha ao carregar modulo de seguranca do Mercado Pago.")),
+          { once: true },
+        );
+        return;
+      }
+
+      const script = document.createElement("script");
+      script.src = MERCADO_PAGO_SECURITY_SDK_URL;
+      script.async = true;
+      script.defer = true;
+      script.dataset.mpSdk = "security-v2";
+      script.setAttribute("view", "checkout");
+      script.setAttribute("output", "flowdeskDeviceSessionId");
+      script.onload = () => resolve();
+      script.onerror = () =>
+        reject(new Error("Falha ao carregar modulo de seguranca do Mercado Pago."));
+      document.head.appendChild(script);
+    });
+  }
+
+  await mercadoPagoSecuritySdkPromise;
+}
+
+function resolveMercadoPagoDeviceSessionId() {
+  if (typeof window === "undefined") return null;
+
+  const candidates = [
+    window.MP_DEVICE_SESSION_ID,
+    window.flowdeskDeviceSessionId,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+    const normalized = candidate.trim();
+    if (!normalized) continue;
+    if (!/^[a-zA-Z0-9:_-]{8,200}$/.test(normalized)) continue;
+    return normalized;
+  }
+
+  return null;
+}
+
 function formatDocumentInput(value: string) {
   const digits = normalizeBrazilDocumentDigits(value);
 
@@ -742,13 +808,13 @@ function summarizeMercadoPagoStatusDetail(
     case "cc_rejected_duplicated_payment":
       return "pagamento duplicado";
     case "cc_rejected_high_risk":
-      return "recusado por seguranca";
+      return "recusado na analise antifraude do emissor";
     case "cc_rejected_invalid_installments":
       return "parcelamento invalido";
     case "cc_rejected_max_attempts":
       return "limite de tentativas excedido";
     case "cc_rejected_blacklist":
-      return "pagamento bloqueado por seguranca";
+      return "pagamento bloqueado na analise de risco";
     case "cc_rejected_other_reason":
       return "recusado pelo banco emissor";
     case "pending_contingency":
@@ -1870,6 +1936,7 @@ export function ConfigStepFour({
     setMethodMessage(null);
 
     try {
+      await loadMercadoPagoSecuritySdk();
       await loadMercadoPagoSdk();
 
       if (!window.MercadoPago) {
@@ -1927,6 +1994,7 @@ export function ConfigStepFour({
           paymentMethodId,
           installments: 1,
           issuerId,
+          deviceSessionId: resolveMercadoPagoDeviceSessionId(),
         }),
       });
 
@@ -1966,15 +2034,22 @@ export function ConfigStepFour({
         "Erro inesperado ao processar pagamento com cartao.";
 
       const normalizedMessage = message.toLowerCase();
+      const isRiskOrCooldownMessage =
+        normalizedMessage.includes("antifraude") ||
+        normalizedMessage.includes("analise de risco") ||
+        normalizedMessage.includes("recusado por seguranca") ||
+        normalizedMessage.includes("aguarde") ||
+        normalizedMessage.includes("retry-after");
       const shouldFlagInputError =
-        normalizedMessage.includes("cartao") ||
-        normalizedMessage.includes("card") ||
-        normalizedMessage.includes("token") ||
-        normalizedMessage.includes("cvv") ||
-        normalizedMessage.includes("cvc") ||
-        normalizedMessage.includes("expiration") ||
-        normalizedMessage.includes("cpf/cnpj") ||
-        normalizedMessage.includes("documento");
+        !isRiskOrCooldownMessage &&
+        (normalizedMessage.includes("cartao") ||
+          normalizedMessage.includes("card") ||
+          normalizedMessage.includes("token") ||
+          normalizedMessage.includes("cvv") ||
+          normalizedMessage.includes("cvc") ||
+          normalizedMessage.includes("expiration") ||
+          normalizedMessage.includes("cpf/cnpj") ||
+          normalizedMessage.includes("documento"));
 
       if (shouldFlagInputError) {
         triggerCardFormValidationError(message);
