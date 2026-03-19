@@ -8,7 +8,7 @@ import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { serversScale } from "@/components/servers/serversScale";
 
 type ManagedServerStatus = "paid" | "expired" | "off";
-type EditorTab = "settings" | "payments" | "methods";
+type EditorTab = "settings" | "payments" | "methods" | "plans";
 type PaymentStatus =
   | "pending"
   | "approved"
@@ -48,7 +48,34 @@ type SavedMethod = {
   lastFour: string;
   expMonth: number | null;
   expYear: number | null;
+  lastUsedAt: string;
   timesUsed: number;
+};
+
+type PlanSettings = {
+  planCode: "pro";
+  monthlyAmount: number;
+  currency: string;
+  recurringEnabled: boolean;
+  recurringMethodId: string | null;
+  recurringMethod: {
+    id: string;
+    brand: string | null;
+    firstSix: string;
+    lastFour: string;
+    expMonth: number | null;
+    expYear: number | null;
+    lastUsedAt: string;
+  } | null;
+  availableMethodsCount: number;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+type PlanApiResponse = {
+  ok: boolean;
+  message?: string;
+  plan?: PlanSettings;
 };
 
 type ServerSettingsEditorProps = {
@@ -68,6 +95,7 @@ const TAB_INDEX: Record<EditorTab, number> = {
   settings: 0,
   payments: 1,
   methods: 2,
+  plans: 3,
 };
 
 function normalizeSearch(value: string) {
@@ -167,6 +195,15 @@ export function ServerSettingsEditor({
   const [methodSearch, setMethodSearch] = useState("");
   const [methodStatusFilter, setMethodStatusFilter] = useState<"all" | PaymentStatus>("all");
   const [methodGuildFilter, setMethodGuildFilter] = useState<string>(guildId);
+  const [openMethodMenuId, setOpenMethodMenuId] = useState<string | null>(null);
+  const [deletingMethodId, setDeletingMethodId] = useState<string | null>(null);
+  const [methodActionMessage, setMethodActionMessage] = useState<string | null>(null);
+
+  const [isPlanLoading, setIsPlanLoading] = useState(true);
+  const [isPlanSaving, setIsPlanSaving] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [planSuccess, setPlanSuccess] = useState<string | null>(null);
+  const [planSettings, setPlanSettings] = useState<PlanSettings | null>(null);
 
   const locked = status === "expired" || status === "off";
   const headerStatus = statusBadge(status);
@@ -179,7 +216,36 @@ export function ServerSettingsEditor({
     setMethodGuildFilter(guildId);
     setMethodSearch("");
     setMethodStatusFilter("all");
+    setOpenMethodMenuId(null);
+    setDeletingMethodId(null);
+    setMethodActionMessage(null);
+    setPlanError(null);
+    setPlanSuccess(null);
   }, [guildId]);
+
+  useEffect(() => {
+    function handleOutsideClick(event: MouseEvent) {
+      const target = event.target as Element | null;
+      if (!target) return;
+      if (!target.closest("[data-method-menu-root='true']")) {
+        setOpenMethodMenuId(null);
+      }
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpenMethodMenuId(null);
+      }
+    }
+
+    document.addEventListener("mousedown", handleOutsideClick);
+    document.addEventListener("keydown", handleEscape);
+
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -270,6 +336,44 @@ export function ServerSettingsEditor({
     };
   }, []);
 
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadPlan() {
+      setIsPlanLoading(true);
+      setPlanError(null);
+      try {
+        const response = await fetch(
+          `/api/auth/me/servers/plans?guildId=${guildId}`,
+          { cache: "no-store" },
+        );
+        const payload = (await response.json()) as PlanApiResponse;
+
+        if (!mounted) return;
+
+        if (!response.ok || !payload.ok || !payload.plan) {
+          throw new Error(payload.message || "Falha ao carregar plano do servidor.");
+        }
+
+        setPlanSettings(payload.plan);
+      } catch (error) {
+        if (!mounted) return;
+        setPlanSettings(null);
+        setPlanError(
+          error instanceof Error ? error.message : "Erro ao carregar plano.",
+        );
+      } finally {
+        if (mounted) setIsPlanLoading(false);
+      }
+    }
+
+    void loadPlan();
+
+    return () => {
+      mounted = false;
+    };
+  }, [guildId]);
+
   const serverMap = useMemo(() => {
     const map = new Map<string, { guildName: string; iconUrl: string | null }>();
     for (const server of allServers) {
@@ -354,6 +458,20 @@ export function ServerSettingsEditor({
     serverMap,
   ]);
 
+  const methodById = useMemo(
+    () => new Map(methods.map((method) => [method.id, method])),
+    [methods],
+  );
+
+  const recurringMethod = useMemo(() => {
+    if (!planSettings?.recurringMethodId) return null;
+    return (
+      methodById.get(planSettings.recurringMethodId) ||
+      planSettings.recurringMethod ||
+      null
+    );
+  }, [methodById, planSettings]);
+
   const canSave = Boolean(
     !locked &&
       !isLoading &&
@@ -366,6 +484,104 @@ export function ServerSettingsEditor({
       claimRoleIds.length &&
       closeRoleIds.length &&
       notifyRoleIds.length,
+  );
+
+  const handleToggleRecurring = useCallback(async () => {
+    if (!planSettings || isPlanSaving || locked) return;
+
+    const nextRecurringEnabled = !planSettings.recurringEnabled;
+    const fallbackMethodId =
+      planSettings.recurringMethodId || methods[0]?.id || null;
+
+    setIsPlanSaving(true);
+    setPlanError(null);
+    setPlanSuccess(null);
+
+    try {
+      const response = await fetch("/api/auth/me/servers/plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          guildId,
+          recurringEnabled: nextRecurringEnabled,
+          recurringMethodId: nextRecurringEnabled ? fallbackMethodId : null,
+        }),
+      });
+      const payload = (await response.json()) as PlanApiResponse;
+
+      if (!response.ok || !payload.ok || !payload.plan) {
+        throw new Error(payload.message || "Falha ao atualizar recorrencia.");
+      }
+
+      setPlanSettings(payload.plan);
+      setPlanSuccess(
+        nextRecurringEnabled
+          ? "Cobranca recorrente ativada com sucesso."
+          : "Cobranca recorrente desativada com sucesso.",
+      );
+    } catch (error) {
+      setPlanError(
+        error instanceof Error
+          ? error.message
+          : "Erro ao atualizar recorrencia.",
+      );
+    } finally {
+      setIsPlanSaving(false);
+    }
+  }, [guildId, isPlanSaving, locked, methods, planSettings]);
+
+  const handleDeleteMethod = useCallback(
+    async (methodId: string) => {
+      if (deletingMethodId) return;
+
+      setDeletingMethodId(methodId);
+      setMethodActionMessage(null);
+      setOpenMethodMenuId(null);
+      setPaymentsError(null);
+
+      try {
+        const response = await fetch("/api/auth/me/payments/methods", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            guildId,
+            methodId,
+          }),
+        });
+        const payload = (await response.json()) as {
+          ok: boolean;
+          message?: string;
+        };
+
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.message || "Falha ao remover metodo.");
+        }
+
+        setMethods((current) => current.filter((method) => method.id !== methodId));
+        setMethodActionMessage("Metodo removido com sucesso.");
+
+        if (planSettings?.recurringMethodId === methodId) {
+          setPlanSettings((current) =>
+            current
+              ? {
+                  ...current,
+                  recurringMethodId: null,
+                  recurringMethod: null,
+                }
+              : current,
+          );
+        }
+      } catch (error) {
+        setPaymentsError(
+          error instanceof Error
+            ? error.message
+            : "Erro ao remover metodo de pagamento.",
+        );
+      } finally {
+        setDeletingMethodId(null);
+      }
+    },
+    [deletingMethodId, guildId, planSettings?.recurringMethodId],
   );
 
   const handleSave = useCallback(async () => {
@@ -456,6 +672,7 @@ export function ServerSettingsEditor({
           ["settings", "Configuracoes"],
           ["payments", "Pagamentos"],
           ["methods", "Metodos"],
+          ["plans", "Planos"],
         ] as const).map(([tab, label]) => (
           <button
             key={tab}
@@ -640,17 +857,51 @@ export function ServerSettingsEditor({
                   {filteredMethods.map((method) => {
                     const brandLabel = cardBrandLabel(method.brand);
                     const masked = `${method.firstSix} ****** ${method.lastFour}`;
+                    const isDeleting = deletingMethodId === method.id;
                     return (
                       <article key={method.id} className="rounded-[3px] border border-[#2E2E2E] bg-[#0A0A0A] px-4 py-3">
-                        <div className="flex items-center gap-3">
-                          <span className="relative block h-[40px] w-[40px] shrink-0 overflow-hidden rounded-[3px] bg-[#111111]">
-                            <Image src={cardBrandIcon(method.brand)} alt={brandLabel} fill sizes="32px" className="object-contain" unoptimized />
-                          </span>
-                          <div className="min-w-0">
-                            <p className="truncate text-[15px] text-[#D8D8D8]">{brandLabel}</p>
-                            <p className="truncate text-[14px] text-[#777777]">{masked}</p>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <span className="relative block h-[40px] w-[40px] shrink-0 overflow-hidden rounded-[3px] bg-[#111111]">
+                              <Image src={cardBrandIcon(method.brand)} alt={brandLabel} fill sizes="32px" className="object-contain" unoptimized />
+                            </span>
+                            <div className="min-w-0">
+                              <p className="truncate text-[15px] text-[#D8D8D8]">{brandLabel}</p>
+                              <p className="truncate text-[14px] text-[#777777]">{masked}</p>
+                            </div>
+                          </div>
+
+                          <div className="relative" data-method-menu-root="true">
+                            <button
+                              type="button"
+                              disabled={isDeleting}
+                              onClick={() => {
+                                setOpenMethodMenuId((current) =>
+                                  current === method.id ? null : method.id,
+                                );
+                              }}
+                              className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-[2px] text-[18px] leading-none text-[#4A4A4A] transition-colors hover:bg-[rgba(255,255,255,0.05)] hover:text-[#7A7A7A] disabled:cursor-not-allowed disabled:opacity-45"
+                              aria-label="Abrir menu do metodo"
+                            >
+                              ...
+                            </button>
+
+                            {openMethodMenuId === method.id ? (
+                              <div className="flowdesk-scale-in-soft absolute right-0 top-[30px] z-20 min-w-[122px] rounded-[3px] border border-[#2E2E2E] bg-[#0A0A0A] py-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    void handleDeleteMethod(method.id);
+                                  }}
+                                  className="block w-full px-3 py-2 text-left text-[12px] text-[#DB4646] transition-colors hover:bg-[#121212]"
+                                >
+                                  {isDeleting ? "Removendo..." : "Deletar"}
+                                </button>
+                              </div>
+                            ) : null}
                           </div>
                         </div>
+
                         <div className="mt-3 flex items-center justify-between text-[12px] text-[#777777]">
                           <span>
                             Validade:{" "}
@@ -669,7 +920,107 @@ export function ServerSettingsEditor({
                   Nenhum metodo encontrado para esse filtro.
                 </div>
               )}
+
+              {methodActionMessage ? (
+                <p className="mt-2 text-[11px] text-[#9BD694]">{methodActionMessage}</p>
+              ) : null}
+              {paymentsError ? (
+                <p className="mt-2 text-[11px] text-[#C2C2C2]">{paymentsError}</p>
+              ) : null}
             </div>
+          </div>
+
+          <div className="w-full shrink-0 pl-0 min-[860px]:pl-[8px]">
+            {isPlanLoading ? (
+              <div className="flex h-[275px] items-center justify-center rounded-[3px] border border-[#2E2E2E] bg-[#0A0A0A]">
+                <ButtonLoader size={28} />
+              </div>
+            ) : (
+              <div className="rounded-[3px] border border-[#2E2E2E] bg-[#0A0A0A] px-4 py-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-[16px] font-medium text-[#D8D8D8]">Plano Pro</p>
+                    <p className="text-[12px] text-[#8E8E8E]">
+                      Licenca padrao do servidor por 30 dias
+                    </p>
+                  </div>
+                  <span className="inline-flex h-[23px] items-center justify-center rounded-[3px] border border-[#6AE25A] bg-[rgba(106,226,90,0.2)] px-3 text-[11px] text-[#6AE25A]">
+                    R$ 9,99 / mes
+                  </span>
+                </div>
+
+                <div className="mt-4 rounded-[3px] border border-[#2E2E2E] bg-[#090909] px-3 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[14px] text-[#D8D8D8]">Cobranca recorrente</p>
+                      <p className="mt-1 text-[11px] text-[#8E8E8E]">
+                        Ative para renovar automaticamente a cada 30 dias.
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void handleToggleRecurring();
+                      }}
+                      disabled={locked || isPlanSaving || !planSettings}
+                      className={`inline-flex h-[31px] min-w-[92px] items-center justify-center rounded-[3px] border px-3 text-[12px] transition-opacity disabled:cursor-not-allowed disabled:opacity-45 ${
+                        planSettings?.recurringEnabled
+                          ? "border-[#6AE25A] bg-[rgba(106,226,90,0.2)] text-[#6AE25A]"
+                          : "border-[#2E2E2E] bg-[#0A0A0A] text-[#D8D8D8]"
+                      }`}
+                    >
+                      {isPlanSaving ? (
+                        <ButtonLoader size={16} colorClassName="text-[#D8D8D8]" />
+                      ) : planSettings?.recurringEnabled ? (
+                        "Ativado"
+                      ) : (
+                        "Desativado"
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-[3px] border border-[#2E2E2E] bg-[#090909] px-3 py-3">
+                  <p className="text-[12px] text-[#8E8E8E]">Cartao vinculado a recorrencia</p>
+                  {recurringMethod ? (
+                    <div className="mt-2 flex items-center gap-3">
+                      <span className="relative block h-[38px] w-[38px] shrink-0 overflow-hidden rounded-[3px] bg-[#111111]">
+                        <Image
+                          src={cardBrandIcon(recurringMethod.brand)}
+                          alt={cardBrandLabel(recurringMethod.brand)}
+                          fill
+                          sizes="32px"
+                          className="object-contain"
+                          unoptimized
+                        />
+                      </span>
+                      <div>
+                        <p className="text-[14px] text-[#D8D8D8]">
+                          {cardBrandLabel(recurringMethod.brand)}
+                        </p>
+                        <p className="text-[12px] text-[#777777]">
+                          {recurringMethod.firstSix} ****** {recurringMethod.lastFour}
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-[12px] text-[#777777]">
+                      Nenhum cartao vinculado.
+                    </p>
+                  )}
+                </div>
+
+                {locked ? (
+                  <p className="mt-3 text-[11px] text-[#C2C2C2]">
+                    Servidor expirado/desligado. Renove para alterar recorrencia.
+                  </p>
+                ) : null}
+
+                {planError ? <p className="mt-2 text-[11px] text-[#C2C2C2]">{planError}</p> : null}
+                {planSuccess ? <p className="mt-2 text-[11px] text-[#9BD694]">{planSuccess}</p> : null}
+              </div>
+            )}
           </div>
         </div>
       </div>

@@ -28,6 +28,7 @@ type CreateCardPaymentInput = {
   installments: number;
   issuerId?: string | null;
   deviceSessionId?: string | null;
+  idempotencyKey?: string | null;
 };
 
 type PayerNameParts = {
@@ -259,7 +260,8 @@ export async function createMercadoPagoPixPayment(input: CreatePixPaymentInput) 
 
 export async function createMercadoPagoCardPayment(input: CreateCardPaymentInput) {
   const accessToken = getMercadoPagoCardAccessTokenOrThrow();
-  const idempotencyKey = crypto.randomUUID();
+  const idempotencyKey =
+    input.idempotencyKey?.trim() || crypto.randomUUID();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${accessToken}`,

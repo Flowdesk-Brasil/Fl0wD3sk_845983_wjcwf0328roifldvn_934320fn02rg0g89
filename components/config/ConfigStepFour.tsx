@@ -54,6 +54,8 @@ type PixPaymentApiResponse = {
   ok: boolean;
   message?: string;
   reused?: boolean;
+  alreadyProcessing?: boolean;
+  retryAfterSeconds?: number;
   blockedByActiveLicense?: boolean;
   licenseActive?: boolean;
   licenseExpiresAt?: string | null;
@@ -1322,6 +1324,7 @@ export function ConfigStepFour({
   const [cardFormHasInputError, setCardFormHasInputError] = useState(false);
   const [cardFormErrorAnimationTick, setCardFormErrorAnimationTick] = useState(0);
   const [isSubmittingCard, setIsSubmittingCard] = useState(false);
+  const [cardClientCooldownUntil, setCardClientCooldownUntil] = useState<number | null>(null);
 
   const [pixOrder, setPixOrder] = useState<PixOrder | null>(null);
   const [lastKnownOrderNumber, setLastKnownOrderNumber] = useState<number | null>(
@@ -1388,6 +1391,7 @@ export function ConfigStepFour({
     setCardExpiry(guildDraft.cardExpiry);
     setCardCvv(guildDraft.cardCvv);
     setCardDocument(guildDraft.cardDocument);
+    setCardClientCooldownUntil(null);
     setLastKnownOrderNumber(guildDraft.lastKnownOrderNumber);
     setCopied(false);
     if (cachedPendingOrder) {
@@ -1901,6 +1905,31 @@ export function ConfigStepFour({
   const handleSubmitCardPayment = useCallback(async () => {
     if (!guildId || isSubmittingCard) return;
 
+    if (
+      cardClientCooldownUntil &&
+      Date.now() < cardClientCooldownUntil
+    ) {
+      const remainingSeconds = Math.max(
+        1,
+        Math.ceil((cardClientCooldownUntil - Date.now()) / 1000),
+      );
+      setCardFormHasInputError(false);
+      setCardFormError(
+        `Aguarde ${remainingSeconds}s para nova tentativa com cartao.`,
+      );
+      setCardFormErrorAnimationTick((current) => current + 1);
+      return;
+    }
+
+    if (pixOrder?.method === "card" && pixOrder.status === "pending") {
+      setCardFormHasInputError(false);
+      setCardFormError(
+        "Ja existe um pagamento com cartao em analise. Aguarde o retorno antes de tentar novamente.",
+      );
+      setCardFormErrorAnimationTick((current) => current + 1);
+      return;
+    }
+
     if (!canSubmitCard) {
       triggerCardFormValidationError("Revise os dados do cartao para continuar com seguranca.");
       return;
@@ -2001,6 +2030,11 @@ export function ConfigStepFour({
       const payload = (await response.json()) as PixPaymentApiResponse;
 
       if (!response.ok || !payload.ok || !payload.order) {
+        if (payload.retryAfterSeconds && payload.retryAfterSeconds > 0) {
+          setCardClientCooldownUntil(
+            Date.now() + payload.retryAfterSeconds * 1000,
+          );
+        }
         throw new Error(payload.message || "Falha ao processar pagamento com cartao.");
       }
 
@@ -2069,8 +2103,11 @@ export function ConfigStepFour({
     cardExpiryDigits,
     cardHolderName,
     cardNumberDigits,
+    cardClientCooldownUntil,
     guildId,
     isSubmittingCard,
+    pixOrder?.method,
+    pixOrder?.status,
     triggerCardFormValidationError,
   ]);
 

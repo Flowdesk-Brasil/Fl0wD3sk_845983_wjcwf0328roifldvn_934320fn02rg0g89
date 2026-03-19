@@ -57,6 +57,7 @@ type PaymentOrderEventPayload = Record<string, unknown>;
 const DEFAULT_AMOUNT = 9.99;
 const DEFAULT_CURRENCY = "BRL";
 const CARD_RETRY_COOLDOWN_MS = 2 * 60 * 1000;
+const CARD_PENDING_REUSE_WINDOW_MS = 15 * 60 * 1000;
 const LICENSE_VALIDITY_DAYS = 30;
 const LICENSE_VALIDITY_MS = LICENSE_VALIDITY_DAYS * 24 * 60 * 60 * 1000;
 const PAYMENT_ORDER_SELECT_COLUMNS =
@@ -205,6 +206,16 @@ function resolveCardRetryCooldownSeconds(input: {
   if (elapsedMs >= CARD_RETRY_COOLDOWN_MS) return null;
 
   return Math.max(1, Math.ceil((CARD_RETRY_COOLDOWN_MS - elapsedMs) / 1000));
+}
+
+function isRecentOrderTimestamp(
+  value: string | null | undefined,
+  windowMs: number,
+) {
+  if (!value) return false;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return false;
+  return Date.now() - timestamp <= windowMs;
 }
 
 function resolveLicenseBaseTimestamp(order: PaymentOrderRecord) {
@@ -572,6 +583,44 @@ export async function POST(request: Request) {
       guildId,
     );
 
+    const hasRecentPendingCardOrder =
+      !!latestCardOrder &&
+      latestCardOrder.payment_method === "card" &&
+      latestCardOrder.status === "pending" &&
+      !!latestCardOrder.provider_payment_id &&
+      (isRecentOrderTimestamp(
+        latestCardOrder.updated_at,
+        CARD_PENDING_REUSE_WINDOW_MS,
+      ) ||
+        isRecentOrderTimestamp(
+          latestCardOrder.created_at,
+          CARD_PENDING_REUSE_WINDOW_MS,
+        ));
+
+    if (hasRecentPendingCardOrder && latestCardOrder) {
+      try {
+        await createPaymentOrderEvent(
+          latestCardOrder.id,
+          "card_payment_reused_pending",
+          {
+            userId: user.id,
+            guildId,
+            orderNumber: latestCardOrder.order_number,
+            providerPaymentId: latestCardOrder.provider_payment_id,
+          },
+        );
+      } catch {
+        // nao bloquear resposta principal por falha de log
+      }
+
+      return NextResponse.json({
+        ok: true,
+        reused: true,
+        alreadyProcessing: true,
+        order: toApiOrder(latestCardOrder),
+      });
+    }
+
     const retryCooldownSeconds = resolveCardRetryCooldownSeconds({
       latestCardOrder,
       payerDocument: payerDocument.normalized,
@@ -717,6 +766,7 @@ export async function POST(request: Request) {
         installments,
         issuerId,
         deviceSessionId,
+        idempotencyKey: `flowdesk-card-order-${createdOrder.id}`,
       });
 
       const providerPaymentId = String(mercadoPagoPayment.id);
