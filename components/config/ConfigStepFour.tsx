@@ -220,6 +220,8 @@ const MERCADO_PAGO_SECURITY_SDK_URL = "https://www.mercadopago.com/v2/security.j
 let mercadoPagoSdkPromise: Promise<void> | null = null;
 let mercadoPagoSecuritySdkPromise: Promise<void> | null = null;
 const PAYMENT_ORDER_CACHE_STORAGE_KEY = "flowdesk_payment_order_cache_v1";
+const APPROVED_REDIRECTED_ORDERS_STORAGE_KEY =
+  "flowdesk_approved_redirected_orders_v1";
 const CHECKOUT_STATUS_QUERY_KEYS = ["status", "code", "guild"] as const;
 
 const EMPTY_STEP_FOUR_DRAFT: StepFourDraft = {
@@ -360,6 +362,47 @@ function removeCachedOrderByGuild(guildId: string) {
     );
   } catch {
     // ignorar erro de cache local
+  }
+}
+
+function readApprovedRedirectedOrderNumbers() {
+  if (typeof window === "undefined") return new Set<number>();
+
+  try {
+    const raw = window.sessionStorage.getItem(
+      APPROVED_REDIRECTED_ORDERS_STORAGE_KEY,
+    );
+    if (!raw) return new Set<number>();
+
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return new Set<number>();
+
+    const normalized = parsed
+      .map((value) => Number(value))
+      .filter((value) => Number.isInteger(value) && value > 0);
+
+    return new Set<number>(normalized);
+  } catch {
+    return new Set<number>();
+  }
+}
+
+function hasApprovedOrderBeenAutoRedirected(orderNumber: number) {
+  return readApprovedRedirectedOrderNumbers().has(orderNumber);
+}
+
+function markApprovedOrderAutoRedirected(orderNumber: number) {
+  if (typeof window === "undefined") return;
+
+  try {
+    const set = readApprovedRedirectedOrderNumbers();
+    set.add(orderNumber);
+    window.sessionStorage.setItem(
+      APPROVED_REDIRECTED_ORDERS_STORAGE_KEY,
+      JSON.stringify(Array.from(set.values())),
+    );
+  } catch {
+    // ignorar falha de storage local
   }
 }
 
@@ -1755,6 +1798,25 @@ export function ConfigStepFour({
       pixOrder &&
       paymentStatus !== "pending",
   );
+
+  useEffect(() => {
+    if (!shouldShowStatusResultPanel) return;
+    if (paymentStatus !== "approved") return;
+    if (!resolvedOrderNumber) return;
+
+    if (hasApprovedOrderBeenAutoRedirected(resolvedOrderNumber)) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      markApprovedOrderAutoRedirected(resolvedOrderNumber);
+      window.location.assign("/servers");
+    }, 10_000);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [paymentStatus, resolvedOrderNumber, shouldShowStatusResultPanel]);
 
   const triggerPixFormValidationError = useCallback((message: string) => {
     setPixFormError(message);
