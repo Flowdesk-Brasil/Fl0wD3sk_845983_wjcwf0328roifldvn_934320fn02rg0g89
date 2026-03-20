@@ -160,7 +160,7 @@ function toApiOrder(record: PaymentOrderRecord) {
 
 async function finalizeHostedCheckoutFallbackOrder(input: {
   order: PaymentOrderRecord;
-  returnStatus: "cancelled" | "rejected" | "failed";
+  returnStatus: "pending" | "cancelled" | "rejected" | "failed";
 }) {
   const { order, returnStatus } = input;
 
@@ -169,18 +169,21 @@ async function finalizeHostedCheckoutFallbackOrder(input: {
   if (order.provider_payment_id) return order;
 
   const supabase = getSupabaseAdminClientOrThrow();
+  const finalStatus = returnStatus === "pending" ? "cancelled" : returnStatus;
   const providerStatusDetail =
-    returnStatus === "cancelled"
-      ? "checkout_cancelled_by_user"
-      : returnStatus === "rejected"
-        ? "checkout_rejected_before_provider_confirmation"
-        : "checkout_failed_before_provider_confirmation";
+    returnStatus === "pending"
+      ? "checkout_returned_without_payment_confirmation"
+      : returnStatus === "cancelled"
+        ? "checkout_cancelled_by_user"
+        : returnStatus === "rejected"
+          ? "checkout_rejected_before_provider_confirmation"
+          : "checkout_failed_before_provider_confirmation";
 
   const result = await supabase
     .from("payment_orders")
     .update({
-      status: returnStatus,
-      provider_status: returnStatus,
+      status: finalStatus,
+      provider_status: finalStatus,
       provider_status_detail: providerStatusDetail,
     })
     .eq("id", order.id)
@@ -360,7 +363,8 @@ export async function GET(request: Request) {
       }
     } else if (
       returnStatus &&
-      (returnStatus === "cancelled" ||
+      (returnStatus === "pending" ||
+        returnStatus === "cancelled" ||
         returnStatus === "rejected" ||
         returnStatus === "failed")
     ) {

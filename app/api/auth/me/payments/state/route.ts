@@ -26,7 +26,7 @@ type PaymentOrderStateRecord = {
 
 const LICENSE_VALIDITY_DAYS = 30;
 const LICENSE_VALIDITY_MS = LICENSE_VALIDITY_DAYS * 24 * 60 * 60 * 1000;
-const STALE_CARD_REDIRECT_PENDING_MS = 20 * 60 * 1000;
+const STALE_CARD_REDIRECT_PENDING_MS = 4 * 60 * 1000;
 const PAYMENT_STATE_SELECT_COLUMNS =
   "id, order_number, guild_id, payment_method, status, provider_payment_id, provider_status, provider_status_detail, provider_qr_code, paid_at, expires_at, created_at, updated_at";
 

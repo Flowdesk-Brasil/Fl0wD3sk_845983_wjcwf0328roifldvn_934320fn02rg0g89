@@ -1374,6 +1374,44 @@ function resolveStatusSupportCopy(order: PixOrder | null | undefined) {
   return "Apos a confirmacao do pagamento, a aprovacao sera imediata, juntamente com a liberacao do sistema.";
 }
 
+function resolveHostedCardReturnFallbackOrder(input: {
+  order: PixOrder | null;
+  returnStatus: string | null;
+}) {
+  const { order, returnStatus } = input;
+  if (!order) return null;
+  if (order.method !== "card") return null;
+  if (order.status !== "pending") return null;
+  if (order.providerPaymentId) return null;
+  if (
+    returnStatus !== "pending" &&
+    returnStatus !== "cancelled" &&
+    returnStatus !== "rejected" &&
+    returnStatus !== "failed"
+  ) {
+    return null;
+  }
+
+  const nextStatus =
+    returnStatus === "pending" ? "cancelled" : returnStatus;
+  const providerStatusDetail =
+    returnStatus === "pending"
+      ? "checkout_returned_without_payment_confirmation"
+      : returnStatus === "cancelled"
+        ? "checkout_cancelled_by_user"
+        : returnStatus === "rejected"
+          ? "checkout_rejected_before_provider_confirmation"
+          : "checkout_failed_before_provider_confirmation";
+
+  return {
+    ...order,
+    status: nextStatus,
+    providerStatus: nextStatus,
+    providerStatusDetail,
+    updatedAt: new Date().toISOString(),
+  } satisfies PixOrder;
+}
+
 function resolveRegenerateButtonLabel(order: PixOrder | null | undefined) {
   if (!order) return "Gerar novo pagamento";
 
@@ -2087,6 +2125,25 @@ export function ConfigStepFour({
         }
       } catch {
         if (!isMounted) return;
+
+        const fallbackCheckoutOrder = resolveHostedCardReturnFallbackOrder({
+          order: cachedPendingOrder,
+          returnStatus: shouldLoadOrderByCode ? checkoutQuery.status : null,
+        });
+
+        if (fallbackCheckoutOrder) {
+          removeCachedOrderByGuild(activeGuildId);
+          setPixOrder(fallbackCheckoutOrder);
+          setLastKnownOrderNumber(fallbackCheckoutOrder.orderNumber);
+          setView("methods");
+          setMethodMessage(null);
+          setCheckoutStatusQuery({
+            order: fallbackCheckoutOrder,
+            guildId: activeGuildId,
+          });
+          return;
+        }
+
         setPixOrder(cachedPendingOrder || null);
         if (cachedPendingOrder) {
           setLastKnownOrderNumber(cachedPendingOrder.orderNumber);
