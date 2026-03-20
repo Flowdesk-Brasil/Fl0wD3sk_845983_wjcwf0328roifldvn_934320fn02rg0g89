@@ -29,6 +29,7 @@ type CreateCardPaymentInput = {
   issuerId?: string | null;
   deviceSessionId?: string | null;
   idempotencyKey?: string | null;
+  capture?: boolean | null;
 };
 
 type PayerNameParts = {
@@ -143,6 +144,7 @@ function buildCardRequestBody(input: CreateCardPaymentInput) {
     },
     external_reference: input.externalReference,
     metadata: input.metadata,
+    capture: typeof input.capture === "boolean" ? input.capture : undefined,
   };
 }
 
@@ -301,6 +303,46 @@ export async function createMercadoPagoCardPayment(input: CreateCardPaymentInput
   return payload as MercadoPagoPaymentResponse;
 }
 
+export async function cancelMercadoPagoCardPayment(paymentId: string | number) {
+  const accessToken = getMercadoPagoCardAccessTokenOrThrow();
+
+  const response = await fetch(
+    `https://api.mercadopago.com/v1/payments/${encodeURIComponent(String(paymentId))}`,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        status: "cancelled",
+      }),
+      cache: "no-store",
+    },
+  );
+
+  const rawText = await response.text();
+  let payload: unknown = null;
+
+  if (rawText) {
+    try {
+      payload = JSON.parse(rawText) as unknown;
+    } catch {
+      payload = rawText;
+    }
+  }
+
+  if (!response.ok) {
+    const providerMessage =
+      parseMercadoPagoErrorMessage(payload) ||
+      "Falha ao cancelar validacao do cartao.";
+
+    throw new Error(`Mercado Pago: ${providerMessage}`);
+  }
+
+  return payload as MercadoPagoPaymentResponse;
+}
+
 export async function fetchMercadoPagoPaymentById(
   paymentId: string | number,
   options?: { useCardToken?: boolean; useCardTestToken?: boolean },
@@ -376,6 +418,42 @@ export async function refundMercadoPagoPixPayment(paymentId: string | number) {
     const providerMessage =
       parseMercadoPagoErrorMessage(payload) ||
       "Falha ao estornar pagamento PIX no Mercado Pago.";
+    throw new Error(`Mercado Pago: ${providerMessage}`);
+  }
+
+  return payload;
+}
+
+export async function refundMercadoPagoCardPayment(paymentId: string | number) {
+  const accessToken = getMercadoPagoCardAccessTokenOrThrow();
+
+  const response = await fetch(
+    `https://api.mercadopago.com/v1/payments/${encodeURIComponent(String(paymentId))}/refunds`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      cache: "no-store",
+    },
+  );
+
+  const rawText = await response.text();
+  let payload: unknown = null;
+
+  if (rawText) {
+    try {
+      payload = JSON.parse(rawText) as unknown;
+    } catch {
+      payload = rawText;
+    }
+  }
+
+  if (!response.ok) {
+    const providerMessage =
+      parseMercadoPagoErrorMessage(payload) ||
+      "Falha ao estornar validacao do cartao.";
+
     throw new Error(`Mercado Pago: ${providerMessage}`);
   }
 

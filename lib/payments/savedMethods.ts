@@ -16,6 +16,11 @@ export type SavedMethod = {
   lastUsedAt: string;
   timesUsed: number;
   nickname?: string | null;
+  verificationStatus?: "verified" | "pending" | "failed" | "cancelled";
+  verificationStatusDetail?: string | null;
+  verificationAmount?: number | null;
+  verifiedAt?: string | null;
+  lastContextGuildId?: string | null;
 };
 
 export type OrderForSavedMethods = {

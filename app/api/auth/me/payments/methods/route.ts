@@ -1,15 +1,37 @@
+import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 import {
   assertUserAdminInGuildOrNull,
   isGuildId,
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
+import {
+  isValidBrazilDocument,
+  normalizeBrazilDocumentDigits,
+  resolveBrazilDocumentType,
+} from "@/lib/payments/brazilDocument";
+import {
+  cancelMercadoPagoCardPayment,
+  createMercadoPagoCardPayment,
+  fetchMercadoPagoPaymentById,
+  refundMercadoPagoCardPayment,
+} from "@/lib/payments/mercadoPago";
 import { isValidSavedMethodId, parseSavedMethodId } from "@/lib/payments/savedMethods";
 import {
   buildMethodIdFromStoredInput,
   normalizePaymentMethodNickname,
   normalizeStoredMethodShape,
+  toSavedMethodFromStoredRecord,
+  type StoredPaymentMethodRecord,
 } from "@/lib/payments/userPaymentMethods";
+import { ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
+import {
+  attachRequestId,
+  createSecurityRequestContext,
+  enforceRequestRateLimit,
+  extendSecurityRequestContext,
+  logSecurityAuditEventSafe,
+} from "@/lib/security/requestSecurity";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 type DeleteMethodBody = {
@@ -25,6 +47,12 @@ type AddMethodBody = {
   lastFour?: unknown;
   expMonth?: unknown;
   expYear?: unknown;
+  payerName?: unknown;
+  payerDocument?: unknown;
+  cardToken?: unknown;
+  paymentMethodId?: unknown;
+  issuerId?: unknown;
+  deviceSessionId?: unknown;
 };
 
 type UpdateMethodBody = {
@@ -38,15 +66,14 @@ type GuildPlanSettingsRecord = {
   recurring_method_id: string | null;
 };
 
-type StoredPaymentMethodRecord = {
-  method_id: string;
-  nickname: string | null;
-  brand: string | null;
-  first_six: string;
-  last_four: string;
-  exp_month: number | null;
-  exp_year: number | null;
-  updated_at: string;
+type PaymentMethodVerificationRecord = {
+  id: number;
+  status: string;
+  provider_payment_id: string | null;
+  provider_status: string | null;
+  provider_status_detail: string | null;
+  verified_at: string | null;
+  refunded_at: string | null;
 };
 
 type AccessContext =
@@ -54,6 +81,9 @@ type AccessContext =
       ok: true;
       context: {
         userId: number;
+        sessionId: string;
+        userEmail: string | null;
+        discordUserId: string;
       };
     }
   | {
@@ -73,6 +103,9 @@ const BLOCKED_CARD_DIGITS = new Set([
   "4321",
   "9999",
 ]);
+
+const STORED_METHOD_SELECT_COLUMNS =
+  "method_id, nickname, brand, first_six, last_four, exp_month, exp_year, is_active, verification_status, verification_status_detail, verification_amount, verification_provider_payment_id, verified_at, last_context_guild_id, created_at, updated_at";
 
 function normalizeGuildId(value: unknown) {
   if (typeof value !== "string") return null;
@@ -100,59 +133,73 @@ function normalizeNullableInteger(value: unknown) {
   return numeric;
 }
 
+function normalizePayerName(value: unknown) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().replace(/\s+/g, " ");
+  if (!normalized) return null;
+  if (normalized.length < 2 || normalized.length > 120) return null;
+  return normalized;
+}
+
+function normalizePayerDocument(value: unknown) {
+  if (typeof value !== "string") return null;
+  const normalized = normalizeBrazilDocumentDigits(value);
+  const type = resolveBrazilDocumentType(normalized);
+  if (!type) return null;
+  if (!isValidBrazilDocument(normalized)) return null;
+
+  return {
+    normalized,
+    type,
+  };
+}
+
+function normalizeCardToken(value: unknown) {
+  if (typeof value !== "string") return null;
+  const token = value.trim();
+  if (token.length < 8 || token.length > 300) return null;
+  return token;
+}
+
+function normalizePaymentMethodId(value: unknown) {
+  if (typeof value !== "string") return null;
+  const methodId = value.trim().toLowerCase();
+  if (!/^[a-z0-9_]{2,32}$/.test(methodId)) return null;
+  return methodId;
+}
+
+function normalizeIssuerId(value: unknown) {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  const issuerId = String(value).trim();
+  if (!issuerId) return null;
+  if (!/^[a-zA-Z0-9_-]{1,32}$/.test(issuerId)) return null;
+  return issuerId;
+}
+
+function normalizeDeviceSessionId(value: unknown) {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string") return null;
+  const sessionId = value.trim();
+  if (!sessionId) return null;
+  if (!/^[a-zA-Z0-9:_-]{8,200}$/.test(sessionId)) return null;
+  return sessionId;
+}
+
+function normalizePayerEmail(value: unknown) {
+  if (typeof value !== "string") return null;
+  const email = value.trim().toLowerCase();
+  if (!email || email.length > 254) return null;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
+  return email;
+}
+
 function isRepeatedDigits(value: string) {
   return /^(\d)\1+$/.test(value);
 }
 
 function isBlockedDigitPattern(value: string) {
   return BLOCKED_CARD_DIGITS.has(value);
-}
-
-function isSameOriginRequest(request: Request) {
-  const requestUrl = new URL(request.url);
-  const originHeader = request.headers.get("origin");
-
-  if (originHeader) {
-    try {
-      const originUrl = new URL(originHeader);
-      if (originUrl.host !== requestUrl.host) {
-        return false;
-      }
-    } catch {
-      return false;
-    }
-  }
-
-  const secFetchSite = request.headers.get("sec-fetch-site");
-  if (
-    secFetchSite &&
-    secFetchSite !== "same-origin" &&
-    secFetchSite !== "same-site" &&
-    secFetchSite !== "none"
-  ) {
-    return false;
-  }
-
-  return true;
-}
-
-function ensureMutationSecurity(request: Request) {
-  if (!isSameOriginRequest(request)) {
-    return NextResponse.json(
-      { ok: false, message: "Origem da requisicao invalida." },
-      { status: 403 },
-    );
-  }
-
-  const contentType = request.headers.get("content-type") || "";
-  if (!contentType.toLowerCase().includes("application/json")) {
-    return NextResponse.json(
-      { ok: false, message: "Content-Type invalido." },
-      { status: 415 },
-    );
-  }
-
-  return null;
 }
 
 function isExpiryOutOfRange(expMonth: number | null, expYear: number | null) {
@@ -169,18 +216,37 @@ function isExpiryOutOfRange(expMonth: number | null, expYear: number | null) {
   return false;
 }
 
+function resolveVerificationAmount() {
+  const cents = crypto.randomInt(1, 90);
+  return Math.round((1 + cents / 100) * 100) / 100;
+}
+
 function toApiMethod(method: StoredPaymentMethodRecord) {
-  return {
-    id: method.method_id,
-    brand: method.brand,
-    firstSix: method.first_six,
-    lastFour: method.last_four,
-    expMonth: method.exp_month,
-    expYear: method.exp_year,
-    lastUsedAt: method.updated_at,
-    timesUsed: 0,
-    nickname: method.nickname || null,
-  };
+  const normalized = toSavedMethodFromStoredRecord(method);
+  if (!normalized) {
+    throw new Error("Metodo salvo invalido para resposta.");
+  }
+
+  return normalized;
+}
+
+function shouldCancelAuthorizedVerification(status: string | null | undefined) {
+  const normalized = (status || "").trim().toLowerCase();
+  return (
+    normalized === "authorized" ||
+    normalized === "in_process" ||
+    normalized === "pending"
+  );
+}
+
+function shouldRefundCapturedVerification(status: string | null | undefined) {
+  const normalized = (status || "").trim().toLowerCase();
+  return normalized === "approved";
+}
+
+function isVerificationApproved(status: string | null | undefined) {
+  const normalized = (status || "").trim().toLowerCase();
+  return normalized === "authorized" || normalized === "approved";
 }
 
 async function ensureGuildAccess(guildId: string): Promise<AccessContext> {
@@ -210,6 +276,9 @@ async function ensureGuildAccess(guildId: string): Promise<AccessContext> {
       ok: true,
       context: {
         userId: sessionData.authSession.user.id,
+        sessionId: sessionData.authSession.id,
+        userEmail: sessionData.authSession.user.email || null,
+        discordUserId: sessionData.authSession.user.discord_user_id,
       },
     };
   }
@@ -241,37 +310,163 @@ async function ensureGuildAccess(guildId: string): Promise<AccessContext> {
     ok: true,
     context: {
       userId: sessionData.authSession.user.id,
+      sessionId: sessionData.authSession.id,
+      userEmail: sessionData.authSession.user.email || null,
+      discordUserId: sessionData.authSession.user.discord_user_id,
     },
   };
 }
 
+async function createVerificationAttempt(input: {
+  userId: number;
+  guildId: string;
+  methodId: string;
+  amount: number;
+  currency: string;
+  payerName: string;
+  payerDocument: string;
+  payerDocumentType: "CPF" | "CNPJ";
+}) {
+  const supabase = getSupabaseAdminClientOrThrow();
+  const result = await supabase
+    .from("auth_user_payment_method_verifications")
+    .insert({
+      user_id: input.userId,
+      guild_id: input.guildId,
+      method_id: input.methodId,
+      amount: input.amount,
+      currency: input.currency,
+      payer_name: input.payerName,
+      payer_document: input.payerDocument,
+      payer_document_type: input.payerDocumentType,
+      provider_payload: {
+        source: "flowdesk_saved_method",
+      },
+    })
+    .select(
+      "id, status, provider_payment_id, provider_status, provider_status_detail, verified_at, refunded_at",
+    )
+    .single<PaymentMethodVerificationRecord>();
+
+  if (result.error || !result.data) {
+    throw new Error(
+      result.error?.message ||
+        "Falha ao iniciar validacao segura do cartao.",
+    );
+  }
+
+  return result.data;
+}
+
+async function updateVerificationAttempt(
+  verificationId: number,
+  input: {
+    status: "pending" | "verified" | "failed" | "cancelled";
+    providerPaymentId?: string | null;
+    providerExternalReference?: string | null;
+    providerStatus?: string | null;
+    providerStatusDetail?: string | null;
+    providerPayload?: Record<string, unknown>;
+    verifiedAt?: string | null;
+    refundedAt?: string | null;
+  },
+) {
+  const supabase = getSupabaseAdminClientOrThrow();
+  const result = await supabase
+    .from("auth_user_payment_method_verifications")
+    .update({
+      status: input.status,
+      provider_payment_id: input.providerPaymentId ?? null,
+      provider_external_reference: input.providerExternalReference ?? null,
+      provider_status: input.providerStatus ?? null,
+      provider_status_detail: input.providerStatusDetail ?? null,
+      provider_payload: input.providerPayload || {},
+      verified_at: input.verifiedAt ?? null,
+      refunded_at: input.refundedAt ?? null,
+    })
+    .eq("id", verificationId);
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+}
+
 export async function POST(request: Request) {
+  const baseRequestContext = createSecurityRequestContext(request);
+  let auditContext = baseRequestContext;
+
   try {
-    const securityResponse = ensureMutationSecurity(request);
-    if (securityResponse) return securityResponse;
+    const securityResponse = ensureSameOriginJsonMutationRequest(request);
+    if (securityResponse) {
+      return attachRequestId(securityResponse, baseRequestContext.requestId);
+    }
 
     let body: AddMethodBody = {};
     try {
       body = (await request.json()) as AddMethodBody;
     } catch {
-      return NextResponse.json(
+      return attachRequestId(NextResponse.json(
         { ok: false, message: "Payload JSON invalido." },
         { status: 400 },
-      );
+      ), baseRequestContext.requestId);
     }
 
     const guildId = normalizeGuildId(body.guildId);
     if (!guildId) {
-      return NextResponse.json(
+      return attachRequestId(NextResponse.json(
         { ok: false, message: "Guild ID invalido." },
         { status: 400 },
-      );
+      ), baseRequestContext.requestId);
     }
 
     const access = await ensureGuildAccess(guildId);
-    if (!access.ok) return access.response;
+    if (!access.ok) return attachRequestId(access.response, baseRequestContext.requestId);
+    auditContext = extendSecurityRequestContext(baseRequestContext, {
+      sessionId: access.context.sessionId,
+      userId: access.context.userId,
+      guildId,
+    });
+
+    const rateLimit = await enforceRequestRateLimit({
+      action: "payment_method_post",
+      windowMs: 15 * 60 * 1000,
+      maxAttempts: 10,
+      context: auditContext,
+    });
+    if (!rateLimit.ok) {
+      await logSecurityAuditEventSafe(auditContext, {
+        action: "payment_method_post",
+        outcome: "blocked",
+        metadata: {
+          reason: "rate_limit",
+          retryAfterSeconds: rateLimit.retryAfterSeconds,
+        },
+      });
+
+      const response = NextResponse.json(
+        {
+          ok: false,
+          message:
+            "Muitas tentativas para validar/salvar cartao. Aguarde alguns instantes e tente novamente.",
+        },
+        { status: 429 },
+      );
+      response.headers.set("Retry-After", String(rateLimit.retryAfterSeconds));
+      return attachRequestId(response, baseRequestContext.requestId);
+    }
+
+    await logSecurityAuditEventSafe(auditContext, {
+      action: "payment_method_post",
+      outcome: "started",
+    });
 
     const nickname = normalizePaymentMethodNickname(body.nickname);
+    const payerName = normalizePayerName(body.payerName);
+    const payerDocument = normalizePayerDocument(body.payerDocument);
+    const cardToken = normalizeCardToken(body.cardToken);
+    const paymentMethodId = normalizePaymentMethodId(body.paymentMethodId);
+    const issuerId = normalizeIssuerId(body.issuerId);
+    const deviceSessionId = normalizeDeviceSessionId(body.deviceSessionId);
     const normalized = normalizeStoredMethodShape({
       brand: typeof body.brand === "string" ? body.brand : null,
       firstSix: normalizeStringDigits(body.firstSix, 6),
@@ -317,17 +512,19 @@ export async function POST(request: Request) {
     const supabase = getSupabaseAdminClientOrThrow();
     const existingMethodResult = await supabase
       .from("auth_user_payment_methods")
-      .select("id")
+      .select(STORED_METHOD_SELECT_COLUMNS)
       .eq("user_id", access.context.userId)
       .eq("method_id", methodId)
-      .maybeSingle<{ id: number }>();
+      .maybeSingle<StoredPaymentMethodRecord>();
 
     if (existingMethodResult.error) {
       throw new Error(existingMethodResult.error.message);
     }
 
-    const isNewMethod = !existingMethodResult.data;
-    if (isNewMethod) {
+    const existingMethod = existingMethodResult.data || null;
+    const isAlreadyVerified =
+      existingMethod?.verification_status === "verified";
+    if (!isAlreadyVerified) {
       const [activeCountResult, recentUpdatesResult] = await Promise.all([
         supabase
           .from("auth_user_payment_methods")
@@ -353,68 +550,354 @@ export async function POST(request: Request) {
       }
 
       if ((activeCountResult.count || 0) >= 20) {
-        return NextResponse.json(
+        return attachRequestId(NextResponse.json(
           {
             ok: false,
             message:
               "Limite de metodos atingido. Remova um metodo antigo antes de adicionar outro.",
           },
           { status: 409 },
-        );
+        ), baseRequestContext.requestId);
       }
 
       if ((recentUpdatesResult.count || 0) >= 8) {
-        return NextResponse.json(
+        return attachRequestId(NextResponse.json(
           {
             ok: false,
             message:
               "Muitas tentativas em pouco tempo. Aguarde alguns segundos e tente novamente.",
           },
           { status: 429 },
-        );
+        ), baseRequestContext.requestId);
       }
     }
 
-    const upsertResult = await supabase
-      .from("auth_user_payment_methods")
-      .upsert(
-        {
-          user_id: access.context.userId,
-          method_id: methodId,
-          nickname: nickname || null,
-          brand: normalized.brand,
-          first_six: normalized.firstSix,
-          last_four: normalized.lastFour,
-          exp_month: normalized.expMonth,
-          exp_year: normalized.expYear,
-          is_active: true,
-        },
-        {
-          onConflict: "user_id,method_id",
-        },
-      )
-      .select(
-        "method_id, nickname, brand, first_six, last_four, exp_month, exp_year, updated_at",
-      )
-      .single<StoredPaymentMethodRecord>();
+    if (isAlreadyVerified && existingMethod) {
+      const upsertResult = await supabase
+        .from("auth_user_payment_methods")
+        .upsert(
+          {
+            user_id: access.context.userId,
+            method_id: methodId,
+            nickname: nickname || null,
+            brand: normalized.brand,
+            first_six: normalized.firstSix,
+            last_four: normalized.lastFour,
+            exp_month: normalized.expMonth,
+            exp_year: normalized.expYear,
+            verification_status: "verified",
+            verification_status_detail:
+              existingMethod.verification_status_detail || null,
+            verification_amount: existingMethod.verification_amount ?? null,
+            verification_provider_payment_id:
+              existingMethod.verification_provider_payment_id ?? null,
+            verified_at: existingMethod.verified_at || new Date().toISOString(),
+            last_context_guild_id: guildId,
+            is_active: true,
+          },
+          {
+            onConflict: "user_id,method_id",
+          },
+        )
+        .select(STORED_METHOD_SELECT_COLUMNS)
+        .single<StoredPaymentMethodRecord>();
 
-    if (upsertResult.error || !upsertResult.data) {
-      throw new Error(upsertResult.error?.message || "Falha ao salvar metodo.");
+      if (upsertResult.error || !upsertResult.data) {
+        throw new Error(
+          upsertResult.error?.message || "Falha ao reativar metodo.",
+        );
+      }
+
+      await supabase
+        .from("auth_user_hidden_payment_methods")
+        .delete()
+        .eq("user_id", access.context.userId)
+        .eq("method_id", methodId);
+
+      await logSecurityAuditEventSafe(auditContext, {
+        action: "payment_method_post",
+        outcome: "succeeded",
+        metadata: {
+          methodId,
+          alreadyVerified: true,
+        },
+      });
+
+      return attachRequestId(NextResponse.json({
+        ok: true,
+        guildId,
+        method: toApiMethod(upsertResult.data),
+        alreadyVerified: true,
+      }), baseRequestContext.requestId);
     }
 
-    await supabase
-      .from("auth_user_hidden_payment_methods")
-      .delete()
-      .eq("user_id", access.context.userId)
-      .eq("method_id", methodId);
+    const payerEmail = normalizePayerEmail(access.context.userEmail);
+    if (!payerName || !payerDocument || !cardToken || !paymentMethodId) {
+      return attachRequestId(NextResponse.json(
+        {
+          ok: false,
+          message:
+            "Dados completos do cartao sao obrigatorios para validar e liberar o metodo.",
+        },
+        { status: 400 },
+      ), baseRequestContext.requestId);
+    }
 
-    return NextResponse.json({
-      ok: true,
+    if (!payerEmail) {
+      return attachRequestId(NextResponse.json(
+        {
+          ok: false,
+          message:
+            "Nao foi possivel identificar um e-mail valido da conta Discord para validar o cartao.",
+        },
+        { status: 400 },
+      ), baseRequestContext.requestId);
+    }
+
+    const verificationAmount = resolveVerificationAmount();
+    const verificationCurrency = "BRL";
+    const verificationAttempt = await createVerificationAttempt({
+      userId: access.context.userId,
       guildId,
-      method: toApiMethod(upsertResult.data),
+      methodId,
+      amount: verificationAmount,
+      currency: verificationCurrency,
+      payerName,
+      payerDocument: payerDocument.normalized,
+      payerDocumentType: payerDocument.type,
     });
+
+    const externalReference = `flowdesk-method-verify-${verificationAttempt.id}`;
+
+    let verificationPayload: Record<string, unknown> = {
+      source: "flowdesk_saved_method",
+      verificationId: verificationAttempt.id,
+      methodId,
+      guildId,
+      payerDocumentType: payerDocument.type,
+      deviceSessionIdPresent: Boolean(deviceSessionId),
+    };
+
+    try {
+      const initialPayment = await createMercadoPagoCardPayment({
+        amount: verificationAmount,
+        description: `Flowdesk validacao do cartao ${methodId}`,
+        payerName,
+        payerEmail,
+        payerIdentification: {
+          type: payerDocument.type,
+          number: payerDocument.normalized,
+        },
+        externalReference,
+        metadata: {
+          flowdesk_verification_id: String(verificationAttempt.id),
+          flowdesk_user_id: String(access.context.userId),
+          flowdesk_discord_user_id: access.context.discordUserId,
+          flowdesk_guild_id: guildId,
+          flowdesk_method_id: methodId,
+          flowdesk_flow: "saved_method_validation",
+        },
+        token: cardToken,
+        paymentMethodId,
+        installments: 1,
+        issuerId,
+        deviceSessionId,
+        idempotencyKey: `flowdesk-method-verify-${verificationAttempt.id}`,
+        capture: false,
+      });
+
+      const providerPaymentId = String(initialPayment.id);
+      let providerPayment = initialPayment;
+
+      try {
+        const snapshot = await fetchMercadoPagoPaymentById(providerPaymentId, {
+          useCardToken: true,
+        });
+        if (snapshot && typeof snapshot === "object") {
+          providerPayment = snapshot;
+        }
+      } catch {
+        // manter retorno inicial quando o snapshot ainda nao estiver disponivel
+      }
+
+      const providerStatus = providerPayment.status || initialPayment.status || null;
+      const providerStatusDetail =
+        providerPayment.status_detail || initialPayment.status_detail || null;
+
+      verificationPayload = {
+        ...verificationPayload,
+        externalReference,
+        initialPayment,
+        providerPayment,
+      };
+
+      if (!isVerificationApproved(providerStatus)) {
+        await updateVerificationAttempt(verificationAttempt.id, {
+          status: "failed",
+          providerPaymentId,
+          providerExternalReference: externalReference,
+          providerStatus,
+          providerStatusDetail,
+          providerPayload: verificationPayload,
+        });
+
+        await logSecurityAuditEventSafe(auditContext, {
+          action: "payment_method_post",
+          outcome: "failed",
+          metadata: {
+            methodId,
+            stage: "provider_verification",
+            providerStatus,
+            providerStatusDetail,
+          },
+        });
+
+        return attachRequestId(NextResponse.json(
+          {
+            ok: false,
+            message:
+              providerStatusDetail ||
+              "O cartao nao conseguiu concluir a validacao de seguranca.",
+          },
+          { status: 402 },
+        ), baseRequestContext.requestId);
+      }
+
+      let reversalPayload: unknown = null;
+      if (shouldRefundCapturedVerification(providerStatus)) {
+        reversalPayload = await refundMercadoPagoCardPayment(providerPaymentId);
+      } else if (shouldCancelAuthorizedVerification(providerStatus)) {
+        reversalPayload = await cancelMercadoPagoCardPayment(providerPaymentId);
+      }
+
+      const verifiedAt = new Date().toISOString();
+      verificationPayload = {
+        ...verificationPayload,
+        reversalPayload,
+      };
+
+      await updateVerificationAttempt(verificationAttempt.id, {
+        status: "verified",
+        providerPaymentId,
+        providerExternalReference: externalReference,
+        providerStatus,
+        providerStatusDetail,
+        providerPayload: verificationPayload,
+        verifiedAt,
+        refundedAt: verifiedAt,
+      });
+
+      const upsertResult = await supabase
+        .from("auth_user_payment_methods")
+        .upsert(
+          {
+            user_id: access.context.userId,
+            method_id: methodId,
+            nickname: nickname || null,
+            brand: normalized.brand,
+            first_six: normalized.firstSix,
+            last_four: normalized.lastFour,
+            exp_month: normalized.expMonth,
+            exp_year: normalized.expYear,
+            verification_status: "verified",
+            verification_status_detail: providerStatusDetail,
+            verification_amount: verificationAmount,
+            verification_provider_payment_id: providerPaymentId,
+            verified_at: verifiedAt,
+            last_context_guild_id: guildId,
+            is_active: true,
+          },
+          {
+            onConflict: "user_id,method_id",
+          },
+        )
+        .select(STORED_METHOD_SELECT_COLUMNS)
+        .single<StoredPaymentMethodRecord>();
+
+      if (upsertResult.error || !upsertResult.data) {
+        throw new Error(upsertResult.error?.message || "Falha ao salvar metodo.");
+      }
+
+      await supabase
+        .from("auth_user_hidden_payment_methods")
+        .delete()
+        .eq("user_id", access.context.userId)
+        .eq("method_id", methodId);
+
+      await logSecurityAuditEventSafe(auditContext, {
+        action: "payment_method_post",
+        outcome: "succeeded",
+        metadata: {
+          methodId,
+          verificationAmount,
+          verificationCurrency,
+        },
+      });
+
+      return attachRequestId(NextResponse.json({
+        ok: true,
+        guildId,
+        method: toApiMethod(upsertResult.data),
+        verification: {
+          amount: verificationAmount,
+          currency: verificationCurrency,
+        },
+      }), baseRequestContext.requestId);
+    } catch (providerError) {
+      const message =
+        providerError instanceof Error
+          ? providerError.message
+          : "Falha ao validar o cartao com seguranca.";
+      const normalizedMessage = message.toLowerCase();
+      const responseStatus =
+        normalizedMessage.includes("mercado pago:") ||
+        normalizedMessage.includes("cartao") ||
+        normalizedMessage.includes("card") ||
+        normalizedMessage.includes("identification") ||
+        normalizedMessage.includes("documento") ||
+        normalizedMessage.includes("cpf/cnpj")
+          ? 400
+          : 502;
+
+      await updateVerificationAttempt(verificationAttempt.id, {
+        status: "failed",
+        providerStatus: "error",
+        providerStatusDetail: message,
+        providerPayload: {
+          ...verificationPayload,
+          error: message,
+        },
+      });
+
+      await logSecurityAuditEventSafe(auditContext, {
+        action: "payment_method_post",
+        outcome: "failed",
+        metadata: {
+          methodId,
+          stage: "provider_error",
+          message,
+        },
+      });
+
+      return attachRequestId(NextResponse.json(
+        {
+          ok: false,
+          message,
+        },
+        { status: responseStatus },
+      ), baseRequestContext.requestId);
+    }
+
   } catch (error) {
-    return NextResponse.json(
+    await logSecurityAuditEventSafe(auditContext, {
+      action: "payment_method_post",
+      outcome: "failed",
+      metadata: {
+        message: error instanceof Error ? error.message : "unknown_error",
+      },
+    });
+
+    return attachRequestId(NextResponse.json(
       {
         ok: false,
         message:
@@ -423,38 +906,41 @@ export async function POST(request: Request) {
             : "Erro ao adicionar metodo de pagamento.",
       },
       { status: 500 },
-    );
+    ), baseRequestContext.requestId);
   }
 }
 
 export async function PATCH(request: Request) {
+  const baseRequestContext = createSecurityRequestContext(request);
+  let auditContext = baseRequestContext;
+
   try {
-    const securityResponse = ensureMutationSecurity(request);
-    if (securityResponse) return securityResponse;
+    const securityResponse = ensureSameOriginJsonMutationRequest(request);
+    if (securityResponse) return attachRequestId(securityResponse, baseRequestContext.requestId);
 
     let body: UpdateMethodBody = {};
     try {
       body = (await request.json()) as UpdateMethodBody;
     } catch {
-      return NextResponse.json(
+      return attachRequestId(NextResponse.json(
         { ok: false, message: "Payload JSON invalido." },
         { status: 400 },
-      );
+      ), baseRequestContext.requestId);
     }
 
     const guildId = normalizeGuildId(body.guildId);
     const methodId = normalizeMethodId(body.methodId);
     if (!guildId) {
-      return NextResponse.json(
+      return attachRequestId(NextResponse.json(
         { ok: false, message: "Guild ID invalido." },
         { status: 400 },
-      );
+      ), baseRequestContext.requestId);
     }
     if (!methodId) {
-      return NextResponse.json(
+      return attachRequestId(NextResponse.json(
         { ok: false, message: "Metodo de pagamento invalido." },
         { status: 400 },
-      );
+      ), baseRequestContext.requestId);
     }
 
     if (body.nickname !== undefined) {
@@ -463,23 +949,32 @@ export async function PATCH(request: Request) {
         body.nickname === "" ||
         body.nickname === null;
       if (!isValidNickname) {
-        return NextResponse.json(
+        return attachRequestId(NextResponse.json(
           { ok: false, message: "Apelido do cartao invalido." },
           { status: 400 },
-        );
+        ), baseRequestContext.requestId);
       }
     }
 
     const nickname = normalizePaymentMethodNickname(body.nickname);
     const access = await ensureGuildAccess(guildId);
-    if (!access.ok) return access.response;
+    if (!access.ok) return attachRequestId(access.response, baseRequestContext.requestId);
+    auditContext = extendSecurityRequestContext(baseRequestContext, {
+      sessionId: access.context.sessionId,
+      userId: access.context.userId,
+      guildId,
+    });
+    await logSecurityAuditEventSafe(auditContext, {
+      action: "payment_method_patch",
+      outcome: "started",
+    });
 
     const parsed = parseSavedMethodId(methodId);
     if (!parsed || !parsed.firstSix || !parsed.lastFour) {
-      return NextResponse.json(
+      return attachRequestId(NextResponse.json(
         { ok: false, message: "Metodo de pagamento invalido para apelido." },
         { status: 400 },
-      );
+      ), baseRequestContext.requestId);
     }
 
     if (
@@ -488,38 +983,47 @@ export async function PATCH(request: Request) {
       isBlockedDigitPattern(parsed.firstSix) ||
       isBlockedDigitPattern(parsed.lastFour)
     ) {
-      return NextResponse.json(
+      return attachRequestId(NextResponse.json(
         { ok: false, message: "Metodo de pagamento invalido para apelido." },
         { status: 400 },
-      );
+      ), baseRequestContext.requestId);
     }
 
     const supabase = getSupabaseAdminClientOrThrow();
-    const upsertResult = await supabase
+    const existingMethodResult = await supabase
       .from("auth_user_payment_methods")
-      .upsert(
+      .select(STORED_METHOD_SELECT_COLUMNS)
+      .eq("user_id", access.context.userId)
+      .eq("method_id", methodId)
+      .maybeSingle<StoredPaymentMethodRecord>();
+
+    if (existingMethodResult.error) {
+      throw new Error(existingMethodResult.error.message);
+    }
+
+    if (!existingMethodResult.data) {
+      return attachRequestId(NextResponse.json(
+        { ok: false, message: "Metodo de pagamento nao encontrado." },
+        { status: 404 },
+      ), baseRequestContext.requestId);
+    }
+
+    const updateResult = await supabase
+      .from("auth_user_payment_methods")
+      .update(
         {
-          user_id: access.context.userId,
-          method_id: methodId,
           nickname: nickname || null,
-          brand: parsed.brand,
-          first_six: parsed.firstSix,
-          last_four: parsed.lastFour,
-          exp_month: parsed.expMonth,
-          exp_year: parsed.expYear,
           is_active: true,
-        },
-        {
-          onConflict: "user_id,method_id",
+          last_context_guild_id: guildId,
         },
       )
-      .select(
-        "method_id, nickname, brand, first_six, last_four, exp_month, exp_year, updated_at",
-      )
+      .eq("user_id", access.context.userId)
+      .eq("method_id", methodId)
+      .select(STORED_METHOD_SELECT_COLUMNS)
       .single<StoredPaymentMethodRecord>();
 
-    if (upsertResult.error || !upsertResult.data) {
-      throw new Error(upsertResult.error?.message || "Falha ao salvar apelido.");
+    if (updateResult.error || !updateResult.data) {
+      throw new Error(updateResult.error?.message || "Falha ao salvar apelido.");
     }
 
     await supabase
@@ -528,13 +1032,29 @@ export async function PATCH(request: Request) {
       .eq("user_id", access.context.userId)
       .eq("method_id", methodId);
 
-    return NextResponse.json({
+    await logSecurityAuditEventSafe(auditContext, {
+      action: "payment_method_patch",
+      outcome: "succeeded",
+      metadata: {
+        methodId,
+      },
+    });
+
+    return attachRequestId(NextResponse.json({
       ok: true,
       guildId,
-      method: toApiMethod(upsertResult.data),
-    });
+      method: toApiMethod(updateResult.data),
+    }), baseRequestContext.requestId);
   } catch (error) {
-    return NextResponse.json(
+    await logSecurityAuditEventSafe(auditContext, {
+      action: "payment_method_patch",
+      outcome: "failed",
+      metadata: {
+        message: error instanceof Error ? error.message : "unknown_error",
+      },
+    });
+
+    return attachRequestId(NextResponse.json(
       {
         ok: false,
         message:
@@ -543,44 +1063,59 @@ export async function PATCH(request: Request) {
             : "Erro ao atualizar apelido do metodo.",
       },
       { status: 500 },
-    );
+    ), baseRequestContext.requestId);
   }
 }
 
 export async function DELETE(request: Request) {
+  const baseRequestContext = createSecurityRequestContext(request);
+  let auditContext = baseRequestContext;
+
   try {
-    const securityResponse = ensureMutationSecurity(request);
-    if (securityResponse) return securityResponse;
+    const securityResponse = ensureSameOriginJsonMutationRequest(request);
+    if (securityResponse) return attachRequestId(securityResponse, baseRequestContext.requestId);
 
     let body: DeleteMethodBody = {};
     try {
       body = (await request.json()) as DeleteMethodBody;
     } catch {
-      return NextResponse.json(
+      return attachRequestId(NextResponse.json(
         { ok: false, message: "Payload JSON invalido." },
         { status: 400 },
-      );
+      ), baseRequestContext.requestId);
     }
 
     const guildId = normalizeGuildId(body.guildId);
     const methodId = normalizeMethodId(body.methodId);
 
     if (!guildId) {
-      return NextResponse.json(
+      return attachRequestId(NextResponse.json(
         { ok: false, message: "Guild ID invalido." },
         { status: 400 },
-      );
+      ), baseRequestContext.requestId);
     }
 
     if (!methodId) {
-      return NextResponse.json(
+      return attachRequestId(NextResponse.json(
         { ok: false, message: "Metodo de pagamento invalido." },
         { status: 400 },
-      );
+      ), baseRequestContext.requestId);
     }
 
     const access = await ensureGuildAccess(guildId);
-    if (!access.ok) return access.response;
+    if (!access.ok) return attachRequestId(access.response, baseRequestContext.requestId);
+    auditContext = extendSecurityRequestContext(baseRequestContext, {
+      sessionId: access.context.sessionId,
+      userId: access.context.userId,
+      guildId,
+    });
+    await logSecurityAuditEventSafe(auditContext, {
+      action: "payment_method_delete",
+      outcome: "started",
+      metadata: {
+        methodId,
+      },
+    });
 
     const userId = access.context.userId;
     const supabase = getSupabaseAdminClientOrThrow();
@@ -589,7 +1124,9 @@ export async function DELETE(request: Request) {
       .from("guild_plan_settings")
       .select("recurring_enabled, recurring_method_id")
       .eq("user_id", userId)
-      .eq("guild_id", guildId)
+      .eq("recurring_enabled", true)
+      .eq("recurring_method_id", methodId)
+      .limit(1)
       .maybeSingle<GuildPlanSettingsRecord>();
 
     if (planSettingsResult.error) {
@@ -601,14 +1138,14 @@ export async function DELETE(request: Request) {
       planSettings?.recurring_enabled &&
       planSettings.recurring_method_id === methodId
     ) {
-      return NextResponse.json(
+      return attachRequestId(NextResponse.json(
         {
           ok: false,
           message:
-            "Nao e possivel remover este cartao enquanto a cobranca recorrente deste servidor estiver ativa.",
+            "Nao e possivel remover este cartao enquanto existir cobranca recorrente ativa vinculada a ele.",
         },
         { status: 409 },
-      );
+      ), baseRequestContext.requestId);
     }
 
     const [hideResult, softDeleteResult] = await Promise.all([
@@ -640,13 +1177,29 @@ export async function DELETE(request: Request) {
       throw new Error(softDeleteResult.error.message);
     }
 
-    return NextResponse.json({
+    await logSecurityAuditEventSafe(auditContext, {
+      action: "payment_method_delete",
+      outcome: "succeeded",
+      metadata: {
+        methodId,
+      },
+    });
+
+    return attachRequestId(NextResponse.json({
       ok: true,
       guildId,
       methodId,
-    });
+    }), baseRequestContext.requestId);
   } catch (error) {
-    return NextResponse.json(
+    await logSecurityAuditEventSafe(auditContext, {
+      action: "payment_method_delete",
+      outcome: "failed",
+      metadata: {
+        message: error instanceof Error ? error.message : "unknown_error",
+      },
+    });
+
+    return attachRequestId(NextResponse.json(
       {
         ok: false,
         message:
@@ -655,6 +1208,6 @@ export async function DELETE(request: Request) {
             : "Erro ao remover metodo de pagamento.",
       },
       { status: 500 },
-    );
+    ), baseRequestContext.requestId);
   }
 }

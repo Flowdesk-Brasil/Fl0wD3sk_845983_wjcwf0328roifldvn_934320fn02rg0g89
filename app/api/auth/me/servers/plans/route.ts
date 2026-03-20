@@ -10,6 +10,14 @@ import {
   toSavedMethodFromStoredRecord,
   type StoredPaymentMethodRecord,
 } from "@/lib/payments/userPaymentMethods";
+import { ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
+import {
+  attachRequestId,
+  createSecurityRequestContext,
+  enforceRequestRateLimit,
+  extendSecurityRequestContext,
+  logSecurityAuditEventSafe,
+} from "@/lib/security/requestSecurity";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 type GuildPlanSettingsRecord = {
@@ -159,7 +167,7 @@ async function getAvailableSavedMethodsForUser(userId: number) {
     supabase
       .from("auth_user_payment_methods")
       .select(
-        "method_id, nickname, brand, first_six, last_four, exp_month, exp_year, is_active, created_at, updated_at",
+        "method_id, nickname, brand, first_six, last_four, exp_month, exp_year, is_active, verification_status, verification_status_detail, verification_amount, verified_at, last_context_guild_id, created_at, updated_at",
       )
       .eq("user_id", userId)
       .eq("is_active", true)
@@ -189,7 +197,9 @@ async function getAvailableSavedMethodsForUser(userId: number) {
 
   return mergeSavedMethodsWithStored({
     derivedMethods,
-    storedMethods,
+    storedMethods: storedMethods.filter(
+      (method) => method.verificationStatus === "verified",
+    ),
     hiddenMethodSet,
   });
 }
@@ -252,18 +262,19 @@ function toPlanResponse(input: {
 }
 
 export async function GET(request: Request) {
+  const requestContext = createSecurityRequestContext(request);
   try {
     const url = new URL(request.url);
     const guildId = normalizeGuildId(url.searchParams.get("guildId"));
     if (!guildId) {
-      return NextResponse.json(
+      return attachRequestId(NextResponse.json(
         { ok: false, message: "Guild ID invalido." },
         { status: 400 },
-      );
+      ), requestContext.requestId);
     }
 
     const access = await ensureGuildAccess(guildId);
-    if (!access.ok) return access.response;
+    if (!access.ok) return attachRequestId(access.response, requestContext.requestId);
 
     const userId = access.context.sessionData.authSession.user.id;
     const [settings, savedMethods] = await Promise.all([
@@ -277,7 +288,7 @@ export async function GET(request: Request) {
         ? savedMethods.find((method) => method.id === recurringMethodId) || null
         : null;
 
-    return NextResponse.json({
+    return attachRequestId(NextResponse.json({
       ok: true,
       guildId,
       plan: toPlanResponse({
@@ -287,9 +298,9 @@ export async function GET(request: Request) {
         availableMethods: savedMethods,
         availableMethodsCount: savedMethods.length,
       }),
-    });
+    }), requestContext.requestId);
   } catch (error) {
-    return NextResponse.json(
+    return attachRequestId(NextResponse.json(
       {
         ok: false,
         message:
@@ -298,20 +309,26 @@ export async function GET(request: Request) {
             : "Erro ao carregar plano do servidor.",
       },
       { status: 500 },
-    );
+    ), requestContext.requestId);
   }
 }
 
 export async function POST(request: Request) {
+  const baseRequestContext = createSecurityRequestContext(request);
+  let auditContext = baseRequestContext;
+
   try {
+    const securityResponse = ensureSameOriginJsonMutationRequest(request);
+    if (securityResponse) return attachRequestId(securityResponse, baseRequestContext.requestId);
+
     let body: UpdatePlanBody = {};
     try {
       body = (await request.json()) as UpdatePlanBody;
     } catch {
-      return NextResponse.json(
+      return attachRequestId(NextResponse.json(
         { ok: false, message: "Payload JSON invalido." },
         { status: 400 },
-      );
+      ), baseRequestContext.requestId);
     }
 
     const guildId = normalizeGuildId(body.guildId);
@@ -319,21 +336,63 @@ export async function POST(request: Request) {
     const recurringMethodId = normalizeRecurringMethodId(body.recurringMethodId);
 
     if (!guildId) {
-      return NextResponse.json(
+      return attachRequestId(NextResponse.json(
         { ok: false, message: "Guild ID invalido." },
         { status: 400 },
-      );
+      ), baseRequestContext.requestId);
     }
 
     if (recurringEnabled === null) {
-      return NextResponse.json(
+      return attachRequestId(NextResponse.json(
         { ok: false, message: "Flag de recorrencia invalida." },
         { status: 400 },
-      );
+      ), baseRequestContext.requestId);
     }
 
     const access = await ensureGuildAccess(guildId);
-    if (!access.ok) return access.response;
+    if (!access.ok) return attachRequestId(access.response, baseRequestContext.requestId);
+
+    auditContext = extendSecurityRequestContext(baseRequestContext, {
+      sessionId: access.context.sessionData.authSession.id,
+      userId: access.context.sessionData.authSession.user.id,
+      guildId,
+    });
+
+    const rateLimit = await enforceRequestRateLimit({
+      action: "server_plan_post",
+      windowMs: 10 * 60 * 1000,
+      maxAttempts: 18,
+      context: auditContext,
+    });
+    if (!rateLimit.ok) {
+      await logSecurityAuditEventSafe(auditContext, {
+        action: "server_plan_post",
+        outcome: "blocked",
+        metadata: {
+          reason: "rate_limit",
+          retryAfterSeconds: rateLimit.retryAfterSeconds,
+        },
+      });
+      const response = NextResponse.json(
+        {
+          ok: false,
+          message:
+            "Muitas alteracoes de plano em pouco tempo. Aguarde alguns instantes e tente novamente.",
+        },
+        { status: 429 },
+      );
+      response.headers.set("Retry-After", String(rateLimit.retryAfterSeconds));
+      return attachRequestId(response, baseRequestContext.requestId);
+    }
+
+    await logSecurityAuditEventSafe(auditContext, {
+      action: "server_plan_post",
+      outcome: "started",
+      metadata: {
+        recurringEnabled,
+        recurringMethodId,
+      },
+    });
 
     const userId = access.context.sessionData.authSession.user.id;
     const supabase = getSupabaseAdminClientOrThrow();
@@ -350,10 +409,10 @@ export async function POST(request: Request) {
     if (recurringEnabled) {
       if (recurringMethodId) {
         if (!savedMethodMap.has(recurringMethodId)) {
-          return NextResponse.json(
+          return attachRequestId(NextResponse.json(
             { ok: false, message: "Metodo de pagamento nao encontrado para recorrencia." },
             { status: 400 },
-          );
+          ), baseRequestContext.requestId);
         }
         resolvedRecurringMethodId = recurringMethodId;
       } else if (
@@ -366,14 +425,14 @@ export async function POST(request: Request) {
       }
 
       if (!resolvedRecurringMethodId) {
-        return NextResponse.json(
+        return attachRequestId(NextResponse.json(
           {
             ok: false,
             message:
               "Nenhum cartao salvo disponivel. Salve um cartao em Metodos para ativar recorrencia.",
           },
           { status: 400 },
-        );
+        ), baseRequestContext.requestId);
       }
     } else {
       resolvedRecurringMethodId = null;
@@ -407,7 +466,16 @@ export async function POST(request: Request) {
         ? savedMethodMap.get(resolvedRecurringMethodId) || null
         : null;
 
-    return NextResponse.json({
+    await logSecurityAuditEventSafe(auditContext, {
+      action: "server_plan_post",
+      outcome: "succeeded",
+      metadata: {
+        recurringEnabled,
+        resolvedRecurringMethodId,
+      },
+    });
+
+    return attachRequestId(NextResponse.json({
       ok: true,
       guildId,
       plan: toPlanResponse({
@@ -417,9 +485,17 @@ export async function POST(request: Request) {
         availableMethods: savedMethods,
         availableMethodsCount: savedMethods.length,
       }),
-    });
+    }), baseRequestContext.requestId);
   } catch (error) {
-    return NextResponse.json(
+    await logSecurityAuditEventSafe(auditContext, {
+      action: "server_plan_post",
+      outcome: "failed",
+      metadata: {
+        message: error instanceof Error ? error.message : "unknown_error",
+      },
+    });
+
+    return attachRequestId(NextResponse.json(
       {
         ok: false,
         message:
@@ -428,6 +504,6 @@ export async function POST(request: Request) {
             : "Erro ao salvar plano do servidor.",
       },
       { status: 500 },
-    );
+    ), baseRequestContext.requestId);
   }
 }

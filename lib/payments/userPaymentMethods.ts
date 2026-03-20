@@ -14,6 +14,12 @@ export type StoredPaymentMethodRecord = {
   exp_month: number | null;
   exp_year: number | null;
   is_active: boolean;
+  verification_status: string | null;
+  verification_status_detail: string | null;
+  verification_amount: string | number | null;
+  verification_provider_payment_id?: string | null;
+  verified_at: string | null;
+  last_context_guild_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -30,6 +36,29 @@ function normalizeNullableString(value: string | null | undefined) {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
+}
+
+function normalizeVerificationStatus(value: unknown) {
+  if (value === "verified") return "verified";
+  if (value === "pending") return "pending";
+  if (value === "failed") return "failed";
+  if (value === "cancelled") return "cancelled";
+  return "verified";
+}
+
+function normalizeNullableNumber(value: unknown) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
 }
 
 export function normalizePaymentMethodNickname(value: unknown) {
@@ -123,6 +152,13 @@ export function toSavedMethodFromStoredRecord(
     lastUsedAt: row.updated_at || row.created_at,
     timesUsed: 0,
     nickname: normalizeNullableString(row.nickname),
+    verificationStatus: normalizeVerificationStatus(row.verification_status),
+    verificationStatusDetail: normalizeNullableString(
+      row.verification_status_detail,
+    ),
+    verificationAmount: normalizeNullableNumber(row.verification_amount),
+    verifiedAt: normalizeNullableString(row.verified_at),
+    lastContextGuildId: normalizeNullableString(row.last_context_guild_id),
   };
 }
 
@@ -180,4 +216,3 @@ export function mergeSavedMethodsWithStored(input: {
     return safeBTime - safeATime;
   });
 }
-

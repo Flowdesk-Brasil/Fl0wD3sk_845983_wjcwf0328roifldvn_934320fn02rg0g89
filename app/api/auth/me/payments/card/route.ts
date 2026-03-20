@@ -17,6 +17,13 @@ import {
   toQrDataUri,
 } from "@/lib/payments/mercadoPago";
 import { ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
+import {
+  attachRequestId,
+  createSecurityRequestContext,
+  enforceRequestRateLimit,
+  extendSecurityRequestContext,
+  logSecurityAuditEventSafe,
+} from "@/lib/security/requestSecurity";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 type CreateCardPaymentBody = {
@@ -512,15 +519,20 @@ async function createDraftOrderForCheckout(input: {
 }
 
 export async function POST(request: Request) {
+  const baseRequestContext = createSecurityRequestContext(request);
+  let auditContext = baseRequestContext;
+  const respond = (body: unknown, init?: ResponseInit) =>
+    attachRequestId(NextResponse.json(body, init), baseRequestContext.requestId);
+
   try {
     const securityResponse = ensureSameOriginJsonMutationRequest(request);
-    if (securityResponse) return securityResponse;
+    if (securityResponse) return attachRequestId(securityResponse, baseRequestContext.requestId);
 
     let body: CreateCardPaymentBody = {};
     try {
       body = (await request.json()) as CreateCardPaymentBody;
     } catch {
-      return NextResponse.json(
+      return respond(
         { ok: false, message: "Payload JSON invalido." },
         { status: 400 },
       );
@@ -536,28 +548,28 @@ export async function POST(request: Request) {
     const deviceSessionId = normalizeDeviceSessionId(body.deviceSessionId);
 
     if (!guildId) {
-      return NextResponse.json(
+      return respond(
         { ok: false, message: "Guild ID invalido para pagamento." },
         { status: 400 },
       );
     }
 
     if (!payerName) {
-      return NextResponse.json(
+      return respond(
         { ok: false, message: "Nome completo invalido para pagamento." },
         { status: 400 },
       );
     }
 
     if (!payerDocument) {
-      return NextResponse.json(
+      return respond(
         { ok: false, message: "CPF/CNPJ invalido para pagamento." },
         { status: 400 },
       );
     }
 
     if (!cardToken || !paymentMethodId || installments === null) {
-      return NextResponse.json(
+      return respond(
         { ok: false, message: "Dados do cartao invalidos para pagamento." },
         { status: 400 },
       );
@@ -565,13 +577,53 @@ export async function POST(request: Request) {
 
     const access = await ensureGuildAccess(guildId);
     if (!access.ok) {
-      return access.response;
+      return attachRequestId(access.response, baseRequestContext.requestId);
     }
+    auditContext = extendSecurityRequestContext(baseRequestContext, {
+      sessionId: access.context.sessionData.authSession.id,
+      userId: access.context.sessionData.authSession.user.id,
+      guildId,
+    });
+
+    const rateLimit = await enforceRequestRateLimit({
+      action: "payment_card_post",
+      windowMs: 10 * 60 * 1000,
+      maxAttempts: 8,
+      context: auditContext,
+    });
+    if (!rateLimit.ok) {
+      await logSecurityAuditEventSafe(auditContext, {
+        action: "payment_card_post",
+        outcome: "blocked",
+        metadata: {
+          reason: "rate_limit",
+          retryAfterSeconds: rateLimit.retryAfterSeconds,
+        },
+      });
+      const response = respond(
+        {
+          ok: false,
+          message:
+            "Muitas tentativas com cartao em pouco tempo. Aguarde alguns instantes antes de tentar novamente.",
+        },
+        { status: 429 },
+      );
+      response.headers.set("Retry-After", String(rateLimit.retryAfterSeconds));
+      return response;
+    }
+
+    await logSecurityAuditEventSafe(auditContext, {
+      action: "payment_card_post",
+      outcome: "started",
+      metadata: {
+        installments,
+      },
+    });
 
     const user = access.context.sessionData.authSession.user;
     const activeLicenseOrder = await getActiveLicenseOrderForGuild(guildId);
     if (activeLicenseOrder) {
-      return NextResponse.json({
+      return respond({
         ok: true,
         blockedByActiveLicense: true,
         licenseActive: true,
@@ -617,7 +669,7 @@ export async function POST(request: Request) {
         // nao bloquear resposta principal por falha de log
       }
 
-      return NextResponse.json({
+      return respond({
         ok: true,
         reused: true,
         alreadyProcessing: true,
@@ -648,7 +700,7 @@ export async function POST(request: Request) {
         // nao bloquear o fluxo em caso de falha ao gravar evento
       }
 
-      const response = NextResponse.json(
+      const response = respond(
         {
           ok: false,
           message: `Para reduzir bloqueio antifraude, aguarde ${retryCooldownSeconds}s antes de tentar novamente com cartao.`,
@@ -737,11 +789,11 @@ export async function POST(request: Request) {
     const externalReference = `flowdesk-order-${createdOrder.order_number}`;
     const discordPayerEmail = normalizePayerEmail(user.email);
     if (!discordPayerEmail) {
-      return NextResponse.json(
+      return respond(
         {
           ok: false,
           message:
-            "Nao foi possivel identificar um e-mail valido da conta Discord para pagamento com cartao.",
+              "Nao foi possivel identificar um e-mail valido da conta Discord para pagamento com cartao.",
         },
         { status: 400 },
       );
@@ -852,7 +904,16 @@ export async function POST(request: Request) {
         method: "card",
       });
 
-      return NextResponse.json({
+      await logSecurityAuditEventSafe(auditContext, {
+        action: "payment_card_post",
+        outcome: "succeeded",
+        metadata: {
+          orderNumber: updatedOrderResult.data.order_number,
+          status: updatedOrderResult.data.status,
+        },
+      });
+
+      return respond({
         ok: true,
         reused: false,
         order: toApiOrder(updatedOrderResult.data),
@@ -879,21 +940,21 @@ export async function POST(request: Request) {
       });
 
       if (isProviderDocumentErrorMessage(message)) {
-        return NextResponse.json(
+        return respond(
           { ok: false, message: "CPF/CNPJ invalido para pagamento." },
           { status: 400 },
         );
       }
 
       if (isProviderCardFieldErrorMessage(message)) {
-        return NextResponse.json(
+        return respond(
           { ok: false, message: "Dados do cartao invalidos para pagamento." },
           { status: 400 },
         );
       }
 
       if (isProviderPayerEmailErrorMessage(message)) {
-        return NextResponse.json(
+        return respond(
           {
             ok: false,
             message:
@@ -904,7 +965,7 @@ export async function POST(request: Request) {
       }
 
       if (isProviderInvalidUsersMessage(message)) {
-        return NextResponse.json(
+        return respond(
           {
             ok: false,
             message:
@@ -917,7 +978,14 @@ export async function POST(request: Request) {
       throw new Error(message);
     }
   } catch (error) {
-    return NextResponse.json(
+    await logSecurityAuditEventSafe(auditContext, {
+      action: "payment_card_post",
+      outcome: "failed",
+      metadata: {
+        message: error instanceof Error ? error.message : "unknown_error",
+      },
+    });
+    return respond(
       {
         ok: false,
         message:

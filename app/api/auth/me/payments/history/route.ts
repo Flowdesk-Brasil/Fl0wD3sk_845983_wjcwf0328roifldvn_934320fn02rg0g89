@@ -117,7 +117,7 @@ export async function GET() {
     const storedMethodsResult = await supabase
       .from("auth_user_payment_methods")
       .select(
-        "method_id, nickname, brand, first_six, last_four, exp_month, exp_year, is_active, created_at, updated_at",
+        "method_id, nickname, brand, first_six, last_four, exp_month, exp_year, is_active, verification_status, verification_status_detail, verification_amount, verified_at, last_context_guild_id, created_at, updated_at",
       )
       .eq("user_id", sessionData.authSession.user.id)
       .eq("is_active", true)

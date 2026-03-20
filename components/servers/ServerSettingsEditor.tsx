@@ -1,7 +1,6 @@
 ﻿"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Image from "next/image";
 import { ClientErrorBoundary } from "@/components/common/ClientErrorBoundary";
 import { ConfigStepMultiSelect } from "@/components/config/ConfigStepMultiSelect";
 import { ConfigStepSelect } from "@/components/config/ConfigStepSelect";
@@ -22,6 +21,7 @@ type PaymentStatus =
   | "cancelled"
   | "expired"
   | "failed";
+type CardBrand = "visa" | "mastercard" | "amex" | "elo" | null;
 
 type SelectOption = {
   id: string;
@@ -57,7 +57,45 @@ type SavedMethod = {
   lastUsedAt: string;
   timesUsed: number;
   nickname?: string | null;
+  verificationStatus?: "verified" | "pending" | "failed" | "cancelled";
+  verificationStatusDetail?: string | null;
+  verificationAmount?: number | null;
+  verifiedAt?: string | null;
+  lastContextGuildId?: string | null;
 };
+
+type MercadoPagoCardTokenPayload = {
+  id?: string;
+  payment_method_id?: string;
+  issuer_id?: string | number | null;
+  message?: string;
+  cause?: Array<{ description?: string }>;
+};
+
+type UnknownErrorObject = Record<string, unknown>;
+
+type MercadoPagoInstance = {
+  createCardToken: (input: {
+    cardNumber: string;
+    cardholderName: string;
+    identificationType: "CPF" | "CNPJ";
+    identificationNumber: string;
+    securityCode: string;
+    cardExpirationMonth: string;
+    cardExpirationYear: string;
+  }) => Promise<MercadoPagoCardTokenPayload>;
+};
+
+declare global {
+  interface Window {
+    MercadoPago?: new (
+      publicKey: string,
+      options?: { locale?: string },
+    ) => MercadoPagoInstance;
+    MP_DEVICE_SESSION_ID?: string;
+    flowdeskDeviceSessionId?: string;
+  }
+}
 
 type PlanSettings = {
   planCode: "pro";
@@ -65,26 +103,8 @@ type PlanSettings = {
   currency: string;
   recurringEnabled: boolean;
   recurringMethodId: string | null;
-  recurringMethod: {
-    id: string;
-    brand: string | null;
-    firstSix: string;
-    lastFour: string;
-    expMonth: number | null;
-    expYear: number | null;
-    lastUsedAt: string;
-    nickname?: string | null;
-  } | null;
-  availableMethods?: Array<{
-    id: string;
-    brand: string | null;
-    firstSix: string;
-    lastFour: string;
-    expMonth: number | null;
-    expYear: number | null;
-    lastUsedAt: string;
-    nickname?: string | null;
-  }>;
+  recurringMethod: SavedMethod | null;
+  availableMethods?: SavedMethod[];
   availableMethodsCount: number;
   createdAt: string | null;
   updatedAt: string | null;
@@ -147,6 +167,27 @@ function orderStatusBadge(status: PaymentStatus) {
   return { label: "Falhou", cls: "border-[#DB4646] bg-[rgba(219,70,70,0.2)] text-[#DB4646]" };
 }
 
+function methodVerificationBadge(status: SavedMethod["verificationStatus"]) {
+  if (status === "pending") {
+    return {
+      label: "Validacao pendente",
+      cls: "border-[#D8D8D8] bg-[rgba(216,216,216,0.12)] text-[#D8D8D8]",
+    };
+  }
+
+  if (status === "failed" || status === "cancelled") {
+    return {
+      label: "Nao liberado",
+      cls: "border-[#DB4646] bg-[rgba(219,70,70,0.2)] text-[#DB4646]",
+    };
+  }
+
+  return {
+    label: "Verificado",
+    cls: "border-[#6AE25A] bg-[rgba(106,226,90,0.2)] text-[#6AE25A]",
+  };
+}
+
 function cardBrandLabel(brand: string | null | undefined) {
   const normalized = normalizeBrandValue(brand);
   if (normalized === "visa") return "Visa";
@@ -191,6 +232,242 @@ function PaymentMethodIcon({
       }}
     />
   );
+}
+
+function resolveCardPublicKey() {
+  const candidates = [
+    process.env.NEXT_PUBLIC_MERCADO_PAGO_CARD_PUBLIC_KEY || null,
+    process.env.NEXT_PUBLIC_MERCADO_PAGO_CARD_PRODUCTION_PUBLIC_KEY || null,
+    process.env.NEXT_PUBLIC_MERCADO_PAGO_PUBLIC_KEY || null,
+    process.env.NEXT_PUBLIC_MERCADO_PAGO_CARD_TEST_PUBLIC_KEY || null,
+  ]
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .filter(Boolean);
+
+  const key =
+    candidates.find((value) => !value.startsWith("TEST-")) ||
+    candidates[0] ||
+    null;
+  if (!key) return null;
+  if (!key.startsWith("APP_USR-") && !key.startsWith("TEST-")) {
+    return null;
+  }
+  return key;
+}
+
+function resolveCardPaymentMethodIdFromBrand(brand: CardBrand) {
+  switch (brand) {
+    case "visa":
+      return "visa";
+    case "mastercard":
+      return "master";
+    case "amex":
+      return "amex";
+    case "elo":
+      return "elo";
+    default:
+      return null;
+  }
+}
+
+function parseMercadoPagoCardTokenError(payload: MercadoPagoCardTokenPayload) {
+  if (typeof payload.message === "string" && payload.message.trim()) {
+    return payload.message.trim();
+  }
+
+  if (Array.isArray(payload.cause) && payload.cause.length > 0) {
+    const description = payload.cause[0]?.description;
+    if (typeof description === "string" && description.trim()) {
+      return description.trim();
+    }
+  }
+
+  return null;
+}
+
+function parseUnknownErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    const message = error.message?.trim();
+    return message || null;
+  }
+
+  if (typeof error === "string") {
+    const message = error.trim();
+    return message || null;
+  }
+
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+
+  const data = error as UnknownErrorObject;
+  const directMessage = data.message;
+  if (typeof directMessage === "string" && directMessage.trim()) {
+    return directMessage.trim();
+  }
+
+  const errorMessage = data.errorMessage;
+  if (typeof errorMessage === "string" && errorMessage.trim()) {
+    return errorMessage.trim();
+  }
+
+  const cause = data.cause;
+  if (Array.isArray(cause) && cause.length > 0) {
+    const firstCause = cause[0];
+    if (firstCause && typeof firstCause === "object") {
+      const description = (firstCause as UnknownErrorObject).description;
+      if (typeof description === "string" && description.trim()) {
+        return description.trim();
+      }
+    }
+  }
+
+  return null;
+}
+
+async function loadMercadoPagoSdk() {
+  if (typeof window === "undefined") {
+    throw new Error("SDK de cartao indisponivel no servidor.");
+  }
+
+  if (window.MercadoPago) {
+    return;
+  }
+
+  if (!mercadoPagoSdkPromise) {
+    mercadoPagoSdkPromise = new Promise<void>((resolve, reject) => {
+      const existingScript = document.querySelector<HTMLScriptElement>(
+        "script[data-mp-sdk='v2']",
+      );
+
+      if (existingScript) {
+        existingScript.addEventListener("load", () => resolve(), {
+          once: true,
+        });
+        existingScript.addEventListener(
+          "error",
+          () => reject(new Error("Falha ao carregar SDK do Mercado Pago.")),
+          { once: true },
+        );
+        return;
+      }
+
+      const script = document.createElement("script");
+      script.src = MERCADO_PAGO_SDK_URL;
+      script.async = true;
+      script.defer = true;
+      script.dataset.mpSdk = "v2";
+      script.onload = () => resolve();
+      script.onerror = () =>
+        reject(new Error("Falha ao carregar SDK do Mercado Pago."));
+
+      document.head.appendChild(script);
+    });
+  }
+
+  await mercadoPagoSdkPromise;
+
+  if (!window.MercadoPago) {
+    throw new Error("SDK do Mercado Pago nao carregou corretamente.");
+  }
+}
+
+async function loadMercadoPagoSecuritySdk() {
+  if (typeof window === "undefined") return;
+
+  if (!mercadoPagoSecuritySdkPromise) {
+    mercadoPagoSecuritySdkPromise = new Promise<void>((resolve, reject) => {
+      const existingScript = document.querySelector<HTMLScriptElement>(
+        "script[data-mp-sdk='security-v2']",
+      );
+
+      if (existingScript) {
+        if (window.MP_DEVICE_SESSION_ID || window.flowdeskDeviceSessionId) {
+          resolve();
+          return;
+        }
+
+        existingScript.addEventListener("load", () => resolve(), {
+          once: true,
+        });
+        existingScript.addEventListener(
+          "error",
+          () =>
+            reject(
+              new Error(
+                "Falha ao carregar modulo de seguranca do Mercado Pago.",
+              ),
+            ),
+          { once: true },
+        );
+        return;
+      }
+
+      const script = document.createElement("script");
+      script.src = MERCADO_PAGO_SECURITY_SDK_URL;
+      script.async = true;
+      script.defer = true;
+      script.dataset.mpSdk = "security-v2";
+      script.setAttribute("view", "checkout");
+      script.setAttribute("output", "flowdeskDeviceSessionId");
+      script.onload = () => resolve();
+      script.onerror = () =>
+        reject(
+          new Error("Falha ao carregar modulo de seguranca do Mercado Pago."),
+        );
+
+      document.head.appendChild(script);
+    });
+  }
+
+  await mercadoPagoSecuritySdkPromise;
+}
+
+function resolveMercadoPagoDeviceSessionId() {
+  if (typeof window === "undefined") return null;
+
+  const candidates = [
+    window.MP_DEVICE_SESSION_ID,
+    window.flowdeskDeviceSessionId,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+    const normalized = candidate.trim();
+    if (!normalized) continue;
+    if (!/^[a-zA-Z0-9:_-]{8,200}$/.test(normalized)) continue;
+    return normalized;
+  }
+
+  return null;
+}
+
+function formatDocumentInput(value: string) {
+  const digits = normalizeBrazilDocumentDigits(value);
+
+  if (digits.length <= 11) {
+    const p1 = digits.slice(0, 3);
+    const p2 = digits.slice(3, 6);
+    const p3 = digits.slice(6, 9);
+    const p4 = digits.slice(9, 11);
+
+    if (digits.length <= 3) return p1;
+    if (digits.length <= 6) return `${p1}.${p2}`;
+    if (digits.length <= 9) return `${p1}.${p2}.${p3}`;
+    return `${p1}.${p2}.${p3}-${p4}`;
+  }
+
+  const c1 = digits.slice(0, 2);
+  const c2 = digits.slice(2, 5);
+  const c3 = digits.slice(5, 8);
+  const c4 = digits.slice(8, 12);
+  const c5 = digits.slice(12, 14);
+
+  if (digits.length <= 2) return c1;
+  if (digits.length <= 5) return `${c1}.${c2}`;
+  if (digits.length <= 8) return `${c1}.${c2}.${c3}`;
+  if (digits.length <= 12) return `${c1}.${c2}.${c3}/${c4}`;
+  return `${c1}.${c2}.${c3}/${c4}-${c5}`;
 }
 
 function formatDateTime(value: string | null) {
@@ -256,6 +533,11 @@ const ELO_PREFIXES = [
   "655000",
   "655019",
 ];
+
+const MERCADO_PAGO_SDK_URL = "https://sdk.mercadopago.com/js/v2";
+const MERCADO_PAGO_SECURITY_SDK_URL = "https://www.mercadopago.com/v2/security.js";
+let mercadoPagoSdkPromise: Promise<void> | null = null;
+let mercadoPagoSecuritySdkPromise: Promise<void> | null = null;
 
 function normalizeCardDigits(value: string) {
   return value.replace(/\D/g, "").slice(0, 19);
@@ -378,6 +660,16 @@ function toSafeNumber(value: unknown) {
   return 0;
 }
 
+function toSafeNullableNumber(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 function toSafePaymentStatus(value: unknown): PaymentStatus {
   if (value === "approved") return "approved";
   if (value === "pending") return "pending";
@@ -385,6 +677,14 @@ function toSafePaymentStatus(value: unknown): PaymentStatus {
   if (value === "cancelled") return "cancelled";
   if (value === "expired") return "expired";
   return "failed";
+}
+
+function toSafeVerificationStatus(value: unknown): SavedMethod["verificationStatus"] {
+  if (value === "verified") return "verified";
+  if (value === "pending") return "pending";
+  if (value === "failed") return "failed";
+  if (value === "cancelled") return "cancelled";
+  return "verified";
 }
 
 function sanitizePaymentOrder(input: unknown): PaymentOrder | null {
@@ -453,6 +753,11 @@ function sanitizeSavedMethod(input: unknown): SavedMethod | null {
     lastUsedAt,
     timesUsed: timesUsed === null ? 0 : Math.max(0, timesUsed),
     nickname: toSafeNullableText(method.nickname),
+    verificationStatus: toSafeVerificationStatus(method.verificationStatus),
+    verificationStatusDetail: toSafeNullableText(method.verificationStatusDetail),
+    verificationAmount: toSafeNullableNumber(method.verificationAmount),
+    verifiedAt: toSafeNullableText(method.verifiedAt),
+    lastContextGuildId: toSafeNullableText(method.lastContextGuildId),
   };
 }
 
@@ -504,6 +809,12 @@ export function ServerSettingsEditor({
   const [methodActionMessage, setMethodActionMessage] = useState<string | null>(null);
   const [isAddMethodModalOpen, setIsAddMethodModalOpen] = useState(false);
   const [isAddingMethod, setIsAddingMethod] = useState(false);
+  const [isAddMethodSdkLoading, setIsAddMethodSdkLoading] = useState(false);
+  const [isAddMethodSdkReady, setIsAddMethodSdkReady] = useState(false);
+  const [addMethodFlowState, setAddMethodFlowState] = useState<
+    "idle" | "preparing" | "validating" | "approved" | "rejected"
+  >("idle");
+  const [addMethodStatusMessage, setAddMethodStatusMessage] = useState<string | null>(null);
   const [addMethodError, setAddMethodError] = useState<string | null>(null);
   const [addMethodForm, setAddMethodForm] = useState({
     cardNumber: "",
@@ -537,6 +848,10 @@ export function ServerSettingsEditor({
     setMethodActionMessage(null);
     setIsAddMethodModalOpen(false);
     setIsAddingMethod(false);
+    setIsAddMethodSdkLoading(false);
+    setIsAddMethodSdkReady(false);
+    setAddMethodFlowState("idle");
+    setAddMethodStatusMessage(null);
     setAddMethodError(null);
     setAddMethodForm({
       cardNumber: "",
@@ -576,6 +891,52 @@ export function ServerSettingsEditor({
       document.removeEventListener("keydown", handleEscape);
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function prepareAddMethodSdk() {
+      if (!isAddMethodModalOpen) return;
+
+      setIsAddMethodSdkLoading(true);
+      setIsAddMethodSdkReady(false);
+      setAddMethodFlowState("preparing");
+      setAddMethodStatusMessage("Preparando validacao segura do cartao...");
+      setAddMethodError(null);
+
+      try {
+        await loadMercadoPagoSecuritySdk();
+        await loadMercadoPagoSdk();
+        if (!cancelled) {
+          setIsAddMethodSdkReady(true);
+          setAddMethodFlowState("idle");
+          setAddMethodStatusMessage(null);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setIsAddMethodSdkReady(false);
+          setAddMethodFlowState("rejected");
+          setAddMethodError(
+            parseUnknownErrorMessage(error) ||
+              "Nao foi possivel preparar a validacao segura do cartao.",
+          );
+          setAddMethodStatusMessage(
+            "Falha ao preparar a validacao segura do cartao.",
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setIsAddMethodSdkLoading(false);
+        }
+      }
+    }
+
+    void prepareAddMethodSdk();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAddMethodModalOpen]);
 
   useEffect(() => {
     let mounted = true;
@@ -778,6 +1139,7 @@ export function ServerSettingsEditor({
 
     return methods.filter((method) => {
       const relatedOrders = cardOrdersByMethod.get(method.id) || [];
+      const fallbackGuildId = method.lastContextGuildId || null;
 
       if (methodStatusFilter !== "all") {
         const matchesStatus = relatedOrders.some((order) => order.status === methodStatusFilter);
@@ -786,7 +1148,9 @@ export function ServerSettingsEditor({
 
       if (methodGuildFilter !== "all") {
         const matchesGuild = relatedOrders.some((order) => order.guildId === methodGuildFilter);
-        if (!matchesGuild) return false;
+        const matchesFallbackGuild =
+          relatedOrders.length === 0 && fallbackGuildId === methodGuildFilter;
+        if (!matchesGuild && !matchesFallbackGuild) return false;
       }
 
       if (!search) return true;
@@ -797,8 +1161,21 @@ export function ServerSettingsEditor({
       const relatedServerNames = relatedOrders
         .map((order) => serverMap.get(order.guildId)?.guildName || order.guildId)
         .join(" ");
+      const fallbackServerName = fallbackGuildId
+        ? serverMap.get(fallbackGuildId)?.guildName || fallbackGuildId
+        : "";
       const relatedStatuses = relatedOrders.map((order) => order.status).join(" ");
-      const haystack = normalizeSearch(`${brandLabel} ${nickname} ${masked} ${relatedServerNames} ${relatedStatuses}`);
+      const verificationLabel =
+        method.verificationStatus === "verified"
+          ? "verificado"
+          : method.verificationStatus === "pending"
+            ? "pendente"
+            : method.verificationStatus === "failed"
+              ? "falhou"
+              : "cancelado";
+      const haystack = normalizeSearch(
+        `${brandLabel} ${nickname} ${masked} ${relatedServerNames} ${fallbackServerName} ${relatedStatuses} ${verificationLabel}`,
+      );
       return haystack.includes(search);
     });
   }, [
@@ -1109,14 +1486,99 @@ export function ServerSettingsEditor({
   );
 
   const handleAddMethodSubmit = useCallback(async () => {
-    if (!addMethodCanSubmit || isAddingMethod) return;
+    if (!addMethodCanSubmit || isAddingMethod || isAddMethodSdkLoading) return;
+
+    const holderName = addMethodForm.holderName.trim().replace(/\s+/g, " ");
+    const documentType = resolveBrazilDocumentType(addMethodDocumentDigits);
+    const publicKey = resolveCardPublicKey();
+    const fallbackPaymentMethodId =
+      resolveCardPaymentMethodIdFromBrand(addMethodCardBrand);
+
+    if (!isAddMethodSdkReady) {
+      setAddMethodFlowState("preparing");
+      setAddMethodStatusMessage(
+        "Aguardando o ambiente seguro do cartao ficar pronto...",
+      );
+      setAddMethodError(
+        "A validacao segura do cartao ainda esta sendo preparada. Aguarde alguns instantes.",
+      );
+      return;
+    }
+
+    if (!documentType) {
+      setAddMethodError("CPF/CNPJ invalido para validar o cartao.");
+      return;
+    }
+
+    if (!publicKey) {
+      setAddMethodError(
+        "Chave publica do Mercado Pago nao configurada para validar o cartao.",
+      );
+      return;
+    }
+
+    if (!fallbackPaymentMethodId) {
+      setAddMethodError("Nao foi possivel identificar a bandeira do cartao.");
+      return;
+    }
 
     setIsAddingMethod(true);
     setAddMethodError(null);
     setMethodActionMessage(null);
     setPaymentsError(null);
+    setAddMethodFlowState("validating");
+    setAddMethodStatusMessage(
+      "Validando a integridade do cartao com autorizacao temporaria...",
+    );
 
     try {
+      await loadMercadoPagoSecuritySdk();
+      await loadMercadoPagoSdk();
+
+      if (!window.MercadoPago) {
+        throw new Error("SDK do Mercado Pago indisponivel para validar o cartao.");
+      }
+
+      const mercadoPago = new window.MercadoPago(publicKey, {
+        locale: "pt-BR",
+      });
+
+      let tokenPayload: MercadoPagoCardTokenPayload;
+      try {
+        tokenPayload = await mercadoPago.createCardToken({
+          cardNumber: addMethodCardDigits,
+          cardholderName: holderName,
+          identificationType: documentType,
+          identificationNumber: addMethodDocumentDigits,
+          securityCode: addMethodCvvDigits,
+          cardExpirationMonth: addMethodExpiryDigits.slice(0, 2),
+          cardExpirationYear: `20${addMethodExpiryDigits.slice(2, 4)}`,
+        });
+      } catch (tokenizationError) {
+        throw new Error(
+          parseUnknownErrorMessage(tokenizationError) ||
+            "Falha ao tokenizar o cartao para validacao.",
+        );
+      }
+
+      const cardToken = tokenPayload?.id?.trim() || null;
+      if (!cardToken) {
+        throw new Error(
+          parseMercadoPagoCardTokenError(tokenPayload) ||
+            "Falha ao tokenizar o cartao.",
+        );
+      }
+
+      const paymentMethodId =
+        tokenPayload?.payment_method_id?.trim()?.toLowerCase() ||
+        fallbackPaymentMethodId;
+      const issuerId =
+        tokenPayload?.issuer_id !== undefined &&
+        tokenPayload?.issuer_id !== null &&
+        String(tokenPayload.issuer_id).trim()
+          ? String(tokenPayload.issuer_id).trim()
+          : null;
+
       const expMonth = Number(addMethodExpiryDigits.slice(0, 2));
       const expYear = Number(addMethodExpiryDigits.slice(2, 4)) + 2000;
       const nickname = addMethodForm.nickname.trim().replace(/\s+/g, " ");
@@ -1132,6 +1594,12 @@ export function ServerSettingsEditor({
           expMonth: Number.isInteger(expMonth) ? expMonth : null,
           expYear: Number.isInteger(expYear) ? expYear : null,
           nickname,
+          payerName: holderName,
+          payerDocument: addMethodDocumentDigits,
+          cardToken,
+          paymentMethodId,
+          issuerId,
+          deviceSessionId: resolveMercadoPagoDeviceSessionId(),
         }),
       });
 
@@ -1139,6 +1607,11 @@ export function ServerSettingsEditor({
         ok: boolean;
         message?: string;
         method?: SavedMethod;
+        alreadyVerified?: boolean;
+        verification?: {
+          amount?: number;
+          currency?: string;
+        };
       };
 
       if (!response.ok || !payload.ok || !payload.method) {
@@ -1183,7 +1656,13 @@ export function ServerSettingsEditor({
                 expMonth: addedMethod.expMonth,
                 expYear: addedMethod.expYear,
                 lastUsedAt: addedMethod.lastUsedAt,
+                timesUsed: addedMethod.timesUsed ?? 0,
                 nickname: addedMethod.nickname || null,
+                verificationStatus: addedMethod.verificationStatus,
+                verificationStatusDetail: addedMethod.verificationStatusDetail,
+                verificationAmount: addedMethod.verificationAmount,
+                verifiedAt: addedMethod.verifiedAt,
+                lastContextGuildId: addedMethod.lastContextGuildId,
               },
               ...currentMethods,
             ];
@@ -1203,11 +1682,35 @@ export function ServerSettingsEditor({
         document: "",
         nickname: "",
       });
+      setMethodSearch("");
+      setMethodStatusFilter("all");
+      setMethodGuildFilter(guildId);
+      setAddMethodFlowState("approved");
+      setMethodActionMessage(
+        payload.alreadyVerified
+          ? "Cartao reativado com sucesso."
+          : payload.verification?.amount
+            ? `Cartao validado e salvo com sucesso. Autorizacao temporaria de ${formatAmount(
+                payload.verification.amount,
+                payload.verification.currency || "BRL",
+              )} revertida automaticamente.`
+            : "Cartao validado e salvo com sucesso.",
+      );
+      setAddMethodStatusMessage(
+        payload.alreadyVerified
+          ? "Cartao reconhecido e liberado para uso."
+          : "Cartao aprovado na validacao e liberado para uso no sistema.",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 900));
       setIsAddMethodModalOpen(false);
-      setMethodActionMessage("Metodo adicionado com sucesso.");
     } catch (error) {
+      setAddMethodFlowState("rejected");
+      setAddMethodStatusMessage(
+        "Nao foi possivel concluir a validacao segura deste cartao.",
+      );
       setAddMethodError(
-        error instanceof Error ? error.message : "Erro ao adicionar metodo de pagamento.",
+        parseUnknownErrorMessage(error) ||
+          "Erro ao adicionar metodo de pagamento.",
       );
     } finally {
       setIsAddingMethod(false);
@@ -1216,9 +1719,14 @@ export function ServerSettingsEditor({
     addMethodCanSubmit,
     addMethodCardBrand,
     addMethodCardDigits,
+    addMethodCvvDigits,
+    addMethodDocumentDigits,
     addMethodExpiryDigits,
+    addMethodForm.holderName,
     addMethodForm.nickname,
     guildId,
+    isAddMethodSdkLoading,
+    isAddMethodSdkReady,
     isAddingMethod,
   ]);
 
@@ -1562,6 +2070,9 @@ export function ServerSettingsEditor({
                     const brandLabel = cardBrandLabel(method.brand);
                     const masked = `${method.firstSix} ****** ${method.lastFour}`;
                     const isDeleting = deletingMethodId === method.id;
+                    const verificationBadge = methodVerificationBadge(
+                      method.verificationStatus,
+                    );
                     return (
                       <article key={method.id} className="rounded-[3px] border border-[#2E2E2E] bg-[#0A0A0A] px-4 py-3">
                         <div className="flex items-start justify-between gap-2">
@@ -1570,7 +2081,12 @@ export function ServerSettingsEditor({
                               <PaymentMethodIcon src={cardBrandIcon(method.brand)} alt={brandLabel} size={32} />
                             </span>
                             <div className="min-w-0">
-                              <p className="truncate text-[15px] text-[#D8D8D8]">{method.nickname?.trim() || brandLabel}</p>
+                              <div className="flex items-center gap-2">
+                                <p className="truncate text-[15px] text-[#D8D8D8]">{method.nickname?.trim() || brandLabel}</p>
+                                <span className={`inline-flex shrink-0 rounded-[3px] border px-[8px] py-[3px] text-[10px] ${verificationBadge.cls}`}>
+                                  {verificationBadge.label}
+                                </span>
+                              </div>
                               <p className="truncate text-[14px] text-[#777777]">{masked}</p>
                             </div>
                           </div>
@@ -1662,7 +2178,18 @@ export function ServerSettingsEditor({
                           <span>
                             Ultimo uso: {formatDateTime(method.lastUsedAt)}
                           </span>
+                          <span>
+                            {method.verifiedAt
+                              ? `Validado em ${formatDateTime(method.verifiedAt)}`
+                              : "Validacao recente"}
+                          </span>
                         </div>
+
+                        {method.verificationStatusDetail ? (
+                          <p className="mt-2 text-[11px] text-[#686868]">
+                            {method.verificationStatusDetail}
+                          </p>
+                        ) : null}
                       </article>
                     );
                   })}
@@ -1676,6 +2203,8 @@ export function ServerSettingsEditor({
               <button
                 type="button"
                 onClick={() => {
+                  setAddMethodFlowState("idle");
+                  setAddMethodStatusMessage(null);
                   setAddMethodError(null);
                   setIsAddMethodModalOpen(true);
                 }}
@@ -1870,6 +2399,8 @@ export function ServerSettingsEditor({
               type="button"
               onClick={() => {
                 if (isAddingMethod) return;
+                setAddMethodFlowState("idle");
+                setAddMethodStatusMessage(null);
                 setIsAddMethodModalOpen(false);
               }}
               className="absolute right-4 top-4 inline-flex h-[28px] w-[28px] items-center justify-center rounded-[3px] text-[#8A8A8A] transition-colors hover:text-[#D8D8D8]"
@@ -1884,8 +2415,42 @@ export function ServerSettingsEditor({
 
             <div className="mt-6 h-[1px] w-full bg-[#242424]" />
 
+            {addMethodFlowState !== "idle" || addMethodStatusMessage ? (
+              <div
+                className={`mt-4 flex min-h-[46px] items-center gap-3 rounded-[3px] border px-4 py-3 ${
+                  addMethodFlowState === "approved"
+                    ? "border-[#6AE25A] bg-[rgba(106,226,90,0.12)] text-[#9FE88F]"
+                    : addMethodFlowState === "rejected"
+                      ? "border-[#DB4646] bg-[rgba(219,70,70,0.12)] text-[#F09A9A]"
+                      : "border-[#2E2E2E] bg-[#0F0F0F] text-[#D8D8D8]"
+                }`}
+              >
+                <span className="inline-flex h-[22px] w-[22px] items-center justify-center">
+                  {addMethodFlowState === "approved" ? (
+                    <span className="text-[14px] font-semibold text-[#6AE25A]">OK</span>
+                  ) : addMethodFlowState === "rejected" ? (
+                    <span className="text-[14px] font-semibold text-[#DB4646]">ER</span>
+                  ) : (
+                    <ButtonLoader
+                      size={18}
+                      colorClassName="text-[#D8D8D8]"
+                    />
+                  )}
+                </span>
+                <p className="text-[12px]">
+                  {addMethodStatusMessage ||
+                    (addMethodFlowState === "preparing"
+                      ? "Preparando ambiente seguro..."
+                      : "Validando cartao...")}
+                </p>
+              </div>
+            ) : null}
+
             <div className="mt-6">
               <p className="mb-3 text-[12px] text-[#D8D8D8]">Dados do Cartao</p>
+              <p className="mb-3 text-[11px] text-[#8A8A8A]">
+                O cartao so e liberado depois de uma validacao segura com autorizacao temporaria e reversao automatica.
+              </p>
 
               <div className="grid grid-cols-1 gap-3">
                 <div className="relative">
@@ -1963,7 +2528,7 @@ export function ServerSettingsEditor({
                     const digits = normalizeBrazilDocumentDigits(nextValue).slice(0, 14);
                     setAddMethodForm((current) => ({
                       ...current,
-                      document: digits,
+                      document: formatDocumentInput(digits),
                     }));
                   }}
                   placeholder="CPF/CNPJ"
@@ -1991,10 +2556,14 @@ export function ServerSettingsEditor({
               onClick={() => {
                 void handleAddMethodSubmit();
               }}
-              disabled={!addMethodCanSubmit || isAddingMethod}
+              disabled={!addMethodCanSubmit || isAddingMethod || !isAddMethodSdkReady || isAddMethodSdkLoading}
               className="mt-5 flex h-[51px] w-full items-center justify-center rounded-[3px] bg-[#D8D8D8] text-[16px] font-medium text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {isAddingMethod ? <ButtonLoader size={24} /> : "Confirmar pagamento"}
+              {isAddingMethod || isAddMethodSdkLoading ? (
+                <ButtonLoader size={24} />
+              ) : (
+                "Validar e salvar cartao"
+              )}
             </button>
 
             {addMethodError ? (

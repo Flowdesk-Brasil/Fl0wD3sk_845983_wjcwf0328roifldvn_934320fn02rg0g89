@@ -10,6 +10,13 @@ import {
 } from "@/lib/auth/discord";
 import { createUserSessionFromDiscordUser } from "@/lib/auth/session";
 import { applyNoStoreHeaders } from "@/lib/security/http";
+import {
+  attachRequestId,
+  createSecurityRequestContext,
+  enforceRequestRateLimit,
+  extendSecurityRequestContext,
+  logSecurityAuditEventSafe,
+} from "@/lib/security/requestSecurity";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 function buildLoginRedirect(request: NextRequest) {
@@ -55,6 +62,37 @@ async function hasApprovedServerForUser(userId: number) {
 }
 
 export async function GET(request: NextRequest) {
+  const initialRequestContext = createSecurityRequestContext(request);
+  const rateLimit = await enforceRequestRateLimit({
+    action: "auth_discord_callback",
+    windowMs: 10 * 60 * 1000,
+    maxAttempts: 24,
+    context: initialRequestContext,
+  });
+
+  if (!rateLimit.ok) {
+    await logSecurityAuditEventSafe(initialRequestContext, {
+      action: "auth_discord_callback",
+      outcome: "blocked",
+      metadata: {
+        reason: "rate_limit",
+        retryAfterSeconds: rateLimit.retryAfterSeconds,
+      },
+    });
+
+    const response = applyNoStoreHeaders(
+      NextResponse.redirect(buildLoginRedirect(request)),
+    );
+    response.headers.set("Retry-After", String(rateLimit.retryAfterSeconds));
+    clearOAuthCookies(response);
+    return attachRequestId(response, initialRequestContext.requestId);
+  }
+
+  await logSecurityAuditEventSafe(initialRequestContext, {
+    action: "auth_discord_callback",
+    outcome: "started",
+  });
+
   const code = request.nextUrl.searchParams.get("code");
   const state = request.nextUrl.searchParams.get("state");
   const stateCookie = request.cookies.get(authConfig.oauthStateCookieName)?.value;
@@ -65,7 +103,14 @@ export async function GET(request: NextRequest) {
   if (!code || !state || !stateCookie || !redirectUriCookie || state !== stateCookie) {
     const response = applyNoStoreHeaders(NextResponse.redirect(buildLoginRedirect(request)));
     clearOAuthCookies(response);
-    return response;
+    await logSecurityAuditEventSafe(initialRequestContext, {
+      action: "auth_discord_callback",
+      outcome: "failed",
+      metadata: {
+        reason: "invalid_oauth_state_or_code",
+      },
+    });
+    return attachRequestId(response, initialRequestContext.requestId);
   }
 
   try {
@@ -105,13 +150,35 @@ export async function GET(request: NextRequest) {
       secure: isSecureRequest(request),
       maxAge: authConfig.sessionTtlHours * 60 * 60,
       path: "/",
+      priority: "high",
     });
 
     clearOAuthCookies(response);
-    return response;
+    const authenticatedContext = extendSecurityRequestContext(
+      initialRequestContext,
+      {
+        userId: user.id,
+      },
+    );
+    await logSecurityAuditEventSafe(authenticatedContext, {
+      action: "auth_discord_callback",
+      outcome: "succeeded",
+      metadata: {
+        redirectTo: successLocation,
+        hasApprovedServer,
+      },
+    });
+    return attachRequestId(response, initialRequestContext.requestId);
   } catch {
     const response = applyNoStoreHeaders(NextResponse.redirect(buildLoginRedirect(request)));
     clearOAuthCookies(response);
-    return response;
+    await logSecurityAuditEventSafe(initialRequestContext, {
+      action: "auth_discord_callback",
+      outcome: "failed",
+      metadata: {
+        reason: "oauth_exchange_failed",
+      },
+    });
+    return attachRequestId(response, initialRequestContext.requestId);
   }
 }

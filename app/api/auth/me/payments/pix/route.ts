@@ -18,6 +18,13 @@ import {
   type MercadoPagoPaymentResponse,
 } from "@/lib/payments/mercadoPago";
 import { ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
+import {
+  attachRequestId,
+  createSecurityRequestContext,
+  enforceRequestRateLimit,
+  extendSecurityRequestContext,
+  logSecurityAuditEventSafe,
+} from "@/lib/security/requestSecurity";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 type CreatePixPaymentBody = {
@@ -627,15 +634,20 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const baseRequestContext = createSecurityRequestContext(request);
+  let auditContext = baseRequestContext;
+  const respond = (body: unknown, init?: ResponseInit) =>
+    attachRequestId(NextResponse.json(body, init), baseRequestContext.requestId);
+
   try {
     const securityResponse = ensureSameOriginJsonMutationRequest(request);
-    if (securityResponse) return securityResponse;
+    if (securityResponse) return attachRequestId(securityResponse, baseRequestContext.requestId);
 
     let body: CreatePixPaymentBody = {};
     try {
       body = (await request.json()) as CreatePixPaymentBody;
     } catch {
-      return NextResponse.json(
+      return respond(
         { ok: false, message: "Payload JSON invalido." },
         { status: 400 },
       );
@@ -646,21 +658,21 @@ export async function POST(request: Request) {
     const payerDocument = normalizePayerDocument(body.payerDocument);
 
     if (!guildId) {
-      return NextResponse.json(
+      return respond(
         { ok: false, message: "Guild ID invalido para pagamento." },
         { status: 400 },
       );
     }
 
     if (!payerName) {
-      return NextResponse.json(
+      return respond(
         { ok: false, message: "Nome completo invalido para pagamento." },
         { status: 400 },
       );
     }
 
     if (!payerDocument) {
-      return NextResponse.json(
+      return respond(
         { ok: false, message: "CPF/CNPJ invalido para pagamento." },
         { status: 400 },
       );
@@ -668,13 +680,50 @@ export async function POST(request: Request) {
 
     const access = await ensureGuildAccess(guildId);
     if (!access.ok) {
-      return access.response;
+      return attachRequestId(access.response, baseRequestContext.requestId);
     }
+    auditContext = extendSecurityRequestContext(baseRequestContext, {
+      sessionId: access.context.sessionData.authSession.id,
+      userId: access.context.sessionData.authSession.user.id,
+      guildId,
+    });
+
+    const rateLimit = await enforceRequestRateLimit({
+      action: "payment_pix_post",
+      windowMs: 10 * 60 * 1000,
+      maxAttempts: 10,
+      context: auditContext,
+    });
+    if (!rateLimit.ok) {
+      await logSecurityAuditEventSafe(auditContext, {
+        action: "payment_pix_post",
+        outcome: "blocked",
+        metadata: {
+          reason: "rate_limit",
+          retryAfterSeconds: rateLimit.retryAfterSeconds,
+        },
+      });
+      const response = respond(
+        {
+          ok: false,
+          message:
+            "Muitas tentativas de gerar PIX em pouco tempo. Aguarde alguns instantes.",
+        },
+        { status: 429 },
+      );
+      response.headers.set("Retry-After", String(rateLimit.retryAfterSeconds));
+      return response;
+    }
+
+    await logSecurityAuditEventSafe(auditContext, {
+      action: "payment_pix_post",
+      outcome: "started",
+    });
 
     const user = access.context.sessionData.authSession.user;
     const activeLicenseOrder = await getActiveLicenseOrderForGuild(guildId);
     if (activeLicenseOrder) {
-      return NextResponse.json({
+      return respond({
         ok: true,
         blockedByActiveLicense: true,
         licenseActive: true,
@@ -693,7 +742,7 @@ export async function POST(request: Request) {
       latestOrder.provider_qr_code &&
       Date.now() - new Date(latestOrder.created_at).getTime() < PENDING_REUSE_WINDOW_MS
     ) {
-      return NextResponse.json({
+      return respond({
         ok: true,
         reused: true,
         order: toApiOrder(latestOrder),
@@ -835,7 +884,16 @@ export async function POST(request: Request) {
         providerStatusDetail: mercadoPagoPayment.status_detail || null,
       });
 
-      return NextResponse.json({
+      await logSecurityAuditEventSafe(auditContext, {
+        action: "payment_pix_post",
+        outcome: "succeeded",
+        metadata: {
+          orderNumber: updatedOrderResult.data.order_number,
+          status: updatedOrderResult.data.status,
+        },
+      });
+
+      return respond({
         ok: true,
         reused: false,
         order: toApiOrder(updatedOrderResult.data),
@@ -931,7 +989,7 @@ export async function POST(request: Request) {
       });
 
       if (isProviderDocumentErrorMessage(message)) {
-        return NextResponse.json(
+        return respond(
           { ok: false, message: "CPF/CNPJ invalido para pagamento." },
           { status: 400 },
         );
@@ -940,7 +998,14 @@ export async function POST(request: Request) {
       throw new Error(message);
     }
   } catch (error) {
-    return NextResponse.json(
+    await logSecurityAuditEventSafe(auditContext, {
+      action: "payment_pix_post",
+      outcome: "failed",
+      metadata: {
+        message: error instanceof Error ? error.message : "unknown_error",
+      },
+    });
+    return respond(
       {
         ok: false,
         message:
