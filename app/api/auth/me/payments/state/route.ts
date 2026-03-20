@@ -26,6 +26,7 @@ type PaymentOrderStateRecord = {
 
 const LICENSE_VALIDITY_DAYS = 30;
 const LICENSE_VALIDITY_MS = LICENSE_VALIDITY_DAYS * 24 * 60 * 60 * 1000;
+const STALE_CARD_REDIRECT_PENDING_MS = 20 * 60 * 1000;
 const PAYMENT_STATE_SELECT_COLUMNS =
   "id, order_number, guild_id, payment_method, status, provider_payment_id, provider_status, provider_status_detail, provider_qr_code, paid_at, expires_at, created_at, updated_at";
 
@@ -70,6 +71,41 @@ function toOrderState(order: PaymentOrderStateRecord) {
     createdAt: order.created_at,
     updatedAt: order.updated_at,
   };
+}
+
+function isStaleHostedCardPendingOrder(order: PaymentOrderStateRecord) {
+  if (order.payment_method !== "card") return false;
+  if (order.status !== "pending") return false;
+  if (order.provider_payment_id) return false;
+
+  const createdAtMs = Date.parse(order.created_at);
+  if (!Number.isFinite(createdAtMs)) return false;
+
+  return Date.now() - createdAtMs >= STALE_CARD_REDIRECT_PENDING_MS;
+}
+
+async function finalizeStaleHostedCardPendingOrder(order: PaymentOrderStateRecord) {
+  const supabase = getSupabaseAdminClientOrThrow();
+  const result = await supabase
+    .from("payment_orders")
+    .update({
+      status: "cancelled",
+      provider_status: "cancelled",
+      provider_status_detail: "checkout_session_abandoned_or_expired",
+    })
+    .eq("id", order.id)
+    .eq("status", "pending")
+    .is("provider_payment_id", null)
+    .select(PAYMENT_STATE_SELECT_COLUMNS)
+    .maybeSingle<PaymentOrderStateRecord>();
+
+  if (result.error) {
+    throw new Error(
+      `Erro ao finalizar checkout com cartao abandonado: ${result.error.message}`,
+    );
+  }
+
+  return result.data || order;
 }
 
 async function ensureGuildAccess(guildId: string) {
@@ -206,6 +242,16 @@ export async function GET(request: Request) {
       getActiveLicenseOrderForGuild(guildId),
       getLatestUserOrderForGuild(user.id, guildId),
     ]);
+
+    if (latestUserOrder && isStaleHostedCardPendingOrder(latestUserOrder)) {
+      try {
+        latestUserOrder = await finalizeStaleHostedCardPendingOrder(
+          latestUserOrder,
+        );
+      } catch {
+        // melhor esforco; nao quebrar consulta por falha nessa normalizacao
+      }
+    }
 
     const shouldReconcileLatestOrder =
       !!latestUserOrder &&

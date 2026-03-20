@@ -580,6 +580,7 @@ function buildPaymentOrderLookupUrl(input: {
   guildId: string;
   orderCode?: number | null;
   paymentId?: string | null;
+  status?: string | null;
 }) {
   const params = new URLSearchParams({ guildId: input.guildId });
 
@@ -589,6 +590,10 @@ function buildPaymentOrderLookupUrl(input: {
 
   if (input.paymentId) {
     params.set("paymentId", input.paymentId);
+  }
+
+  if (input.status) {
+    params.set("status", input.status);
   }
 
   return `/api/auth/me/payments/order?${params.toString()}`;
@@ -1983,6 +1988,7 @@ export function ConfigStepFour({
                 guildId: activeGuildId,
                 orderCode: checkoutQuery.code,
                 paymentId: checkoutQuery.paymentId,
+                status: checkoutQuery.status,
               })
             : `/api/auth/me/payments/pix?${new URLSearchParams({
                 guildId: activeGuildId,
@@ -2018,10 +2024,17 @@ export function ConfigStepFour({
         if (remoteOrder && remoteOrder.status !== "pending") {
           removeCachedOrderByGuild(activeGuildId);
           setLastKnownOrderNumber(remoteOrder.orderNumber);
-          setPixOrder(null);
           setView("methods");
-          setMethodMessage("Pagamento anterior finalizado. Escolha um novo metodo.");
-          clearCheckoutStatusQuery();
+
+          if (shouldLoadOrderByCode) {
+            setPixOrder(remoteOrder);
+            setMethodMessage(null);
+            setCheckoutStatusQuery({ order: remoteOrder, guildId: activeGuildId });
+          } else {
+            setPixOrder(null);
+            setMethodMessage("Pagamento anterior finalizado. Escolha um novo metodo.");
+            clearCheckoutStatusQuery();
+          }
           return;
         }
 
@@ -2193,6 +2206,7 @@ export function ConfigStepFour({
         writeCachedOrderByGuild(activeGuildId, payload.order);
 
         if (payload.order.status && payload.order.status !== "pending") {
+          removeCachedOrderByGuild(activeGuildId);
           setView("methods");
           if (payload.order.status === "approved") {
             setMethodMessage(
@@ -2202,8 +2216,8 @@ export function ConfigStepFour({
             );
             setCheckoutStatusQuery({ order: payload.order, guildId: activeGuildId });
           } else if (payload.order.method === "card") {
-            setMethodMessage("Pagamento com cartao finalizado. Escolha como deseja continuar.");
-            clearCheckoutStatusQuery();
+            setMethodMessage(null);
+            setCheckoutStatusQuery({ order: payload.order, guildId: activeGuildId });
           } else {
             clearCheckoutStatusQuery();
           }

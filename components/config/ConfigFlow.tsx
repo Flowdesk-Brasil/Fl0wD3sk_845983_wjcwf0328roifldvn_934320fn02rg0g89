@@ -91,7 +91,15 @@ const STEP_THREE_HASH = "#/step/3";
 const STEP_FOUR_LEGACY_HASH = "#/step/4";
 const PAYMENT_HASH = "#/payment";
 const CONTEXT_SYNC_DEBOUNCE_MS = 420;
-const CHECKOUT_QUERY_KEYS = ["status", "code", "guild"] as const;
+const CHECKOUT_QUERY_KEYS = [
+  "status",
+  "code",
+  "guild",
+  "method",
+  "payment_id",
+  "paymentId",
+  "collection_id",
+] as const;
 
 function resolveHashForStep(step: ConfigStep) {
   if (step === 4) return PAYMENT_HASH;
@@ -269,6 +277,23 @@ function normalizePaymentStatusForQuery(status: string | null | undefined) {
   return normalized;
 }
 
+function readCheckoutStatusQuery(url: URL) {
+  const guildId = normalizeGuildIdFromQuery(url.searchParams.get("guild"));
+  const codeRaw = url.searchParams.get("code")?.trim() || "";
+  const statusRaw = url.searchParams.get("status");
+  const status = normalizePaymentStatusForQuery(statusRaw);
+
+  if (!guildId || !/^\d+$/.test(codeRaw) || !statusRaw) {
+    return null;
+  }
+
+  return {
+    guildId,
+    code: Number(codeRaw),
+    status,
+  };
+}
+
 function updateCheckoutStatusQuery(
   input:
     | {
@@ -429,6 +454,17 @@ export function ConfigFlow({ displayName }: ConfigFlowProps) {
 
   useEffect(() => {
     function syncStepFromHash() {
+      const currentUrl = new URL(window.location.href);
+      const checkoutQuery = readCheckoutStatusQuery(currentUrl);
+
+      if (checkoutQuery) {
+        setCurrentStep(4);
+        if (normalizeStepHash(window.location.hash) !== normalizeStepHash(PAYMENT_HASH)) {
+          setStepHash(4);
+        }
+        return;
+      }
+
       const hash = window.location.hash;
       if (!hasStepHash(hash)) return;
       setCurrentStep(parseStepFromHash(hash));
@@ -442,6 +478,7 @@ export function ConfigFlow({ displayName }: ConfigFlowProps) {
       const initialHashStep = parseStepFromHash(initialHash);
       const shouldRespectHash = hasStepHash(initialHash);
       const initialUrl = new URL(window.location.href);
+      const checkoutQuery = readCheckoutStatusQuery(initialUrl);
       const queryGuildId = normalizeGuildIdFromQuery(
         initialUrl.searchParams.get("guild"),
       );
@@ -475,9 +512,12 @@ export function ConfigFlow({ displayName }: ConfigFlowProps) {
         if (!isMounted) return;
 
         const mergedContext = mergeStoredContexts(localContext, serverContext);
-        const resolvedActiveGuildId = queryGuildId || mergedContext.activeGuildId;
+        const resolvedActiveGuildId =
+          checkoutQuery?.guildId || queryGuildId || mergedContext.activeGuildId;
         const resolvedActiveStep =
-          shouldRespectHash && resolvedActiveGuildId
+          checkoutQuery
+            ? 4
+            : shouldRespectHash && resolvedActiveGuildId
             ? initialHashStep
             : shouldRespectHash && !resolvedActiveGuildId
               ? 1
@@ -496,7 +536,9 @@ export function ConfigFlow({ displayName }: ConfigFlowProps) {
         setConfigDraft(hydratedContext.draft);
 
         setCurrentStep(hydratedContext.activeStep);
-        if (!shouldRespectHash && hydratedContext.activeStep !== 1) {
+        if (checkoutQuery) {
+          setStepHash(4);
+        } else if (!shouldRespectHash && hydratedContext.activeStep !== 1) {
           setStepHash(hydratedContext.activeStep);
         }
 

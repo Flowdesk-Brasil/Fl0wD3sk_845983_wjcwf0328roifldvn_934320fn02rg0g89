@@ -77,6 +77,26 @@ function normalizePaymentId(value: string | null) {
   return trimmed ? trimmed : null;
 }
 
+function normalizeHostedCheckoutReturnStatus(value: string | null) {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return null;
+
+  if (normalized === "canceled") return "cancelled" as const;
+  if (
+    normalized === "approved" ||
+    normalized === "pending" ||
+    normalized === "cancelled" ||
+    normalized === "rejected" ||
+    normalized === "expired" ||
+    normalized === "failed"
+  ) {
+    return normalized;
+  }
+
+  return null;
+}
+
 function parseAmount(amount: string | number) {
   if (typeof amount === "number") return amount;
   const numeric = Number(amount);
@@ -136,6 +156,46 @@ function toApiOrder(record: PaymentOrderRecord) {
     createdAt: record.created_at,
     updatedAt: record.updated_at,
   };
+}
+
+async function finalizeHostedCheckoutFallbackOrder(input: {
+  order: PaymentOrderRecord;
+  returnStatus: "cancelled" | "rejected" | "failed";
+}) {
+  const { order, returnStatus } = input;
+
+  if (order.payment_method !== "card") return order;
+  if (order.status !== "pending") return order;
+  if (order.provider_payment_id) return order;
+
+  const supabase = getSupabaseAdminClientOrThrow();
+  const providerStatusDetail =
+    returnStatus === "cancelled"
+      ? "checkout_cancelled_by_user"
+      : returnStatus === "rejected"
+        ? "checkout_rejected_before_provider_confirmation"
+        : "checkout_failed_before_provider_confirmation";
+
+  const result = await supabase
+    .from("payment_orders")
+    .update({
+      status: returnStatus,
+      provider_status: returnStatus,
+      provider_status_detail: providerStatusDetail,
+    })
+    .eq("id", order.id)
+    .eq("status", "pending")
+    .is("provider_payment_id", null)
+    .select(PAYMENT_ORDER_SELECT_COLUMNS)
+    .maybeSingle<PaymentOrderRecord>();
+
+  if (result.error) {
+    throw new Error(
+      `Erro ao finalizar retorno do checkout com cartao: ${result.error.message}`,
+    );
+  }
+
+  return result.data || order;
 }
 
 async function ensureGuildAccess(guildId: string) {
@@ -258,6 +318,9 @@ export async function GET(request: Request) {
       normalizePaymentId(url.searchParams.get("paymentId")) ||
       normalizePaymentId(url.searchParams.get("payment_id")) ||
       normalizePaymentId(url.searchParams.get("collection_id"));
+    const returnStatus = normalizeHostedCheckoutReturnStatus(
+      url.searchParams.get("status"),
+    );
 
     if (!guildId) {
       return respond(
@@ -294,6 +357,20 @@ export async function GET(request: Request) {
         order = (await getOrderByCodeForGuild(guildId, order.order_number)) || order;
       } catch {
         // melhor esforco; ainda podemos cair no estado persistido ou na reconciliacao normal
+      }
+    } else if (
+      returnStatus &&
+      (returnStatus === "cancelled" ||
+        returnStatus === "rejected" ||
+        returnStatus === "failed")
+    ) {
+      try {
+        order = await finalizeHostedCheckoutFallbackOrder({
+          order,
+          returnStatus,
+        });
+      } catch {
+        // melhor esforco; ainda retornamos o estado persistido
       }
     } else if (order.provider_payment_id) {
       try {
