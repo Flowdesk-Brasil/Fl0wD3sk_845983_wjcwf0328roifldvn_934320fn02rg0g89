@@ -254,6 +254,8 @@ let mercadoPagoSecuritySdkPromise: Promise<void> | null = null;
 const PAYMENT_ORDER_CACHE_STORAGE_KEY = "flowdesk_payment_order_cache_v1";
 const APPROVED_REDIRECTED_ORDERS_STORAGE_KEY =
   "flowdesk_approved_redirected_orders_v1";
+const PENDING_CARD_REDIRECT_STORAGE_KEY =
+  "flowdesk_pending_card_redirect_v1";
 const CHECKOUT_STATUS_QUERY_KEYS = [
   "status",
   "code",
@@ -411,6 +413,86 @@ function removeCachedOrderByGuild(guildId: string) {
     );
   } catch {
     // ignorar erro de cache local
+  }
+}
+
+type PendingCardRedirectState = {
+  guildId: string;
+  orderNumber: number | null;
+  startedAt: number;
+};
+
+function readPendingCardRedirectState(guildId: string) {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = window.sessionStorage.getItem(PENDING_CARD_REDIRECT_STORAGE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return null;
+
+    const data = parsed as Record<string, unknown>;
+    const storedGuildId =
+      typeof data.guildId === "string" ? data.guildId.trim() : "";
+    const orderNumber =
+      typeof data.orderNumber === "number" && Number.isInteger(data.orderNumber)
+        ? data.orderNumber
+        : null;
+    const startedAt =
+      typeof data.startedAt === "number" && Number.isFinite(data.startedAt)
+        ? data.startedAt
+        : Number.NaN;
+
+    if (!storedGuildId || storedGuildId !== guildId || !Number.isFinite(startedAt)) {
+      return null;
+    }
+
+    return {
+      guildId: storedGuildId,
+      orderNumber,
+      startedAt,
+    } satisfies PendingCardRedirectState;
+  } catch {
+    return null;
+  }
+}
+
+function writePendingCardRedirectState(input: {
+  guildId: string;
+  orderNumber: number | null;
+}) {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.sessionStorage.setItem(
+      PENDING_CARD_REDIRECT_STORAGE_KEY,
+      JSON.stringify({
+        guildId: input.guildId,
+        orderNumber: input.orderNumber,
+        startedAt: Date.now(),
+      } satisfies PendingCardRedirectState),
+    );
+  } catch {
+    // ignorar falha de storage local
+  }
+}
+
+function clearPendingCardRedirectState(guildId?: string | null) {
+  if (typeof window === "undefined") return;
+
+  try {
+    if (!guildId) {
+      window.sessionStorage.removeItem(PENDING_CARD_REDIRECT_STORAGE_KEY);
+      return;
+    }
+
+    const current = readPendingCardRedirectState(guildId);
+    if (!current) return;
+
+    window.sessionStorage.removeItem(PENDING_CARD_REDIRECT_STORAGE_KEY);
+  } catch {
+    // ignorar falha de storage local
   }
 }
 
@@ -1440,15 +1522,15 @@ function resolveRegenerateButtonLabel(order: PixOrder | null | undefined) {
   if (order.method === "card") {
     switch (order.status) {
       case "cancelled":
-        return "Abrir checkout com cartao novamente";
+        return "Escolher pagamento novamente";
       case "rejected":
-        return "Tentar novamente com cartao";
+        return "Escolher pagamento novamente";
       case "failed":
-        return "Gerar novo checkout com cartao";
+        return "Escolher pagamento novamente";
       case "expired":
-        return "Gerar novo checkout com cartao";
+        return "Escolher pagamento novamente";
       default:
-        return "Tentar novamente com cartao";
+        return "Escolher pagamento novamente";
     }
   }
 
@@ -1865,6 +1947,7 @@ export function ConfigStepFour({
   const hasInitialStepFourDraftRef = useRef(hasInitialStepFourDraft);
   const paymentPollingInFlightRef = useRef(false);
   const lastHandledCardRedirectKeyRef = useRef(0);
+  const lastAutoResolvedPendingCardOrderRef = useRef<number | null>(null);
   const [view, setView] = useState<StepFourView>(initialStepFourDraft.view);
   const [methodMessage, setMethodMessage] = useState<string | null>(null);
   const [cardRedirectRequestKey, setCardRedirectRequestKey] = useState(0);
@@ -2752,6 +2835,14 @@ export function ConfigStepFour({
         setLastKnownOrderNumber(payload.orderNumber);
       }
 
+      writePendingCardRedirectState({
+        guildId,
+        orderNumber:
+          payload.orderNumber && Number.isInteger(payload.orderNumber)
+            ? payload.orderNumber
+            : null,
+      });
+
       redirected = true;
       window.setTimeout(() => {
         window.location.assign(payload.redirectUrl!);
@@ -2766,6 +2857,7 @@ export function ConfigStepFour({
       setCardFormErrorAnimationTick((current) => current + 1);
     } finally {
       if (!redirected) {
+        clearPendingCardRedirectState(guildId);
         setIsSubmittingCard(false);
       }
     }
@@ -3146,10 +3238,14 @@ export function ConfigStepFour({
     }
   }, [pixOrder?.qrCodeText]);
 
-  const handleCancelPendingCardPayment = useCallback(async () => {
+  const handleCancelPendingCardPayment = useCallback(async (options?: {
+    preserveCancelledResult?: boolean;
+  }) => {
     if (!guildId || !pixOrder || pixOrder.method !== "card" || pixOrder.status !== "pending") {
       return;
     }
+
+    const preserveCancelledResult = options?.preserveCancelledResult ?? true;
 
     setIsCancellingPendingCard(true);
     setMethodMessage("Cancelando checkout com cartao...");
@@ -3175,15 +3271,26 @@ export function ConfigStepFour({
         );
       }
 
+      clearPendingCardRedirectState(guildId);
       removeCachedOrderByGuild(guildId);
-      setPixOrder(payload.order);
-      setLastKnownOrderNumber(payload.order.orderNumber);
       setView("methods");
-      setMethodMessage(null);
-      setCheckoutStatusQuery({
-        order: payload.order,
-        guildId,
-      });
+
+      if (preserveCancelledResult) {
+        setPixOrder(payload.order);
+        setLastKnownOrderNumber(payload.order.orderNumber);
+        setMethodMessage(null);
+        setCheckoutStatusQuery({
+          order: payload.order,
+          guildId,
+        });
+      } else {
+        setPixOrder(null);
+        setLastKnownOrderNumber(null);
+        setMethodMessage(
+          "Tentativa anterior encerrada porque o checkout externo foi abandonado. Escolha novamente como deseja pagar.",
+        );
+        clearCheckoutStatusQuery();
+      }
     } catch (error) {
       setMethodMessage(
         parseUnknownErrorMessage(error) ||
@@ -3193,6 +3300,65 @@ export function ConfigStepFour({
       setIsCancellingPendingCard(false);
     }
   }, [guildId, pixOrder]);
+
+  useEffect(() => {
+    if (!guildId) return;
+
+    const checkoutQuery = readCheckoutStatusQuery();
+    const hasProviderCallbackContext = Boolean(
+      checkoutQuery.status || checkoutQuery.paymentId || checkoutQuery.code !== null,
+    );
+
+    if (hasProviderCallbackContext) {
+      clearPendingCardRedirectState(guildId);
+      return;
+    }
+
+    if (!pixOrder || pixOrder.method !== "card" || pixOrder.status !== "pending") {
+      clearPendingCardRedirectState(guildId);
+      return;
+    }
+
+    if (pixOrder.providerPaymentId) {
+      clearPendingCardRedirectState(guildId);
+      return;
+    }
+
+    const pendingRedirectState = readPendingCardRedirectState(guildId);
+    if (!pendingRedirectState) return;
+
+    if (
+      pendingRedirectState.orderNumber &&
+      pendingRedirectState.orderNumber !== pixOrder.orderNumber
+    ) {
+      clearPendingCardRedirectState(guildId);
+      return;
+    }
+
+    const shouldAutoReset =
+      Date.now() - pendingRedirectState.startedAt >= 2500;
+
+    if (!shouldAutoReset) return;
+    if (lastAutoResolvedPendingCardOrderRef.current === pixOrder.orderNumber) return;
+
+    const resolveManualReturn = () => {
+      if (document.visibilityState !== "visible") return;
+      lastAutoResolvedPendingCardOrderRef.current = pixOrder.orderNumber;
+      void handleCancelPendingCardPayment({
+        preserveCancelledResult: false,
+      });
+    };
+
+    resolveManualReturn();
+
+    window.addEventListener("focus", resolveManualReturn);
+    document.addEventListener("visibilitychange", resolveManualReturn);
+
+    return () => {
+      window.removeEventListener("focus", resolveManualReturn);
+      document.removeEventListener("visibilitychange", resolveManualReturn);
+    };
+  }, [guildId, handleCancelPendingCardPayment, pixOrder]);
 
   const handleRegeneratePayment = useCallback(() => {
     if (!guildId) return;
@@ -3260,9 +3426,10 @@ export function ConfigStepFour({
         }
 
         if (lastMethod === "card") {
-          setView("card_form");
-          setMethodMessage("Preparando checkout seguro do cartao.");
-          setCardRedirectRequestKey((current) => current + 1);
+          setView("methods");
+          setMethodMessage(
+            "Tentativa anterior encerrada. Escolha novamente como deseja pagar para abrir um novo checkout seguro.",
+          );
           return;
         }
 
