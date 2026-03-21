@@ -3,11 +3,13 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ConfigLogoutButton } from "@/components/config/ConfigLogoutButton";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 import {
   buildOfficialDiscordChannelUrl,
   OFFICIAL_DISCORD_INVITE_URL,
   OFFICIAL_DISCORD_LINK_PATH,
+  OFFICIAL_DISCORD_LINK_START_PATH,
   OFFICIAL_DISCORD_LINKED_ROLE_NAME,
 } from "@/lib/discordLink/config";
 import { PRIVACY_PATH, TERMS_PATH } from "@/lib/legal/content";
@@ -23,6 +25,12 @@ type LinkSyncResponse = {
   openDiscordUrl?: string;
   inviteUrl?: string;
   pollAfterMs?: number | null;
+  authenticatedUser?: {
+    discordUserId: string;
+    username: string;
+    displayName: string;
+    avatarUrl: string | null;
+  };
 };
 
 type ViewState =
@@ -48,24 +56,6 @@ type ViewState =
       requestId: string | null;
     };
 
-function SuccessIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      className="h-[78px] w-[78px] text-[#6AE25A]"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.7"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <circle cx="12" cy="12" r="9.2" />
-      <path d="m8 12.3 2.7 2.7L16.4 9.6" />
-    </svg>
-  );
-}
-
 const INITIAL_CHECKING_STATE: ViewState = {
   phase: "checking",
   title: "Validando vinculacao da conta",
@@ -73,13 +63,36 @@ const INITIAL_CHECKING_STATE: ViewState = {
     "Estamos confirmando o login seguro e sincronizando sua conta com o Discord oficial.",
 };
 
-export function DiscordLinkPageClient() {
-  const [state, setState] = useState<ViewState>({
-    ...INITIAL_CHECKING_STATE,
-  });
+type DiscordLinkPageClientProps = {
+  accessToken: string;
+  initialStatus?: string | null;
+};
+
+export function DiscordLinkPageClient({
+  accessToken,
+  initialStatus = null,
+}: DiscordLinkPageClientProps) {
+  type AuthenticatedUserInfo = NonNullable<LinkSyncResponse["authenticatedUser"]>;
+  const [state, setState] = useState<ViewState>(
+    initialStatus === "linked"
+      ? {
+          phase: "success",
+          title: "Conta vinculada com sucesso",
+          description:
+            "Sua vinculacao foi concluida. Estamos apenas confirmando a sincronizacao final com o Discord oficial.",
+          actionHref: buildOfficialDiscordChannelUrl(),
+          actionLabel: "Voltar ao Discord oficial",
+          roleName: OFFICIAL_DISCORD_LINKED_ROLE_NAME,
+        }
+      : {
+          ...INITIAL_CHECKING_STATE,
+        },
+  );
+  const [authenticatedUser, setAuthenticatedUser] = useState<AuthenticatedUserInfo | null>(null);
   const redirectTimerRef = useRef<number | null>(null);
   const syncRetryTimerRef = useRef<number | null>(null);
   const syncLinkRef = useRef<((resetState?: boolean) => Promise<void>) | null>(null);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   const clearRetryTimer = useCallback(() => {
     if (syncRetryTimerRef.current) {
@@ -103,11 +116,13 @@ export function DiscordLinkPageClient() {
       cache: "no-store",
       body: JSON.stringify({
         source: "official_link_page",
+        accessToken,
       }),
     });
 
     const requestId = response.headers.get("X-Request-Id");
     const payload = (await response.json().catch(() => null)) as LinkSyncResponse | null;
+    setAuthenticatedUser(payload?.authenticatedUser || null);
 
     if (response.status === 401) {
       setState({
@@ -121,9 +136,10 @@ export function DiscordLinkPageClient() {
         window.clearTimeout(redirectTimerRef.current);
       }
 
+      const nextPath = `${OFFICIAL_DISCORD_LINK_PATH}?access=${encodeURIComponent(accessToken)}`;
       redirectTimerRef.current = window.setTimeout(() => {
         window.location.assign(
-          `/api/auth/discord?next=${encodeURIComponent(OFFICIAL_DISCORD_LINK_PATH)}`,
+          `/api/auth/discord?next=${encodeURIComponent(nextPath)}`,
         );
       }, 500);
 
@@ -131,6 +147,18 @@ export function DiscordLinkPageClient() {
     }
 
     if (!response.ok || !payload?.ok) {
+      if (response.status === 403) {
+        setState({
+          phase: "error",
+          title: "Este link seguro expirou",
+          description:
+            payload?.message ||
+            "A sessao segura desta vinculacao nao esta mais disponivel. Gere um novo link seguro para continuar.",
+          requestId,
+        });
+        return;
+      }
+
       setState({
         phase: "error",
         title: "Nao foi possivel concluir a vinculacao",
@@ -143,12 +171,15 @@ export function DiscordLinkPageClient() {
     }
 
     if (payload.status === "pending" || payload.status === "pending_member") {
+      if (initialStatus === "linked") {
+        const linkedUrl = `${OFFICIAL_DISCORD_LINK_PATH}?access=${encodeURIComponent(accessToken)}&status=linked`;
+        window.history.replaceState({}, "", linkedUrl);
+      }
+
       setState({
         phase: "syncing",
-        title: "Sincronizando sua conta com o Discord",
-        description:
-          payload.message ||
-          "Estamos validando a sua conta no servidor oficial e liberando o cargo automaticamente.",
+        title: INITIAL_CHECKING_STATE.title,
+        description: INITIAL_CHECKING_STATE.description,
         helperHref:
           payload.openDiscordUrl ||
           payload.inviteUrl ||
@@ -164,6 +195,9 @@ export function DiscordLinkPageClient() {
       return;
     }
 
+    const linkedUrl = `${OFFICIAL_DISCORD_LINK_PATH}?access=${encodeURIComponent(accessToken)}&status=linked`;
+    window.history.replaceState({}, "", linkedUrl);
+
     setState({
       phase: "success",
       title: payload.alreadyLinked
@@ -176,11 +210,27 @@ export function DiscordLinkPageClient() {
       actionLabel: "Voltar ao Discord oficial",
       roleName: payload.roleName || OFFICIAL_DISCORD_LINKED_ROLE_NAME,
     });
-  }, [clearRetryTimer]);
+  }, [accessToken, clearRetryTimer, initialStatus]);
 
   useEffect(() => {
     syncLinkRef.current = syncLink;
   }, [syncLink]);
+
+  const handleLogout = useCallback(async () => {
+    if (isLoggingOut) return;
+    setIsLoggingOut(true);
+
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+    } finally {
+      window.location.assign("/login");
+    }
+  }, [isLoggingOut]);
 
   useEffect(() => {
     const bootTimer = window.setTimeout(() => {
@@ -248,25 +298,63 @@ export function DiscordLinkPageClient() {
               o acesso ao painel e liberar automaticamente o cargo oficial no servidor de
               suporte.
             </p>
+            {authenticatedUser ? (
+              <div className="mt-2 flex items-center gap-3 rounded-[14px] border border-[#242424] bg-[#0A0A0A] px-4 py-3 text-left">
+                {authenticatedUser.avatarUrl ? (
+                  <Image
+                    src={authenticatedUser.avatarUrl}
+                    alt={authenticatedUser.displayName}
+                    width={38}
+                    height={38}
+                    className="rounded-full object-cover"
+                  />
+                ) : (
+                  <div className="flex h-[38px] w-[38px] items-center justify-center rounded-full bg-[#151515] text-[14px] font-medium text-[#D8D8D8]">
+                    {authenticatedUser.displayName.slice(0, 1).toUpperCase()}
+                  </div>
+                )}
+                <div className="text-[12px] leading-[1.65] text-[#8F8F8F]">
+                  <p className="font-medium text-[#D8D8D8]">
+                    Conta detectada: {authenticatedUser.displayName}
+                  </p>
+                  <p>@{authenticatedUser.username}</p>
+                  <p>
+                    Se o Discord aberto no navegador ou launcher estiver em outra conta,
+                    troque para esta conta antes de concluir a vinculacao.
+                  </p>
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div className="h-px w-full bg-[#242424]" />
 
           <div className="flex w-full flex-col items-center gap-5 text-center">
-            <h2 className="text-[22px] leading-[1.2] font-medium text-[#D8D8D8] sm:text-[26px]">
-              {state.title}
-            </h2>
-            <p className="max-w-[640px] text-[14px] leading-[1.75] text-[#A8A8A8]">
-              {state.description}
-            </p>
+            {state.phase === "success" || state.phase === "error" ? (
+              <>
+                <h2 className="text-[22px] leading-[1.2] font-medium text-[#D8D8D8] sm:text-[26px]">
+                  {state.title}
+                </h2>
+                <p className="max-w-[640px] text-[14px] leading-[1.75] text-[#A8A8A8]">
+                  {state.description}
+                </p>
+              </>
+            ) : null}
 
             <div
-              className={`flex h-[320px] w-full max-w-[390px] items-center justify-center rounded-[26px] border border-[#242424] bg-[#080808] p-8 ${
+              className={`flex h-[320px] w-full items-center justify-center rounded-[3px] border border-[#242424] bg-[#080808] p-8 ${
                 state.phase === "success" ? "flowdesk-success-glow" : "flowdesk-panel-glow"
               }`}
             >
               {state.phase === "success" ? (
-                <SuccessIcon />
+                <Image
+                  src="/cdn/icons/check.png"
+                  alt="Vinculacao concluida"
+                  width={146}
+                  height={146}
+                  className="h-[146px] w-[146px] object-contain"
+                  priority
+                />
               ) : (
                 <ButtonLoader size={46} colorClassName="text-[#D8D8D8]" />
               )}
@@ -288,7 +376,7 @@ export function DiscordLinkPageClient() {
               </p>
             ) : null}
 
-            <div className="flex w-full max-w-[390px] flex-col gap-3 pt-1">
+            <div className="flex w-full max-w-[420px] flex-col gap-3 pt-1">
               {state.phase === "success" ? (
                 <a
                   href={state.actionHref}
@@ -313,11 +401,24 @@ export function DiscordLinkPageClient() {
                 <button
                   type="button"
                   onClick={() => {
+                    if (
+                      state.description.includes("link seguro") ||
+                      state.description.includes("nao esta mais disponivel") ||
+                      state.description.includes("expirou")
+                    ) {
+                      window.location.assign(OFFICIAL_DISCORD_LINK_START_PATH);
+                      return;
+                    }
+
                     void syncLink();
                   }}
                   className="inline-flex h-[52px] items-center justify-center rounded-[14px] bg-[#F3F3F3] px-5 text-[15px] font-medium text-black transition hover:bg-white"
                 >
-                  Tentar novamente
+                  {state.description.includes("link seguro") ||
+                  state.description.includes("nao esta mais disponivel") ||
+                  state.description.includes("expirou")
+                    ? "Gerar novo link seguro"
+                    : "Tentar novamente"}
                 </button>
               ) : null}
             </div>
@@ -339,6 +440,12 @@ export function DiscordLinkPageClient() {
           </p>
         </div>
       </section>
+      <ConfigLogoutButton
+        onClick={() => {
+          void handleLogout();
+        }}
+        disabled={isLoggingOut}
+      />
     </main>
   );
 }

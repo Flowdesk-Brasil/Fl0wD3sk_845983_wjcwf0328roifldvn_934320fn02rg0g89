@@ -10,6 +10,9 @@ export const OFFICIAL_DISCORD_LINKED_ROLE_ID =
 export const OFFICIAL_DISCORD_LINK_PATH =
   process.env.OFFICIAL_ACCOUNT_LINK_PATH?.trim() || "/discord/link";
 
+export const OFFICIAL_DISCORD_LINK_START_PATH =
+  process.env.OFFICIAL_ACCOUNT_LINK_START_PATH?.trim() || "/discord/link/start";
+
 export const OFFICIAL_DISCORD_LINKED_ROLE_NAME =
   process.env.OFFICIAL_LINKED_ROLE_NAME?.trim() || "Conta vinculada";
 
@@ -22,9 +25,9 @@ export const FLOWDESK_APP_URL =
 
 export function buildOfficialDiscordLinkUrl(origin?: string | null) {
   const baseOrigin = (origin || FLOWDESK_APP_URL).replace(/\/+$/, "");
-  const normalizedPath = OFFICIAL_DISCORD_LINK_PATH.startsWith("/")
-    ? OFFICIAL_DISCORD_LINK_PATH
-    : `/${OFFICIAL_DISCORD_LINK_PATH}`;
+  const normalizedPath = OFFICIAL_DISCORD_LINK_START_PATH.startsWith("/")
+    ? OFFICIAL_DISCORD_LINK_START_PATH
+    : `/${OFFICIAL_DISCORD_LINK_START_PATH}`;
 
   return `${baseOrigin}${normalizedPath}`;
 }

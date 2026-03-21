@@ -8,8 +8,10 @@ import {
 } from "@/lib/discordLink/config";
 import {
   DiscordRateLimitError,
+  fetchDiscordCurrentUserGuildMember,
   fetchDiscordGuilds,
   type DiscordGuild,
+  type DiscordGuildMember,
 } from "@/lib/auth/discord";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
@@ -40,11 +42,6 @@ type DiscordLinkRecord = {
   metadata: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
-};
-
-type DiscordGuildMember = {
-  roles?: string[];
-  joined_at?: string;
 };
 
 type SyncDiscordLinkResult = {
@@ -164,6 +161,25 @@ async function isOfficialGuildVisibleToAuthenticatedUser(
   }
 }
 
+async function fetchOfficialGuildMemberFromAuthenticatedUser(
+  discordAccessToken: string | null | undefined,
+) {
+  if (!discordAccessToken) return null;
+
+  try {
+    return await fetchDiscordCurrentUserGuildMember(
+      discordAccessToken,
+      OFFICIAL_DISCORD_GUILD_ID,
+    );
+  } catch (error) {
+    if (error instanceof DiscordRateLimitError) {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
 export async function getDiscordLinkRecordForUser(userId: number) {
   const supabase = getSupabaseAdminClientOrThrow();
   const result = await supabase
@@ -243,7 +259,12 @@ export async function syncOfficialDiscordLink(input: {
   const roleName = OFFICIAL_DISCORD_LINKED_ROLE_NAME;
 
   try {
-    const member = await fetchOfficialGuildMember(input.discordUserId);
+    const authenticatedUserMember =
+      await fetchOfficialGuildMemberFromAuthenticatedUser(
+        input.discordAccessToken || null,
+      );
+    const member =
+      authenticatedUserMember || (await fetchOfficialGuildMember(input.discordUserId));
 
     if (!member) {
       const guildVisibleToAuthenticatedUser =

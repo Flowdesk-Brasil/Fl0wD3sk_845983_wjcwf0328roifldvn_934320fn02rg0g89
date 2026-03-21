@@ -6,6 +6,7 @@ import {
   OFFICIAL_DISCORD_LINKED_ROLE_ID,
   OFFICIAL_DISCORD_LINKED_ROLE_NAME,
 } from "@/lib/discordLink/config";
+import { validateDiscordLinkAccessToken } from "@/lib/discordLink/linkAccess";
 import {
   getDiscordLinkRecordForUser,
   syncOfficialDiscordLink,
@@ -29,6 +30,12 @@ function buildUnauthorizedResponse(requestId: string) {
     ),
     requestId,
   );
+}
+
+function buildDiscordAvatarUrl(discordUserId: string, avatarHash: string | null) {
+  if (!avatarHash) return null;
+  const extension = avatarHash.startsWith("a_") ? "gif" : "png";
+  return `https://cdn.discordapp.com/avatars/${discordUserId}/${avatarHash}.${extension}?size=160`;
 }
 
 export async function GET(request: NextRequest) {
@@ -155,10 +162,48 @@ export async function POST(request: NextRequest) {
 
   try {
     const payload = await request.json().catch(() => ({}));
+    const linkAccessToken =
+      payload && typeof payload === "object" && typeof payload.accessToken === "string"
+        ? payload.accessToken.trim()
+        : null;
     const source =
       payload && typeof payload === "object" && typeof payload.source === "string"
         ? payload.source.trim().slice(0, 64)
         : "official_link_page";
+    const accessValidation = await validateDiscordLinkAccessToken(linkAccessToken);
+
+    if (!accessValidation.ok) {
+      await logSecurityAuditEventSafe(authenticatedContext, {
+        action: "discord_link_sync",
+        outcome: "blocked",
+        metadata: {
+          reason: accessValidation.reason,
+        },
+      });
+
+      return attachRequestId(
+        applyNoStoreHeaders(
+          NextResponse.json(
+            {
+              ok: false,
+              authenticated: true,
+              message: accessValidation.message,
+              authenticatedUser: {
+                discordUserId: authSession.user.discord_user_id,
+                username: authSession.user.username,
+                displayName: authSession.user.display_name,
+                avatarUrl: buildDiscordAvatarUrl(
+                  authSession.user.discord_user_id,
+                  authSession.user.avatar,
+                ),
+              },
+            },
+            { status: 403 },
+          ),
+        ),
+        authenticatedContext.requestId,
+      );
+    }
 
     const result = await syncOfficialDiscordLink({
       userId: authSession.user.id,
@@ -187,6 +232,15 @@ export async function POST(request: NextRequest) {
               status: result.status,
               openDiscordUrl: result.openDiscordUrl,
               inviteUrl: result.inviteUrl,
+              authenticatedUser: {
+                discordUserId: authSession.user.discord_user_id,
+                username: authSession.user.username,
+                displayName: authSession.user.display_name,
+                avatarUrl: buildDiscordAvatarUrl(
+                  authSession.user.discord_user_id,
+                  authSession.user.avatar,
+                ),
+              },
               linkRecord: result.linkRecord,
             },
             { status: 500 },
@@ -220,6 +274,15 @@ export async function POST(request: NextRequest) {
           guildId: OFFICIAL_DISCORD_GUILD_ID,
           openDiscordUrl: result.openDiscordUrl,
           inviteUrl: result.inviteUrl,
+          authenticatedUser: {
+            discordUserId: authSession.user.discord_user_id,
+            username: authSession.user.username,
+            displayName: authSession.user.display_name,
+            avatarUrl: buildDiscordAvatarUrl(
+              authSession.user.discord_user_id,
+              authSession.user.avatar,
+            ),
+          },
           pollAfterMs:
             result.status === "pending" || result.status === "pending_member"
               ? 5000

@@ -31,6 +31,12 @@ export type DiscordGuild = {
   features: string[];
 };
 
+export type DiscordGuildMember = {
+  roles?: string[];
+  joined_at?: string;
+  pending?: boolean;
+};
+
 type DiscordRateLimitPayload = {
   message?: string;
   retry_after?: number;
@@ -75,7 +81,7 @@ export function buildDiscordAuthorizeUrl(state: string, redirectUri: string) {
   const params = new URLSearchParams({
     client_id: authConfig.discordClientId,
     response_type: "code",
-    scope: "identify email guilds",
+    scope: "identify email guilds guilds.members.read",
     state,
     redirect_uri: redirectUri,
     prompt: "consent",
@@ -176,6 +182,45 @@ export async function fetchDiscordGuilds(accessToken: string) {
   }
 
   return [];
+}
+
+export async function fetchDiscordCurrentUserGuildMember(
+  accessToken: string,
+  guildId: string,
+) {
+  const response = await fetch(
+    `https://discord.com/api/users/@me/guilds/${guildId}/member`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      cache: "no-store",
+    },
+  );
+
+  if (response.status === 404) {
+    return null;
+  }
+
+  if (response.status === 429) {
+    const payload = (await response.json().catch(() => null)) as DiscordRateLimitPayload | null;
+    const retryAfterSeconds = parseRetryAfterSeconds(response, payload);
+    throw new DiscordRateLimitError(
+      "Falha ao verificar membro da guilda no Discord: limite temporario de requisicoes (429).",
+      retryAfterSeconds,
+    );
+  }
+
+  if (response.status === 401 || response.status === 403) {
+    return null;
+  }
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Falha ao buscar membro atual da guilda no Discord: ${text}`);
+  }
+
+  return (await response.json()) as DiscordGuildMember;
 }
 
 export async function refreshDiscordToken(refreshToken: string) {
