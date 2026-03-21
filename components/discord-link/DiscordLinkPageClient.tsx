@@ -226,8 +226,8 @@ export function DiscordLinkPageClient() {
 
   return (
     <main className="flex min-h-screen w-full items-center justify-center bg-black px-6 py-10">
-      <section className="w-full max-w-[880px]">
-        <div className="mx-auto flex w-full max-w-[760px] flex-col items-center gap-7">
+      <section className="w-full max-w-[760px]">
+        <div className="mx-auto flex w-full flex-col items-center gap-7">
           <div className="relative h-[68px] w-[68px] shrink-0">
             <Image
               src="/cdn/logos/logotipo.png"
@@ -252,109 +252,74 @@ export function DiscordLinkPageClient() {
 
           <div className="h-px w-full bg-[#242424]" />
 
-          <div className="flex w-full flex-col items-center gap-6 lg:flex-row lg:items-stretch lg:justify-between">
-            <div className="flex w-full max-w-[420px] flex-1 flex-col gap-5 text-center lg:max-w-[330px] lg:justify-center lg:text-left">
-              <h2 className="text-[22px] leading-[1.2] font-medium text-[#D8D8D8]">
-                {state.title}
-              </h2>
-              <p className="text-[14px] leading-[1.7] text-[#A8A8A8]">
-                {state.description}
-              </p>
-
-              {state.phase === "success" ? (
-                <div className="rounded-[18px] border border-[rgba(106,226,90,0.22)] bg-[rgba(106,226,90,0.08)] px-4 py-3 text-left">
-                  <p className="text-[13px] font-medium text-[#6AE25A]">
-                    Cargo liberado
-                  </p>
-                  <p className="mt-1 text-[13px] leading-[1.6] text-[#CDE9C8]">
-                    O cargo <span className="font-medium text-[#DFF6DA]">{state.roleName}</span>{" "}
-                    foi sincronizado. Agora voce pode voltar ao Discord oficial.
-                  </p>
-                </div>
-              ) : null}
-
-              {state.phase === "error" && state.requestId ? (
-                <p className="text-[12px] leading-[1.6] text-[#7E7E7E]">
-                  Protocolo tecnico: <span className="text-[#B8B8B8]">{state.requestId}</span>
-                </p>
-              ) : null}
-
-              <div className="flex flex-col gap-3 pt-1">
-                {state.phase === "success" ? (
-                  <a
-                    href={state.actionHref}
-                    className="inline-flex h-[52px] items-center justify-center rounded-[14px] bg-[#F3F3F3] px-5 text-[15px] font-medium text-black transition hover:bg-white"
-                  >
-                    {state.actionLabel}
-                  </a>
-                ) : null}
-
-                {state.phase === "syncing" && state.helperHref && state.helperLabel ? (
-                  <a
-                    href={state.helperHref}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-[13px] font-medium text-[#8E8E8E] underline-offset-4 hover:text-[#D4D4D4] hover:underline"
-                  >
-                    {state.helperLabel}
-                  </a>
-                ) : null}
-
-                {state.phase === "error" ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void syncLink();
-                    }}
-                    className="inline-flex h-[52px] items-center justify-center rounded-[14px] bg-[#F3F3F3] px-5 text-[15px] font-medium text-black transition hover:bg-white"
-                  >
-                    Tentar novamente
-                  </button>
-                ) : null}
-              </div>
-            </div>
+          <div className="flex w-full flex-col items-center gap-5 text-center">
+            <h2 className="text-[22px] leading-[1.2] font-medium text-[#D8D8D8] sm:text-[26px]">
+              {state.title}
+            </h2>
+            <p className="max-w-[640px] text-[14px] leading-[1.75] text-[#A8A8A8]">
+              {state.description}
+            </p>
 
             <div
-              className={`flex w-full max-w-[390px] shrink-0 items-center justify-center rounded-[26px] border border-[#242424] bg-[#080808] p-8 ${
+              className={`flex h-[320px] w-full max-w-[390px] items-center justify-center rounded-[26px] border border-[#242424] bg-[#080808] p-8 ${
                 state.phase === "success" ? "flowdesk-success-glow" : "flowdesk-panel-glow"
               }`}
             >
-              <div className="flex min-h-[290px] w-full flex-col items-center justify-center gap-6 text-center">
-                {state.phase === "success" ? (
-                  <>
-                    <SuccessIcon />
-                    <div className="space-y-2">
-                      <p className="text-[20px] font-medium text-[#DFF6DA]">
-                        Vinculacao concluida
-                      </p>
-                      <p className="mx-auto max-w-[280px] text-[13px] leading-[1.7] text-[#94B58F]">
-                        Sua conta foi validada com seguranca e o acesso ja esta sincronizado no
-                        Discord oficial.
-                      </p>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <ButtonLoader size={46} colorClassName="text-[#D8D8D8]" />
-                    <div className="space-y-2">
-                      <p className="text-[20px] font-medium text-[#D8D8D8]">
-                        {state.phase === "redirecting"
-                          ? "Abrindo login seguro"
-                          : state.phase === "error"
-                              ? "Falha ao sincronizar"
-                              : "Sincronizando sua conta"}
-                      </p>
-                      <p className="mx-auto max-w-[280px] text-[13px] leading-[1.7] text-[#8F8F8F]">
-                        {state.phase === "redirecting"
-                          ? "Em instantes voce sera levado ao login do Flowdesk para continuar a vinculacao."
-                          : state.phase === "error"
-                              ? "Voce pode tentar novamente agora. Se persistir, compartilhe o protocolo tecnico com o suporte."
-                              : "Deixe esta pagina aberta enquanto o Flowdesk valida a conta, verifica sua presenca no servidor oficial e libera o cargo automaticamente."}
-                      </p>
-                    </div>
-                  </>
-                )}
+              {state.phase === "success" ? (
+                <SuccessIcon />
+              ) : (
+                <ButtonLoader size={46} colorClassName="text-[#D8D8D8]" />
+              )}
+            </div>
+
+            {state.phase === "success" ? (
+              <div className="w-full max-w-[640px] rounded-[18px] border border-[rgba(106,226,90,0.22)] bg-[rgba(106,226,90,0.08)] px-4 py-3 text-center">
+                <p className="text-[13px] font-medium text-[#6AE25A]">Cargo liberado</p>
+                <p className="mt-1 text-[13px] leading-[1.7] text-[#CDE9C8]">
+                  O cargo <span className="font-medium text-[#DFF6DA]">{state.roleName}</span>{" "}
+                  foi sincronizado. Agora voce pode voltar ao Discord oficial.
+                </p>
               </div>
+            ) : null}
+
+            {state.phase === "error" && state.requestId ? (
+              <p className="text-[12px] leading-[1.6] text-[#7E7E7E]">
+                Protocolo tecnico: <span className="text-[#B8B8B8]">{state.requestId}</span>
+              </p>
+            ) : null}
+
+            <div className="flex w-full max-w-[390px] flex-col gap-3 pt-1">
+              {state.phase === "success" ? (
+                <a
+                  href={state.actionHref}
+                  className="inline-flex h-[52px] items-center justify-center rounded-[14px] bg-[#F3F3F3] px-5 text-[15px] font-medium text-black transition hover:bg-white"
+                >
+                  {state.actionLabel}
+                </a>
+              ) : null}
+
+              {state.phase === "syncing" && state.helperHref && state.helperLabel ? (
+                <a
+                  href={state.helperHref}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[13px] font-medium text-[#8E8E8E] underline-offset-4 hover:text-[#D4D4D4] hover:underline"
+                >
+                  {state.helperLabel}
+                </a>
+              ) : null}
+
+              {state.phase === "error" ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void syncLink();
+                  }}
+                  className="inline-flex h-[52px] items-center justify-center rounded-[14px] bg-[#F3F3F3] px-5 text-[15px] font-medium text-black transition hover:bg-white"
+                >
+                  Tentar novamente
+                </button>
+              ) : null}
             </div>
           </div>
 

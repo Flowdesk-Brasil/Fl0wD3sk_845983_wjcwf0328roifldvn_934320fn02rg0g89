@@ -117,7 +117,7 @@ export async function POST(request: NextRequest) {
   const rateLimit = await enforceRequestRateLimit({
     action: "discord_link_sync",
     windowMs: 10 * 60 * 1000,
-    maxAttempts: 18,
+    maxAttempts: 120,
     context: authenticatedContext,
   });
 
@@ -222,7 +222,7 @@ export async function POST(request: NextRequest) {
           inviteUrl: result.inviteUrl,
           pollAfterMs:
             result.status === "pending" || result.status === "pending_member"
-              ? 2500
+              ? 5000
               : null,
           linkRecord: result.linkRecord,
         }),
