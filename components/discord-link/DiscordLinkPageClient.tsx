@@ -269,6 +269,11 @@ export function DiscordLinkPageClient({
     }),
     [],
   );
+  const shouldHideAuthenticatedUserCard =
+    state.phase === "error" &&
+    (state.description.includes("link seguro") ||
+      state.description.includes("nao esta mais disponivel") ||
+      state.description.includes("expirou"));
 
   return (
     <main className="flex min-h-screen w-full items-center justify-center bg-black px-6 py-10">
@@ -294,7 +299,7 @@ export function DiscordLinkPageClient({
               o acesso ao painel e liberar automaticamente o cargo oficial no servidor de
               suporte.
             </p>
-            {authenticatedUser ? (
+            {authenticatedUser && !shouldHideAuthenticatedUserCard ? (
               <div className="mt-2 flex items-center gap-3 rounded-[14px] border border-[#242424] bg-[#0A0A0A] px-4 py-3 text-left">
                 {authenticatedUser.avatarUrl ? (
                   <Image
