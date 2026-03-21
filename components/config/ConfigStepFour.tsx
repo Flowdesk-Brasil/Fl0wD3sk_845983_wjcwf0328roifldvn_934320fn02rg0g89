@@ -3305,11 +3305,15 @@ export function ConfigStepFour({
     if (!guildId) return;
 
     const checkoutQuery = readCheckoutStatusQuery();
-    const hasProviderCallbackContext = Boolean(
-      checkoutQuery.status || checkoutQuery.paymentId || checkoutQuery.code !== null,
-    );
+    const hasFinalProviderCallbackContext =
+      Boolean(checkoutQuery.paymentId) ||
+      checkoutQuery.status === "approved" ||
+      checkoutQuery.status === "cancelled" ||
+      checkoutQuery.status === "rejected" ||
+      checkoutQuery.status === "failed" ||
+      checkoutQuery.status === "expired";
 
-    if (hasProviderCallbackContext) {
+    if (hasFinalProviderCallbackContext) {
       clearPendingCardRedirectState(guildId);
       return;
     }
@@ -3352,10 +3356,12 @@ export function ConfigStepFour({
     resolveManualReturn();
 
     window.addEventListener("focus", resolveManualReturn);
+    window.addEventListener("pageshow", resolveManualReturn);
     document.addEventListener("visibilitychange", resolveManualReturn);
 
     return () => {
       window.removeEventListener("focus", resolveManualReturn);
+      window.removeEventListener("pageshow", resolveManualReturn);
       document.removeEventListener("visibilitychange", resolveManualReturn);
     };
   }, [guildId, handleCancelPendingCardPayment, pixOrder]);
