@@ -23,6 +23,11 @@ import {
   resolveCheckoutLinkFailureMessage,
   verifyCheckoutAccessToken,
 } from "@/lib/payments/checkoutLinkSecurity";
+import {
+  cleanupExpiredUnpaidServerSetups,
+  resolveUnpaidSetupEffectiveExpiresAt,
+  resolveUnpaidSetupExpiresAt,
+} from "@/lib/payments/setupCleanup";
 import { ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -394,6 +399,36 @@ async function getActiveLicenseOrderForGuild(guildId: string) {
   return orders.find((order) => isLicenseActiveForOrder(order)) || null;
 }
 
+async function hasStoredGuildSetupConfiguration(guildId: string) {
+  const supabase = getSupabaseAdminClientOrThrow();
+  const [ticketSettingsResult, staffSettingsResult] = await Promise.all([
+    supabase
+      .from("guild_ticket_settings")
+      .select("id")
+      .eq("guild_id", guildId)
+      .maybeSingle<{ id: number }>(),
+    supabase
+      .from("guild_ticket_staff_settings")
+      .select("id")
+      .eq("guild_id", guildId)
+      .maybeSingle<{ id: number }>(),
+  ]);
+
+  if (ticketSettingsResult.error) {
+    throw new Error(
+      `Erro ao verificar configuracoes de canais do servidor: ${ticketSettingsResult.error.message}`,
+    );
+  }
+
+  if (staffSettingsResult.error) {
+    throw new Error(
+      `Erro ao verificar configuracoes de cargos do servidor: ${staffSettingsResult.error.message}`,
+    );
+  }
+
+  return Boolean(ticketSettingsResult.data && staffSettingsResult.data);
+}
+
 async function reconcilePixOrderFromProvider(
   order: PaymentOrderRecord,
   source: "poll" | "order_code" | "post_recovery",
@@ -412,7 +447,10 @@ async function reconcilePixOrderFromProvider(
     resolvedStatus === "approved"
       ? providerPayment.date_approved || new Date().toISOString()
       : null;
-  const expiresAt = providerPayment.date_of_expiration || null;
+  const expiresAt = resolveUnpaidSetupEffectiveExpiresAt({
+    createdAt: order.created_at,
+    providerExpiresAt: providerPayment.date_of_expiration || null,
+  });
   const externalReference =
     providerPayment.external_reference || order.provider_external_reference || null;
 
@@ -540,6 +578,7 @@ async function createDraftOrderForCheckout(input: {
       amount: input.amount,
       currency: input.currency,
       provider: "mercado_pago",
+      expires_at: resolveUnpaidSetupExpiresAt(),
       provider_payload: {
         source: "flowdesk_checkout",
         step: 4,
@@ -794,6 +833,12 @@ export async function POST(request: Request) {
     });
 
     const user = access.context.sessionData.authSession.user;
+    await cleanupExpiredUnpaidServerSetups({
+      userId: user.id,
+      guildId,
+      source: "payment_pix_post",
+    });
+
     const activeLicenseOrder = await getActiveLicenseOrderForGuild(guildId);
     if (activeLicenseOrder) {
       const activeLicenseLink =
@@ -814,6 +859,17 @@ export async function POST(request: Request) {
           activeLicenseLink?.checkoutAccessToken || null,
         ),
       });
+    }
+
+    if (!(await hasStoredGuildSetupConfiguration(guildId))) {
+      return respond(
+        {
+          ok: false,
+          message:
+            "A configuracao desse servidor expirou apos 30 minutos sem pagamento. Refaça a configuracao antes de gerar um novo checkout.",
+        },
+        { status: 409 },
+      );
     }
 
     const supabase = getSupabaseAdminClientOrThrow();
@@ -863,6 +919,7 @@ export async function POST(request: Request) {
           payer_document_type: payerDocument.type,
           provider_status: null,
           provider_status_detail: null,
+          expires_at: resolveUnpaidSetupExpiresAt(latestOrder.created_at),
         })
         .eq("id", latestOrder.id)
         .select(PAYMENT_ORDER_SELECT_COLUMNS)
@@ -930,6 +987,7 @@ export async function POST(request: Request) {
           flowdesk_discord_user_id: user.discord_user_id,
           flowdesk_guild_id: guildId,
         },
+        dateOfExpiration: resolveUnpaidSetupExpiresAt(createdOrder.created_at),
       });
       createdProviderPayment = mercadoPagoPayment;
 
@@ -941,7 +999,10 @@ export async function POST(request: Request) {
         resolvedStatus === "approved"
           ? mercadoPagoPayment.date_approved || new Date().toISOString()
           : null;
-      const expiresAt = mercadoPagoPayment.date_of_expiration || null;
+      const expiresAt = resolveUnpaidSetupEffectiveExpiresAt({
+        createdAt: createdOrder.created_at,
+        providerExpiresAt: mercadoPagoPayment.date_of_expiration || null,
+      });
 
       const updatedOrderResult = await supabase
         .from("payment_orders")
@@ -1021,7 +1082,11 @@ export async function POST(request: Request) {
             resolvedStatus === "approved"
               ? createdProviderPayment?.date_approved || new Date().toISOString()
               : null;
-          const expiresAt = createdProviderPayment?.date_of_expiration || null;
+          const expiresAt = resolveUnpaidSetupEffectiveExpiresAt({
+            createdAt: createdOrder.created_at,
+            providerExpiresAt:
+              createdProviderPayment?.date_of_expiration || null,
+          });
 
           const recoveredOrderResult = await supabase
             .from("payment_orders")

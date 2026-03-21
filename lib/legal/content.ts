@@ -2,7 +2,6 @@ export const TERMS_PATH = "/terms";
 export const PRIVACY_PATH = "/privacy";
 
 const APP_URL = "https://flowdeskbot.vercel.app";
-const LOCAL_APP_URL = "http://localhost:3000";
 const SUPABASE_PUBLIC_URL =
   process.env.SUPABASE_URL?.trim() ||
   "https://sqkhmyhnoyfotifengxv.supabase.co";
@@ -62,11 +61,6 @@ const officialUrlsTable: LegalTable = {
       { text: "Painel web" },
       { text: APP_URL, href: APP_URL, mono: true },
       { text: "Login, configuracao, gerenciamento e paginas legais." },
-    ],
-    [
-      { text: "Ambiente local de desenvolvimento" },
-      { text: LOCAL_APP_URL, href: LOCAL_APP_URL, mono: true },
-      { text: "Testes tecnicos controlados pelo titular da conta." },
     ],
     [
       { text: "OAuth e APIs do Discord" },

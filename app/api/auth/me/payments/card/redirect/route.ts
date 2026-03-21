@@ -13,6 +13,10 @@ import {
   ensureCheckoutAccessTokenForOrder,
   PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS,
 } from "@/lib/payments/checkoutLinkSecurity";
+import {
+  cleanupExpiredUnpaidServerSetups,
+  resolveUnpaidSetupExpiresAt,
+} from "@/lib/payments/setupCleanup";
 import { ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -96,6 +100,14 @@ function normalizePayerEmail(value: unknown) {
   if (!email || email.length > 254) return null;
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
   return email;
+}
+
+function shouldForwardSessionEmailToHostedCardCheckout() {
+  const rawValue = process.env.MERCADO_PAGO_CARD_REDIRECT_USE_SESSION_EMAIL;
+  if (!rawValue) return false;
+
+  const normalized = rawValue.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
 function resolveAmount() {
@@ -323,6 +335,36 @@ async function getActiveLicenseOrderForGuild(guildId: string) {
   return orders.find((order) => isLicenseActiveForOrder(order)) || null;
 }
 
+async function hasStoredGuildSetupConfiguration(guildId: string) {
+  const supabase = getSupabaseAdminClientOrThrow();
+  const [ticketSettingsResult, staffSettingsResult] = await Promise.all([
+    supabase
+      .from("guild_ticket_settings")
+      .select("id")
+      .eq("guild_id", guildId)
+      .maybeSingle<{ id: number }>(),
+    supabase
+      .from("guild_ticket_staff_settings")
+      .select("id")
+      .eq("guild_id", guildId)
+      .maybeSingle<{ id: number }>(),
+  ]);
+
+  if (ticketSettingsResult.error) {
+    throw new Error(
+      `Erro ao verificar configuracoes de canais do servidor: ${ticketSettingsResult.error.message}`,
+    );
+  }
+
+  if (staffSettingsResult.error) {
+    throw new Error(
+      `Erro ao verificar configuracoes de cargos do servidor: ${staffSettingsResult.error.message}`,
+    );
+  }
+
+  return Boolean(ticketSettingsResult.data && staffSettingsResult.data);
+}
+
 async function createDraftOrderForCheckout(input: {
   userId: number;
   guildId: string;
@@ -341,6 +383,7 @@ async function createDraftOrderForCheckout(input: {
       amount: input.amount,
       currency: input.currency,
       provider: "mercado_pago",
+      expires_at: resolveUnpaidSetupExpiresAt(),
       provider_payload: {
         source: "flowdesk_card_redirect_checkout",
         step: 4,
@@ -447,6 +490,12 @@ export async function POST(request: Request) {
     });
 
     const user = access.context.sessionData.authSession.user;
+    await cleanupExpiredUnpaidServerSetups({
+      userId: user.id,
+      guildId,
+      source: "payment_card_redirect_post",
+    });
+
     const activeLicenseOrder = await getActiveLicenseOrderForGuild(guildId);
     if (activeLicenseOrder) {
       return respond({
@@ -455,6 +504,17 @@ export async function POST(request: Request) {
         licenseActive: true,
         licenseExpiresAt: resolveLicenseExpiresAt(activeLicenseOrder),
       });
+    }
+
+    if (!(await hasStoredGuildSetupConfiguration(guildId))) {
+      return respond(
+        {
+          ok: false,
+          message:
+            "A configuracao desse servidor expirou apos 30 minutos sem pagamento. Refaça a configuracao antes de abrir um novo checkout.",
+        },
+        { status: 409 },
+      );
     }
 
     const amount = resolveAmount();
@@ -515,6 +575,7 @@ export async function POST(request: Request) {
           status: "pending",
           amount,
           currency,
+          expires_at: resolveUnpaidSetupExpiresAt(latestOrder.created_at),
           provider_external_reference: null,
           provider_payload: {
             source: "flowdesk_card_redirect_checkout",
@@ -565,7 +626,10 @@ export async function POST(request: Request) {
     const externalReference = `flowdesk-order-${createdOrder.order_number}`;
     const requestUrl = new URL(request.url);
     const origin = requestUrl.origin;
-    const payerEmail = normalizePayerEmail(user.email);
+    const payerEmail = shouldForwardSessionEmailToHostedCardCheckout()
+      ? normalizePayerEmail(user.email)
+      : null;
+    const checkoutExpiresAt = resolveUnpaidSetupExpiresAt(createdOrder.created_at);
     const successUrl = buildConfigReturnUrl({
       origin,
       status: "approved",
@@ -611,6 +675,7 @@ export async function POST(request: Request) {
       successUrl,
       pendingUrl,
       failureUrl,
+      expiresAt: checkoutExpiresAt,
       statementDescriptor: "FLOWDESK",
       metadata: {
         flowdesk_order_number: String(createdOrder.order_number),
@@ -636,6 +701,7 @@ export async function POST(request: Request) {
       .from("payment_orders")
       .update({
         provider_external_reference: externalReference,
+        expires_at: checkoutExpiresAt,
         provider_payload: {
           source: "flowdesk_card_redirect_checkout",
           step: 4,
@@ -644,6 +710,7 @@ export async function POST(request: Request) {
           checkoutPreferenceId: preference.id,
           checkoutRedirectUrl: redirectUrl,
           checkoutEnvironment: cardEnvironment,
+          checkoutForwardedSessionEmail: Boolean(payerEmail),
         },
       })
       .eq("id", createdOrder.id)

@@ -22,6 +22,7 @@ import {
   extendSecurityRequestContext,
   logSecurityAuditEventSafe,
 } from "@/lib/security/requestSecurity";
+import { cleanupExpiredUnpaidServerSetups } from "@/lib/payments/setupCleanup";
 
 type ConfigContextBody = {
   activeGuildId?: unknown;
@@ -38,12 +39,24 @@ function normalizeGuildId(value: unknown) {
 export async function GET(request: Request) {
   const requestContext = createSecurityRequestContext(request);
   try {
-    const session = await getCurrentAuthSessionFromCookie();
+    let session = await getCurrentAuthSessionFromCookie();
     if (!session) {
       return attachRequestId(applyNoStoreHeaders(NextResponse.json(
         { ok: false, message: "Nao autenticado." },
         { status: 401 },
       )), requestContext.requestId);
+    }
+
+    const cleanupSummary = await cleanupExpiredUnpaidServerSetups({
+      userId: session.user.id,
+      source: "config_context_get",
+    });
+
+    if (cleanupSummary.cleanedGuildIds.length) {
+      const refreshedSession = await getCurrentAuthSessionFromCookie();
+      if (refreshedSession) {
+        session = refreshedSession;
+      }
     }
 
     return attachRequestId(applyNoStoreHeaders(NextResponse.json({

@@ -8,6 +8,7 @@ import {
   fetchMercadoPagoPaymentById,
   toQrDataUri,
 } from "@/lib/payments/mercadoPago";
+import { resolvePaymentDiagnostic } from "@/lib/payments/paymentDiagnostics";
 import {
   ensureCheckoutAccessTokenForOrder,
   PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS,
@@ -18,6 +19,7 @@ import {
   reconcilePaymentOrderRecord,
   reconcilePaymentOrderWithProviderPayment,
 } from "@/lib/payments/reconciliation";
+import { cleanupExpiredUnpaidServerSetups } from "@/lib/payments/setupCleanup";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -179,6 +181,23 @@ function toApiOrder(
   };
 }
 
+async function createPaymentOrderEventSafe(
+  paymentOrderId: number,
+  eventType: string,
+  eventPayload: Record<string, unknown>,
+) {
+  try {
+    const supabase = getSupabaseAdminClientOrThrow();
+    await supabase.from("payment_order_events").insert({
+      payment_order_id: paymentOrderId,
+      event_type: eventType,
+      event_payload: eventPayload,
+    });
+  } catch {
+    // nao quebrar o retorno por telemetria
+  }
+}
+
 async function finalizeHostedCheckoutFallbackOrder(input: {
   order: PaymentOrderRecord;
   returnStatus: "pending" | "cancelled" | "rejected" | "failed";
@@ -219,7 +238,25 @@ async function finalizeHostedCheckoutFallbackOrder(input: {
     );
   }
 
-  return result.data || order;
+  const nextOrder = result.data || order;
+  const diagnostic = resolvePaymentDiagnostic({
+    paymentMethod: "card",
+    status: nextOrder.status,
+    providerStatus: nextOrder.provider_status,
+    providerStatusDetail: nextOrder.provider_status_detail,
+  });
+
+  await createPaymentOrderEventSafe(nextOrder.id, "flowdesk_payment_diagnostic_registered", {
+    source: "auth_payment_order_query",
+    category: diagnostic.category,
+    headline: diagnostic.headline,
+    summary: diagnostic.summary,
+    recommendation: diagnostic.recommendation,
+    providerStatus: nextOrder.provider_status,
+    providerStatusDetail: nextOrder.provider_status_detail,
+  });
+
+  return nextOrder;
 }
 
 async function ensureGuildAccess(guildId: string) {
@@ -376,6 +413,12 @@ export async function GET(request: Request) {
     }
 
     const user = access.context.sessionData.authSession.user;
+    await cleanupExpiredUnpaidServerSetups({
+      userId: user.id,
+      guildId,
+      source: "auth_payment_order_query",
+    });
+
     let foreignOwner = false;
     let order = null;
 

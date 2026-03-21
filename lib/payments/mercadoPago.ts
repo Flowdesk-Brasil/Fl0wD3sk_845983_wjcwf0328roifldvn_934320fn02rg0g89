@@ -13,6 +13,7 @@ type CreatePixPaymentInput = {
   payerIdentification: MercadoPagoPayerIdentification;
   externalReference: string;
   metadata: Record<string, string>;
+  dateOfExpiration?: string | null;
 };
 
 type CreateCardPaymentInput = {
@@ -71,6 +72,7 @@ type CreateCardCheckoutPreferenceInput = {
   successUrl: string;
   pendingUrl: string;
   failureUrl: string;
+  expiresAt?: string | null;
   statementDescriptor?: string | null;
   idempotencyKey?: string | null;
 };
@@ -136,6 +138,13 @@ export type MercadoPagoCheckoutPreferenceResponse = {
   init_point?: string | null;
   sandbox_init_point?: string | null;
 };
+
+function normalizeMercadoPagoIsoDate(value: string | null | undefined) {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return null;
+  return new Date(timestamp).toISOString();
+}
 
 function resolveMercadoPagoAccessToken() {
   const token = process.env.MERCADO_PAGO_ACCESS_TOKEN;
@@ -216,6 +225,7 @@ function buildRequestBody(input: CreatePixPaymentInput) {
     },
     external_reference: input.externalReference,
     metadata: input.metadata,
+    date_of_expiration: input.dateOfExpiration || undefined,
   };
 }
 
@@ -431,6 +441,7 @@ export async function createMercadoPagoCardCheckoutPreference(
   const accessToken = getMercadoPagoCardAccessTokenOrThrow();
   const idempotencyKey =
     input.idempotencyKey?.trim() || crypto.randomUUID();
+  const expirationDateTo = normalizeMercadoPagoIsoDate(input.expiresAt);
 
   const response = await fetch("https://api.mercadopago.com/checkout/preferences", {
     method: "POST",
@@ -462,6 +473,8 @@ export async function createMercadoPagoCardCheckoutPreference(
         failure: input.failureUrl,
       },
       auto_return: "approved",
+      expires: Boolean(expirationDateTo),
+      expiration_date_to: expirationDateTo || undefined,
       external_reference: input.externalReference,
       metadata: input.metadata,
       notification_url: input.notificationUrl,

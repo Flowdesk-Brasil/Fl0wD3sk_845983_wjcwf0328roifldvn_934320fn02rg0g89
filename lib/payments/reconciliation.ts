@@ -5,6 +5,11 @@ import {
   resolvePaymentStatus,
   type MercadoPagoPaymentResponse,
 } from "@/lib/payments/mercadoPago";
+import { resolvePaymentDiagnostic } from "@/lib/payments/paymentDiagnostics";
+import {
+  isLockedByUnpaidSetupTimeout,
+  UNPAID_SETUP_TIMEOUT_REFUND_STATUS_DETAIL,
+} from "@/lib/payments/setupCleanup";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 export type ReconcilablePaymentStatus =
@@ -46,6 +51,7 @@ type ReconcileResult = {
     | "unchanged"
     | "updated"
     | "refunded_duplicate"
+    | "refunded_timeout"
     | "provider_unreachable";
   providerStatus: string | null;
   providerStatusDetail: string | null;
@@ -297,6 +303,64 @@ async function reconcilePaymentOrderWithFetchedProviderPayment(
   const expiresAt = providerPayment.date_of_expiration || null;
 
   if (resolvedStatus === "approved") {
+    if (isLockedByUnpaidSetupTimeout(order)) {
+      await autoRefundProviderPayment({
+        providerPaymentId,
+        providerPayment,
+        orderPaymentMethod: order.payment_method,
+      });
+
+      const supabase = getSupabaseAdminClientOrThrow();
+      const refundedTimeoutOrderResult = await supabase
+        .from("payment_orders")
+        .update({
+          status: "cancelled",
+          provider_status: "refunded",
+          provider_status_detail: UNPAID_SETUP_TIMEOUT_REFUND_STATUS_DETAIL,
+          provider_external_reference: externalReference,
+          provider_qr_code: transactionData?.qr_code || order.provider_qr_code,
+          provider_qr_base64:
+            transactionData?.qr_code_base64 || order.provider_qr_base64,
+          provider_ticket_url:
+            transactionData?.ticket_url || order.provider_ticket_url,
+          provider_payload: {
+            source,
+            reconciled_by: source,
+            auto_refunded_after_setup_timeout: true,
+            mercado_pago: providerPayment,
+          },
+          expires_at: expiresAt,
+        })
+        .eq("id", order.id)
+        .select(PAYMENT_ORDER_RECONCILIATION_SELECT_COLUMNS)
+        .single<PaymentOrderReconciliationRecord>();
+
+      if (refundedTimeoutOrderResult.error || !refundedTimeoutOrderResult.data) {
+        throw new Error(
+          refundedTimeoutOrderResult.error?.message ||
+            "Falha ao atualizar pedido pago apos timeout do onboarding.",
+        );
+      }
+
+      await createPaymentOrderEventSafe(
+        order.id,
+        "provider_payment_auto_refunded_after_setup_timeout",
+        {
+          source,
+          providerPaymentId,
+          reason: "approved_after_setup_timeout",
+        },
+      );
+
+      return {
+        order: refundedTimeoutOrderResult.data,
+        changed: true,
+        action: "refunded_timeout",
+        providerStatus: "refunded",
+        providerStatusDetail: UNPAID_SETUP_TIMEOUT_REFUND_STATUS_DETAIL,
+      };
+    }
+
     const activeLicenseOrder = await getActiveLicenseOrderForGuild(
       order.guild_id,
       order.id,
@@ -358,6 +422,16 @@ async function reconcilePaymentOrderWithFetchedProviderPayment(
     }
   }
 
+  if (isLockedByUnpaidSetupTimeout(order) && resolvedStatus === "pending") {
+    return {
+      order,
+      changed: false,
+      action: "unchanged",
+      providerStatus,
+      providerStatusDetail,
+    };
+  }
+
   const nextSnapshot = {
     status: resolvedStatus,
     providerPaymentId,
@@ -370,6 +444,12 @@ async function reconcilePaymentOrderWithFetchedProviderPayment(
     paidAt,
     expiresAt,
   };
+  const diagnostic = resolvePaymentDiagnostic({
+    paymentMethod: order.payment_method,
+    status: resolvedStatus,
+    providerStatus,
+    providerStatusDetail,
+  });
 
   if (!hasOrderCoreChanges(order, nextSnapshot)) {
     return {
@@ -396,6 +476,7 @@ async function reconcilePaymentOrderWithFetchedProviderPayment(
       provider_payload: {
         source,
         reconciled_by: source,
+        flowdesk_diagnostic: diagnostic,
         mercado_pago: providerPayment,
       },
       paid_at: paidAt,
@@ -418,6 +499,7 @@ async function reconcilePaymentOrderWithFetchedProviderPayment(
     providerStatus,
     providerStatusDetail,
     resolvedStatus,
+    diagnosticCategory: diagnostic.category,
   });
 
   return {
@@ -545,7 +627,10 @@ export async function reconcileRecentPaymentOrders(
         providerStatusDetail: reconciled.providerStatusDetail,
       });
 
-      if (reconciled.action === "refunded_duplicate") {
+      if (
+        reconciled.action === "refunded_duplicate" ||
+        reconciled.action === "refunded_timeout"
+      ) {
         summary.changed += 1;
         summary.refunded += 1;
       } else if (reconciled.action === "updated") {

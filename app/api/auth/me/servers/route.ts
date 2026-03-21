@@ -9,6 +9,7 @@ import {
   resolveLicenseBaseTimestamp,
 } from "@/lib/payments/licenseStatus";
 import { reconcileRecentPaymentOrders } from "@/lib/payments/reconciliation";
+import { cleanupExpiredUnpaidServerSetups } from "@/lib/payments/setupCleanup";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
@@ -58,6 +59,15 @@ export async function GET() {
     }
 
     const supabase = getSupabaseAdminClientOrThrow();
+    try {
+      await cleanupExpiredUnpaidServerSetups({
+        userId: sessionData.authSession.user.id,
+        source: "auth_servers",
+      });
+    } catch {
+      // melhor esforco; nao bloquear dashboard por limpeza de onboarding
+    }
+
     try {
       await reconcileRecentPaymentOrders({
         userId: sessionData.authSession.user.id,

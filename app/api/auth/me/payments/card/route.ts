@@ -19,6 +19,12 @@ import {
   toQrDataUri,
   type MercadoPagoPaymentResponse,
 } from "@/lib/payments/mercadoPago";
+import { resolvePaymentDiagnostic } from "@/lib/payments/paymentDiagnostics";
+import {
+  cleanupExpiredUnpaidServerSetups,
+  resolveUnpaidSetupEffectiveExpiresAt,
+  resolveUnpaidSetupExpiresAt,
+} from "@/lib/payments/setupCleanup";
 import { ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -660,6 +666,36 @@ async function getActiveLicenseOrderForGuild(guildId: string) {
   return orders.find((order) => isLicenseActiveForOrder(order)) || null;
 }
 
+async function hasStoredGuildSetupConfiguration(guildId: string) {
+  const supabase = getSupabaseAdminClientOrThrow();
+  const [ticketSettingsResult, staffSettingsResult] = await Promise.all([
+    supabase
+      .from("guild_ticket_settings")
+      .select("id")
+      .eq("guild_id", guildId)
+      .maybeSingle<{ id: number }>(),
+    supabase
+      .from("guild_ticket_staff_settings")
+      .select("id")
+      .eq("guild_id", guildId)
+      .maybeSingle<{ id: number }>(),
+  ]);
+
+  if (ticketSettingsResult.error) {
+    throw new Error(
+      `Erro ao verificar configuracoes de canais do servidor: ${ticketSettingsResult.error.message}`,
+    );
+  }
+
+  if (staffSettingsResult.error) {
+    throw new Error(
+      `Erro ao verificar configuracoes de cargos do servidor: ${staffSettingsResult.error.message}`,
+    );
+  }
+
+  return Boolean(ticketSettingsResult.data && staffSettingsResult.data);
+}
+
 async function createDraftOrderForCheckout(input: {
   userId: number;
   guildId: string;
@@ -679,6 +715,7 @@ async function createDraftOrderForCheckout(input: {
       amount: input.amount,
       currency: input.currency,
       provider: "mercado_pago",
+      expires_at: resolveUnpaidSetupExpiresAt(),
       provider_payload: {
         source: "flowdesk_checkout",
         step: 4,
@@ -815,6 +852,12 @@ export async function POST(request: Request) {
     });
 
     const user = access.context.sessionData.authSession.user;
+    await cleanupExpiredUnpaidServerSetups({
+      userId: user.id,
+      guildId,
+      source: "payment_card_post",
+    });
+
     const activeLicenseOrder = await getActiveLicenseOrderForGuild(guildId);
     if (activeLicenseOrder) {
       return respond({
@@ -824,6 +867,17 @@ export async function POST(request: Request) {
         licenseExpiresAt: resolveLicenseExpiresAt(activeLicenseOrder),
         order: toApiOrder(activeLicenseOrder),
       });
+    }
+
+    if (!(await hasStoredGuildSetupConfiguration(guildId))) {
+      return respond(
+        {
+          ok: false,
+          message:
+            "A configuracao desse servidor expirou apos 30 minutos sem pagamento. Refaça a configuracao antes de gerar um novo checkout.",
+        },
+        { status: 409 },
+      );
     }
 
     const supabase = getSupabaseAdminClientOrThrow();
@@ -956,6 +1010,7 @@ export async function POST(request: Request) {
           status: "pending",
           amount,
           currency,
+          expires_at: resolveUnpaidSetupExpiresAt(latestOrder.created_at),
           payer_name: payerName,
           payer_document: payerDocument.normalized,
           payer_document_type: payerDocument.type,
@@ -1103,10 +1158,22 @@ export async function POST(request: Request) {
             mercadoPagoPayment.date_approved ||
             new Date().toISOString()
           : null;
-      const expiresAt =
-        latestProviderPayment.date_of_expiration ||
-        mercadoPagoPayment.date_of_expiration ||
-        null;
+      const expiresAt = resolveUnpaidSetupEffectiveExpiresAt({
+        createdAt: createdOrder.created_at,
+        providerExpiresAt:
+          latestProviderPayment.date_of_expiration ||
+          mercadoPagoPayment.date_of_expiration ||
+          null,
+      });
+      const diagnostic = resolvePaymentDiagnostic({
+        paymentMethod: "card",
+        status: resolvedStatus,
+        providerStatus,
+        providerStatusDetail:
+          latestProviderPayment.status_detail ||
+          mercadoPagoPayment.status_detail ||
+          null,
+      });
 
       const updatedOrderResult = await supabase
         .from("payment_orders")
@@ -1130,6 +1197,7 @@ export async function POST(request: Request) {
             payer_email_masked: maskEmail(discordPayerEmail),
             billing_zip_code_present: true,
             device_session_id_present: Boolean(deviceSessionId),
+            flowdesk_diagnostic: diagnostic,
             mercado_pago: latestProviderPayment,
             mercado_pago_initial: mercadoPagoPayment,
           },
@@ -1154,6 +1222,7 @@ export async function POST(request: Request) {
           latestProviderPayment.status_detail ||
           mercadoPagoPayment.status_detail ||
           null,
+        diagnosticCategory: diagnostic.category,
         payerEmailSource: "discord",
         payerEmailMasked: maskEmail(discordPayerEmail),
         billingZipCodePresent: true,
@@ -1219,8 +1288,18 @@ export async function POST(request: Request) {
             resolvedStatus === "approved"
               ? recoveredProviderPayment?.date_approved || new Date().toISOString()
               : null;
-          const expiresAt =
-            recoveredProviderPayment?.date_of_expiration || null;
+          const expiresAt = resolveUnpaidSetupEffectiveExpiresAt({
+            createdAt: createdOrder.created_at,
+            providerExpiresAt:
+              recoveredProviderPayment?.date_of_expiration || null,
+          });
+          const diagnostic = resolvePaymentDiagnostic({
+            paymentMethod: "card",
+            status: resolvedStatus,
+            providerStatus,
+            providerStatusDetail:
+              recoveredProviderPayment?.status_detail || message,
+          });
 
           const recoveredOrderResult = await supabase
             .from("payment_orders")
@@ -1242,6 +1321,7 @@ export async function POST(request: Request) {
                 payer_email_source: "discord",
                 payer_email_masked: maskEmail(discordPayerEmail),
                 device_session_id_present: Boolean(deviceSessionId),
+                flowdesk_diagnostic: diagnostic,
                 mercado_pago: recoveredProviderPayment,
               },
               paid_at: paidAt,
@@ -1267,6 +1347,7 @@ export async function POST(request: Request) {
               providerPaymentId,
               providerStatus,
               resolvedStatus,
+              diagnosticCategory: diagnostic.category,
               method: "card",
             },
           );

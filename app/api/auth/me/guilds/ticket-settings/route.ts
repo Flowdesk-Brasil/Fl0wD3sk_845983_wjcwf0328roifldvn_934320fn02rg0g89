@@ -6,6 +6,7 @@ import {
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
 import { getGuildLicenseStatus } from "@/lib/payments/licenseStatus";
+import { cleanupExpiredUnpaidServerSetups } from "@/lib/payments/setupCleanup";
 import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
@@ -154,6 +155,12 @@ export async function GET(request: Request) {
       return access.response;
     }
 
+    await cleanupExpiredUnpaidServerSetups({
+      userId: access.context.sessionData.authSession.user.id,
+      guildId,
+      source: "guild_ticket_settings_get",
+    });
+
     const supabase = getSupabaseAdminClientOrThrow();
     const result = await supabase
       .from("guild_ticket_settings")
@@ -247,6 +254,25 @@ export async function POST(request: Request) {
     const access = await ensureGuildAccess(guildId);
     if (!access.ok) {
       return access.response;
+    }
+
+    const cleanupSummary = await cleanupExpiredUnpaidServerSetups({
+      userId: access.context.sessionData.authSession.user.id,
+      guildId,
+      source: "guild_ticket_settings_post",
+    });
+
+    if (cleanupSummary.cleanedGuildIds.includes(guildId)) {
+      return applyNoStoreHeaders(
+        NextResponse.json(
+        {
+          ok: false,
+          message:
+            "A configuracao desse servidor expirou apos 30 minutos sem pagamento. Recomece a ativacao para continuar.",
+        },
+        { status: 409 },
+        ),
+      );
     }
 
     const licenseStatus = await getGuildLicenseStatus(guildId);

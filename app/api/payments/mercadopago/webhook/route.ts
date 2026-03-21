@@ -6,6 +6,11 @@ import {
   resolvePaymentStatus,
   type MercadoPagoPaymentResponse,
 } from "@/lib/payments/mercadoPago";
+import { resolvePaymentDiagnostic } from "@/lib/payments/paymentDiagnostics";
+import {
+  isLockedByUnpaidSetupTimeout,
+  UNPAID_SETUP_TIMEOUT_REFUND_STATUS_DETAIL,
+} from "@/lib/payments/setupCleanup";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 type PaymentOrderRecord = {
@@ -228,8 +233,66 @@ async function updateOrderFromProviderPayment(
       ? providerPayment.date_approved || new Date().toISOString()
       : null;
   const expiresAt = providerPayment.date_of_expiration || null;
+  const diagnostic = resolvePaymentDiagnostic({
+    paymentMethod: order.payment_method,
+    status: resolvedStatus,
+    providerStatus,
+    providerStatusDetail,
+  });
 
   if (resolvedStatus === "approved") {
+    if (isLockedByUnpaidSetupTimeout(order)) {
+      await autoRefundProviderPayment({
+        providerPaymentId,
+        providerPayment,
+        orderPaymentMethod: order.payment_method,
+      });
+
+      const supabase = getSupabaseAdminClientOrThrow();
+      const refundedTimeoutOrderResult = await supabase
+        .from("payment_orders")
+        .update({
+          status: "cancelled",
+          provider_status: "refunded",
+          provider_status_detail: UNPAID_SETUP_TIMEOUT_REFUND_STATUS_DETAIL,
+          provider_external_reference: externalReference,
+          provider_qr_code: transactionData?.qr_code || order.provider_qr_code,
+          provider_qr_base64:
+            transactionData?.qr_code_base64 || order.provider_qr_base64,
+          provider_ticket_url:
+            transactionData?.ticket_url || order.provider_ticket_url,
+          provider_payload: {
+            source: "mercado_pago_webhook",
+            auto_refunded_after_setup_timeout: true,
+            flowdesk_diagnostic: diagnostic,
+            mercado_pago: providerPayment,
+          },
+          expires_at: expiresAt,
+        })
+        .eq("id", order.id)
+        .select(PAYMENT_ORDER_SELECT_COLUMNS)
+        .single<PaymentOrderRecord>();
+
+      if (refundedTimeoutOrderResult.error || !refundedTimeoutOrderResult.data) {
+        throw new Error(
+          refundedTimeoutOrderResult.error?.message ||
+            "Falha ao atualizar pedido pago apos timeout do onboarding.",
+        );
+      }
+
+      await createPaymentOrderEventSafe(
+        order.id,
+        "provider_payment_auto_refunded_after_setup_timeout",
+        {
+          source: "mercado_pago_webhook",
+          providerPaymentId,
+          reason: "approved_after_setup_timeout",
+        },
+      );
+
+      return refundedTimeoutOrderResult.data;
+    }
+
     const activeLicenseOrder = await getActiveLicenseOrderForGuild(order.guild_id);
     if (activeLicenseOrder && activeLicenseOrder.id !== order.id) {
       await autoRefundProviderPayment({
@@ -254,6 +317,7 @@ async function updateOrderFromProviderPayment(
           provider_payload: {
             source: "mercado_pago_webhook",
             auto_refunded_duplicate: true,
+            flowdesk_diagnostic: diagnostic,
             mercado_pago: providerPayment,
           },
           expires_at: expiresAt,
@@ -280,6 +344,10 @@ async function updateOrderFromProviderPayment(
     }
   }
 
+  if (isLockedByUnpaidSetupTimeout(order)) {
+    return order;
+  }
+
   const supabase = getSupabaseAdminClientOrThrow();
   const updatedOrderResult = await supabase
     .from("payment_orders")
@@ -294,6 +362,7 @@ async function updateOrderFromProviderPayment(
       provider_status_detail: providerStatusDetail,
       provider_payload: {
         source: "mercado_pago_webhook",
+        flowdesk_diagnostic: diagnostic,
         mercado_pago: providerPayment,
       },
       paid_at: paidAt,
@@ -316,6 +385,7 @@ async function updateOrderFromProviderPayment(
     providerStatus,
     providerStatusDetail,
     resolvedStatus,
+    diagnosticCategory: diagnostic.category,
   });
 
   return updatedOrderResult.data;

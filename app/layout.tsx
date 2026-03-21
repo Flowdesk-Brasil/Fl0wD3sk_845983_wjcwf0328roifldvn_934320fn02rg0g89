@@ -1,5 +1,10 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import { Geist, Geist_Mono } from "next/font/google";
+
+import { CookieConsentManager } from "@/components/cookies/CookieConsentManager";
+import { COOKIE_CONSENT_COOKIE_NAME } from "@/lib/cookies/consent";
+
 import "./globals.css";
 
 const geistSans = Geist({
@@ -17,17 +22,24 @@ export const metadata: Metadata = {
   description: "Login do painel Flowdesk",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const cookieStore = await cookies();
+  const initialConsentValue =
+    cookieStore.get(COOKIE_CONSENT_COOKIE_NAME)?.value ?? null;
+
   return (
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {children}
+        <CookieConsentManager initialConsentValue={initialConsentValue} />
+      </body>
     </html>
   );
 }

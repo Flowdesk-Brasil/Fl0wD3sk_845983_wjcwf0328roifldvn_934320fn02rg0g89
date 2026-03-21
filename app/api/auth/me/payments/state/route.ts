@@ -9,6 +9,7 @@ import {
   PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS,
 } from "@/lib/payments/checkoutLinkSecurity";
 import { reconcilePaymentOrderRecord } from "@/lib/payments/reconciliation";
+import { cleanupExpiredUnpaidServerSetups } from "@/lib/payments/setupCleanup";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
@@ -251,6 +252,12 @@ export async function GET(request: Request) {
     }
 
     const user = access.context.sessionData.authSession.user;
+    await cleanupExpiredUnpaidServerSetups({
+      userId: user.id,
+      guildId,
+      source: "auth_payment_state",
+    });
+
     let [activeLicenseOrder, latestUserOrder] = await Promise.all([
       getActiveLicenseOrderForGuild(guildId),
       getLatestUserOrderForGuild(user.id, guildId),

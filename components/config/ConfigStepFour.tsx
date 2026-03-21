@@ -16,6 +16,10 @@ import {
   normalizeBrazilDocumentDigits,
   resolveBrazilDocumentType,
 } from "@/lib/payments/brazilDocument";
+import {
+  resolvePaymentDiagnostic,
+  type PaymentDiagnosticCategory,
+} from "@/lib/payments/paymentDiagnostics";
 
 type ConfigStepFourProps = {
   displayName: string;
@@ -1312,6 +1316,60 @@ function summarizeMercadoPagoStatusDetail(
   }
 }
 
+function resolveOrderDiagnostic(order: PixOrder | null | undefined) {
+  if (!order) return null;
+
+  return resolvePaymentDiagnostic({
+    paymentMethod: order.method,
+    status: order.status,
+    providerStatus: order.providerStatus,
+    providerStatusDetail: order.providerStatusDetail,
+  });
+}
+
+function resolveDiagnosticOriginLabel(category: PaymentDiagnosticCategory | null) {
+  switch (category) {
+    case "issuer":
+      return "Origem: banco emissor";
+    case "antifraud":
+      return "Origem: analise antifraude";
+    case "checkout_closed":
+      return "Origem: checkout encerrado";
+    case "checkout_failed":
+      return "Origem: checkout interrompido";
+    case "validation":
+      return "Origem: validacao dos dados";
+    case "duplicate":
+      return "Origem: tentativa duplicada";
+    case "timeout":
+      return "Origem: prazo expirado";
+    case "processing":
+      return "Origem: confirmacao em andamento";
+    case "provider":
+      return "Origem: provedor de pagamento";
+    default:
+      return "Origem: analise do pagamento";
+  }
+}
+
+function resolveDiagnosticToneClass(category: PaymentDiagnosticCategory | null) {
+  switch (category) {
+    case "issuer":
+    case "antifraud":
+    case "checkout_closed":
+    case "checkout_failed":
+    case "validation":
+      return "border-[#DB4646] bg-[rgba(219,70,70,0.08)] text-[#F0A1A1]";
+    case "timeout":
+    case "duplicate":
+      return "border-[#F2C823] bg-[rgba(242,200,35,0.08)] text-[#F3DD7A]";
+    case "processing":
+      return "border-[#3C3C3C] bg-[rgba(216,216,216,0.05)] text-[#D8D8D8]";
+    default:
+      return "border-[#2E2E2E] bg-[rgba(216,216,216,0.04)] text-[#C9C9C9]";
+  }
+}
+
 function paymentStatusLabel(order: PixOrder | null | undefined) {
   const status = order?.status || "pending";
   const method = order?.method || "pix";
@@ -1369,6 +1427,7 @@ type StatusVisual = {
 function resolveStatusVisual(order: PixOrder | null | undefined): StatusVisual {
   const status = order?.status || "pending";
   const method = order?.method || "pix";
+  const diagnostic = resolveOrderDiagnostic(order);
 
   if (status === "approved") {
     return {
@@ -1407,7 +1466,9 @@ function resolveStatusVisual(order: PixOrder | null | undefined): StatusVisual {
     return {
       title:
         method === "card"
-          ? "Checkout cancelado, Crie um novo novamente"
+          ? diagnostic?.category === "checkout_closed"
+            ? "Checkout encerrado antes da confirmacao do pagamento"
+            : "Checkout cancelado, Crie um novo novamente"
           : "Pagamento Cancelado, Gere outro pagamento",
       label: method === "card" ? "Checkout cancelado" : "Pagamento Cancelado",
       colorClassName: "text-[#DB4646]",
@@ -1419,7 +1480,12 @@ function resolveStatusVisual(order: PixOrder | null | undefined): StatusVisual {
 
   if (status === "rejected") {
     return {
-      title: "Pagamento nao aprovado, revise os dados e tente novamente",
+      title:
+        method === "card" && diagnostic?.category === "antifraud"
+          ? "Pagamento nao aprovado na analise de seguranca"
+          : method === "card" && diagnostic?.category === "issuer"
+            ? "Pagamento nao aprovado pelo banco emissor"
+            : "Pagamento nao aprovado, revise os dados e tente novamente",
       label: "Pagamento nao aprovado",
       colorClassName: "text-[#DB4646]",
       iconPath: "/cdn/icons/canceled.png",
@@ -1432,7 +1498,9 @@ function resolveStatusVisual(order: PixOrder | null | undefined): StatusVisual {
     return {
       title:
         method === "card"
-          ? "Falha ao concluir o checkout, gere uma nova tentativa"
+          ? diagnostic?.category === "checkout_failed"
+            ? "Tentativa com cartao nao foi concluida com seguranca"
+            : "Falha ao concluir o checkout, gere uma nova tentativa"
           : "Pagamento Cancelado, Gere outro pagamento",
       label: method === "card" ? "Falha no checkout" : "Pagamento Cancelado",
       colorClassName: "text-[#DB4646]",
@@ -1457,20 +1525,30 @@ function resolveStatusSupportCopy(order: PixOrder | null | undefined) {
     return "Apos a confirmacao do pagamento, a aprovacao sera imediata, juntamente com a liberacao do sistema.";
   }
 
+  const diagnostic = resolveOrderDiagnostic(order);
+
   if (order.method === "card" && order.status === "pending") {
-    return "Seu pagamento com cartao foi enviado para analise do emissor. Em alguns casos, a confirmacao pode levar alguns instantes. Se o status mudar, esta tela sera atualizada automaticamente.";
+    return diagnostic
+      ? `${diagnostic.summary} ${diagnostic.recommendation}`
+      : "Seu pagamento com cartao foi enviado para analise do emissor. Em alguns casos, a confirmacao pode levar alguns instantes. Se o status mudar, esta tela sera atualizada automaticamente.";
   }
 
   if (order.method === "card" && order.status === "rejected") {
-    return "O emissor do cartao nao aprovou esta tentativa. Revise os dados, utilize o mesmo titular do cartao e tente novamente. Se preferir, voce tambem pode concluir por PIX.";
+    return diagnostic
+      ? `${diagnostic.summary} ${diagnostic.recommendation}`
+      : "O emissor do cartao nao aprovou esta tentativa. Revise os dados, utilize o mesmo titular do cartao e tente novamente. Se preferir, voce tambem pode concluir por PIX.";
   }
 
   if (order.method === "card" && order.status === "cancelled") {
-    return "O checkout com cartao foi encerrado antes da confirmacao do pagamento. Quando quiser, voce pode gerar uma nova tentativa segura e concluir novamente.";
+    return diagnostic
+      ? `${diagnostic.summary} ${diagnostic.recommendation}`
+      : "O checkout com cartao foi encerrado antes da confirmacao do pagamento. Quando quiser, voce pode gerar uma nova tentativa segura e concluir novamente.";
   }
 
   if (order.method === "card" && order.status === "failed") {
-    return "Nao foi possivel concluir o checkout do cartao nesta tentativa. Gere um novo checkout para continuar com seguranca.";
+    return diagnostic
+      ? `${diagnostic.summary} ${diagnostic.recommendation}`
+      : "Nao foi possivel concluir o checkout do cartao nesta tentativa. Gere um novo checkout para continuar com seguranca.";
   }
 
   if (order.status === "expired") {
@@ -2633,6 +2711,7 @@ export function ConfigStepFour({
   const currentPaymentStatusLabel = paymentStatusLabel(pixOrder);
   const statusVisual = resolveStatusVisual(pixOrder);
   const statusSupportCopy = resolveStatusSupportCopy(pixOrder);
+  const orderDiagnostic = resolveOrderDiagnostic(pixOrder);
   const regenerateButtonLabel = resolveRegenerateButtonLabel(pixOrder);
   const canChoosePaymentMethod = Boolean(
     !isLoadingOrder &&
@@ -2649,6 +2728,22 @@ export function ConfigStepFour({
       pixOrder &&
       pixOrder.method === "card" &&
       pixOrder.status === "pending",
+  );
+  const shouldShowCardRecoveryActions = Boolean(
+    guildId &&
+      shouldShowStatusResultPanel &&
+      pixOrder &&
+      pixOrder.method === "card" &&
+      (paymentStatus === "rejected" ||
+        paymentStatus === "cancelled" ||
+        paymentStatus === "failed" ||
+        paymentStatus === "expired"),
+  );
+  const diagnosticOriginLabel = resolveDiagnosticOriginLabel(
+    orderDiagnostic?.category || null,
+  );
+  const diagnosticToneClass = resolveDiagnosticToneClass(
+    orderDiagnostic?.category || null,
   );
   const statusStageKey = useMemo(() => {
     if (view === "card_form") {
@@ -3533,6 +3628,31 @@ export function ConfigStepFour({
     })();
   }, [documentDigits, guildId, payerName, pixOrder?.method]);
 
+  const handleStartPixAfterCardIssue = useCallback(() => {
+    if (!guildId) return;
+
+    removeCachedOrderByGuild(guildId);
+    clearCheckoutStatusQuery();
+    setPixOrder(null);
+    setLastKnownOrderNumber(null);
+    setCopied(false);
+    setMethodMessage("Preencha os dados para gerar um novo PIX com seguranca.");
+    setView("pix_form");
+  }, [guildId]);
+
+  const handleStartCardRetry = useCallback(() => {
+    if (!guildId) return;
+
+    removeCachedOrderByGuild(guildId);
+    clearCheckoutStatusQuery();
+    setPixOrder(null);
+    setLastKnownOrderNumber(null);
+    setCopied(false);
+    setMethodMessage("Preparando um novo checkout seguro do cartao.");
+    setView("card_form");
+    setCardRedirectRequestKey((current) => current + 1);
+  }, [guildId]);
+
   const rightPanel = useMemo(() => {
     if (isLoadingOrder) {
       return (
@@ -3919,9 +4039,40 @@ export function ConfigStepFour({
                 . O pagamento de R$ 9,99 e referente a validacao de apenas 1 licenca, ou seja, o Flowdesk funcionara somente no servidor do Discord que foi configurado inicialmente.
               </p>
 
+              {shouldShowCardRecoveryActions && orderDiagnostic ? (
+                <div className={`mt-[18px] rounded-[3px] border px-[16px] py-[14px] ${diagnosticToneClass}`}>
+                  <p className="text-[11px] font-medium uppercase tracking-[0.08em]">
+                    {diagnosticOriginLabel}
+                  </p>
+                  <p className="mt-[8px] text-[14px] font-medium text-[#D8D8D8]">
+                    {orderDiagnostic.headline}
+                  </p>
+                  <p className="mt-[6px] text-[12px] leading-[1.55] text-[#B8B8B8]">
+                    {orderDiagnostic.recommendation}
+                  </p>
+                </div>
+              ) : null}
+
               <CheckoutLegalText className="mt-[16px] text-[12px] leading-[1.6] text-[#949494] min-[1530px]:hidden" />
 
-              {shouldShowStatusResultPanel && statusVisual.showRegenerate ? (
+              {shouldShowCardRecoveryActions ? (
+                <div className="mt-[26px] grid w-full gap-[12px] min-[760px]:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={handleStartPixAfterCardIssue}
+                    className="flex h-[51px] w-full items-center justify-center rounded-[3px] border border-[#2E2E2E] bg-[#0A0A0A] text-[15px] font-medium text-[#D8D8D8] transition-colors hover:border-[#4A4A4A] hover:bg-[#111111]"
+                  >
+                    Pagar com PIX
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleStartCardRetry}
+                    className="flex h-[51px] w-full items-center justify-center rounded-[3px] bg-[#D8D8D8] text-[16px] font-medium text-black transition-opacity hover:opacity-90"
+                  >
+                    Tentar outro cartao
+                  </button>
+                </div>
+              ) : shouldShowStatusResultPanel && statusVisual.showRegenerate ? (
                 <button
                   type="button"
                   onClick={handleRegeneratePayment}

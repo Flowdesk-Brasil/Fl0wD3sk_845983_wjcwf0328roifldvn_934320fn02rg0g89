@@ -37,7 +37,7 @@ export const PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS =
   "user_id, checkout_link_nonce, checkout_link_expires_at, checkout_link_invalidated_at";
 
 const CHECKOUT_LINK_TOKEN_PREFIX = "fdpay_v1";
-const DEFAULT_CHECKOUT_LINK_TTL_MS = 45 * 60 * 1000;
+const DEFAULT_CHECKOUT_LINK_TTL_MS = 30 * 60 * 1000;
 const MIN_CHECKOUT_LINK_TTL_MS = 5 * 60 * 1000;
 const MAX_CHECKOUT_LINK_TTL_MS = 3 * 60 * 60 * 1000;
 
