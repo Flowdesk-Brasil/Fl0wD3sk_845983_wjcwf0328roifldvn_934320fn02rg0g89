@@ -2713,11 +2713,7 @@ export function ConfigStepFour({
   const statusSupportCopy = resolveStatusSupportCopy(pixOrder);
   const orderDiagnostic = resolveOrderDiagnostic(pixOrder);
   const regenerateButtonLabel = resolveRegenerateButtonLabel(pixOrder);
-  const canChoosePaymentMethod = Boolean(
-    !isLoadingOrder &&
-      resolvedOrderNumber &&
-      (!pixOrder || pixOrder.status === "pending"),
-  );
+  const canChoosePaymentMethod = Boolean(guildId && !isLoadingOrder);
   const shouldShowStatusResultPanel = Boolean(
     view === "methods" &&
       pixOrder &&
@@ -2991,6 +2987,13 @@ export function ConfigStepFour({
       return;
     }
 
+    if (guildId) {
+      clearPendingCardRedirectState(guildId);
+      paymentPollingInFlightRef.current = false;
+    }
+
+    setIsLoadingOrder(false);
+    setIsSubmittingCard(false);
     setMethodMessage(null);
     setPixFormHasInputError(false);
     setPixFormError(null);
@@ -3007,7 +3010,7 @@ export function ConfigStepFour({
     setView("card_form");
     setMethodMessage("Preparando checkout seguro do cartao.");
     setCardRedirectRequestKey((current) => current + 1);
-  }, [canChoosePaymentMethod]);
+  }, [canChoosePaymentMethod, guildId]);
 
   const handleSubmitPixPayment = useCallback(async () => {
     if (!guildId || isSubmittingPix) return;
@@ -3477,6 +3480,96 @@ export function ConfigStepFour({
     };
   }, [guildId, handleCancelPendingCardPayment, pixOrder]);
 
+  useEffect(() => {
+    if (!guildId) return;
+
+    const resolveManualHostedCheckoutReturn = () => {
+      if (document.visibilityState !== "visible") return;
+
+      const pendingRedirectState = readPendingCardRedirectState(guildId);
+      if (!pendingRedirectState) return;
+
+      const checkoutQuery = readCheckoutStatusQuery();
+      const hasFinalProviderCallbackContext =
+        Boolean(checkoutQuery.paymentId) ||
+        checkoutQuery.status === "approved" ||
+        checkoutQuery.status === "cancelled" ||
+        checkoutQuery.status === "rejected" ||
+        checkoutQuery.status === "failed" ||
+        checkoutQuery.status === "expired";
+
+      if (hasFinalProviderCallbackContext) {
+        clearPendingCardRedirectState(guildId);
+        return;
+      }
+
+      if (Date.now() - pendingRedirectState.startedAt < 2500) {
+        return;
+      }
+
+      const orphanPendingCardOrder =
+        pixOrder?.method === "card" &&
+        pixOrder.status === "pending" &&
+        !pixOrder.providerPaymentId;
+
+      if (orphanPendingCardOrder && pixOrder.orderNumber) {
+        if (lastAutoResolvedPendingCardOrderRef.current === pixOrder.orderNumber) {
+          return;
+        }
+
+        lastAutoResolvedPendingCardOrderRef.current = pixOrder.orderNumber;
+        void handleCancelPendingCardPayment({
+          preserveCancelledResult: false,
+        });
+        return;
+      }
+
+      const isHostedCheckoutStillMarkedAsLive =
+        view === "card_form" && isSubmittingCard;
+
+      if (!isHostedCheckoutStillMarkedAsLive) {
+        return;
+      }
+
+      clearPendingCardRedirectState(guildId);
+      paymentPollingInFlightRef.current = false;
+      removeCachedOrderByGuild(guildId);
+      setIsSubmittingCard(false);
+      setIsLoadingOrder(false);
+      setPixOrder(null);
+      setLastKnownOrderNumber(null);
+      setView("methods");
+      setMethodMessage(
+        "Tentativa anterior encerrada porque o checkout externo foi abandonado. Escolha novamente como deseja pagar.",
+      );
+      clearCheckoutStatusQuery();
+    };
+
+    resolveManualHostedCheckoutReturn();
+
+    window.addEventListener("focus", resolveManualHostedCheckoutReturn);
+    window.addEventListener("pageshow", resolveManualHostedCheckoutReturn);
+    document.addEventListener(
+      "visibilitychange",
+      resolveManualHostedCheckoutReturn,
+    );
+
+    return () => {
+      window.removeEventListener("focus", resolveManualHostedCheckoutReturn);
+      window.removeEventListener("pageshow", resolveManualHostedCheckoutReturn);
+      document.removeEventListener(
+        "visibilitychange",
+        resolveManualHostedCheckoutReturn,
+      );
+    };
+  }, [
+    guildId,
+    handleCancelPendingCardPayment,
+    isSubmittingCard,
+    pixOrder,
+    view,
+  ]);
+
   const handleRegeneratePayment = useCallback(() => {
     if (!guildId) return;
 
@@ -3631,8 +3724,12 @@ export function ConfigStepFour({
   const handleStartPixAfterCardIssue = useCallback(() => {
     if (!guildId) return;
 
+    clearPendingCardRedirectState(guildId);
+    paymentPollingInFlightRef.current = false;
     removeCachedOrderByGuild(guildId);
     clearCheckoutStatusQuery();
+    setIsSubmittingCard(false);
+    setIsLoadingOrder(false);
     setPixOrder(null);
     setLastKnownOrderNumber(null);
     setCopied(false);
@@ -3643,8 +3740,12 @@ export function ConfigStepFour({
   const handleStartCardRetry = useCallback(() => {
     if (!guildId) return;
 
+    clearPendingCardRedirectState(guildId);
+    paymentPollingInFlightRef.current = false;
     removeCachedOrderByGuild(guildId);
     clearCheckoutStatusQuery();
+    setIsSubmittingCard(false);
+    setIsLoadingOrder(false);
     setPixOrder(null);
     setLastKnownOrderNumber(null);
     setCopied(false);

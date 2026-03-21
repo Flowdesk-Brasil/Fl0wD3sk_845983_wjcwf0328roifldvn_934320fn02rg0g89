@@ -67,6 +67,7 @@ type CreateCardCheckoutPreferenceInput = {
   description?: string | null;
   externalReference: string;
   payerEmail?: string | null;
+  payerName?: string | null;
   metadata: Record<string, string>;
   notificationUrl: string;
   successUrl: string;
@@ -441,6 +442,10 @@ export async function createMercadoPagoCardCheckoutPreference(
   const accessToken = getMercadoPagoCardAccessTokenOrThrow();
   const idempotencyKey =
     input.idempotencyKey?.trim() || crypto.randomUUID();
+  const payerName = splitPayerName(input.payerName || "");
+  const hasPayerName =
+    Boolean(payerName.firstName?.trim()) || Boolean(payerName.lastName?.trim());
+  const expirationDateFrom = new Date().toISOString();
   const expirationDateTo = normalizeMercadoPagoIsoDate(input.expiresAt);
 
   const response = await fetch("https://api.mercadopago.com/checkout/preferences", {
@@ -462,11 +467,14 @@ export async function createMercadoPagoCardCheckoutPreference(
           unit_price: input.amount,
         },
       ],
-      payer: input.payerEmail
-        ? {
-            email: input.payerEmail,
-          }
-        : undefined,
+      payer:
+        input.payerEmail || hasPayerName
+          ? {
+              email: input.payerEmail || undefined,
+              name: hasPayerName ? payerName.firstName : undefined,
+              surname: hasPayerName ? payerName.lastName || undefined : undefined,
+            }
+          : undefined,
       back_urls: {
         success: input.successUrl,
         pending: input.pendingUrl,
@@ -474,6 +482,7 @@ export async function createMercadoPagoCardCheckoutPreference(
       },
       auto_return: "approved",
       expires: Boolean(expirationDateTo),
+      expiration_date_from: expirationDateTo ? expirationDateFrom : undefined,
       expiration_date_to: expirationDateTo || undefined,
       external_reference: input.externalReference,
       metadata: input.metadata,

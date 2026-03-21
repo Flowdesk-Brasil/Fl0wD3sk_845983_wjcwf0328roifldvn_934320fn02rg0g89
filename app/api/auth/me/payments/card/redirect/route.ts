@@ -671,6 +671,7 @@ export async function POST(request: Request) {
       description: `Licenca mensal do servidor ${guildId} no painel Flowdesk`,
       externalReference,
       payerEmail,
+      payerName: user.display_name || user.global_name || user.username,
       notificationUrl: buildWebhookNotificationUrl(origin),
       successUrl,
       pendingUrl,
