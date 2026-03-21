@@ -8,6 +8,11 @@ import {
   createMercadoPagoCardCheckoutPreference,
   resolveMercadoPagoCardEnvironment,
 } from "@/lib/payments/mercadoPago";
+import {
+  buildCheckoutAccessToken,
+  ensureCheckoutAccessTokenForOrder,
+  PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS,
+} from "@/lib/payments/checkoutLinkSecurity";
 import { ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -29,6 +34,7 @@ type CreateCardRedirectBody = {
 type PaymentOrderRecord = {
   id: number;
   order_number: number;
+  user_id: number;
   guild_id: string;
   payment_method: "pix" | "card";
   status: string;
@@ -38,6 +44,9 @@ type PaymentOrderRecord = {
   provider_external_reference: string | null;
   provider_payload: unknown;
   paid_at: string | null;
+  checkout_link_nonce: string | null;
+  checkout_link_expires_at: string | null;
+  checkout_link_invalidated_at: string | null;
   created_at: string;
 };
 
@@ -54,7 +63,7 @@ const CHECKOUT_REDIRECT_REUSE_WINDOW_MS = 20 * 60 * 1000;
 const LICENSE_VALIDITY_DAYS = 30;
 const LICENSE_VALIDITY_MS = LICENSE_VALIDITY_DAYS * 24 * 60 * 60 * 1000;
 const PAYMENT_ORDER_SELECT_COLUMNS =
-  "id, order_number, guild_id, payment_method, status, amount, currency, provider_payment_id, provider_external_reference, provider_payload, paid_at, created_at";
+  `id, order_number, user_id, guild_id, payment_method, status, amount, currency, provider_payment_id, provider_external_reference, provider_payload, paid_at, created_at, ${PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS}`;
 const SERVER_TABS = new Set(["settings", "payments", "methods", "plans"]);
 
 function normalizeGuildId(value: unknown) {
@@ -153,6 +162,7 @@ function buildConfigReturnUrl(input: {
   status: "approved" | "pending" | "cancelled";
   orderNumber: number;
   guildId: string;
+  checkoutToken: string;
   renew: boolean;
   returnTarget: "servers" | null;
   returnGuildId: string | null;
@@ -163,6 +173,7 @@ function buildConfigReturnUrl(input: {
   url.searchParams.set("code", String(input.orderNumber));
   url.searchParams.set("guild", input.guildId);
   url.searchParams.set("method", "card");
+  url.searchParams.set("checkoutToken", input.checkoutToken);
 
   if (input.renew) {
     url.searchParams.set("renew", "1");
@@ -452,8 +463,10 @@ export async function POST(request: Request) {
     const cardChannel =
       cardEnvironment === "production" ? "card_redirect_production" : "card_redirect_test";
     const latestOrder = await getLatestOrderForUserAndGuild(user.id, guildId);
+    const reusableCheckoutToken =
+      latestOrder ? buildCheckoutAccessToken(latestOrder) : null;
     const reusableRedirectUrl =
-      latestOrder ? resolveReusableRedirectUrl(latestOrder) : null;
+      reusableCheckoutToken && latestOrder ? resolveReusableRedirectUrl(latestOrder) : null;
 
     if (reusableRedirectUrl && latestOrder) {
       await logSecurityAuditEventSafe(auditContext, {
@@ -537,6 +550,18 @@ export async function POST(request: Request) {
       });
     }
 
+    const securedOrder = await ensureCheckoutAccessTokenForOrder({
+      order: createdOrder,
+      forceRotate: true,
+      invalidateOtherOrders: true,
+    });
+    createdOrder = securedOrder.order;
+    const checkoutToken = securedOrder.checkoutAccessToken;
+
+    if (!checkoutToken) {
+      throw new Error("Falha ao preparar token seguro do checkout.");
+    }
+
     const externalReference = `flowdesk-order-${createdOrder.order_number}`;
     const requestUrl = new URL(request.url);
     const origin = requestUrl.origin;
@@ -546,6 +571,7 @@ export async function POST(request: Request) {
       status: "approved",
       orderNumber: createdOrder.order_number,
       guildId,
+      checkoutToken,
       renew,
       returnTarget,
       returnGuildId,
@@ -556,6 +582,7 @@ export async function POST(request: Request) {
       status: "pending",
       orderNumber: createdOrder.order_number,
       guildId,
+      checkoutToken,
       renew,
       returnTarget,
       returnGuildId,
@@ -566,6 +593,7 @@ export async function POST(request: Request) {
       status: "cancelled",
       orderNumber: createdOrder.order_number,
       guildId,
+      checkoutToken,
       renew,
       returnTarget,
       returnGuildId,

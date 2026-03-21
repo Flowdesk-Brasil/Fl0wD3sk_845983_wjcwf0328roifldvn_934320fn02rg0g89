@@ -73,6 +73,7 @@ type PaymentStateOrder = {
   hasPixQr: boolean;
   paidAt: string | null;
   expiresAt: string | null;
+  checkoutAccessToken?: string | null;
   createdAt: string;
   updatedAt: string;
   licenseExpiresAt?: string;
@@ -96,6 +97,7 @@ const CHECKOUT_QUERY_KEYS = [
   "code",
   "guild",
   "method",
+  "checkoutToken",
   "payment_id",
   "paymentId",
   "collection_id",
@@ -291,6 +293,7 @@ function readCheckoutStatusQuery(url: URL) {
     guildId,
     code: Number(codeRaw),
     status,
+    checkoutToken: url.searchParams.get("checkoutToken")?.trim() || null,
   };
 }
 
@@ -300,6 +303,7 @@ function updateCheckoutStatusQuery(
         status: string;
         code: number;
         guildId: string;
+        checkoutToken?: string | null;
       }
     | null,
 ) {
@@ -313,6 +317,11 @@ function updateCheckoutStatusQuery(
     url.searchParams.set("status", normalizePaymentStatusForQuery(input.status));
     url.searchParams.set("code", String(input.code));
     url.searchParams.set("guild", input.guildId);
+    if (input.checkoutToken) {
+      url.searchParams.set("checkoutToken", input.checkoutToken);
+    } else {
+      url.searchParams.delete("checkoutToken");
+    }
   }
 
   window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
@@ -803,22 +812,33 @@ export function ConfigFlow({ displayName }: ConfigFlowProps) {
         const latestOrder = paymentState?.latestOrder || null;
 
         let targetStep = preferredStep;
-        let checkoutQuery: { status: string; code: number; guildId: string } | null = null;
+        let checkoutQuery:
+          | {
+              status: string;
+              code: number;
+              guildId: string;
+              checkoutToken?: string | null;
+            }
+          | null = null;
 
-        if (activeLicenseOrder?.orderNumber) {
+        if (activeLicenseOrder?.orderNumber && activeLicenseOrder.checkoutAccessToken) {
           targetStep = 4;
           checkoutQuery = {
             status: activeLicenseOrder.status || "approved",
             code: activeLicenseOrder.orderNumber,
             guildId,
+            checkoutToken: activeLicenseOrder.checkoutAccessToken || null,
           };
-        } else if (latestOrder?.orderNumber) {
+        } else if (latestOrder?.orderNumber && latestOrder.checkoutAccessToken) {
           targetStep = 4;
           checkoutQuery = {
             status: latestOrder.status || "pending",
             code: latestOrder.orderNumber,
             guildId,
+            checkoutToken: latestOrder.checkoutAccessToken || null,
           };
+        } else if (activeLicenseOrder?.orderNumber || latestOrder?.orderNumber) {
+          targetStep = 4;
         } else if (preferredStep === 1) {
           targetStep = 1;
         }

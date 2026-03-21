@@ -46,6 +46,8 @@ type PixOrder = {
   ticketUrl: string | null;
   paidAt: string | null;
   expiresAt: string | null;
+  checkoutAccessToken?: string | null;
+  checkoutAccessTokenExpiresAt?: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -256,6 +258,7 @@ const CHECKOUT_STATUS_QUERY_KEYS = [
   "status",
   "code",
   "guild",
+  "checkoutToken",
   "payment_id",
   "paymentId",
   "collection_id",
@@ -477,6 +480,7 @@ function readCheckoutStatusQuery() {
       code: null as number | null,
       status: null as string | null,
       guild: null as string | null,
+      checkoutToken: null as string | null,
       paymentId: null as string | null,
     };
   }
@@ -487,13 +491,14 @@ function readCheckoutStatusQuery() {
     rawCode && /^\d{1,12}$/.test(rawCode.trim()) ? Number(rawCode.trim()) : null;
   const status = params.get("status")?.trim().toLowerCase() || null;
   const guild = params.get("guild")?.trim() || null;
+  const checkoutToken = params.get("checkoutToken")?.trim() || null;
   const paymentId =
     params.get("payment_id")?.trim() ||
     params.get("paymentId")?.trim() ||
     params.get("collection_id")?.trim() ||
     null;
 
-  return { code, status, guild, paymentId };
+  return { code, status, guild, checkoutToken, paymentId };
 }
 
 function readRequestedPaymentMethodFromQuery() {
@@ -574,6 +579,12 @@ function setCheckoutStatusQuery(input: {
     url.searchParams.delete("guild");
   }
 
+  if (input.order.checkoutAccessToken) {
+    url.searchParams.set("checkoutToken", input.order.checkoutAccessToken);
+  } else {
+    url.searchParams.delete("checkoutToken");
+  }
+
   url.searchParams.set("method", input.order.method);
   url.searchParams.delete("payment_id");
   url.searchParams.delete("paymentId");
@@ -585,6 +596,7 @@ function setCheckoutStatusQuery(input: {
 function buildPaymentOrderLookupUrl(input: {
   guildId: string;
   orderCode?: number | null;
+  checkoutToken?: string | null;
   paymentId?: string | null;
   status?: string | null;
 }) {
@@ -592,6 +604,10 @@ function buildPaymentOrderLookupUrl(input: {
 
   if (input.orderCode) {
     params.set("code", String(input.orderCode));
+  }
+
+  if (input.checkoutToken) {
+    params.set("checkoutToken", input.checkoutToken);
   }
 
   if (input.paymentId) {
@@ -2032,6 +2048,7 @@ export function ConfigStepFour({
             ? buildPaymentOrderLookupUrl({
                 guildId: activeGuildId,
                 orderCode: checkoutQuery.code,
+                checkoutToken: checkoutQuery.checkoutToken,
                 paymentId: checkoutQuery.paymentId,
                 status: checkoutQuery.status,
               })
@@ -2271,11 +2288,15 @@ export function ConfigStepFour({
           guildId: activeGuildId,
           code: String(activeOrderCode),
         });
+        if (pixOrder?.checkoutAccessToken) {
+          queryParams.set("checkoutToken", pixOrder.checkoutAccessToken);
+        }
         const lookupUrl =
           pixOrder?.method === "card"
             ? buildPaymentOrderLookupUrl({
                 guildId: activeGuildId,
                 orderCode: activeOrderCode,
+                checkoutToken: pixOrder?.checkoutAccessToken || null,
               })
             : `/api/auth/me/payments/pix?${queryParams.toString()}`;
         const response = await fetch(
@@ -2329,7 +2350,13 @@ export function ConfigStepFour({
       paymentPollingInFlightRef.current = false;
       window.clearInterval(intervalId);
     };
-  }, [guildId, pendingPixOrderId, pendingPixOrderNumber, pixOrder?.method]);
+  }, [
+    guildId,
+    pendingPixOrderId,
+    pendingPixOrderNumber,
+    pixOrder?.checkoutAccessToken,
+    pixOrder?.method,
+  ]);
 
   useEffect(() => {
     if (!documentDigits) {

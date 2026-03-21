@@ -17,6 +17,12 @@ import {
   toQrDataUri,
   type MercadoPagoPaymentResponse,
 } from "@/lib/payments/mercadoPago";
+import {
+  ensureCheckoutAccessTokenForOrder,
+  PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS,
+  resolveCheckoutLinkFailureMessage,
+  verifyCheckoutAccessToken,
+} from "@/lib/payments/checkoutLinkSecurity";
 import { ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -53,6 +59,10 @@ type PaymentOrderRecord = {
   provider_status_detail: string | null;
   paid_at: string | null;
   expires_at: string | null;
+  user_id: number;
+  checkout_link_nonce: string | null;
+  checkout_link_expires_at: string | null;
+  checkout_link_invalidated_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -65,7 +75,7 @@ const PENDING_REUSE_WINDOW_MS = 25 * 60 * 1000;
 const LICENSE_VALIDITY_DAYS = 30;
 const LICENSE_VALIDITY_MS = LICENSE_VALIDITY_DAYS * 24 * 60 * 60 * 1000;
 const PAYMENT_ORDER_SELECT_COLUMNS =
-  "id, order_number, guild_id, payment_method, status, amount, currency, payer_name, payer_document, payer_document_type, provider_payment_id, provider_external_reference, provider_qr_code, provider_qr_base64, provider_ticket_url, provider_status, provider_status_detail, paid_at, expires_at, created_at, updated_at";
+  `id, order_number, guild_id, payment_method, status, amount, currency, payer_name, payer_document, payer_document_type, provider_payment_id, provider_external_reference, provider_qr_code, provider_qr_base64, provider_ticket_url, provider_status, provider_status_detail, paid_at, expires_at, user_id, created_at, updated_at, ${PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS}`;
 
 function isProviderDocumentErrorMessage(message: string) {
   const normalizedMessage = message.toLowerCase();
@@ -148,7 +158,10 @@ function resolvePixCurrency() {
   return process.env.MERCADO_PAGO_PIX_CURRENCY || DEFAULT_PIX_CURRENCY;
 }
 
-function toApiOrder(record: PaymentOrderRecord) {
+function toApiOrder(
+  record: PaymentOrderRecord,
+  checkoutAccessToken: string | null = null,
+) {
   const qrDataUri = toQrDataUri(record.provider_qr_base64);
 
   return {
@@ -172,6 +185,8 @@ function toApiOrder(record: PaymentOrderRecord) {
     ticketUrl: record.provider_ticket_url,
     paidAt: record.paid_at,
     expiresAt: record.expires_at,
+    checkoutAccessToken,
+    checkoutAccessTokenExpiresAt: record.checkout_link_expires_at,
     createdAt: record.created_at,
     updatedAt: record.updated_at,
   };
@@ -206,6 +221,12 @@ function parsePaymentId(value: unknown) {
     return trimmed;
   }
   return null;
+}
+
+function normalizeCheckoutToken(value: unknown) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized || null;
 }
 
 async function ensureGuildAccess(guildId: string) {
@@ -324,10 +345,10 @@ async function getOrderByCodeForGuild(guildId: string, orderCode: number) {
 
   const result = await supabase
     .from("payment_orders")
-    .select(`user_id, ${PAYMENT_ORDER_SELECT_COLUMNS}`)
+    .select(PAYMENT_ORDER_SELECT_COLUMNS)
     .eq("guild_id", guildId)
     .eq("order_number", orderCode)
-    .maybeSingle<(PaymentOrderRecord & { user_id: number }) | null>();
+    .maybeSingle<PaymentOrderRecord | null>();
 
   if (result.error) {
     throw new Error(`Erro ao carregar pedido por codigo: ${result.error.message}`);
@@ -347,10 +368,7 @@ async function getOrderByCodeForUserAndGuild(
   if (order.user_id !== userId) {
     return { order: null, foreignOwner: true };
   }
-
-  const safeOrder = { ...order } as PaymentOrderRecord & { user_id?: number };
-  delete safeOrder.user_id;
-  return { order: safeOrder as PaymentOrderRecord, foreignOwner: false };
+  return { order, foreignOwner: false };
 }
 
 async function getActiveLicenseOrderForGuild(guildId: string) {
@@ -550,6 +568,9 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const guildIdFromQuery = normalizeGuildId(url.searchParams.get("guildId"));
     const orderCodeFromQuery = normalizeOrderCode(url.searchParams.get("code"));
+    const checkoutToken = normalizeCheckoutToken(
+      url.searchParams.get("checkoutToken"),
+    );
     const forceNew =
       url.searchParams.get("forceNew") === "1" ||
       url.searchParams.get("forceNew") === "true";
@@ -594,6 +615,17 @@ export async function GET(request: Request) {
       }
 
       let orderByCode = foundOrderByCode.order;
+      const tokenValidation = verifyCheckoutAccessToken(orderByCode, checkoutToken);
+      if (!tokenValidation.ok) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message: resolveCheckoutLinkFailureMessage(tokenValidation.reason),
+          },
+          { status: tokenValidation.reason === "expired" ? 410 : 403 },
+        );
+      }
+
       if (orderByCode.provider_payment_id) {
         try {
           orderByCode = await reconcilePixOrderFromProvider(orderByCode, "order_code");
@@ -604,11 +636,20 @@ export async function GET(request: Request) {
         }
       }
 
+      const securedOrder = await ensureCheckoutAccessTokenForOrder({
+        order: orderByCode,
+        forceRotate: false,
+        invalidateOtherOrders: false,
+      });
+
       return NextResponse.json({
         ok: true,
-        order: toApiOrder(orderByCode),
-        licenseActive: isLicenseActiveForOrder(orderByCode),
-        licenseExpiresAt: resolveLicenseExpiresAt(orderByCode),
+        order: toApiOrder(
+          securedOrder.order,
+          securedOrder.checkoutAccessToken,
+        ),
+        licenseActive: isLicenseActiveForOrder(securedOrder.order),
+        licenseExpiresAt: resolveLicenseExpiresAt(securedOrder.order),
         fromOrderCode: true,
       });
     }
@@ -635,9 +676,18 @@ export async function GET(request: Request) {
       });
     }
 
+    const securedOrder = await ensureCheckoutAccessTokenForOrder({
+      order,
+      forceRotate: forceNew,
+      invalidateOtherOrders: forceNew,
+    });
+
     return NextResponse.json({
       ok: true,
-      order: toApiOrder(order),
+      order: toApiOrder(
+        securedOrder.order,
+        securedOrder.checkoutAccessToken,
+      ),
       blockedByActiveLicense: false,
       licenseActive: false,
       licenseExpiresAt: null,
@@ -746,12 +796,23 @@ export async function POST(request: Request) {
     const user = access.context.sessionData.authSession.user;
     const activeLicenseOrder = await getActiveLicenseOrderForGuild(guildId);
     if (activeLicenseOrder) {
+      const activeLicenseLink =
+        activeLicenseOrder.user_id === user.id
+          ? await ensureCheckoutAccessTokenForOrder({
+              order: activeLicenseOrder,
+              forceRotate: false,
+              invalidateOtherOrders: false,
+            })
+          : null;
       return respond({
         ok: true,
         blockedByActiveLicense: true,
         licenseActive: true,
         licenseExpiresAt: resolveLicenseExpiresAt(activeLicenseOrder),
-        order: toApiOrder(activeLicenseOrder),
+        order: toApiOrder(
+          activeLicenseOrder,
+          activeLicenseLink?.checkoutAccessToken || null,
+        ),
       });
     }
 
@@ -765,10 +826,18 @@ export async function POST(request: Request) {
       latestOrder.provider_qr_code &&
       Date.now() - new Date(latestOrder.created_at).getTime() < PENDING_REUSE_WINDOW_MS
     ) {
+      const securedOrder = await ensureCheckoutAccessTokenForOrder({
+        order: latestOrder,
+        forceRotate: false,
+        invalidateOtherOrders: false,
+      });
       return respond({
         ok: true,
         reused: true,
-        order: toApiOrder(latestOrder),
+        order: toApiOrder(
+          securedOrder.order,
+          securedOrder.checkoutAccessToken,
+        ),
       });
     }
 
@@ -916,10 +985,19 @@ export async function POST(request: Request) {
         },
       });
 
+      const securedOrder = await ensureCheckoutAccessTokenForOrder({
+        order: updatedOrderResult.data,
+        forceRotate: true,
+        invalidateOtherOrders: true,
+      });
+
       return respond({
         ok: true,
         reused: false,
-        order: toApiOrder(updatedOrderResult.data),
+        order: toApiOrder(
+          securedOrder.order,
+          securedOrder.checkoutAccessToken,
+        ),
       });
     } catch (providerError) {
       const message =
@@ -1019,11 +1097,20 @@ export async function POST(request: Request) {
             },
           });
 
+          const securedRecoveredOrder = await ensureCheckoutAccessTokenForOrder({
+            order: recoveredOrder,
+            forceRotate: true,
+            invalidateOtherOrders: true,
+          });
+
           return respond({
             ok: true,
             reused: false,
             recovered: true,
-            order: toApiOrder(recoveredOrder),
+            order: toApiOrder(
+              securedRecoveredOrder.order,
+              securedRecoveredOrder.checkoutAccessToken,
+            ),
           });
         }
       }

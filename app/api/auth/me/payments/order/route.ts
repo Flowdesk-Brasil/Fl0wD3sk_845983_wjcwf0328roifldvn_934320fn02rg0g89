@@ -9,6 +9,12 @@ import {
   toQrDataUri,
 } from "@/lib/payments/mercadoPago";
 import {
+  ensureCheckoutAccessTokenForOrder,
+  PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS,
+  resolveCheckoutLinkFailureMessage,
+  verifyCheckoutAccessToken,
+} from "@/lib/payments/checkoutLinkSecurity";
+import {
   reconcilePaymentOrderRecord,
   reconcilePaymentOrderWithProviderPayment,
 } from "@/lib/payments/reconciliation";
@@ -48,6 +54,10 @@ type PaymentOrderRecord = {
   provider_status_detail: string | null;
   paid_at: string | null;
   expires_at: string | null;
+  user_id: number;
+  checkout_link_nonce: string | null;
+  checkout_link_expires_at: string | null;
+  checkout_link_invalidated_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -55,7 +65,7 @@ type PaymentOrderRecord = {
 const LICENSE_VALIDITY_DAYS = 30;
 const LICENSE_VALIDITY_MS = LICENSE_VALIDITY_DAYS * 24 * 60 * 60 * 1000;
 const PAYMENT_ORDER_SELECT_COLUMNS =
-  "id, order_number, guild_id, payment_method, status, amount, currency, payer_name, payer_document, payer_document_type, provider_payment_id, provider_external_reference, provider_qr_code, provider_qr_base64, provider_ticket_url, provider_status, provider_status_detail, paid_at, expires_at, created_at, updated_at";
+  `id, order_number, guild_id, payment_method, status, amount, currency, payer_name, payer_document, payer_document_type, provider_payment_id, provider_external_reference, provider_qr_code, provider_qr_base64, provider_ticket_url, provider_status, provider_status_detail, paid_at, expires_at, user_id, created_at, updated_at, ${PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS}`;
 
 function normalizeGuildId(value: string | null) {
   if (!value) return null;
@@ -75,6 +85,12 @@ function normalizePaymentId(value: string | null) {
   if (!value) return null;
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
+}
+
+function normalizeCheckoutToken(value: string | null) {
+  if (!value) return null;
+  const normalized = value.trim();
+  return normalized || null;
 }
 
 function normalizeHostedCheckoutReturnStatus(value: string | null) {
@@ -131,7 +147,10 @@ function isLicenseActiveForOrder(order: PaymentOrderRecord) {
   return Date.now() < Date.parse(resolveLicenseExpiresAt(order));
 }
 
-function toApiOrder(record: PaymentOrderRecord) {
+function toApiOrder(
+  record: PaymentOrderRecord,
+  checkoutAccessToken: string | null = null,
+) {
   return {
     id: record.id,
     orderNumber: record.order_number,
@@ -153,6 +172,8 @@ function toApiOrder(record: PaymentOrderRecord) {
     ticketUrl: record.provider_ticket_url,
     paidAt: record.paid_at,
     expiresAt: record.expires_at,
+    checkoutAccessToken,
+    checkoutAccessTokenExpiresAt: record.checkout_link_expires_at,
     createdAt: record.created_at,
     updatedAt: record.updated_at,
   };
@@ -273,10 +294,10 @@ async function getOrderByCodeForGuild(guildId: string, orderCode: number) {
   const supabase = getSupabaseAdminClientOrThrow();
   const result = await supabase
     .from("payment_orders")
-    .select(`user_id, ${PAYMENT_ORDER_SELECT_COLUMNS}`)
+    .select(PAYMENT_ORDER_SELECT_COLUMNS)
     .eq("guild_id", guildId)
     .eq("order_number", orderCode)
-    .maybeSingle<(PaymentOrderRecord & { user_id: number }) | null>();
+    .maybeSingle<PaymentOrderRecord | null>();
 
   if (result.error) {
     throw new Error(
@@ -298,10 +319,7 @@ async function getOrderByCodeForUserAndGuild(
   if (order.user_id !== userId) {
     return { order: null, foreignOwner: true };
   }
-
-  const safeOrder = { ...order } as PaymentOrderRecord & { user_id?: number };
-  delete safeOrder.user_id;
-  return { order: safeOrder as PaymentOrderRecord, foreignOwner: false };
+  return { order, foreignOwner: false };
 }
 
 async function getLatestOrderForUserAndGuild(userId: number, guildId: string) {
@@ -338,6 +356,9 @@ export async function GET(request: Request) {
       normalizePaymentId(url.searchParams.get("paymentId")) ||
       normalizePaymentId(url.searchParams.get("payment_id")) ||
       normalizePaymentId(url.searchParams.get("collection_id"));
+    const checkoutToken = normalizeCheckoutToken(
+      url.searchParams.get("checkoutToken"),
+    );
     const returnStatus = normalizeHostedCheckoutReturnStatus(
       url.searchParams.get("status"),
     );
@@ -382,6 +403,22 @@ export async function GET(request: Request) {
       );
     }
 
+    if (orderCode) {
+      const tokenValidation = verifyCheckoutAccessToken(order, checkoutToken);
+      if (!tokenValidation.ok) {
+        return respond(
+          {
+            ok: false,
+            message: resolveCheckoutLinkFailureMessage(tokenValidation.reason),
+          },
+          {
+            status:
+              tokenValidation.reason === "expired" ? 410 : 403,
+          },
+        );
+      }
+    }
+
     if (paymentId) {
       try {
         const providerPayment = await fetchMercadoPagoPaymentById(paymentId, {
@@ -422,11 +459,17 @@ export async function GET(request: Request) {
       }
     }
 
+    const securedOrder = await ensureCheckoutAccessTokenForOrder({
+      order,
+      forceRotate: false,
+      invalidateOtherOrders: false,
+    });
+
     return respond({
       ok: true,
-      order: toApiOrder(order),
-      licenseActive: isLicenseActiveForOrder(order),
-      licenseExpiresAt: resolveLicenseExpiresAt(order),
+      order: toApiOrder(securedOrder.order, securedOrder.checkoutAccessToken),
+      licenseActive: isLicenseActiveForOrder(securedOrder.order),
+      licenseExpiresAt: resolveLicenseExpiresAt(securedOrder.order),
       fromOrderCode: Boolean(orderCode),
     });
   } catch (error) {

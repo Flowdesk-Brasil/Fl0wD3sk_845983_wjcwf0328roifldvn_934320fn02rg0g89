@@ -4,6 +4,10 @@ import {
   isGuildId,
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
+import {
+  ensureCheckoutAccessTokenForOrder,
+  PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS,
+} from "@/lib/payments/checkoutLinkSecurity";
 import { reconcilePaymentOrderRecord } from "@/lib/payments/reconciliation";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
@@ -11,6 +15,7 @@ import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 type PaymentOrderStateRecord = {
   id: number;
   order_number: number;
+  user_id: number;
   guild_id: string;
   payment_method: "pix" | "card";
   status: "pending" | "approved" | "rejected" | "cancelled" | "expired" | "failed";
@@ -20,6 +25,9 @@ type PaymentOrderStateRecord = {
   provider_qr_code: string | null;
   paid_at: string | null;
   expires_at: string | null;
+  checkout_link_nonce: string | null;
+  checkout_link_expires_at: string | null;
+  checkout_link_invalidated_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -28,7 +36,7 @@ const LICENSE_VALIDITY_DAYS = 30;
 const LICENSE_VALIDITY_MS = LICENSE_VALIDITY_DAYS * 24 * 60 * 60 * 1000;
 const STALE_CARD_REDIRECT_PENDING_MS = 4 * 60 * 1000;
 const PAYMENT_STATE_SELECT_COLUMNS =
-  "id, order_number, guild_id, payment_method, status, provider_payment_id, provider_status, provider_status_detail, provider_qr_code, paid_at, expires_at, created_at, updated_at";
+  `id, order_number, user_id, guild_id, payment_method, status, provider_payment_id, provider_status, provider_status_detail, provider_qr_code, paid_at, expires_at, created_at, updated_at, ${PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS}`;
 
 function normalizeGuildId(value: string | null) {
   if (!value) return null;
@@ -57,7 +65,10 @@ function isLicenseActiveForOrder(order: PaymentOrderStateRecord) {
   return Date.now() < Date.parse(resolveLicenseExpiresAt(order));
 }
 
-function toOrderState(order: PaymentOrderStateRecord) {
+function toOrderState(
+  order: PaymentOrderStateRecord,
+  checkoutAccessToken: string | null = null,
+) {
   return {
     orderNumber: order.order_number,
     guildId: order.guild_id,
@@ -68,6 +79,8 @@ function toOrderState(order: PaymentOrderStateRecord) {
     hasPixQr: Boolean(order.provider_qr_code),
     paidAt: order.paid_at,
     expiresAt: order.expires_at,
+    checkoutAccessToken,
+    checkoutAccessTokenExpiresAt: order.checkout_link_expires_at,
     createdAt: order.created_at,
     updatedAt: order.updated_at,
   };
@@ -289,17 +302,42 @@ export async function GET(request: Request) {
       }
     }
 
+    const securedLatestOrder =
+      latestUserOrder && latestUserOrder.user_id === user.id
+        ? await ensureCheckoutAccessTokenForOrder({
+            order: latestUserOrder,
+            forceRotate: false,
+            invalidateOtherOrders: false,
+          })
+        : null;
+    const securedActiveLicenseOrder =
+      activeLicenseOrder && activeLicenseOrder.user_id === user.id
+        ? await ensureCheckoutAccessTokenForOrder({
+            order: activeLicenseOrder,
+            forceRotate: false,
+            invalidateOtherOrders: false,
+          })
+        : null;
+
     return applyNoStoreHeaders(
       NextResponse.json({
       ok: true,
       guildId,
       activeLicense: activeLicenseOrder
         ? {
-            ...toOrderState(activeLicenseOrder),
+            ...toOrderState(
+              activeLicenseOrder,
+              securedActiveLicenseOrder?.checkoutAccessToken || null,
+            ),
             licenseExpiresAt: resolveLicenseExpiresAt(activeLicenseOrder),
           }
         : null,
-      latestOrder: latestUserOrder ? toOrderState(latestUserOrder) : null,
+      latestOrder: latestUserOrder
+        ? toOrderState(
+            latestUserOrder,
+            securedLatestOrder?.checkoutAccessToken || null,
+          )
+        : null,
       }),
     );
   } catch (error) {
