@@ -2840,7 +2840,7 @@ export function ServerSettingsEditor({
                 type="button"
                 onClick={() => openAddMethodModal()}
                 disabled={!cardPaymentsEnabled}
-                className={`relative mt-3 flex h-[46px] w-full items-center justify-center rounded-[3px] border text-[13px] font-medium transition-colors ${
+                className={`mt-3 flex h-[46px] w-full items-center justify-center gap-3 rounded-[3px] border text-[13px] font-medium transition-colors ${
                   cardPaymentsEnabled
                     ? "border-transparent bg-[#D8D8D8] text-black hover:opacity-90"
                     : "border-[#2E2E2E] bg-[#0A0A0A] text-[#D8D8D8] disabled:cursor-not-allowed"
@@ -2848,7 +2848,7 @@ export function ServerSettingsEditor({
               >
                 <span>ADICIONAR NOVO METODO</span>
                 {!cardPaymentsEnabled ? (
-                  <span className="pointer-events-none absolute -right-[7px] -top-[9px] inline-flex h-[22px] items-center justify-center rounded-[3px] border border-[#F2C823] bg-[rgba(242,200,35,0.12)] px-2 text-[10px] tracking-[0.04em] text-[#F2C823] shadow-[0_0_0_1px_rgba(10,10,10,0.55)]">
+                  <span className="pointer-events-none inline-flex h-[22px] items-center justify-center rounded-[3px] border border-[#F2C823] bg-[rgba(242,200,35,0.12)] px-2 text-[10px] tracking-[0.04em] text-[#F2C823] shadow-[0_0_0_1px_rgba(10,10,10,0.55)]">
                     {CARD_PAYMENTS_COMING_SOON_BADGE}
                   </span>
                 ) : null}
