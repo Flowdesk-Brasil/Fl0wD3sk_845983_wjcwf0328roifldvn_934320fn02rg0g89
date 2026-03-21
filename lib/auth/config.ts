@@ -28,6 +28,7 @@ export const authConfig = {
   loginSuccessHashPath: process.env.LOGIN_SUCCESS_HASH_PATH || "/step/1",
   oauthStateCookieName: "flowdesk_oauth_state",
   oauthRedirectUriCookieName: "flowdesk_oauth_redirect_uri",
+  oauthNextPathCookieName: "flowdesk_oauth_next_path",
   sessionCookieName: "flowdesk_auth_session",
   sessionTtlHours: parseSessionHours(),
 };
@@ -55,6 +56,16 @@ function normalizeBasePath(path: string) {
 function normalizeHashPath(path: string) {
   if (!path) return "";
   return path.replace(/^#/, "");
+}
+
+export function normalizeInternalNextPath(path: string | null | undefined) {
+  if (typeof path !== "string") return null;
+
+  const trimmed = path.trim();
+  if (!trimmed || trimmed.length > 300) return null;
+  if (!trimmed.startsWith("/")) return null;
+  if (trimmed.startsWith("//")) return null;
+  return trimmed;
 }
 
 export function buildLoginSuccessLocation(origin: string) {

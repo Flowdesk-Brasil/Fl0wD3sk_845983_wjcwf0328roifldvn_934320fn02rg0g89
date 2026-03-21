@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   authConfig,
   isSecureRequest,
+  normalizeInternalNextPath,
   resolveDiscordRedirectUri,
 } from "@/lib/auth/config";
 import { buildDiscordAuthorizeUrl } from "@/lib/auth/discord";
@@ -47,6 +48,9 @@ export async function GET(request: NextRequest) {
 
   const state = createOAuthState();
   const redirectUri = resolveDiscordRedirectUri(request);
+  const requestedNextPath = normalizeInternalNextPath(
+    request.nextUrl.searchParams.get("next"),
+  );
   const discordAuthUrl = buildDiscordAuthorizeUrl(state, redirectUri);
 
   const response = NextResponse.redirect(discordAuthUrl);
@@ -69,11 +73,25 @@ export async function GET(request: NextRequest) {
     priority: "high",
   });
 
+  if (requestedNextPath) {
+    response.cookies.set(authConfig.oauthNextPathCookieName, requestedNextPath, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: isSecureRequest(request),
+      maxAge: 60 * 10,
+      path: "/",
+      priority: "high",
+    });
+  } else {
+    response.cookies.delete(authConfig.oauthNextPathCookieName);
+  }
+
   await logSecurityAuditEventSafe(requestContext, {
     action: "auth_discord_start",
     outcome: "succeeded",
     metadata: {
       redirectUri,
+      requestedNextPath,
     },
   });
 

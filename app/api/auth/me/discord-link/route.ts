@@ -1,0 +1,252 @@
+import { NextRequest, NextResponse } from "next/server";
+import { getCurrentAuthSessionFromCookie } from "@/lib/auth/session";
+import {
+  OFFICIAL_DISCORD_GUILD_ID,
+  OFFICIAL_DISCORD_LINKED_ROLE_ID,
+  OFFICIAL_DISCORD_LINKED_ROLE_NAME,
+} from "@/lib/discordLink/config";
+import {
+  getDiscordLinkRecordForUser,
+  syncOfficialDiscordLink,
+} from "@/lib/discordLink/service";
+import { ensureSameOriginJsonMutationRequest, applyNoStoreHeaders } from "@/lib/security/http";
+import {
+  attachRequestId,
+  createSecurityRequestContext,
+  enforceRequestRateLimit,
+  extendSecurityRequestContext,
+  logSecurityAuditEventSafe,
+} from "@/lib/security/requestSecurity";
+
+function buildUnauthorizedResponse(requestId: string) {
+  return attachRequestId(
+    applyNoStoreHeaders(
+      NextResponse.json(
+        { ok: false, authenticated: false, message: "Nao autenticado." },
+        { status: 401 },
+      ),
+    ),
+    requestId,
+  );
+}
+
+export async function GET(request: NextRequest) {
+  const requestContext = createSecurityRequestContext(request);
+  const authSession = await getCurrentAuthSessionFromCookie();
+
+  if (!authSession) {
+    return buildUnauthorizedResponse(requestContext.requestId);
+  }
+
+  const authenticatedContext = extendSecurityRequestContext(requestContext, {
+    sessionId: authSession.id,
+    userId: authSession.user.id,
+    guildId: OFFICIAL_DISCORD_GUILD_ID,
+  });
+
+  try {
+    const linkRecord = await getDiscordLinkRecordForUser(authSession.user.id);
+
+    return attachRequestId(
+      applyNoStoreHeaders(
+        NextResponse.json({
+          ok: true,
+          authenticated: true,
+          status: linkRecord?.status || "pending",
+          linked: linkRecord?.status === "linked",
+          roleName: OFFICIAL_DISCORD_LINKED_ROLE_NAME,
+          roleId: OFFICIAL_DISCORD_LINKED_ROLE_ID,
+          guildId: OFFICIAL_DISCORD_GUILD_ID,
+          linkRecord,
+        }),
+      ),
+      authenticatedContext.requestId,
+    );
+  } catch (error) {
+    await logSecurityAuditEventSafe(authenticatedContext, {
+      action: "discord_link_status",
+      outcome: "failed",
+      metadata: {
+        reason: error instanceof Error ? error.message : "unknown",
+      },
+    });
+
+    return attachRequestId(
+      applyNoStoreHeaders(
+        NextResponse.json(
+          {
+            ok: false,
+            authenticated: true,
+            message:
+              error instanceof Error
+                ? error.message
+                : "Erro ao consultar a vinculacao Discord.",
+          },
+          { status: 500 },
+        ),
+      ),
+      authenticatedContext.requestId,
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  const originGuard = ensureSameOriginJsonMutationRequest(request);
+  if (originGuard) {
+    return originGuard;
+  }
+
+  const requestContext = createSecurityRequestContext(request, {
+    guildId: OFFICIAL_DISCORD_GUILD_ID,
+  });
+  const authSession = await getCurrentAuthSessionFromCookie();
+
+  if (!authSession) {
+    return buildUnauthorizedResponse(requestContext.requestId);
+  }
+
+  const authenticatedContext = extendSecurityRequestContext(requestContext, {
+    sessionId: authSession.id,
+    userId: authSession.user.id,
+    guildId: OFFICIAL_DISCORD_GUILD_ID,
+  });
+
+  const rateLimit = await enforceRequestRateLimit({
+    action: "discord_link_sync",
+    windowMs: 10 * 60 * 1000,
+    maxAttempts: 18,
+    context: authenticatedContext,
+  });
+
+  if (!rateLimit.ok) {
+    await logSecurityAuditEventSafe(authenticatedContext, {
+      action: "discord_link_sync",
+      outcome: "blocked",
+      metadata: {
+        reason: "rate_limit",
+        retryAfterSeconds: rateLimit.retryAfterSeconds,
+      },
+    });
+
+    const response = applyNoStoreHeaders(
+      NextResponse.json(
+        {
+          ok: false,
+          message:
+            "Muitas tentativas de vinculacao em sequencia. Aguarde alguns segundos e tente novamente.",
+        },
+        { status: 429 },
+      ),
+    );
+    response.headers.set("Retry-After", String(rateLimit.retryAfterSeconds));
+    return attachRequestId(response, authenticatedContext.requestId);
+  }
+
+  await logSecurityAuditEventSafe(authenticatedContext, {
+    action: "discord_link_sync",
+    outcome: "started",
+    metadata: {
+      discordUserId: authSession.user.discord_user_id,
+    },
+  });
+
+  try {
+    const payload = await request.json().catch(() => ({}));
+    const source =
+      payload && typeof payload === "object" && typeof payload.source === "string"
+        ? payload.source.trim().slice(0, 64)
+        : "official_link_page";
+
+    const result = await syncOfficialDiscordLink({
+      userId: authSession.user.id,
+      discordUserId: authSession.user.discord_user_id,
+      requestId: authenticatedContext.requestId,
+    });
+
+    if (result.status === "failed") {
+      await logSecurityAuditEventSafe(authenticatedContext, {
+        action: "discord_link_sync",
+        outcome: "failed",
+        metadata: {
+          source,
+          reason: result.message,
+        },
+      });
+
+      return attachRequestId(
+        applyNoStoreHeaders(
+          NextResponse.json(
+            {
+              ok: false,
+              authenticated: true,
+              message: result.message,
+              status: result.status,
+              openDiscordUrl: result.openDiscordUrl,
+              inviteUrl: result.inviteUrl,
+              linkRecord: result.linkRecord,
+            },
+            { status: 500 },
+          ),
+        ),
+        authenticatedContext.requestId,
+      );
+    }
+
+    await logSecurityAuditEventSafe(authenticatedContext, {
+      action: "discord_link_sync",
+      outcome: "succeeded",
+      metadata: {
+        source,
+        status: result.status,
+        alreadyLinked: result.alreadyLinked,
+      },
+    });
+
+    return attachRequestId(
+      applyNoStoreHeaders(
+        NextResponse.json({
+          ok: true,
+          authenticated: true,
+          status: result.status,
+          linked: result.status === "linked",
+          message: result.message,
+          alreadyLinked: result.alreadyLinked,
+          roleName: result.roleName,
+          roleId: OFFICIAL_DISCORD_LINKED_ROLE_ID,
+          guildId: OFFICIAL_DISCORD_GUILD_ID,
+          openDiscordUrl: result.openDiscordUrl,
+          inviteUrl: result.inviteUrl,
+          linkRecord: result.linkRecord,
+        }),
+      ),
+      authenticatedContext.requestId,
+    );
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Erro inesperado ao vincular a conta Discord.";
+
+    await logSecurityAuditEventSafe(authenticatedContext, {
+      action: "discord_link_sync",
+      outcome: "failed",
+      metadata: {
+        reason: message,
+      },
+    });
+
+    return attachRequestId(
+      applyNoStoreHeaders(
+        NextResponse.json(
+          {
+            ok: false,
+            authenticated: true,
+            message,
+          },
+          { status: 500 },
+        ),
+      ),
+      authenticatedContext.requestId,
+    );
+  }
+}

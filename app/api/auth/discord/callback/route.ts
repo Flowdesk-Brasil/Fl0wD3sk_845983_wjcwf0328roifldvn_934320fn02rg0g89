@@ -3,6 +3,7 @@ import {
   authConfig,
   buildLoginSuccessLocation,
   isSecureRequest,
+  normalizeInternalNextPath,
 } from "@/lib/auth/config";
 import {
   exchangeCodeForToken,
@@ -35,6 +36,7 @@ function extractClientIp(request: NextRequest) {
 function clearOAuthCookies(response: NextResponse) {
   response.cookies.delete(authConfig.oauthStateCookieName);
   response.cookies.delete(authConfig.oauthRedirectUriCookieName);
+  response.cookies.delete(authConfig.oauthNextPathCookieName);
 }
 
 function redirectWithLocation(location: string) {
@@ -110,6 +112,9 @@ export async function GET(request: NextRequest) {
   const redirectUriCookie = request.cookies.get(
     authConfig.oauthRedirectUriCookieName,
   )?.value;
+  const nextPathCookie = normalizeInternalNextPath(
+    request.cookies.get(authConfig.oauthNextPathCookieName)?.value,
+  );
 
   if (!code || !state || !stateCookie || !redirectUriCookie || state !== stateCookie) {
     const response = applyNoStoreHeaders(NextResponse.redirect(buildLoginRedirect(request)));
@@ -154,9 +159,11 @@ export async function GET(request: NextRequest) {
     } catch {
       hasManagedServerAccess = false;
     }
-    const successLocation = hasManagedServerAccess
-      ? `${request.nextUrl.origin}/servers`
-      : buildLoginSuccessLocation(request.nextUrl.origin);
+    const successLocation = nextPathCookie
+      ? `${request.nextUrl.origin}${nextPathCookie}`
+      : hasManagedServerAccess
+        ? `${request.nextUrl.origin}/servers`
+        : buildLoginSuccessLocation(request.nextUrl.origin);
     const response = redirectWithLocation(successLocation);
 
     response.cookies.set(authConfig.sessionCookieName, session.sessionToken, {
