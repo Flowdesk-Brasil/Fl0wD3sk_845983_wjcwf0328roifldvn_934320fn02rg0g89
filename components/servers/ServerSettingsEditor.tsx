@@ -2840,11 +2840,15 @@ export function ServerSettingsEditor({
                 type="button"
                 onClick={() => openAddMethodModal()}
                 disabled={!cardPaymentsEnabled}
-                className="mt-3 flex h-[46px] w-full items-center justify-center gap-3 rounded-[3px] bg-[#D8D8D8] text-[13px] font-medium text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
+                className={`relative mt-3 flex h-[46px] w-full items-center justify-center rounded-[3px] border text-[13px] font-medium transition-colors ${
+                  cardPaymentsEnabled
+                    ? "border-transparent bg-[#D8D8D8] text-black hover:opacity-90"
+                    : "border-[#2E2E2E] bg-[#0A0A0A] text-[#D8D8D8] disabled:cursor-not-allowed"
+                }`}
               >
                 <span>ADICIONAR NOVO METODO</span>
                 {!cardPaymentsEnabled ? (
-                  <span className="inline-flex h-[22px] items-center justify-center rounded-[3px] border border-[#F2C823] bg-[rgba(242,200,35,0.12)] px-2 text-[10px] tracking-[0.04em] text-[#F2C823]">
+                  <span className="pointer-events-none absolute -right-[7px] -top-[9px] inline-flex h-[22px] items-center justify-center rounded-[3px] border border-[#F2C823] bg-[rgba(242,200,35,0.12)] px-2 text-[10px] tracking-[0.04em] text-[#F2C823] shadow-[0_0_0_1px_rgba(10,10,10,0.55)]">
                     {CARD_PAYMENTS_COMING_SOON_BADGE}
                   </span>
                 ) : null}
@@ -2929,10 +2933,12 @@ export function ServerSettingsEditor({
                           !planSettings ||
                           (!cardPaymentsEnabled && !planSettings?.recurringEnabled)
                         }
-                        className={`inline-flex h-[31px] min-w-[92px] items-center justify-center rounded-[3px] border px-3 text-[12px] transition-opacity disabled:cursor-not-allowed disabled:opacity-45 ${
+                        className={`inline-flex h-[31px] min-w-[92px] items-center justify-center rounded-[3px] border px-3 text-[12px] transition-opacity disabled:cursor-not-allowed ${
                           planSettings?.recurringEnabled
                             ? "border-[#6AE25A] bg-[rgba(106,226,90,0.2)] text-[#6AE25A]"
-                            : "border-[#2E2E2E] bg-[#0A0A0A] text-[#D8D8D8]"
+                            : !cardPaymentsEnabled
+                              ? "border-[#4A4020] bg-[rgba(242,200,35,0.08)] text-[#CDBA64]"
+                              : "border-[#2E2E2E] bg-[#0A0A0A] text-[#D8D8D8]"
                         }`}
                       >
                         {isPlanSaving ? (

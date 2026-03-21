@@ -1749,14 +1749,14 @@ function MethodSelectorPanel({
           type="button"
           onClick={() => onChooseMethod("card")}
           disabled={!canInteract || !cardEnabled}
-          className="flex h-[51px] w-full items-center justify-center gap-3 rounded-[3px] border border-[#2E2E2E] bg-[#0A0A0A] text-[16px] font-medium text-[#D8D8D8] transition-opacity disabled:cursor-not-allowed disabled:opacity-45"
+          className="relative flex h-[51px] w-full items-center justify-center gap-3 rounded-[3px] border border-[#2E2E2E] bg-[#0A0A0A] text-[16px] font-medium text-[#D8D8D8] transition-opacity disabled:cursor-not-allowed disabled:opacity-45"
         >
           <span className="relative h-[22px] w-[22px] shrink-0">
             <Image src="/cdn/icons/card_.png" alt="Cartao" fill sizes="22px" className="object-contain" />
           </span>
           <span>Continuar com Cartao</span>
           {!cardEnabled ? (
-            <span className="ml-auto inline-flex h-[22px] items-center justify-center rounded-[3px] border border-[#F2C823] bg-[rgba(242,200,35,0.12)] px-2 text-[10px] tracking-[0.04em] text-[#F2C823]">
+            <span className="pointer-events-none absolute -right-[7px] -top-[9px] inline-flex h-[22px] items-center justify-center rounded-[3px] border border-[#F2C823] bg-[rgba(242,200,35,0.12)] px-2 text-[10px] tracking-[0.04em] text-[#F2C823] shadow-[0_0_0_1px_rgba(10,10,10,0.55)]">
               {CARD_PAYMENTS_COMING_SOON_BADGE}
             </span>
           ) : null}
