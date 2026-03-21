@@ -7,6 +7,7 @@ import {
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
 import { updateSessionActiveGuild } from "@/lib/auth/session";
+import { getLockedGuildLicenseByGuildId } from "@/lib/payments/licenseStatus";
 
 type ValidateGuildBody = {
   guildId?: unknown;
@@ -156,6 +157,21 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { ok: false, message: "Servidor nao encontrado para este usuario." },
         { status: 403 },
+      );
+    }
+
+    const lockedLicense = await getLockedGuildLicenseByGuildId(guildId);
+    if (
+      lockedLicense &&
+      lockedLicense.userId !== sessionData.authSession.user.id
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message:
+            "Este servidor ja possui uma licenca ativa em outra conta e nao pode ser adicionado novamente agora.",
+        },
+        { status: 409 },
       );
     }
 

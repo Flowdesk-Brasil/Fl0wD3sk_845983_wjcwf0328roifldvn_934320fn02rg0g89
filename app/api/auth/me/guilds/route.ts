@@ -3,29 +3,13 @@ import {
   getAccessibleGuildsForSession,
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
-import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
+import { getLockedGuildLicenseMap } from "@/lib/payments/licenseStatus";
 
 function buildGuildIconUrl(guildId: string, icon: string | null) {
   if (!icon) return null;
 
   const extension = icon.startsWith("a_") ? "gif" : "png";
   return `https://cdn.discordapp.com/icons/${guildId}/${icon}.${extension}?size=64`;
-}
-
-async function getPaidGuildIdsForUser(userId: number) {
-  const supabase = getSupabaseAdminClientOrThrow();
-  const result = await supabase
-    .from("payment_orders")
-    .select("guild_id")
-    .eq("user_id", userId)
-    .eq("status", "approved")
-    .returns<Array<{ guild_id: string }>>();
-
-  if (result.error) {
-    throw new Error(result.error.message);
-  }
-
-  return new Set((result.data || []).map((item) => item.guild_id));
 }
 
 export async function GET(request: Request) {
@@ -62,10 +46,10 @@ export async function GET(request: Request) {
     }));
 
     if (excludePaid) {
-      const paidGuildIds = await getPaidGuildIdsForUser(
-        sessionData.authSession.user.id,
+      const lockedGuilds = await getLockedGuildLicenseMap(
+        guilds.map((guild) => guild.id),
       );
-      guilds = guilds.filter((guild) => !paidGuildIds.has(guild.id));
+      guilds = guilds.filter((guild) => !lockedGuilds.has(guild.id));
     }
 
     return NextResponse.json({

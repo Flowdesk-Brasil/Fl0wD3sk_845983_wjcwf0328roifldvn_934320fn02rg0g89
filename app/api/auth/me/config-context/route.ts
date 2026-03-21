@@ -23,6 +23,7 @@ import {
   logSecurityAuditEventSafe,
 } from "@/lib/security/requestSecurity";
 import { cleanupExpiredUnpaidServerSetups } from "@/lib/payments/setupCleanup";
+import { getLockedGuildLicenseByGuildId } from "@/lib/payments/licenseStatus";
 
 type ConfigContextBody = {
   activeGuildId?: unknown;
@@ -211,6 +212,23 @@ export async function PUT(request: Request) {
           { ok: false, message: "Servidor nao encontrado para este usuario." },
           { status: 403 },
         )), baseRequestContext.requestId);
+      }
+
+      const lockedLicense = await getLockedGuildLicenseByGuildId(activeGuildId);
+      if (lockedLicense && lockedLicense.userId !== session.user.id) {
+        return attachRequestId(
+          applyNoStoreHeaders(
+            NextResponse.json(
+              {
+                ok: false,
+                message:
+                  "Este servidor ja possui uma licenca ativa em outra conta e nao pode iniciar uma nova configuracao agora.",
+              },
+              { status: 409 },
+            ),
+          ),
+          baseRequestContext.requestId,
+        );
       }
     }
 

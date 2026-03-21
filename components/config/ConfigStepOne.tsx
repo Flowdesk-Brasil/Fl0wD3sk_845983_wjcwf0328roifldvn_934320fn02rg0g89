@@ -37,7 +37,7 @@ type BotPresenceApiResponse = {
 
 const DEFAULT_NEXT_STEP_URL = "/config/#/step/2";
 const BOT_CHECK_INTERVAL_MS = 4_000;
-const GUILDS_CACHE_STORAGE_KEY = "flowdesk_step1_guilds_cache_v2";
+const GUILDS_CACHE_STORAGE_KEY = "flowdesk_step1_guilds_cache_v3";
 const GUILDS_CACHE_TTL_MS = 5 * 60 * 1000;
 
 type GuildsCachePayload = {
@@ -85,6 +85,7 @@ export function ConfigStepOne({
 }: ConfigStepOneProps) {
   const [guilds, setGuilds] = useState<GuildItem[]>([]);
   const [isLoadingGuilds, setIsLoadingGuilds] = useState(true);
+  const [hasFreshGuildsSync, setHasFreshGuildsSync] = useState(false);
   const [selectedGuildId, setSelectedGuildId] = useState<string | null>(
     initialSelectedGuildId,
   );
@@ -122,6 +123,7 @@ export function ConfigStepOne({
           const nextGuilds = payload.guilds || [];
           setGuilds(nextGuilds);
           writeGuildsCache(nextGuilds);
+          setHasFreshGuildsSync(true);
           return;
         }
 
@@ -314,6 +316,17 @@ export function ConfigStepOne({
   useEffect(() => {
     setNextActionError(null);
   }, [selectedGuildId]);
+
+  useEffect(() => {
+    if (!hasFreshGuildsSync || !selectedGuildId) return;
+    if (guilds.some((guild) => guild.id === selectedGuildId)) return;
+
+    setSelectedGuildId(null);
+    onSelectedGuildChange?.(null);
+    setNextActionError(
+      "Este servidor ja possui uma licenca ativa em outra conta ou nao esta mais disponivel para nova configuracao.",
+    );
+  }, [guilds, hasFreshGuildsSync, onSelectedGuildChange, selectedGuildId]);
 
   useEffect(() => {
     if (initialSelectedGuildId === undefined) return;
