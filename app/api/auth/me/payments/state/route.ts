@@ -106,6 +106,23 @@ function isStaleHostedCardPendingOrder(order: PaymentOrderStateRecord) {
   return Date.now() - createdAtMs >= STALE_CARD_REDIRECT_PENDING_MS;
 }
 
+async function createPaymentOrderEventSafe(
+  paymentOrderId: number,
+  eventType: string,
+  eventPayload: Record<string, unknown>,
+) {
+  try {
+    const supabase = getSupabaseAdminClientOrThrow();
+    await supabase.from("payment_order_events").insert({
+      payment_order_id: paymentOrderId,
+      event_type: eventType,
+      event_payload: eventPayload,
+    });
+  } catch {
+    // telemetria nao deve quebrar o fluxo
+  }
+}
+
 async function finalizeStaleHostedCardPendingOrder(order: PaymentOrderStateRecord) {
   const supabase = getSupabaseAdminClientOrThrow();
   const result = await supabase
@@ -375,6 +392,19 @@ export async function GET(request: Request) {
           await reconcileHostedCardPendingOrderByExternalReference(
             latestUserOrder,
           );
+
+        await createPaymentOrderEventSafe(
+          latestUserOrder.id,
+          "flowdesk_hosted_card_return_reconciled",
+          {
+            source: "auth_payment_state_external_reference",
+            resolvedStatus: latestUserOrder.status,
+            providerPaymentId: latestUserOrder.provider_payment_id,
+            providerStatus: latestUserOrder.provider_status,
+            providerStatusDetail: latestUserOrder.provider_status_detail,
+            externalReference: latestUserOrder.provider_external_reference,
+          },
+        );
 
         if (
           latestUserOrder.status === "approved" ||

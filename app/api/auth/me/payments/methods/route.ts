@@ -24,6 +24,10 @@ import {
   toSavedMethodFromStoredRecord,
   type StoredPaymentMethodRecord,
 } from "@/lib/payments/userPaymentMethods";
+import {
+  areCardPaymentsEnabled,
+  CARD_PAYMENTS_DISABLED_MESSAGE,
+} from "@/lib/payments/cardAvailability";
 import { ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -472,6 +476,27 @@ export async function POST(request: Request) {
       action: "payment_method_post",
       outcome: "started",
     });
+
+    if (!areCardPaymentsEnabled()) {
+      await logSecurityAuditEventSafe(auditContext, {
+        action: "payment_method_post",
+        outcome: "blocked",
+        metadata: {
+          reason: "card_payments_disabled",
+        },
+      });
+
+      return attachRequestId(
+        NextResponse.json(
+          {
+            ok: false,
+            message: CARD_PAYMENTS_DISABLED_MESSAGE,
+          },
+          { status: 503 },
+        ),
+        baseRequestContext.requestId,
+      );
+    }
 
     const nickname = normalizePaymentMethodNickname(body.nickname);
     const payerName = normalizePayerName(body.payerName);

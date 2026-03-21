@@ -40,8 +40,18 @@ type PaymentOrderRecord = {
   updated_at: string;
 };
 
+type PaymentOrderEventRecord = {
+  payment_order_id: number;
+  event_type: string;
+  event_payload: Record<string, unknown> | null;
+  created_at: string;
+};
+
 const PAYMENT_HISTORY_SELECT_COLUMNS =
   "id, order_number, guild_id, payment_method, status, amount, currency, provider_payment_id, provider_status, provider_status_detail, provider_payload, paid_at, expires_at, created_at, updated_at";
+
+const PAYMENT_HISTORY_EVENT_SELECT_COLUMNS =
+  "payment_order_id, event_type, event_payload, created_at";
 
 function toFiniteAmount(value: string | number) {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
@@ -49,7 +59,51 @@ function toFiniteAmount(value: string | number) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function toHistoryOrder(order: PaymentOrderRecord) {
+function buildTechnicalHistoryLabels(
+  order: PaymentOrderRecord,
+  events: PaymentOrderEventRecord[],
+) {
+  const labels: string[] = [];
+
+  const hasApprovedReturnReconciliation = events.some(
+    (event) =>
+      event.event_type === "flowdesk_hosted_card_return_reconciled" &&
+      (event.event_payload?.resolvedStatus === "approved" ||
+        order.status === "approved"),
+  );
+
+  if (hasApprovedReturnReconciliation) {
+    labels.push("Aprovado por reconciliacao de retorno");
+  }
+
+  const hasWebhookApproval = events.some(
+    (event) =>
+      event.event_type === "provider_payment_reconciled" &&
+      event.event_payload?.source === "mercado_pago_webhook" &&
+      event.event_payload?.resolvedStatus === "approved",
+  );
+
+  if (hasWebhookApproval) {
+    labels.push("Aprovado por webhook");
+  }
+
+  const hasAutomaticRefund = events.some(
+    (event) =>
+      event.event_type === "provider_payment_auto_refunded" ||
+      event.event_type === "provider_payment_auto_refunded_after_setup_timeout",
+  );
+
+  if (hasAutomaticRefund) {
+    labels.push("Estorno automatico de seguranca");
+  }
+
+  return labels;
+}
+
+function toHistoryOrder(
+  order: PaymentOrderRecord,
+  events: PaymentOrderEventRecord[],
+) {
   const card = order.payment_method === "card" ? extractCardSnapshot(order.provider_payload) : null;
 
   return {
@@ -67,6 +121,7 @@ function toHistoryOrder(order: PaymentOrderRecord) {
     expiresAt: order.expires_at,
     createdAt: order.created_at,
     updatedAt: order.updated_at,
+    technicalLabels: buildTechnicalHistoryLabels(order, events),
   };
 }
 
@@ -135,7 +190,35 @@ export async function GET() {
       rawOrders = refreshedResult.data || [];
     }
 
-    const orders = rawOrders.map(toHistoryOrder);
+    const orderIds = rawOrders.map((order) => order.id);
+    let paymentEventsByOrderId = new Map<number, PaymentOrderEventRecord[]>();
+
+    if (orderIds.length > 0) {
+      const eventsResult = await supabase
+        .from("payment_order_events")
+        .select(PAYMENT_HISTORY_EVENT_SELECT_COLUMNS)
+        .in("payment_order_id", orderIds)
+        .order("created_at", { ascending: false })
+        .returns<PaymentOrderEventRecord[]>();
+
+      if (eventsResult.error) {
+        throw new Error(eventsResult.error.message);
+      }
+
+      paymentEventsByOrderId = (eventsResult.data || []).reduce(
+        (map, event) => {
+          const current = map.get(event.payment_order_id) || [];
+          current.push(event);
+          map.set(event.payment_order_id, current);
+          return map;
+        },
+        new Map<number, PaymentOrderEventRecord[]>(),
+      );
+    }
+
+    const orders = rawOrders.map((order) =>
+      toHistoryOrder(order, paymentEventsByOrderId.get(order.id) || []),
+    );
     const allMethods = buildSavedMethods(
       rawOrders.map((order) => ({
         payment_method: order.payment_method,

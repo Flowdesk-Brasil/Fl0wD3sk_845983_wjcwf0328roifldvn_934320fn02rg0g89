@@ -9,6 +9,10 @@ import {
   resolveMercadoPagoCardEnvironment,
 } from "@/lib/payments/mercadoPago";
 import {
+  areCardPaymentsEnabled,
+  CARD_PAYMENTS_DISABLED_MESSAGE,
+} from "@/lib/payments/cardAvailability";
+import {
   buildCheckoutAccessToken,
   ensureCheckoutAccessTokenForOrder,
   PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS,
@@ -488,6 +492,24 @@ export async function POST(request: Request) {
       action: "payment_card_redirect_post",
       outcome: "started",
     });
+
+    if (!areCardPaymentsEnabled()) {
+      await logSecurityAuditEventSafe(auditContext, {
+        action: "payment_card_redirect_post",
+        outcome: "blocked",
+        metadata: {
+          reason: "card_payments_disabled",
+        },
+      });
+
+      return respond(
+        {
+          ok: false,
+          message: CARD_PAYMENTS_DISABLED_MESSAGE,
+        },
+        { status: 503 },
+      );
+    }
 
     const user = access.context.sessionData.authSession.user;
     await cleanupExpiredUnpaidServerSetups({

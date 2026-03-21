@@ -420,7 +420,26 @@ async function reconcileHostedCardOrderByExternalReference(
     source,
   });
 
-  return (await getOrderByCodeForGuild(order.guild_id, order.order_number)) || order;
+  const refreshedOrder =
+    (await getOrderByCodeForGuild(order.guild_id, order.order_number)) || order;
+
+  await createPaymentOrderEventSafe(
+    order.id,
+    "flowdesk_hosted_card_return_reconciled",
+    {
+      source,
+      providerPaymentId:
+        providerPayment.id !== undefined && providerPayment.id !== null
+          ? String(providerPayment.id)
+          : null,
+      resolvedStatus: refreshedOrder.status,
+      providerStatus: refreshedOrder.provider_status,
+      providerStatusDetail: refreshedOrder.provider_status_detail,
+      externalReference,
+    },
+  );
+
+  return refreshedOrder;
 }
 
 export async function GET(request: Request) {

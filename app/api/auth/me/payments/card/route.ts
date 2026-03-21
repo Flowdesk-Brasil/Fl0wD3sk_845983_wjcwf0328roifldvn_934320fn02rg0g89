@@ -19,6 +19,10 @@ import {
   toQrDataUri,
   type MercadoPagoPaymentResponse,
 } from "@/lib/payments/mercadoPago";
+import {
+  areCardPaymentsEnabled,
+  CARD_PAYMENTS_DISABLED_MESSAGE,
+} from "@/lib/payments/cardAvailability";
 import { resolvePaymentDiagnostic } from "@/lib/payments/paymentDiagnostics";
 import {
   cleanupExpiredUnpaidServerSetups,
@@ -850,6 +854,24 @@ export async function POST(request: Request) {
         installments,
       },
     });
+
+    if (!areCardPaymentsEnabled()) {
+      await logSecurityAuditEventSafe(auditContext, {
+        action: "payment_card_post",
+        outcome: "blocked",
+        metadata: {
+          reason: "card_payments_disabled",
+        },
+      });
+
+      return respond(
+        {
+          ok: false,
+          message: CARD_PAYMENTS_DISABLED_MESSAGE,
+        },
+        { status: 503 },
+      );
+    }
 
     const user = access.context.sessionData.authSession.user;
     await cleanupExpiredUnpaidServerSetups({

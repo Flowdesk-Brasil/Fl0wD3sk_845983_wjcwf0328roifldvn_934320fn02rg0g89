@@ -698,7 +698,14 @@ export async function GET(request: Request) {
       guildId,
     );
 
-    let order = latestOrder && latestOrder.status === "pending" ? latestOrder : null;
+    const latestPendingPixOrder =
+      latestOrder &&
+      latestOrder.status === "pending" &&
+      latestOrder.payment_method === "pix"
+        ? latestOrder
+        : null;
+
+    let order = latestPendingPixOrder;
     if (forceNew) {
       order = await createDraftOrderForCheckout({
         userId: sessionData.authSession.user.id,

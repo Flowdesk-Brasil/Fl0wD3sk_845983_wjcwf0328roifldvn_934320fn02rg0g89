@@ -20,6 +20,11 @@ import {
   resolvePaymentDiagnostic,
   type PaymentDiagnosticCategory,
 } from "@/lib/payments/paymentDiagnostics";
+import {
+  areCardPaymentsEnabled,
+  CARD_PAYMENTS_COMING_SOON_BADGE,
+  CARD_PAYMENTS_DISABLED_MESSAGE,
+} from "@/lib/payments/cardAvailability";
 
 type ConfigStepFourProps = {
   displayName: string;
@@ -130,6 +135,7 @@ type MethodSelectorPanelProps = {
   onChooseMethod: (method: PaymentMethod) => void;
   methodMessage: string | null;
   canInteract: boolean;
+  cardEnabled: boolean;
 };
 
 type PixFormPanelProps = {
@@ -1690,7 +1696,7 @@ function ValidationIndicator({
 function CheckoutLegalText({ className }: { className: string }) {
   return (
     <p className={className}>
-      O Flowdesk nao realizara renovacao automatica do pagamento em nenhum metodo, incluindo cartao e PIX. Para ativar a renovacao automatica, voce deve acessar o nosso dashboard e configurar essa opcao manualmente.
+      O Flowdesk nao realizara renovacao automatica do pagamento no checkout atual. No momento, o pagamento esta disponivel via PIX e o cartao retornara em breve com a mesma camada de seguranca.
       <br />
       Ao continuar com a confirmacao do pagamento, voce declara que concorda com nossos{" "}
       <Link
@@ -1716,6 +1722,7 @@ function MethodSelectorPanel({
   onChooseMethod,
   methodMessage,
   canInteract,
+  cardEnabled,
 }: MethodSelectorPanelProps) {
   return (
     <div className={className}>
@@ -1741,13 +1748,18 @@ function MethodSelectorPanel({
         <button
           type="button"
           onClick={() => onChooseMethod("card")}
-          disabled={!canInteract}
+          disabled={!canInteract || !cardEnabled}
           className="flex h-[51px] w-full items-center justify-center gap-3 rounded-[3px] border border-[#2E2E2E] bg-[#0A0A0A] text-[16px] font-medium text-[#D8D8D8] transition-opacity disabled:cursor-not-allowed disabled:opacity-45"
         >
           <span className="relative h-[22px] w-[22px] shrink-0">
             <Image src="/cdn/icons/card_.png" alt="Cartao" fill sizes="22px" className="object-contain" />
           </span>
-          Continuar com Cartao
+          <span>Continuar com Cartao</span>
+          {!cardEnabled ? (
+            <span className="ml-auto inline-flex h-[22px] items-center justify-center rounded-[3px] border border-[#F2C823] bg-[rgba(242,200,35,0.12)] px-2 text-[10px] tracking-[0.04em] text-[#F2C823]">
+              {CARD_PAYMENTS_COMING_SOON_BADGE}
+            </span>
+          ) : null}
         </button>
       </div>
 
@@ -2029,6 +2041,7 @@ export function ConfigStepFour({
   initialDraft = null,
   onDraftChange,
 }: ConfigStepFourProps) {
+  const cardPaymentsEnabled = areCardPaymentsEnabled();
   const initialStepFourDraft = useMemo(
     () => buildStepFourDraft(initialDraft),
     [initialDraft],
@@ -2040,6 +2053,7 @@ export function ConfigStepFour({
   const latestInitialStepFourDraftRef = useRef(initialStepFourDraft);
   const hasInitialStepFourDraftRef = useRef(hasInitialStepFourDraft);
   const paymentPollingInFlightRef = useRef(false);
+  const orderBootstrapInFlightRef = useRef(false);
   const lastHandledCardRedirectKeyRef = useRef(0);
   const lastAutoResolvedPendingCardOrderRef = useRef<number | null>(null);
   const [view, setView] = useState<StepFourView>(initialStepFourDraft.view);
@@ -2084,6 +2098,7 @@ export function ConfigStepFour({
   );
   const [copied, setCopied] = useState(false);
   const [isLoadingOrder, setIsLoadingOrder] = useState(true);
+  const [isPreparingBaseOrder, setIsPreparingBaseOrder] = useState(false);
   const [isCancellingPendingCard, setIsCancellingPendingCard] = useState(false);
 
   const documentDigits = useMemo(() => normalizeBrazilDocumentDigits(payerDocument), [payerDocument]);
@@ -2333,9 +2348,15 @@ export function ConfigStepFour({
           if (requestedPaymentMethod === "pix") {
             setView("pix_form");
           } else {
-            setView("card_form");
-            setMethodMessage("Preparando checkout seguro do cartao.");
-            setCardRedirectRequestKey((current) => current + 1);
+            setView("methods");
+            setMethodMessage(
+              cardPaymentsEnabled
+                ? "Preparando checkout seguro do cartao."
+                : CARD_PAYMENTS_DISABLED_MESSAGE,
+            );
+            if (cardPaymentsEnabled) {
+              setCardRedirectRequestKey((current) => current + 1);
+            }
           }
         } else {
           setView(restoredView);
@@ -2397,9 +2418,15 @@ export function ConfigStepFour({
           if (requestedPaymentMethod === "pix") {
             setView("pix_form");
           } else if (requestedPaymentMethod === "card") {
-            setView("card_form");
-            setMethodMessage("Preparando checkout seguro do cartao.");
-            setCardRedirectRequestKey((current) => current + 1);
+            setView("methods");
+            setMethodMessage(
+              cardPaymentsEnabled
+                ? "Preparando checkout seguro do cartao."
+                : CARD_PAYMENTS_DISABLED_MESSAGE,
+            );
+            if (cardPaymentsEnabled) {
+              setCardRedirectRequestKey((current) => current + 1);
+            }
           } else {
             setView("methods");
           }
@@ -2418,7 +2445,7 @@ export function ConfigStepFour({
       window.clearTimeout(timeoutId);
       controller.abort();
     };
-  }, [guildId]);
+  }, [cardPaymentsEnabled, guildId]);
 
   useEffect(() => {
     if (!guildId || isLoadingOrder) return;
@@ -2449,6 +2476,81 @@ export function ConfigStepFour({
     onDraftChange,
     payerDocument,
     payerName,
+    view,
+  ]);
+
+  useEffect(() => {
+    if (!guildId) return;
+    if (isLoadingOrder || isPreparingBaseOrder) return;
+    if (pixOrder?.orderNumber || lastKnownOrderNumber) return;
+    if (pixOrder) return;
+    if (view !== "methods" && view !== "pix_form") return;
+    if (isSubmittingPix || isSubmittingCard || isCancellingPendingCard) return;
+    if (orderBootstrapInFlightRef.current) return;
+
+    orderBootstrapInFlightRef.current = true;
+    setIsPreparingBaseOrder(true);
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => {
+      controller.abort();
+    }, 7000);
+
+    void (async () => {
+      try {
+        const response = await fetch(
+          `/api/auth/me/payments/pix?${new URLSearchParams({ guildId }).toString()}`,
+          {
+            cache: "no-store",
+            signal: controller.signal,
+          },
+        );
+        const payload = (await response.json()) as PixPaymentApiResponse;
+        if (!response.ok || !payload.ok || !payload.order) {
+          throw new Error(
+            payload.message ||
+              "Nao foi possivel preparar o pedido inicial de pagamento.",
+          );
+        }
+
+        setPixOrder(payload.order);
+        setLastKnownOrderNumber(payload.order.orderNumber);
+        writeCachedOrderByGuild(guildId, payload.order);
+      } catch (error) {
+        const message =
+          parseUnknownErrorMessage(error) ||
+          "Nao foi possivel preparar o pedido inicial de pagamento.";
+
+        if (view === "pix_form") {
+          setPixFormHasInputError(false);
+          setPixFormError(message);
+          setPixFormErrorAnimationTick((current) => current + 1);
+        } else {
+          setMethodMessage(message);
+        }
+      } finally {
+        window.clearTimeout(timeoutId);
+        orderBootstrapInFlightRef.current = false;
+        setIsPreparingBaseOrder(false);
+      }
+    })();
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeoutId);
+      orderBootstrapInFlightRef.current = false;
+    };
+  }, [
+    guildId,
+    isCancellingPendingCard,
+    isLoadingOrder,
+    isPreparingBaseOrder,
+    isSubmittingCard,
+    isSubmittingPix,
+    lastKnownOrderNumber,
+    onDraftChange,
+    pixOrder,
+    pixOrder?.orderNumber,
     view,
   ]);
 
@@ -2717,12 +2819,58 @@ export function ConfigStepFour({
   }, [cardBillingZipCodeDigits]);
 
   const canSubmitPix = useMemo(() => {
-    return Boolean(guildId && pixDocumentStatus === "valid" && pixNameStatus === "valid" && !isSubmittingPix);
-  }, [guildId, isSubmittingPix, pixDocumentStatus, pixNameStatus]);
+    return Boolean(
+      guildId &&
+        (pixOrder?.orderNumber || lastKnownOrderNumber) &&
+        !isLoadingOrder &&
+        !isPreparingBaseOrder &&
+        pixDocumentStatus === "valid" &&
+        pixNameStatus === "valid" &&
+        !isSubmittingPix,
+    );
+  }, [
+    guildId,
+    isLoadingOrder,
+    isPreparingBaseOrder,
+    isSubmittingPix,
+    lastKnownOrderNumber,
+    pixDocumentStatus,
+    pixNameStatus,
+    pixOrder?.orderNumber,
+  ]);
 
   const canSubmitCard = useMemo(() => {
-    return Boolean(guildId && cardBrand && cardNumberStatus === "valid" && cardHolderStatus === "valid" && cardExpiryStatus === "valid" && cardCvvStatus === "valid" && cardDocumentStatus === "valid" && cardBillingZipCodeStatus === "valid" && !isSubmittingCard);
-  }, [cardBillingZipCodeStatus, cardBrand, cardCvvStatus, cardDocumentStatus, cardExpiryStatus, cardHolderStatus, cardNumberStatus, guildId, isSubmittingCard]);
+    return Boolean(
+      cardPaymentsEnabled &&
+        guildId &&
+        (pixOrder?.orderNumber || lastKnownOrderNumber) &&
+        !isLoadingOrder &&
+        !isPreparingBaseOrder &&
+        cardBrand &&
+        cardNumberStatus === "valid" &&
+        cardHolderStatus === "valid" &&
+        cardExpiryStatus === "valid" &&
+        cardCvvStatus === "valid" &&
+        cardDocumentStatus === "valid" &&
+        cardBillingZipCodeStatus === "valid" &&
+        !isSubmittingCard,
+    );
+  }, [
+    cardBillingZipCodeStatus,
+    cardBrand,
+    cardDocumentStatus,
+    cardExpiryStatus,
+    cardHolderStatus,
+    cardNumberStatus,
+    cardPaymentsEnabled,
+    cardCvvStatus,
+    guildId,
+    isLoadingOrder,
+    isPreparingBaseOrder,
+    isSubmittingCard,
+    lastKnownOrderNumber,
+    pixOrder?.orderNumber,
+  ]);
 
   const paymentStatus = pixOrder?.status || "pending";
   const resolvedOrderNumber = pixOrder?.orderNumber || lastKnownOrderNumber || null;
@@ -2751,6 +2899,8 @@ export function ConfigStepFour({
   const canChoosePaymentMethod = Boolean(
     guildId &&
       !isLoadingOrder &&
+      !isPreparingBaseOrder &&
+      !!resolvedOrderNumber &&
       !isSubmittingCard &&
       !isCancellingPendingCard &&
       !isHostedCardApprovalAwaitingConfirmation,
@@ -3014,17 +3164,28 @@ export function ConfigStepFour({
   useEffect(() => {
     if (view !== "card_form") return;
     if (cardRedirectRequestKey === 0) return;
+    if (!cardPaymentsEnabled) {
+      setView("methods");
+      setMethodMessage(CARD_PAYMENTS_DISABLED_MESSAGE);
+      return;
+    }
     if (lastHandledCardRedirectKeyRef.current === cardRedirectRequestKey) {
       return;
     }
 
     lastHandledCardRedirectKeyRef.current = cardRedirectRequestKey;
     void startCardRedirectCheckout();
-  }, [cardRedirectRequestKey, startCardRedirectCheckout, view]);
+  }, [cardPaymentsEnabled, cardRedirectRequestKey, startCardRedirectCheckout, view]);
 
   const handleChooseMethod = useCallback((method: PaymentMethod) => {
     if (!canChoosePaymentMethod) {
       setMethodMessage("Aguardando o pedido ficar pronto para pagamento.");
+      return;
+    }
+
+    if (method === "card" && !cardPaymentsEnabled) {
+      setView("methods");
+      setMethodMessage(CARD_PAYMENTS_DISABLED_MESSAGE);
       return;
     }
 
@@ -3051,10 +3212,20 @@ export function ConfigStepFour({
     setView("card_form");
     setMethodMessage("Preparando checkout seguro do cartao.");
     setCardRedirectRequestKey((current) => current + 1);
-  }, [canChoosePaymentMethod, guildId]);
+  }, [canChoosePaymentMethod, cardPaymentsEnabled, guildId]);
 
   const handleSubmitPixPayment = useCallback(async () => {
     if (!guildId || isSubmittingPix) return;
+    if (
+      !(pixOrder?.orderNumber || lastKnownOrderNumber) ||
+      isLoadingOrder ||
+      isPreparingBaseOrder
+    ) {
+      setPixFormHasInputError(false);
+      setPixFormError("Aguardando o pedido ficar pronto para gerar o PIX.");
+      setPixFormErrorAnimationTick((current) => current + 1);
+      return;
+    }
 
     if (pixDocumentStatus !== "valid") {
       triggerPixFormValidationError("CPF/CNPJ invalido. Verifique os digitos e tente novamente.");
@@ -3127,7 +3298,19 @@ export function ConfigStepFour({
     } finally {
       setIsSubmittingPix(false);
     }
-  }, [documentDigits, guildId, isSubmittingPix, payerName, pixDocumentStatus, pixNameStatus, triggerPixFormValidationError]);
+  }, [
+    documentDigits,
+    guildId,
+    isLoadingOrder,
+    isPreparingBaseOrder,
+    isSubmittingPix,
+    payerName,
+    pixDocumentStatus,
+    pixNameStatus,
+    lastKnownOrderNumber,
+    pixOrder?.orderNumber,
+    triggerPixFormValidationError,
+  ]);
 
   const handleSubmitCardPayment = useCallback(async () => {
     if (!guildId || isSubmittingCard) return;
@@ -3774,7 +3957,9 @@ export function ConfigStepFour({
     setPixOrder(null);
     setLastKnownOrderNumber(null);
     setCopied(false);
-    setMethodMessage("Preencha os dados para gerar um novo PIX com seguranca.");
+    setPixFormError(null);
+    setPixFormHasInputError(false);
+    setMethodMessage("Preparando um novo pedido PIX com seguranca.");
     setView("pix_form");
   }, [guildId]);
 
@@ -3922,6 +4107,7 @@ export function ConfigStepFour({
         onChooseMethod={handleChooseMethod}
         methodMessage={methodMessage}
         canInteract={canChoosePaymentMethod}
+        cardEnabled={cardPaymentsEnabled}
       />
     );
   }, [
@@ -3932,6 +4118,7 @@ export function ConfigStepFour({
     cardBrand,
     cardBillingZipCode,
     cardBillingZipCodeStatus,
+    cardPaymentsEnabled,
     cardCvv,
     cardCvvStatus,
     cardDocument,
@@ -4109,6 +4296,7 @@ export function ConfigStepFour({
         onChooseMethod={handleChooseMethod}
         methodMessage={methodMessage}
         canInteract={canChoosePaymentMethod}
+        cardEnabled={cardPaymentsEnabled}
       />
     );
   }
@@ -4140,13 +4328,13 @@ export function ConfigStepFour({
                   <span>Pedido:</span>
                   {orderNumberLabel ? (
                     <span className="ml-1">{orderNumberLabel}</span>
-                  ) : isLoadingOrder ? (
+                  ) : isLoadingOrder || isPreparingBaseOrder ? (
                     <span className="ml-2 inline-flex items-center">
                       <ButtonLoader size={14} colorClassName="text-[#D8D8D8]" />
                     </span>
                   ) : (
-                    <span className="ml-2 text-[13px] text-[#8E8E8E]">
-                      Novo pedido
+                    <span className="ml-2 inline-flex items-center">
+                      <ButtonLoader size={14} colorClassName="text-[#D8D8D8]" />
                     </span>
                   )}
                 </div>
@@ -4155,8 +4343,15 @@ export function ConfigStepFour({
               <p className="mt-[26px] text-[16px] leading-[1.55] text-[#D8D8D8]">
                 A assinatura possui cobranca mensal no valor de{" "}
                 <span className="font-semibold text-white">R$ 9,99</span>, com
-                pagamento via <span className="font-semibold text-white">PIX</span>{" "}
-                ou <span className="font-semibold text-white">Cartao</span>.
+                pagamento via <span className="font-semibold text-white">PIX</span>.
+                {!cardPaymentsEnabled ? (
+                  <>
+                    {" "}
+                    <span className="text-[#BDBDBD]">
+                      Cartao e recorrencia retornarao em breve.
+                    </span>
+                  </>
+                ) : null}
               </p>
 
               <p className="mt-[16px] text-[16px] leading-[1.55] text-[#D8D8D8]">
@@ -4202,7 +4397,7 @@ export function ConfigStepFour({
               <CheckoutLegalText className="mt-[16px] text-[12px] leading-[1.6] text-[#949494] min-[1530px]:hidden" />
 
               {shouldShowCardRecoveryActions ? (
-                <div className="mt-[26px] grid w-full gap-[12px] min-[760px]:grid-cols-2">
+                <div className={`mt-[26px] grid w-full gap-[12px] ${cardPaymentsEnabled ? "min-[760px]:grid-cols-2" : ""}`}>
                   <button
                     type="button"
                     onClick={handleStartPixAfterCardIssue}
@@ -4210,13 +4405,26 @@ export function ConfigStepFour({
                   >
                     Pagar com PIX
                   </button>
-                  <button
-                    type="button"
-                    onClick={handleStartCardRetry}
-                    className="flex h-[51px] w-full items-center justify-center rounded-[3px] bg-[#D8D8D8] text-[16px] font-medium text-black transition-opacity hover:opacity-90"
-                  >
-                    Tentar outro cartao
-                  </button>
+                  {cardPaymentsEnabled ? (
+                    <button
+                      type="button"
+                      onClick={handleStartCardRetry}
+                      className="flex h-[51px] w-full items-center justify-center rounded-[3px] bg-[#D8D8D8] text-[16px] font-medium text-black transition-opacity hover:opacity-90"
+                    >
+                      Tentar outro cartao
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled
+                      className="flex h-[51px] w-full items-center justify-center gap-3 rounded-[3px] border border-[#2E2E2E] bg-[#0A0A0A] text-[15px] font-medium text-[#D8D8D8] opacity-45"
+                    >
+                      <span>Tentar com cartao</span>
+                      <span className="inline-flex h-[22px] items-center justify-center rounded-[3px] border border-[#F2C823] bg-[rgba(242,200,35,0.12)] px-2 text-[10px] tracking-[0.04em] text-[#F2C823]">
+                        {CARD_PAYMENTS_COMING_SOON_BADGE}
+                      </span>
+                    </button>
+                  )}
                 </div>
               ) : shouldShowStatusResultPanel && statusVisual.showRegenerate ? (
                 <button

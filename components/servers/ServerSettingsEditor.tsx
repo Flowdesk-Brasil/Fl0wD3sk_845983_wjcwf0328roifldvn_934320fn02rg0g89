@@ -12,6 +12,12 @@ import {
   normalizeBrazilDocumentDigits,
   resolveBrazilDocumentType,
 } from "@/lib/payments/brazilDocument";
+import {
+  areCardPaymentsEnabled,
+  CARD_PAYMENTS_COMING_SOON_BADGE,
+  CARD_PAYMENTS_DISABLED_MESSAGE,
+  CARD_RECURRING_DISABLED_MESSAGE,
+} from "@/lib/payments/cardAvailability";
 
 type ManagedServerStatus = "paid" | "expired" | "off";
 type EditorTab = "settings" | "payments" | "methods" | "plans";
@@ -53,6 +59,7 @@ type PaymentOrder = {
     expYear: number | null;
   } | null;
   createdAt: string;
+  technicalLabels: string[];
 };
 
 type SavedMethod = {
@@ -176,6 +183,34 @@ function orderStatusBadge(status: PaymentStatus) {
   if (status === "cancelled") return { label: "Cancelado", cls: "border-[#DB4646] bg-[rgba(219,70,70,0.2)] text-[#DB4646]" };
   if (status === "rejected") return { label: "Rejeitado", cls: "border-[#DB4646] bg-[rgba(219,70,70,0.2)] text-[#DB4646]" };
   return { label: "Falhou", cls: "border-[#DB4646] bg-[rgba(219,70,70,0.2)] text-[#DB4646]" };
+}
+
+function technicalHistoryBadge(label: string) {
+  if (label === "Aprovado por reconciliacao de retorno") {
+    return {
+      label,
+      cls: "border-[#5CA9FF] bg-[rgba(92,169,255,0.12)] text-[#8CC2FF]",
+    };
+  }
+
+  if (label === "Aprovado por webhook") {
+    return {
+      label,
+      cls: "border-[#7FE3C2] bg-[rgba(127,227,194,0.12)] text-[#9FF1D4]",
+    };
+  }
+
+  if (label === "Estorno automatico de seguranca") {
+    return {
+      label,
+      cls: "border-[#F2C823] bg-[rgba(242,200,35,0.12)] text-[#F2C823]",
+    };
+  }
+
+  return {
+    label,
+    cls: "border-[#3A3A3A] bg-[rgba(255,255,255,0.04)] text-[#B8B8B8]",
+  };
 }
 
 function methodVerificationBadge(status: SavedMethod["verificationStatus"]) {
@@ -992,6 +1027,12 @@ function sanitizePaymentOrder(input: unknown): PaymentOrder | null {
   const currency = toSafeText(order.currency, "BRL");
   const providerStatusDetail = toSafeNullableText(order.providerStatusDetail);
   const createdAt = toSafeText(order.createdAt);
+  const technicalLabels = Array.isArray(order.technicalLabels)
+    ? order.technicalLabels.filter(
+        (label): label is string =>
+          typeof label === "string" && label.trim().length > 0,
+      )
+    : [];
 
   if (id === null || orderNumber === null || !guildId || !method || !createdAt) {
     return null;
@@ -1019,6 +1060,7 @@ function sanitizePaymentOrder(input: unknown): PaymentOrder | null {
     providerStatusDetail,
     card,
     createdAt,
+    technicalLabels,
   };
 }
 
@@ -1064,6 +1106,7 @@ export function ServerSettingsEditor({
   onClose,
   standalone = false,
 }: ServerSettingsEditorProps) {
+  const cardPaymentsEnabled = areCardPaymentsEnabled();
   const [activeTab, setActiveTab] = useState<EditorTab>(initialTab);
 
   const [isLoading, setIsLoading] = useState(true);
@@ -1426,7 +1469,8 @@ export function ServerSettingsEditor({
       if (paymentGuildFilter !== "all" && order.guildId !== paymentGuildFilter) return false;
       if (!search) return true;
       const guildLabel = serverMap.get(order.guildId)?.guildName || order.guildId;
-      const text = normalizeSearch(`${order.orderNumber} ${order.guildId} ${guildLabel} ${order.method} ${order.status}`);
+      const technicalText = order.technicalLabels.join(" ");
+      const text = normalizeSearch(`${order.orderNumber} ${order.guildId} ${guildLabel} ${order.method} ${order.status} ${technicalText}`);
       return text.includes(search);
     });
   }, [orders, paymentGuildFilter, paymentSearch, paymentStatusFilter, serverMap]);
@@ -1630,6 +1674,21 @@ export function ServerSettingsEditor({
 
   const openAddMethodModal = useCallback(
     (options?: { enableRecurringAfterAdd?: boolean }) => {
+      if (!cardPaymentsEnabled) {
+        setAddMethodFlowState("idle");
+        setAddMethodStatusMessage(null);
+        setAddMethodError(null);
+        setShouldEnableRecurringAfterMethodAdd(false);
+        if (options?.enableRecurringAfterAdd) {
+          setPlanSuccess(null);
+          setPlanError(CARD_RECURRING_DISABLED_MESSAGE);
+        } else {
+          setPaymentsError(null);
+          setMethodActionMessage(CARD_PAYMENTS_DISABLED_MESSAGE);
+        }
+        return;
+      }
+
       setAddMethodFlowState("idle");
       setAddMethodStatusMessage(null);
       setAddMethodError(null);
@@ -1639,7 +1698,7 @@ export function ServerSettingsEditor({
       );
       setIsAddMethodModalOpen(true);
     },
-    [],
+    [cardPaymentsEnabled],
   );
 
   const closeAddMethodModal = useCallback(() => {
@@ -1773,6 +1832,12 @@ export function ServerSettingsEditor({
       return;
     }
 
+    if (!cardPaymentsEnabled) {
+      setPlanSuccess(null);
+      setPlanError(CARD_RECURRING_DISABLED_MESSAGE);
+      return;
+    }
+
     const fallbackMethodId =
       planSettings.recurringMethodId || recurringMethodOptions[0]?.id || null;
 
@@ -1799,6 +1864,7 @@ export function ServerSettingsEditor({
       successMessage: "Cobranca recorrente ativada com sucesso.",
     });
   }, [
+    cardPaymentsEnabled,
     isPlanSaving,
     openAddMethodModal,
     persistPlanSettings,
@@ -2281,6 +2347,11 @@ export function ServerSettingsEditor({
     async (methodId: string) => {
       if (!planSettings || isPlanSaving) return;
       if (!methodId) return;
+      if (!cardPaymentsEnabled) {
+        setPlanSuccess(null);
+        setPlanError(CARD_RECURRING_DISABLED_MESSAGE);
+        return;
+      }
 
       const savedPlan = await persistPlanSettings({
         recurringEnabled: planSettings.recurringEnabled,
@@ -2292,10 +2363,16 @@ export function ServerSettingsEditor({
         setIsRecurringMethodModalOpen(false);
       }
     },
-    [isPlanSaving, persistPlanSettings, planSettings],
+    [cardPaymentsEnabled, isPlanSaving, persistPlanSettings, planSettings],
   );
 
   const handleConfirmRecurringActivation = useCallback(async () => {
+    if (!cardPaymentsEnabled) {
+      setPlanSuccess(null);
+      setPlanError(CARD_RECURRING_DISABLED_MESSAGE);
+      return;
+    }
+
     if (!recurringMethodDraftId) {
       setPlanError(
         "Escolha um cartao valido para ativar a cobranca recorrente.",
@@ -2312,7 +2389,7 @@ export function ServerSettingsEditor({
     if (savedPlan) {
       setIsRecurringMethodModalOpen(false);
     }
-  }, [persistPlanSettings, recurringMethodDraftId]);
+  }, [cardPaymentsEnabled, persistPlanSettings, recurringMethodDraftId]);
 
   const handleSave = useCallback(async () => {
     if (!canSave || !adminRoleId) return;
@@ -2549,6 +2626,21 @@ export function ServerSettingsEditor({
                               <p className="truncate text-[14px] text-[#777777]">{serverName}</p>
                             </div>
                           </div>
+                          {order.technicalLabels.length ? (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {order.technicalLabels.map((label) => {
+                                const technicalBadge = technicalHistoryBadge(label);
+                                return (
+                                  <span
+                                    key={`${order.id}-${label}`}
+                                    className={`inline-flex rounded-[3px] border px-[8px] py-[3px] text-[10px] ${technicalBadge.cls}`}
+                                  >
+                                    {technicalBadge.label}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          ) : null}
                           {order.providerStatusDetail ? (
                             <p className="mt-2 truncate text-[12px] text-[#686868]">{order.providerStatusDetail}</p>
                           ) : null}
@@ -2747,13 +2839,27 @@ export function ServerSettingsEditor({
               <button
                 type="button"
                 onClick={() => openAddMethodModal()}
-                className="mt-3 flex h-[46px] w-full items-center justify-center rounded-[3px] bg-[#D8D8D8] text-[13px] font-medium text-black transition-opacity hover:opacity-90"
+                disabled={!cardPaymentsEnabled}
+                className="mt-3 flex h-[46px] w-full items-center justify-center gap-3 rounded-[3px] bg-[#D8D8D8] text-[13px] font-medium text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
               >
-                ADICIONAR NOVO METODO
+                <span>ADICIONAR NOVO METODO</span>
+                {!cardPaymentsEnabled ? (
+                  <span className="inline-flex h-[22px] items-center justify-center rounded-[3px] border border-[#F2C823] bg-[rgba(242,200,35,0.12)] px-2 text-[10px] tracking-[0.04em] text-[#F2C823]">
+                    {CARD_PAYMENTS_COMING_SOON_BADGE}
+                  </span>
+                ) : null}
               </button>
 
               {methodActionMessage ? (
-                <p className="mt-2 text-[11px] text-[#9BD694]">{methodActionMessage}</p>
+                <p
+                  className={`mt-2 text-[11px] ${
+                    methodActionMessage === CARD_PAYMENTS_DISABLED_MESSAGE
+                      ? "text-[#F2C823]"
+                      : "text-[#9BD694]"
+                  }`}
+                >
+                  {methodActionMessage}
+                </p>
               ) : null}
               {paymentsError ? (
                 <p className="mt-2 text-[11px] text-[#C2C2C2]">{paymentsError}</p>
@@ -2818,7 +2924,11 @@ export function ServerSettingsEditor({
                         onClick={() => {
                           void handleToggleRecurring();
                         }}
-                        disabled={isPlanSaving || !planSettings}
+                        disabled={
+                          isPlanSaving ||
+                          !planSettings ||
+                          (!cardPaymentsEnabled && !planSettings?.recurringEnabled)
+                        }
                         className={`inline-flex h-[31px] min-w-[92px] items-center justify-center rounded-[3px] border px-3 text-[12px] transition-opacity disabled:cursor-not-allowed disabled:opacity-45 ${
                           planSettings?.recurringEnabled
                             ? "border-[#6AE25A] bg-[rgba(106,226,90,0.2)] text-[#6AE25A]"
@@ -2834,6 +2944,13 @@ export function ServerSettingsEditor({
                         )}
                       </button>
                     </div>
+                    {!cardPaymentsEnabled && !planSettings?.recurringEnabled ? (
+                      <div className="mt-3 flex justify-end">
+                        <span className="inline-flex h-[22px] items-center justify-center rounded-[3px] border border-[#F2C823] bg-[rgba(242,200,35,0.12)] px-2 text-[10px] tracking-[0.04em] text-[#F2C823]">
+                          {CARD_PAYMENTS_COMING_SOON_BADGE}
+                        </span>
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="mt-4 rounded-[3px] border border-[#2E2E2E] bg-[#090909] px-3 py-3">
@@ -2842,9 +2959,15 @@ export function ServerSettingsEditor({
                       <button
                         type="button"
                         onClick={() => openAddMethodModal()}
-                        className="inline-flex h-[31px] items-center justify-center rounded-[3px] border border-[#2E2E2E] bg-[#0A0A0A] px-3 text-[11px] text-[#D8D8D8] transition-colors hover:bg-[#111111]"
+                        disabled={!cardPaymentsEnabled}
+                        className="inline-flex h-[31px] items-center justify-center gap-2 rounded-[3px] border border-[#2E2E2E] bg-[#0A0A0A] px-3 text-[11px] text-[#D8D8D8] transition-colors hover:bg-[#111111] disabled:cursor-not-allowed disabled:opacity-55"
                       >
-                        Adicionar cartao
+                        <span>Adicionar cartao</span>
+                        {!cardPaymentsEnabled ? (
+                          <span className="inline-flex h-[18px] items-center justify-center rounded-[3px] border border-[#F2C823] bg-[rgba(242,200,35,0.12)] px-2 text-[9px] tracking-[0.04em] text-[#F2C823]">
+                            {CARD_PAYMENTS_COMING_SOON_BADGE}
+                          </span>
+                        ) : null}
                       </button>
                     </div>
 
@@ -2860,7 +2983,11 @@ export function ServerSettingsEditor({
                             if (!value) return;
                             void handleSelectRecurringMethod(value);
                           }}
-                          disabled={isPlanSaving || !planSettings?.recurringEnabled}
+                          disabled={
+                            isPlanSaving ||
+                            !planSettings?.recurringEnabled ||
+                            !cardPaymentsEnabled
+                          }
                           className="h-[38px] w-full rounded-[3px] border border-[#2E2E2E] bg-[#0A0A0A] px-3 text-[12px] text-[#D8D8D8] outline-none disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           {recurringMethodOptions.map((method) => (
@@ -2899,7 +3026,9 @@ export function ServerSettingsEditor({
                       </div>
                     ) : (
                       <p className="mt-2 text-[12px] text-[#777777]">
-                        Nenhum cartao vinculado. Adicione ou valide um cartao para usar na recorrencia.
+                        {cardPaymentsEnabled
+                          ? "Nenhum cartao vinculado. Adicione ou valide um cartao para usar na recorrencia."
+                          : "Cartoes para recorrencia ficarao disponiveis em breve."}
                       </p>
                     )}
                   </div>
@@ -2907,6 +3036,11 @@ export function ServerSettingsEditor({
                   {locked ? (
                     <p className="mt-3 text-[11px] text-[#C2C2C2]">
                       Mesmo com o servidor expirado ou desligado, voce ainda pode configurar a cobranca recorrente para reativacao automatica.
+                    </p>
+                  ) : null}
+                  {!cardPaymentsEnabled ? (
+                    <p className="mt-3 text-[11px] text-[#C2C2C2]">
+                      Pagamentos com cartao e cobranca recorrente estao temporariamente desativados e retornarao em breve.
                     </p>
                   ) : null}
 

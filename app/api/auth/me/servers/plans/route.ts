@@ -10,6 +10,10 @@ import {
   toSavedMethodFromStoredRecord,
   type StoredPaymentMethodRecord,
 } from "@/lib/payments/userPaymentMethods";
+import {
+  areCardPaymentsEnabled,
+  CARD_RECURRING_DISABLED_MESSAGE,
+} from "@/lib/payments/cardAvailability";
 import { ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -393,6 +397,27 @@ export async function POST(request: Request) {
         recurringMethodId,
       },
     });
+
+    if (recurringEnabled && !areCardPaymentsEnabled()) {
+      await logSecurityAuditEventSafe(auditContext, {
+        action: "server_plan_post",
+        outcome: "blocked",
+        metadata: {
+          reason: "card_recurring_disabled",
+        },
+      });
+
+      return attachRequestId(
+        NextResponse.json(
+          {
+            ok: false,
+            message: CARD_RECURRING_DISABLED_MESSAGE,
+          },
+          { status: 503 },
+        ),
+        baseRequestContext.requestId,
+      );
+    }
 
     const userId = access.context.sessionData.authSession.user.id;
     const supabase = getSupabaseAdminClientOrThrow();
