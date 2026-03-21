@@ -159,6 +159,61 @@ const thirdPartyProvidersTable: LegalTable = {
   ],
 };
 
+const companyIdentityTable: LegalTable = {
+  caption: "Identificacao da operacao e dados institucionais",
+  columns: ["Item", "Informacao publicada"],
+  rows: [
+    [
+      { text: "Nome comercial" },
+      { text: "Flowdesk" },
+    ],
+    [
+      { text: "Natureza da operacao" },
+      {
+        text: "Operacao digital de software e servicos para Discord, sem atendimento presencial publicado nesta versao.",
+      },
+    ],
+    [
+      { text: "CNPJ" },
+      {
+        text: "Nao informado/publicado nesta versao contratual. Quando houver formalizacao empresarial com CNPJ divulgado, os documentos serao atualizados.",
+      },
+    ],
+    [
+      { text: "UF de referencia operacional" },
+      { text: "Sao Paulo/SP, Brasil" },
+    ],
+    [
+      { text: "Endereco fisico de atendimento" },
+      {
+        text: "Nao disponibilizado ao publico nesta versao. O atendimento e realizado por canais digitais oficiais.",
+      },
+    ],
+  ],
+};
+
+const companyContactTable: LegalTable = {
+  caption: "Canais oficiais de contato e suporte",
+  columns: ["Canal", "Detalhe", "Uso recomendado"],
+  rows: [
+    [
+      { text: "Painel autenticado" },
+      { text: APP_URL, href: APP_URL, mono: true },
+      { text: "Fluxos de login, configuracao, pagamentos e comunicacoes operacionais do produto." },
+    ],
+    [
+      { text: "Comunidade oficial no Discord" },
+      { text: DISCORD_INVITE_URL, href: DISCORD_INVITE_URL, mono: true },
+      { text: "Suporte operacional, comunicados e orientacoes gerais." },
+    ],
+    [
+      { text: "Base territorial e foro de referencia" },
+      { text: "Sao Paulo/SP, Brasil" },
+      { text: "Referencia juridica e operacional, sem prejuizo do foro legalmente assegurado ao consumidor." },
+    ],
+  ],
+};
+
 const privacyDataTable: LegalTable = {
   caption: "Categorias de dados tratadas pela Flowdesk",
   columns: ["Categoria", "Exemplos", "Origem", "Necessidade para o sistema"],
@@ -433,9 +488,22 @@ export const termsContent: LegalDocumentContent = {
         "Links, boletos, QR Codes, mensagens diretas ou cobrancas fora desses canais devem ser tratados com cautela e podem ser recusados pela Flowdesk para fins de suporte e validacao.",
     },
     {
+      id: "empresa-foro",
+      navLabel: "Empresa e foro",
+      title: "11. Identificacao da operacao, contato e foro",
+      paragraphs: [
+        "A Flowdesk opera, nesta versao contratual, como uma operacao digital vinculada a Sao Paulo/SP, com atendimento exclusivamente por canais online oficiais. Nao ha atendimento presencial publico nem endereco fisico aberto ao publico informado nestes documentos.",
+        "Enquanto a formalizacao empresarial com CNPJ publico nao for divulgada, as paginas legais, os canais autenticados do painel e a comunidade oficial no Discord constituem os meios reconhecidos para comunicacao operacional, suporte, cobranca, exercicio de direitos e atualizacao documental.",
+        "Para fins de interpretacao contratual, as partes elegem como referencia territorial Sao Paulo/SP, sem afastar qualquer foro obrigatorio ou mais favoravel ao consumidor quando a legislacao brasileira assim determinar.",
+      ],
+      tables: [companyIdentityTable, companyContactTable],
+      note:
+        "Quando houver atualizacao societaria, CNPJ divulgado ou novo canal institucional oficial, este documento podera ser revisado para refletir a estrutura publica vigente da operacao.",
+    },
+    {
       id: "legislacao",
       navLabel: "Base legal",
-      title: "11. Legislacao aplicavel e interpretacao",
+      title: "12. Legislacao aplicavel e interpretacao",
       paragraphs: [
         "Este documento deve ser interpretado em conjunto com a Politica de Privacidade, com as regras operacionais do painel, com as politicas dos provedores terceiros efetivamente utilizados e com a legislacao brasileira aplicavel a consumo, contratos, dados pessoais, capacidade civil, meios de pagamento e defesa de direitos.",
         "Se alguma clausula vier a ser considerada invalida, as demais permanecerao eficazes na maior extensao permitida pela lei.",
@@ -591,7 +659,7 @@ export const privacyContent: LegalDocumentContent = {
       navLabel: "Direitos do titular",
       title: "9. Direitos do titular e limites legais",
       paragraphs: [
-        "Nos termos da LGPD, o titular pode solicitar confirmacao de tratamento, acesso, correcao, anonimização, bloqueio, eliminacao quando cabivel, portabilidade nos limites legais e informacoes sobre compartilhamento. Certos pedidos podem ser limitados quando houver obrigacao legal de retencao, necessidade de preservar provas, exercicio regular de direitos ou exigencias de seguranca e antifraude.",
+        "Nos termos da LGPD, o titular pode solicitar confirmacao de tratamento, acesso, correcao, anonimizacao, bloqueio, eliminacao quando cabivel, portabilidade nos limites legais e informacoes sobre compartilhamento. Certos pedidos podem ser limitados quando houver obrigacao legal de retencao, necessidade de preservar provas, exercicio regular de direitos ou exigencias de seguranca e antifraude.",
         "Pedidos de privacidade, revisao de dado e questionamentos sobre tratamento devem ser enviados pelos canais oficiais da plataforma. Para medidas que dependam do Discord ou do Mercado Pago, a Flowdesk pode orientar o titular a complementar a solicitacao diretamente ao provedor competente.",
       ],
       note:
@@ -607,9 +675,21 @@ export const privacyContent: LegalDocumentContent = {
       ],
     },
     {
+      id: "controladora",
+      navLabel: "Empresa e contato",
+      title: "11. Identificacao da operacao e canais de contato",
+      paragraphs: [
+        "Para os fins desta Politica, a Flowdesk atua como operacao digital responsavel pelo painel, pelas configuracoes de licenca, pelo historico de pedidos e pelos fluxos internos descritos nestas paginas. Nesta versao, a operacao publica como base territorial Sao Paulo/SP e utiliza exclusivamente canais digitais oficiais para comunicacao com usuarios.",
+        "Nao ha endereco fisico publico de atendimento informado nesta versao e ainda nao ha CNPJ divulgado nestes documentos. Quando houver formalizacao societaria publicada ou ampliacao institucional dos canais de contato, a Flowdesk atualizara esta Politica para refletir os novos dados oficiais.",
+      ],
+      tables: [companyIdentityTable, companyContactTable],
+      note:
+        "Solicitacoes relacionadas a privacidade, suporte operacional e revisao de dados devem ser direcionadas apenas aos canais oficiais descritos nesta Politica.",
+    },
+    {
       id: "alteracoes",
       navLabel: "Alteracoes",
-      title: "11. Alteracoes desta politica",
+      title: "12. Alteracoes desta politica",
       paragraphs: [
         "Esta Politica pode ser atualizada para refletir evolucao do produto, novas integracoes, exigencias legais, ajustes de seguranca e mudancas operacionais. A versao vigente sera sempre a publicada nos canais oficiais da Flowdesk.",
       ],
@@ -640,3 +720,4 @@ export const privacyContent: LegalDocumentContent = {
     },
   ],
 };
+
