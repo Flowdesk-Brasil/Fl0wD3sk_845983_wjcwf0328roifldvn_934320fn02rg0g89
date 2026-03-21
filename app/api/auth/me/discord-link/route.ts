@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentAuthSessionFromCookie } from "@/lib/auth/session";
+import { resolveSessionAccessToken } from "@/lib/auth/discordGuildAccess";
 import {
   OFFICIAL_DISCORD_GUILD_ID,
   OFFICIAL_DISCORD_LINKED_ROLE_ID,
@@ -99,11 +100,13 @@ export async function POST(request: NextRequest) {
   const requestContext = createSecurityRequestContext(request, {
     guildId: OFFICIAL_DISCORD_GUILD_ID,
   });
-  const authSession = await getCurrentAuthSessionFromCookie();
+  const sessionContext = await resolveSessionAccessToken();
 
-  if (!authSession) {
+  if (!sessionContext?.authSession) {
     return buildUnauthorizedResponse(requestContext.requestId);
   }
+
+  const authSession = sessionContext.authSession;
 
   const authenticatedContext = extendSecurityRequestContext(requestContext, {
     sessionId: authSession.id,
@@ -161,6 +164,7 @@ export async function POST(request: NextRequest) {
       userId: authSession.user.id,
       discordUserId: authSession.user.discord_user_id,
       requestId: authenticatedContext.requestId,
+      discordAccessToken: sessionContext.accessToken,
     });
 
     if (result.status === "failed") {
@@ -216,6 +220,10 @@ export async function POST(request: NextRequest) {
           guildId: OFFICIAL_DISCORD_GUILD_ID,
           openDiscordUrl: result.openDiscordUrl,
           inviteUrl: result.inviteUrl,
+          pollAfterMs:
+            result.status === "pending" || result.status === "pending_member"
+              ? 2500
+              : null,
           linkRecord: result.linkRecord,
         }),
       ),

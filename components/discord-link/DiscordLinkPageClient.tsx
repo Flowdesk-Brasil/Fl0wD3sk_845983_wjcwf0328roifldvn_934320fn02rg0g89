@@ -22,13 +22,16 @@ type LinkSyncResponse = {
   roleName?: string;
   openDiscordUrl?: string;
   inviteUrl?: string;
+  pollAfterMs?: number | null;
 };
 
 type ViewState =
   | {
-      phase: "checking" | "redirecting";
+      phase: "checking" | "redirecting" | "syncing";
       title: string;
       description: string;
+      helperHref?: string | null;
+      helperLabel?: string | null;
     }
   | {
       phase: "success";
@@ -37,15 +40,6 @@ type ViewState =
       actionHref: string;
       actionLabel: string;
       roleName: string;
-    }
-  | {
-      phase: "pending_member";
-      title: string;
-      description: string;
-      actionHref: string;
-      actionLabel: string;
-      secondaryHref: string;
-      secondaryLabel: string;
     }
   | {
       phase: "error";
@@ -84,11 +78,22 @@ export function DiscordLinkPageClient() {
     ...INITIAL_CHECKING_STATE,
   });
   const redirectTimerRef = useRef<number | null>(null);
+  const syncRetryTimerRef = useRef<number | null>(null);
+  const syncLinkRef = useRef<((resetState?: boolean) => Promise<void>) | null>(null);
+
+  const clearRetryTimer = useCallback(() => {
+    if (syncRetryTimerRef.current) {
+      window.clearTimeout(syncRetryTimerRef.current);
+      syncRetryTimerRef.current = null;
+    }
+  }, []);
 
   const syncLink = useCallback(async (resetState = true) => {
     if (resetState) {
       setState(INITIAL_CHECKING_STATE);
     }
+
+    clearRetryTimer();
 
     const response = await fetch("/api/auth/me/discord-link", {
       method: "POST",
@@ -137,18 +142,25 @@ export function DiscordLinkPageClient() {
       return;
     }
 
-    if (payload.status === "pending_member") {
+    if (payload.status === "pending" || payload.status === "pending_member") {
       setState({
-        phase: "pending_member",
-        title: "Conta autenticada, mas ainda nao sincronizada",
+        phase: "syncing",
+        title: "Sincronizando sua conta com o Discord",
         description:
           payload.message ||
-          "Entre no Discord oficial com esta mesma conta e repita a vinculacao para liberar o cargo automaticamente.",
-        actionHref: payload.inviteUrl || OFFICIAL_DISCORD_INVITE_URL,
-        actionLabel: "Entrar no Discord oficial",
-        secondaryHref: payload.openDiscordUrl || buildOfficialDiscordChannelUrl(),
-        secondaryLabel: "Ja estou no servidor, tentar novamente",
+          "Estamos validando a sua conta no servidor oficial e liberando o cargo automaticamente.",
+        helperHref:
+          payload.openDiscordUrl ||
+          payload.inviteUrl ||
+          buildOfficialDiscordChannelUrl() ||
+          OFFICIAL_DISCORD_INVITE_URL,
+        helperLabel: "Abrir Discord oficial",
       });
+
+      syncRetryTimerRef.current = window.setTimeout(() => {
+        void syncLinkRef.current?.(false);
+      }, Math.max(1800, payload.pollAfterMs || 2500));
+
       return;
     }
 
@@ -164,7 +176,11 @@ export function DiscordLinkPageClient() {
       actionLabel: "Voltar ao Discord oficial",
       roleName: payload.roleName || OFFICIAL_DISCORD_LINKED_ROLE_NAME,
     });
-  }, []);
+  }, [clearRetryTimer]);
+
+  useEffect(() => {
+    syncLinkRef.current = syncLink;
+  }, [syncLink]);
 
   useEffect(() => {
     const bootTimer = window.setTimeout(() => {
@@ -173,9 +189,30 @@ export function DiscordLinkPageClient() {
 
     return () => {
       window.clearTimeout(bootTimer);
+      clearRetryTimer();
       if (redirectTimerRef.current) {
         window.clearTimeout(redirectTimerRef.current);
       }
+    };
+  }, [clearRetryTimer, syncLink]);
+
+  useEffect(() => {
+    function handleForegroundReturn() {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+
+      void syncLink(false);
+    }
+
+    window.addEventListener("pageshow", handleForegroundReturn);
+    document.addEventListener("visibilitychange", handleForegroundReturn);
+    window.addEventListener("focus", handleForegroundReturn);
+
+    return () => {
+      window.removeEventListener("pageshow", handleForegroundReturn);
+      document.removeEventListener("visibilitychange", handleForegroundReturn);
+      window.removeEventListener("focus", handleForegroundReturn);
     };
   }, [syncLink]);
 
@@ -252,34 +289,15 @@ export function DiscordLinkPageClient() {
                   </a>
                 ) : null}
 
-                {state.phase === "pending_member" ? (
-                  <>
-                    <a
-                      href={state.actionHref}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex h-[52px] items-center justify-center rounded-[14px] bg-[#F3F3F3] px-5 text-[15px] font-medium text-black transition hover:bg-white"
-                    >
-                      {state.actionLabel}
-                    </a>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void syncLink();
-                      }}
-                      className="inline-flex h-[48px] items-center justify-center rounded-[14px] border border-[#2C2C2C] bg-[#0E0E0E] px-5 text-[14px] font-medium text-[#D8D8D8] transition hover:border-[#3B3B3B] hover:bg-[#151515]"
-                    >
-                      Tentar novamente
-                    </button>
-                    <a
-                      href={state.secondaryHref}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-[13px] font-medium text-[#8E8E8E] underline-offset-4 hover:text-[#D4D4D4] hover:underline"
-                    >
-                      {state.secondaryLabel}
-                    </a>
-                  </>
+                {state.phase === "syncing" && state.helperHref && state.helperLabel ? (
+                  <a
+                    href={state.helperHref}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[13px] font-medium text-[#8E8E8E] underline-offset-4 hover:text-[#D4D4D4] hover:underline"
+                  >
+                    {state.helperLabel}
+                  </a>
                 ) : null}
 
                 {state.phase === "error" ? (
@@ -317,25 +335,21 @@ export function DiscordLinkPageClient() {
                   </>
                 ) : (
                   <>
-                    <ButtonLoader size={66} colorClassName="text-[#D8D8D8]" />
+                    <ButtonLoader size={46} colorClassName="text-[#D8D8D8]" />
                     <div className="space-y-2">
                       <p className="text-[20px] font-medium text-[#D8D8D8]">
                         {state.phase === "redirecting"
                           ? "Abrindo login seguro"
-                          : state.phase === "pending_member"
-                            ? "Aguardando sua entrada no servidor"
-                            : state.phase === "error"
+                          : state.phase === "error"
                               ? "Falha ao sincronizar"
                               : "Sincronizando sua conta"}
                       </p>
                       <p className="mx-auto max-w-[280px] text-[13px] leading-[1.7] text-[#8F8F8F]">
                         {state.phase === "redirecting"
                           ? "Em instantes voce sera levado ao login do Flowdesk para continuar a vinculacao."
-                          : state.phase === "pending_member"
-                            ? "Assim que esta mesma conta estiver no Discord oficial, repita a vinculacao para liberar o cargo."
-                            : state.phase === "error"
+                          : state.phase === "error"
                               ? "Voce pode tentar novamente agora. Se persistir, compartilhe o protocolo tecnico com o suporte."
-                              : "Validando a sessao, a conta Discord e a entrega automatica do cargo oficial."}
+                              : "Deixe esta pagina aberta enquanto o Flowdesk valida a conta, verifica sua presenca no servidor oficial e libera o cargo automaticamente."}
                       </p>
                     </div>
                   </>

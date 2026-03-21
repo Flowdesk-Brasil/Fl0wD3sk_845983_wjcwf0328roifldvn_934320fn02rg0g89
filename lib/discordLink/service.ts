@@ -6,9 +6,24 @@ import {
   OFFICIAL_DISCORD_LINKED_ROLE_ID,
   OFFICIAL_DISCORD_LINKED_ROLE_NAME,
 } from "@/lib/discordLink/config";
+import {
+  DiscordRateLimitError,
+  fetchDiscordGuilds,
+  type DiscordGuild,
+} from "@/lib/auth/discord";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 export type DiscordLinkStatus = "pending" | "pending_member" | "linked" | "failed";
+
+class DiscordApiRequestError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "DiscordApiRequestError";
+    this.status = status;
+  }
+}
 
 type DiscordLinkRecord = {
   id: number;
@@ -92,7 +107,10 @@ async function fetchOfficialGuildMember(discordUserId: string) {
 
   if (!response.ok) {
     const message = await parseDiscordErrorMessage(response);
-    throw new Error(`Falha ao validar membro no Discord oficial: ${message}`);
+    throw new DiscordApiRequestError(
+      `Falha ao validar membro no Discord oficial: ${message}`,
+      response.status,
+    );
   }
 
   return (await response.json()) as DiscordGuildMember;
@@ -121,7 +139,29 @@ async function grantOfficialLinkedRole(discordUserId: string) {
   }
 
   const message = await parseDiscordErrorMessage(response);
-  throw new Error(`Falha ao aplicar o cargo de vinculacao: ${message}`);
+  throw new DiscordApiRequestError(
+    `Falha ao aplicar o cargo de vinculacao: ${message}`,
+    response.status,
+  );
+}
+
+async function isOfficialGuildVisibleToAuthenticatedUser(
+  discordAccessToken: string | null | undefined,
+) {
+  if (!discordAccessToken) return null;
+
+  try {
+    const guilds = await fetchDiscordGuilds(discordAccessToken);
+    return guilds.some(
+      (guild: DiscordGuild) => guild.id === OFFICIAL_DISCORD_GUILD_ID,
+    );
+  } catch (error) {
+    if (error instanceof DiscordRateLimitError) {
+      return null;
+    }
+
+    throw error;
+  }
 }
 
 export async function getDiscordLinkRecordForUser(userId: number) {
@@ -194,6 +234,7 @@ export async function syncOfficialDiscordLink(input: {
   userId: number;
   discordUserId: string;
   requestId: string;
+  discordAccessToken?: string | null;
 }) {
   const nowIso = new Date().toISOString();
   const currentRecord = await getDiscordLinkRecordForUser(input.userId);
@@ -205,13 +246,83 @@ export async function syncOfficialDiscordLink(input: {
     const member = await fetchOfficialGuildMember(input.discordUserId);
 
     if (!member) {
+      const guildVisibleToAuthenticatedUser =
+        await isOfficialGuildVisibleToAuthenticatedUser(
+          input.discordAccessToken || null,
+        );
+
+      if (guildVisibleToAuthenticatedUser) {
+        try {
+          await grantOfficialLinkedRole(input.discordUserId);
+
+          const linkedAt = currentRecord?.linked_at || nowIso;
+          const roleGrantedAt = currentRecord?.role_granted_at || nowIso;
+          const linkRecord = await upsertDiscordLinkRecord(currentRecord, {
+            userId: input.userId,
+            discordUserId: input.discordUserId,
+            status: "linked",
+            linkedAt,
+            roleGrantedAt,
+            lastRoleSyncAt: nowIso,
+            lastError: null,
+            metadata: {
+              requestId: input.requestId,
+              source: "discord_link_sync",
+              membership: "oauth_visible",
+              roleGrantedWithoutMemberFetch: true,
+            },
+          });
+
+          return {
+            status: "linked",
+            message:
+              "Conta localizada no Discord oficial e vinculada com sucesso. O cargo ja foi sincronizado.",
+            linkRecord,
+            alreadyLinked: Boolean(currentRecord?.linked_at),
+            openDiscordUrl,
+            inviteUrl,
+            roleName,
+          } satisfies SyncDiscordLinkResult;
+        } catch (error) {
+          if (
+            error instanceof DiscordApiRequestError &&
+            error.status === 404
+          ) {
+            const linkRecord = await upsertDiscordLinkRecord(currentRecord, {
+              userId: input.userId,
+              discordUserId: input.discordUserId,
+              status: "pending",
+              lastRoleSyncAt: nowIso,
+              lastError: null,
+              metadata: {
+                requestId: input.requestId,
+                source: "discord_link_sync",
+                membership: "oauth_visible_pending_role",
+              },
+            });
+
+            return {
+              status: "pending",
+              message:
+                "Conta localizada no Discord oficial. Estamos finalizando a sincronizacao do cargo automaticamente.",
+              linkRecord,
+              alreadyLinked: false,
+              openDiscordUrl,
+              inviteUrl,
+              roleName,
+            } satisfies SyncDiscordLinkResult;
+          }
+
+          throw error;
+        }
+      }
+
       const linkRecord = await upsertDiscordLinkRecord(currentRecord, {
         userId: input.userId,
         discordUserId: input.discordUserId,
         status: "pending_member",
         lastRoleSyncAt: nowIso,
-        lastError:
-          "Conta autenticada ainda nao foi encontrada no servidor oficial do Discord.",
+        lastError: null,
         metadata: {
           requestId: input.requestId,
           source: "discord_link_sync",
@@ -222,7 +333,7 @@ export async function syncOfficialDiscordLink(input: {
       return {
         status: "pending_member",
         message:
-          "Entre no Discord oficial com esta mesma conta e tente novamente para concluir a vinculacao.",
+          "Estamos aguardando a conta autenticada aparecer no servidor oficial do Discord para concluir a vinculacao automaticamente.",
         linkRecord,
         alreadyLinked: false,
         openDiscordUrl,
