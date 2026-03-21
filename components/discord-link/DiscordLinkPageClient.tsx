@@ -200,12 +200,8 @@ export function DiscordLinkPageClient({
 
     setState({
       phase: "success",
-      title: payload.alreadyLinked
-        ? "Conta ja vinculada e sincronizada"
-        : "Conta vinculada com sucesso",
-      description:
-        payload.message ||
-        "Sua conta foi vinculada com sucesso. Voce ja pode voltar ao Discord e continuar usando o Flowdesk normalmente.",
+      title: "Vinculacao concluida",
+      description: "",
       actionHref: payload.openDiscordUrl || buildOfficialDiscordChannelUrl(),
       actionLabel: "Voltar ao Discord oficial",
       roleName: payload.roleName || OFFICIAL_DISCORD_LINKED_ROLE_NAME,
@@ -330,14 +326,16 @@ export function DiscordLinkPageClient({
           <div className="h-px w-full bg-[#242424]" />
 
           <div className="flex w-full flex-col items-center gap-5 text-center">
-            {state.phase === "success" || state.phase === "error" ? (
+            {state.phase === "error" ? (
               <>
                 <h2 className="text-[22px] leading-[1.2] font-medium text-[#D8D8D8] sm:text-[26px]">
                   {state.title}
                 </h2>
-                <p className="max-w-[640px] text-[14px] leading-[1.75] text-[#A8A8A8]">
-                  {state.description}
-                </p>
+                {state.description ? (
+                  <p className="max-w-[640px] text-[14px] leading-[1.75] text-[#A8A8A8]">
+                    {state.description}
+                  </p>
+                ) : null}
               </>
             ) : null}
 
@@ -359,16 +357,6 @@ export function DiscordLinkPageClient({
                 <ButtonLoader size={46} colorClassName="text-[#D8D8D8]" />
               )}
             </div>
-
-            {state.phase === "success" ? (
-              <div className="w-full max-w-[640px] rounded-[18px] border border-[rgba(106,226,90,0.22)] bg-[rgba(106,226,90,0.08)] px-4 py-3 text-center">
-                <p className="text-[13px] font-medium text-[#6AE25A]">Cargo liberado</p>
-                <p className="mt-1 text-[13px] leading-[1.7] text-[#CDE9C8]">
-                  O cargo <span className="font-medium text-[#DFF6DA]">{state.roleName}</span>{" "}
-                  foi sincronizado. Agora voce pode voltar ao Discord oficial.
-                </p>
-              </div>
-            ) : null}
 
             {state.phase === "error" && state.requestId ? (
               <p className="text-[12px] leading-[1.6] text-[#7E7E7E]">
