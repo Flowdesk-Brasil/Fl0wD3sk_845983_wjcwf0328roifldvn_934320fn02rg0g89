@@ -603,51 +603,43 @@ export function DiscordLinkPageClient({
                       </div>
                     </div>
                   ) : (
-                    <div
-                      role="button"
-                      tabIndex={humanCheckPhase === "verifying" ? -1 : 0}
-                      aria-disabled={humanCheckPhase === "verifying"}
-                      onPointerMove={(event) => {
-                        registerHumanInteraction(event.pointerType);
-                      }}
-                      onPointerDown={(event) => {
-                        registerHumanInteraction(event.pointerType);
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key !== "Enter" && event.key !== " ") {
-                          return;
-                        }
-
-                        event.preventDefault();
-                        registerHumanInteraction("keyboard");
-                        void handleHumanCheckConfirm();
-                      }}
-                      onClick={() => {
-                        registerHumanInteraction(
-                          humanCheckPointerTypeRef.current || "keyboard",
-                        );
-                        void handleHumanCheckConfirm();
-                      }}
-                      className={`flex w-full items-center justify-between gap-4 text-left ${
-                        humanCheckPhase === "verifying" ? "cursor-default" : "cursor-pointer"
-                      }`}
-                    >
+                    <div className="flex w-full items-center justify-between gap-4 text-left">
                       <span className="flex min-w-0 flex-1 items-center gap-4 sm:gap-5">
-                        <span className="flex h-[34px] w-[34px] items-center justify-center rounded-[4px] border border-[#5A5A5A] bg-[#0C0C0C]">
+                        <button
+                          type="button"
+                          disabled={humanCheckPhase === "verifying"}
+                          onPointerMove={(event) => {
+                            registerHumanInteraction(event.pointerType);
+                          }}
+                          onPointerDown={(event) => {
+                            registerHumanInteraction(event.pointerType);
+                          }}
+                          onClick={() => {
+                            registerHumanInteraction(
+                              humanCheckPointerTypeRef.current || "mouse",
+                            );
+                            void handleHumanCheckConfirm();
+                          }}
+                          className={`flex h-[34px] w-[34px] items-center justify-center rounded-[4px] border border-[#5A5A5A] bg-[#0C0C0C] transition-colors ${
+                            humanCheckPhase === "verifying"
+                              ? "cursor-default"
+                              : "cursor-pointer hover:border-[#7A7A7A]"
+                          }`}
+                        >
                           {humanCheckPhase === "verifying" ? (
                             <ButtonLoader size={16} colorClassName="text-[#D8D8D8]" />
                           ) : (
                             <span className="block h-full w-full rounded-[4px]" />
                           )}
-                        </span>
+                        </button>
                         <span className="min-w-0">
-                          <span className="block text-[20px] leading-[1.12] font-medium text-[#D8D8D8] sm:text-[24px]">
+                          <span className="block text-[18px] leading-[1.12] font-medium text-[#D8D8D8] sm:text-[21px]">
                             Nao sou um robo
                           </span>
                         </span>
                       </span>
 
-                      <span className="hidden min-w-[88px] flex-col items-center gap-1 text-center sm:flex">
+                      <span className="hidden min-w-[80px] flex-col items-center gap-1 text-center sm:flex">
                         <span className="relative h-[34px] w-[34px] shrink-0 overflow-hidden rounded-[10px] bg-[#050505]">
                           <Image
                             src="/cdn/logos/logotipo.png"
@@ -658,25 +650,19 @@ export function DiscordLinkPageClient({
                           />
                         </span>
                         <span className="flex flex-col items-center">
-                          <span className="text-[14px] leading-[1.1] font-medium text-[#D6D6D6]">
+                          <span className="text-[12px] leading-[1.1] font-medium text-[#D6D6D6]">
                             Flowdesk
                           </span>
-                          <span className="mt-1 flex items-center gap-1 text-[10px] leading-[1.2] text-[#818181]">
+                          <span className="mt-1 flex items-center gap-1 text-[9px] leading-[1.2] text-[#818181]">
                             <Link
                               href={footerLinks.privacyUrl}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                              }}
                               className="transition-colors hover:text-[#BFBFBF]"
                             >
                               Privacidade
                             </Link>
-                            <span>•</span>
+                            <span>&bull;</span>
                             <Link
                               href={footerLinks.termsUrl}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                              }}
                               className="transition-colors hover:text-[#BFBFBF]"
                             >
                               Termos
