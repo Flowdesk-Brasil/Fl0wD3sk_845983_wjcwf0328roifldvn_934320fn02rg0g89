@@ -7,7 +7,7 @@ const SUPABASE_PUBLIC_URL =
   "https://sqkhmyhnoyfotifengxv.supabase.co";
 const DISCORD_INVITE_URL =
   process.env.NEXT_PUBLIC_DISCORD_INVITE_URL?.trim() ||
-  "https://discord.gg/j9V2UUmfYP";
+  "https://discord.gg/ddXtHhvvrx";
 
 export type LegalTableCell = {
   text: string;

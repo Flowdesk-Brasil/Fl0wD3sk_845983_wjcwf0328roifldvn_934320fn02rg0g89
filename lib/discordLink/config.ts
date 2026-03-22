@@ -1,11 +1,11 @@
 export const OFFICIAL_DISCORD_GUILD_ID =
-  process.env.OFFICIAL_SUPPORT_GUILD_ID?.trim() || "1483994900344082584";
+  process.env.OFFICIAL_SUPPORT_GUILD_ID?.trim() || "1353259338759671838";
 
 export const OFFICIAL_DISCORD_LINK_CHANNEL_ID =
-  process.env.OFFICIAL_LINK_CHANNEL_ID?.trim() || "1484968829724659802";
+  process.env.OFFICIAL_LINK_CHANNEL_ID?.trim() || "1358209486363295885";
 
 export const OFFICIAL_DISCORD_LINKED_ROLE_ID =
-  process.env.OFFICIAL_LINKED_ROLE_ID?.trim() || "1484996418178388169";
+  process.env.OFFICIAL_LINKED_ROLE_ID?.trim() || "1358203612672692495";
 
 export const OFFICIAL_DISCORD_LINK_PATH =
   process.env.OFFICIAL_ACCOUNT_LINK_PATH?.trim() || "/discord/link";
@@ -18,7 +18,7 @@ export const OFFICIAL_DISCORD_LINKED_ROLE_NAME =
 
 export const OFFICIAL_DISCORD_INVITE_URL =
   process.env.NEXT_PUBLIC_DISCORD_INVITE_URL?.trim() ||
-  "https://discord.gg/j9V2UUmfYP";
+  "https://discord.gg/ddXtHhvvrx";
 
 export const FLOWDESK_APP_URL =
   process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://flowdeskbot.vercel.app";

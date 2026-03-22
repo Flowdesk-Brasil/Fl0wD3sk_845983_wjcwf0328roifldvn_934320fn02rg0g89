@@ -6,6 +6,7 @@ import {
   OFFICIAL_DISCORD_LINKED_ROLE_ID,
   OFFICIAL_DISCORD_LINKED_ROLE_NAME,
 } from "@/lib/discordLink/config";
+import { validateDiscordLinkHumanVerification } from "@/lib/discordLink/humanCheck";
 import { validateDiscordLinkAccessToken } from "@/lib/discordLink/linkAccess";
 import {
   getDiscordLinkRecordForUser,
@@ -199,6 +200,44 @@ export async function POST(request: NextRequest) {
               },
             },
             { status: 403 },
+          ),
+        ),
+        authenticatedContext.requestId,
+      );
+    }
+
+    const humanVerification = await validateDiscordLinkHumanVerification({
+      accessNonce: accessValidation.payload.nonce,
+    });
+
+    if (!humanVerification.ok) {
+      await logSecurityAuditEventSafe(authenticatedContext, {
+        action: "discord_link_sync",
+        outcome: "blocked",
+        metadata: {
+          reason: humanVerification.reason,
+        },
+      });
+
+      return attachRequestId(
+        applyNoStoreHeaders(
+          NextResponse.json(
+            {
+              ok: false,
+              authenticated: true,
+              requireHumanCheck: true,
+              message: humanVerification.message,
+              authenticatedUser: {
+                discordUserId: authSession.user.discord_user_id,
+                username: authSession.user.username,
+                displayName: authSession.user.display_name,
+                avatarUrl: buildDiscordAvatarUrl(
+                  authSession.user.discord_user_id,
+                  authSession.user.avatar,
+                ),
+              },
+            },
+            { status: 428 },
           ),
         ),
         authenticatedContext.requestId,

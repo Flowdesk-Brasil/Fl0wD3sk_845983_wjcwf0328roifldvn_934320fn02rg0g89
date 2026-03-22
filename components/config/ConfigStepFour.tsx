@@ -4374,7 +4374,7 @@ export function ConfigStepFour({
 
               <p className="mt-[36px] text-[12px] leading-[1.6] text-[#949494]">
                 {statusSupportCopy} Caso ocorra algum erro, entre em contato imediatamente em:{" "}
-                <a href="https://discord.gg/j9V2UUmfYP" target="_blank" rel="noreferrer noopener" className="text-[#A8A8A8] underline decoration-[#A0A0A0] underline-offset-2 transition-colors hover:text-[#C7C7C7]">
+                <a href="https://discord.gg/ddXtHhvvrx" target="_blank" rel="noreferrer noopener" className="text-[#A8A8A8] underline decoration-[#A0A0A0] underline-offset-2 transition-colors hover:text-[#C7C7C7]">
                   Ajuda com meu pagamento
                 </a>
                 . O pagamento de R$ 9,99 e referente a validacao de apenas 1 licenca, ou seja, o Flowdesk funcionara somente no servidor do Discord que foi configurado inicialmente.

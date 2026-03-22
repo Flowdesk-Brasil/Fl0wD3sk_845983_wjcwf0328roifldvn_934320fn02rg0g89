@@ -19,6 +19,7 @@ type LinkSyncResponse = {
   authenticated?: boolean;
   status?: "pending" | "pending_member" | "linked" | "failed";
   linked?: boolean;
+  requireHumanCheck?: boolean;
   message?: string;
   alreadyLinked?: boolean;
   roleName?: string;
@@ -31,6 +32,15 @@ type LinkSyncResponse = {
     displayName: string;
     avatarUrl: string | null;
   };
+};
+
+type HumanCheckResponse = {
+  ok: boolean;
+  verified?: boolean;
+  challengeToken?: string | null;
+  minSolveMs?: number;
+  message?: string;
+  authenticatedUser?: LinkSyncResponse["authenticatedUser"];
 };
 
 type ViewState =
@@ -91,9 +101,22 @@ export function DiscordLinkPageClient({
   const [authenticatedUser, setAuthenticatedUser] = useState<AuthenticatedUserInfo | null>(null);
   const redirectTimerRef = useRef<number | null>(null);
   const syncRetryTimerRef = useRef<number | null>(null);
+  const humanCheckTransitionTimerRef = useRef<number | null>(null);
   const syncLinkRef = useRef<((resetState?: boolean) => Promise<void>) | null>(null);
+  const bootstrapHumanCheckRef = useRef<(() => Promise<void>) | null>(null);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [hasLoadedAuthenticatedUser, setHasLoadedAuthenticatedUser] = useState(false);
+  const [humanCheckPhase, setHumanCheckPhase] = useState<
+    "loading" | "ready" | "verifying" | "verified"
+  >(initialStatus === "linked" ? "verified" : "loading");
+  const [humanCheckChallengeToken, setHumanCheckChallengeToken] = useState<string | null>(
+    null,
+  );
+  const [humanCheckError, setHumanCheckError] = useState<string | null>(null);
+  const [humanCheckMinimumSolveMs, setHumanCheckMinimumSolveMs] = useState(900);
+  const humanCheckIssuedAtRef = useRef<number | null>(null);
+  const humanCheckInteractionCountRef = useRef(0);
+  const humanCheckPointerTypeRef = useRef("mouse");
 
   const clearRetryTimer = useCallback(() => {
     if (syncRetryTimerRef.current) {
@@ -101,6 +124,99 @@ export function DiscordLinkPageClient({
       syncRetryTimerRef.current = null;
     }
   }, []);
+
+  const clearHumanCheckTransitionTimer = useCallback(() => {
+    if (humanCheckTransitionTimerRef.current) {
+      window.clearTimeout(humanCheckTransitionTimerRef.current);
+      humanCheckTransitionTimerRef.current = null;
+    }
+  }, []);
+
+  const applyAuthenticatedUserPayload = useCallback(
+    (
+      user:
+        | LinkSyncResponse["authenticatedUser"]
+        | HumanCheckResponse["authenticatedUser"]
+        | null,
+    ) => {
+      setAuthenticatedUser((user as AuthenticatedUserInfo) || null);
+      setHasLoadedAuthenticatedUser(true);
+    },
+    [],
+  );
+
+  const registerHumanInteraction = useCallback((pointerType?: string | null) => {
+    if (pointerType && pointerType.trim()) {
+      humanCheckPointerTypeRef.current = pointerType.trim().slice(0, 24);
+    }
+
+    humanCheckInteractionCountRef.current = Math.min(
+      humanCheckInteractionCountRef.current + 1,
+      12,
+    );
+  }, []);
+
+  const bootstrapHumanCheck = useCallback(async () => {
+    clearRetryTimer();
+    clearHumanCheckTransitionTimer();
+
+    if (initialStatus === "linked") {
+      setHumanCheckPhase("verified");
+      setHumanCheckChallengeToken(null);
+      setHumanCheckError(null);
+      setHasLoadedAuthenticatedUser(true);
+      return;
+    }
+
+    setHumanCheckPhase("loading");
+    setHumanCheckError(null);
+
+    const response = await fetch(
+      `/api/auth/me/discord-link/human-check?access=${encodeURIComponent(accessToken)}`,
+      {
+        cache: "no-store",
+      },
+    );
+
+    const requestId = response.headers.get("X-Request-Id");
+    const payload = (await response.json().catch(() => null)) as HumanCheckResponse | null;
+    applyAuthenticatedUserPayload(payload?.authenticatedUser || null);
+
+    if (!response.ok || !payload?.ok) {
+      setState({
+        phase: "error",
+        title: response.status === 403 ? "Este link seguro expirou" : "Falha ao preparar a verificacao",
+        description:
+          payload?.message ||
+          "Nao foi possivel carregar a verificacao humana desta vinculacao agora.",
+        requestId,
+      });
+      return;
+    }
+
+    setHumanCheckMinimumSolveMs(
+      Number.isFinite(payload.minSolveMs) ? Number(payload.minSolveMs) : 900,
+    );
+
+    if (payload.verified) {
+      setHumanCheckPhase("verified");
+      setHumanCheckChallengeToken(null);
+      void syncLinkRef.current?.(false);
+      return;
+    }
+
+    humanCheckIssuedAtRef.current = performance.now();
+    humanCheckInteractionCountRef.current = 0;
+    humanCheckPointerTypeRef.current = "mouse";
+    setHumanCheckChallengeToken(payload.challengeToken || null);
+    setHumanCheckPhase("ready");
+  }, [
+    accessToken,
+    applyAuthenticatedUserPayload,
+    clearHumanCheckTransitionTimer,
+    clearRetryTimer,
+    initialStatus,
+  ]);
 
   const syncLink = useCallback(async (resetState = true) => {
     if (resetState) {
@@ -123,8 +239,7 @@ export function DiscordLinkPageClient({
 
     const requestId = response.headers.get("X-Request-Id");
     const payload = (await response.json().catch(() => null)) as LinkSyncResponse | null;
-    setAuthenticatedUser(payload?.authenticatedUser || null);
-    setHasLoadedAuthenticatedUser(true);
+    applyAuthenticatedUserPayload(payload?.authenticatedUser || null);
 
     if (response.status === 401) {
       setState({
@@ -145,6 +260,14 @@ export function DiscordLinkPageClient({
         );
       }, 500);
 
+      return;
+    }
+
+    if (response.status === 428 || payload?.requireHumanCheck) {
+      setHumanCheckError(
+        payload?.message || "Confirme a verificacao humana para continuar a vinculacao.",
+      );
+      void bootstrapHumanCheckRef.current?.();
       return;
     }
 
@@ -208,11 +331,93 @@ export function DiscordLinkPageClient({
       actionLabel: "Voltar ao Discord oficial",
       roleName: payload.roleName || OFFICIAL_DISCORD_LINKED_ROLE_NAME,
     });
-  }, [accessToken, clearRetryTimer, initialStatus]);
+  }, [accessToken, applyAuthenticatedUserPayload, clearRetryTimer, initialStatus]);
 
   useEffect(() => {
     syncLinkRef.current = syncLink;
   }, [syncLink]);
+
+  useEffect(() => {
+    bootstrapHumanCheckRef.current = bootstrapHumanCheck;
+  }, [bootstrapHumanCheck]);
+
+  const handleHumanCheckConfirm = useCallback(async () => {
+    if (
+      humanCheckPhase !== "ready" ||
+      !humanCheckChallengeToken ||
+      state.phase === "error" ||
+      initialStatus === "linked"
+    ) {
+      return;
+    }
+
+    setHumanCheckPhase("verifying");
+    setHumanCheckError(null);
+
+    const dwellMs = Math.max(
+      humanCheckMinimumSolveMs,
+      Math.round((humanCheckIssuedAtRef.current ? performance.now() - humanCheckIssuedAtRef.current : 0) || 0),
+    );
+    const interactionCount = Math.max(1, humanCheckInteractionCountRef.current);
+    const pointerType = humanCheckPointerTypeRef.current || "mouse";
+
+    const response = await fetch("/api/auth/me/discord-link/human-check", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      cache: "no-store",
+      body: JSON.stringify({
+        accessToken,
+        challengeToken: humanCheckChallengeToken,
+        dwellMs,
+        interactionCount,
+        pointerType,
+      }),
+    });
+
+    const requestId = response.headers.get("X-Request-Id");
+    const payload = (await response.json().catch(() => null)) as HumanCheckResponse | null;
+    applyAuthenticatedUserPayload(payload?.authenticatedUser || null);
+
+    if (!response.ok || !payload?.ok) {
+      if (response.status === 403) {
+        setState({
+          phase: "error",
+          title: "Este link seguro expirou",
+          description:
+            payload?.message ||
+            "A sessao segura desta vinculacao nao esta mais disponivel. Gere um novo link seguro para continuar.",
+          requestId,
+        });
+        return;
+      }
+
+      setHumanCheckPhase("ready");
+      setHumanCheckError(
+        payload?.message ||
+          "Nao foi possivel confirmar a verificacao humana agora. Tente novamente.",
+      );
+      return;
+    }
+
+    setHumanCheckPhase("verified");
+    setHumanCheckChallengeToken(null);
+    clearHumanCheckTransitionTimer();
+    humanCheckTransitionTimerRef.current = window.setTimeout(() => {
+      void syncLink(false);
+    }, 260);
+  }, [
+    accessToken,
+    applyAuthenticatedUserPayload,
+    clearHumanCheckTransitionTimer,
+    humanCheckChallengeToken,
+    humanCheckMinimumSolveMs,
+    humanCheckPhase,
+    initialStatus,
+    state.phase,
+    syncLink,
+  ]);
 
   const handleLogout = useCallback(async () => {
     if (isLoggingOut) return;
@@ -232,17 +437,23 @@ export function DiscordLinkPageClient({
 
   useEffect(() => {
     const bootTimer = window.setTimeout(() => {
-      void syncLink(false);
+      if (initialStatus === "linked") {
+        setHasLoadedAuthenticatedUser(true);
+        return;
+      }
+
+      void bootstrapHumanCheck();
     }, 0);
 
     return () => {
       window.clearTimeout(bootTimer);
       clearRetryTimer();
+      clearHumanCheckTransitionTimer();
       if (redirectTimerRef.current) {
         window.clearTimeout(redirectTimerRef.current);
       }
     };
-  }, [clearRetryTimer, syncLink]);
+  }, [bootstrapHumanCheck, clearHumanCheckTransitionTimer, clearRetryTimer, initialStatus]);
 
   useEffect(() => {
     function handleForegroundReturn() {
@@ -250,7 +461,16 @@ export function DiscordLinkPageClient({
         return;
       }
 
-      void syncLink(false);
+      if (initialStatus === "linked") {
+        return;
+      }
+
+      if (humanCheckPhase === "verified") {
+        void syncLink(false);
+        return;
+      }
+
+      void bootstrapHumanCheckRef.current?.();
     }
 
     window.addEventListener("pageshow", handleForegroundReturn);
@@ -262,7 +482,7 @@ export function DiscordLinkPageClient({
       document.removeEventListener("visibilitychange", handleForegroundReturn);
       window.removeEventListener("focus", handleForegroundReturn);
     };
-  }, [syncLink]);
+  }, [humanCheckPhase, initialStatus, syncLink]);
 
   const footerLinks = useMemo(
     () => ({
@@ -276,6 +496,12 @@ export function DiscordLinkPageClient({
     (state.description.includes("link seguro") ||
       state.description.includes("nao esta mais disponivel") ||
       state.description.includes("expirou"));
+  const shouldRenderHumanCheck =
+    initialStatus !== "linked" &&
+    state.phase !== "error" &&
+    state.phase !== "success" &&
+    state.phase !== "redirecting" &&
+    humanCheckPhase !== "verified";
 
   return (
     <main className="flex min-h-screen w-full items-center justify-center bg-black px-6 py-10">
@@ -344,90 +570,194 @@ export function DiscordLinkPageClient({
           <div className="h-px w-full bg-[#242424]" />
 
           <div className="flex w-full flex-col items-center gap-5 text-center">
-            {state.phase === "error" ? (
+            {shouldRenderHumanCheck ? (
               <>
-                <h2 className="text-[22px] leading-[1.2] font-medium text-[#D8D8D8] sm:text-[26px]">
-                  {state.title}
-                </h2>
-                {state.description ? (
-                  <p className="max-w-[640px] text-[14px] leading-[1.75] text-[#A8A8A8]">
-                    {state.description}
+                <div
+                  className={`flex w-full flex-col rounded-[3px] border border-[#242424] bg-[#080808] px-5 py-5 text-left sm:px-7 sm:py-6 ${
+                    humanCheckPhase === "loading"
+                      ? "flowdesk-panel-glow"
+                      : "flowdesk-panel-glow transition-colors"
+                  }`}
+                >
+                  {humanCheckPhase === "loading" ? (
+                    <div className="flex w-full items-center justify-between gap-5 flowdesk-shimmer">
+                      <div className="flex min-w-0 flex-1 items-center gap-4">
+                        <div className="h-[76px] w-[76px] rounded-[26px] border border-[#1E1E1E] bg-[#111111]" />
+                        <div className="flex flex-1 flex-col gap-3">
+                          <div className="h-[22px] w-[220px] max-w-full rounded-full bg-[#161616]" />
+                          <div className="h-[12px] w-[140px] rounded-full bg-[#131313]" />
+                        </div>
+                      </div>
+                      <div className="hidden flex-col items-end gap-3 sm:flex">
+                        <div className="h-[52px] w-[52px] rounded-full bg-[#131313]" />
+                        <div className="h-[12px] w-[92px] rounded-full bg-[#161616]" />
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={humanCheckPhase === "verifying"}
+                      onPointerMove={(event) => {
+                        registerHumanInteraction(event.pointerType);
+                      }}
+                      onPointerDown={(event) => {
+                        registerHumanInteraction(event.pointerType);
+                      }}
+                      onKeyDown={() => {
+                        registerHumanInteraction("keyboard");
+                      }}
+                      onClick={() => {
+                        registerHumanInteraction(
+                          humanCheckPointerTypeRef.current || "keyboard",
+                        );
+                        void handleHumanCheckConfirm();
+                      }}
+                      className={`flex w-full items-center justify-between gap-5 text-left ${
+                        humanCheckPhase === "verifying" ? "cursor-default" : "cursor-pointer"
+                      }`}
+                    >
+                      <span className="flex min-w-0 flex-1 items-center gap-4 sm:gap-5">
+                        <span className="flex h-[76px] w-[76px] items-center justify-center rounded-[26px] border border-[#222222] bg-[#0B0B0B]">
+                          {humanCheckPhase === "verifying" ? (
+                            <ButtonLoader size={24} colorClassName="text-[#D8D8D8]" />
+                          ) : (
+                            <span className="block h-[42px] w-[42px] rounded-[14px] border border-[#252525] bg-[#101010]" />
+                          )}
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block text-[26px] leading-[1.15] font-medium text-[#D8D8D8] sm:text-[31px]">
+                            Nao sou um robo
+                          </span>
+                          <span className="mt-2 block text-[13px] leading-[1.65] text-[#8C8C8C]">
+                            Clique para validar esta tentativa segura antes de concluir a
+                            vinculacao da conta.
+                          </span>
+                        </span>
+                      </span>
+
+                      <span className="hidden items-center gap-3 text-right sm:flex">
+                        <span className="relative h-[54px] w-[54px] shrink-0 overflow-hidden rounded-full border border-[#1E1E1E] bg-[#050505]">
+                          <Image
+                            src="/cdn/logos/logotipo.png"
+                            alt="Flowdesk"
+                            fill
+                            sizes="54px"
+                            className="object-contain p-2"
+                          />
+                        </span>
+                        <span className="flex flex-col">
+                          <span className="text-[18px] font-medium text-[#D6D6D6]">
+                            Flowdesk
+                          </span>
+                          <span className="text-[12px] text-[#818181]">
+                            Privacidade • Termos
+                          </span>
+                        </span>
+                      </span>
+                    </button>
+                  )}
+                </div>
+
+                {humanCheckError ? (
+                  <p className="max-w-[640px] text-[13px] leading-[1.75] text-[#D38A8A]">
+                    {humanCheckError}
                   </p>
                 ) : null}
               </>
-            ) : null}
+            ) : (
+              <>
+                {state.phase === "error" ? (
+                  <>
+                    <h2 className="text-[22px] leading-[1.2] font-medium text-[#D8D8D8] sm:text-[26px]">
+                      {state.title}
+                    </h2>
+                    {state.description ? (
+                      <p className="max-w-[640px] text-[14px] leading-[1.75] text-[#A8A8A8]">
+                        {state.description}
+                      </p>
+                    ) : null}
+                  </>
+                ) : null}
 
-            <div
-              className={`flex h-[320px] w-full items-center justify-center rounded-[3px] border border-[#242424] bg-[#080808] p-8 ${
-                state.phase === "success" ? "flowdesk-success-glow" : "flowdesk-panel-glow"
-              }`}
-            >
-              {state.phase === "success" ? (
-                <Image
-                  src="/cdn/icons/check.png"
-                  alt="Vinculacao concluida"
-                  width={146}
-                  height={146}
-                  className="h-[146px] w-[146px] object-contain"
-                  priority
-                />
-              ) : (
-                <ButtonLoader size={46} colorClassName="text-[#D8D8D8]" />
-              )}
-            </div>
-
-            {state.phase === "error" && state.requestId ? (
-              <p className="text-[12px] leading-[1.6] text-[#7E7E7E]">
-                Protocolo tecnico: <span className="text-[#B8B8B8]">{state.requestId}</span>
-              </p>
-            ) : null}
-
-            <div className="flex w-full max-w-[420px] flex-col gap-3 pt-1">
-              {state.phase === "success" ? (
-                <a
-                  href={state.actionHref}
-                  className="inline-flex h-[52px] items-center justify-center rounded-[14px] bg-[#F3F3F3] px-5 text-[15px] font-medium text-black transition hover:bg-white"
+                <div
+                  className={`flex h-[320px] w-full items-center justify-center rounded-[3px] border border-[#242424] bg-[#080808] p-8 ${
+                    state.phase === "success" ? "flowdesk-success-glow" : "flowdesk-panel-glow"
+                  }`}
                 >
-                  {state.actionLabel}
-                </a>
-              ) : null}
+                  {state.phase === "success" ? (
+                    <Image
+                      src="/cdn/icons/check.png"
+                      alt="Vinculacao concluida"
+                      width={146}
+                      height={146}
+                      className="h-[146px] w-[146px] object-contain"
+                      priority
+                    />
+                  ) : (
+                    <ButtonLoader size={46} colorClassName="text-[#D8D8D8]" />
+                  )}
+                </div>
 
-              {state.phase === "syncing" && state.helperHref && state.helperLabel ? (
-                <a
-                  href={state.helperHref}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[13px] font-medium text-[#8E8E8E] underline-offset-4 hover:text-[#D4D4D4] hover:underline"
-                >
-                  {state.helperLabel}
-                </a>
-              ) : null}
+                {state.phase === "error" && state.requestId ? (
+                  <p className="text-[12px] leading-[1.6] text-[#7E7E7E]">
+                    Protocolo tecnico:{" "}
+                    <span className="text-[#B8B8B8]">{state.requestId}</span>
+                  </p>
+                ) : null}
 
-              {state.phase === "error" ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (
-                      state.description.includes("link seguro") ||
+                <div className="flex w-full max-w-[420px] flex-col gap-3 pt-1">
+                  {state.phase === "success" ? (
+                    <a
+                      href={state.actionHref}
+                      className="inline-flex h-[52px] items-center justify-center rounded-[14px] bg-[#F3F3F3] px-5 text-[15px] font-medium text-black transition hover:bg-white"
+                    >
+                      {state.actionLabel}
+                    </a>
+                  ) : null}
+
+                  {state.phase === "syncing" && state.helperHref && state.helperLabel ? (
+                    <a
+                      href={state.helperHref}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[13px] font-medium text-[#8E8E8E] underline-offset-4 hover:text-[#D4D4D4] hover:underline"
+                    >
+                      {state.helperLabel}
+                    </a>
+                  ) : null}
+
+                  {state.phase === "error" ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (
+                          state.description.includes("link seguro") ||
+                          state.description.includes("nao esta mais disponivel") ||
+                          state.description.includes("expirou")
+                        ) {
+                          window.location.assign(OFFICIAL_DISCORD_LINK_START_PATH);
+                          return;
+                        }
+
+                        if (humanCheckPhase !== "verified") {
+                          void bootstrapHumanCheck();
+                          return;
+                        }
+
+                        void syncLink();
+                      }}
+                      className="inline-flex h-[52px] items-center justify-center rounded-[14px] bg-[#F3F3F3] px-5 text-[15px] font-medium text-black transition hover:bg-white"
+                    >
+                      {state.description.includes("link seguro") ||
                       state.description.includes("nao esta mais disponivel") ||
                       state.description.includes("expirou")
-                    ) {
-                      window.location.assign(OFFICIAL_DISCORD_LINK_START_PATH);
-                      return;
-                    }
-
-                    void syncLink();
-                  }}
-                  className="inline-flex h-[52px] items-center justify-center rounded-[14px] bg-[#F3F3F3] px-5 text-[15px] font-medium text-black transition hover:bg-white"
-                >
-                  {state.description.includes("link seguro") ||
-                  state.description.includes("nao esta mais disponivel") ||
-                  state.description.includes("expirou")
-                    ? "Gerar novo link seguro"
-                    : "Tentar novamente"}
-                </button>
-              ) : null}
-            </div>
+                        ? "Gerar novo link seguro"
+                        : "Tentar novamente"}
+                    </button>
+                  ) : null}
+                </div>
+              </>
+            )}
           </div>
 
           <div className="h-px w-full bg-[#242424]" />
