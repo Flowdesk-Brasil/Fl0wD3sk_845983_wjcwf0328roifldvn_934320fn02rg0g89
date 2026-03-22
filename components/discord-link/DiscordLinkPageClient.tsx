@@ -528,7 +528,7 @@ export function DiscordLinkPageClient({
               suporte.
             </p>
             {!shouldHideAuthenticatedUserCard && !hasLoadedAuthenticatedUser ? (
-              <div className="mt-2 flex w-full max-w-[620px] items-center gap-3 rounded-[14px] border border-[#242424] bg-[#0A0A0A] px-4 py-3 text-left flowdesk-shimmer">
+              <div className="mt-2 flex w-full items-center gap-3 rounded-[14px] border border-[#242424] bg-[#0A0A0A] px-4 py-3 text-left flowdesk-shimmer">
                 <div className="h-[38px] w-[38px] rounded-full bg-[#151515]" />
                 <div className="flex flex-1 flex-col gap-2">
                   <div className="h-[12px] w-[168px] rounded-full bg-[#181818]" />
@@ -539,7 +539,7 @@ export function DiscordLinkPageClient({
             ) : null}
 
             {authenticatedUser && !shouldHideAuthenticatedUserCard ? (
-              <div className="mt-2 flex w-full max-w-[620px] items-center gap-3 rounded-[14px] border border-[#242424] bg-[#0A0A0A] px-4 py-3 text-left">
+              <div className="mt-2 flex w-full items-center gap-3 rounded-[14px] border border-[#242424] bg-[#0A0A0A] px-4 py-3 text-left">
                 {authenticatedUser.avatarUrl ? (
                   <Image
                     src={authenticatedUser.avatarUrl}
@@ -573,24 +573,24 @@ export function DiscordLinkPageClient({
             {shouldRenderHumanCheck ? (
               <>
                 <div
-                  className={`flex w-full flex-col rounded-[3px] border border-[#242424] bg-[#080808] px-5 py-5 text-left sm:px-7 sm:py-6 ${
+                  className={`flex w-full flex-col rounded-[3px] border border-[#242424] bg-[#080808] px-4 py-4 text-left sm:px-5 sm:py-4 ${
                     humanCheckPhase === "loading"
                       ? "flowdesk-panel-glow"
                       : "flowdesk-panel-glow transition-colors"
                   }`}
                 >
                   {humanCheckPhase === "loading" ? (
-                    <div className="flex w-full items-center justify-between gap-5 flowdesk-shimmer">
+                    <div className="flex w-full items-center justify-between gap-4 flowdesk-shimmer">
                       <div className="flex min-w-0 flex-1 items-center gap-4">
-                        <div className="h-[76px] w-[76px] rounded-[26px] border border-[#1E1E1E] bg-[#111111]" />
-                        <div className="flex flex-1 flex-col gap-3">
-                          <div className="h-[22px] w-[220px] max-w-full rounded-full bg-[#161616]" />
-                          <div className="h-[12px] w-[140px] rounded-full bg-[#131313]" />
+                        <div className="h-[34px] w-[34px] rounded-[4px] border border-[#3A3A3A] bg-[#111111]" />
+                        <div className="flex flex-1 flex-col gap-2">
+                          <div className="h-[18px] w-[210px] max-w-full rounded-full bg-[#161616]" />
                         </div>
                       </div>
-                      <div className="hidden flex-col items-end gap-3 sm:flex">
-                        <div className="h-[52px] w-[52px] rounded-full bg-[#131313]" />
-                        <div className="h-[12px] w-[92px] rounded-full bg-[#161616]" />
+                      <div className="hidden flex-col items-center gap-2 sm:flex">
+                        <div className="h-[34px] w-[34px] rounded-[10px] bg-[#131313]" />
+                        <div className="h-[10px] w-[64px] rounded-full bg-[#161616]" />
+                        <div className="h-[9px] w-[84px] rounded-full bg-[#131313]" />
                       </div>
                     </div>
                   ) : (
@@ -612,45 +612,41 @@ export function DiscordLinkPageClient({
                         );
                         void handleHumanCheckConfirm();
                       }}
-                      className={`flex w-full items-center justify-between gap-5 text-left ${
+                      className={`flex w-full items-center justify-between gap-4 text-left ${
                         humanCheckPhase === "verifying" ? "cursor-default" : "cursor-pointer"
                       }`}
                     >
                       <span className="flex min-w-0 flex-1 items-center gap-4 sm:gap-5">
-                        <span className="flex h-[76px] w-[76px] items-center justify-center rounded-[26px] border border-[#222222] bg-[#0B0B0B]">
+                        <span className="flex h-[34px] w-[34px] items-center justify-center rounded-[4px] border border-[#5A5A5A] bg-[#0C0C0C]">
                           {humanCheckPhase === "verifying" ? (
-                            <ButtonLoader size={24} colorClassName="text-[#D8D8D8]" />
+                            <ButtonLoader size={16} colorClassName="text-[#D8D8D8]" />
                           ) : (
-                            <span className="block h-[42px] w-[42px] rounded-[14px] border border-[#252525] bg-[#101010]" />
+                            <span className="block h-full w-full rounded-[4px]" />
                           )}
                         </span>
                         <span className="min-w-0">
-                          <span className="block text-[26px] leading-[1.15] font-medium text-[#D8D8D8] sm:text-[31px]">
+                          <span className="block text-[23px] leading-[1.12] font-medium text-[#D8D8D8] sm:text-[27px]">
                             Nao sou um robo
-                          </span>
-                          <span className="mt-2 block text-[13px] leading-[1.65] text-[#8C8C8C]">
-                            Clique para validar esta tentativa segura antes de concluir a
-                            vinculacao da conta.
                           </span>
                         </span>
                       </span>
 
-                      <span className="hidden items-center gap-3 text-right sm:flex">
-                        <span className="relative h-[54px] w-[54px] shrink-0 overflow-hidden rounded-full border border-[#1E1E1E] bg-[#050505]">
+                      <span className="hidden min-w-[88px] flex-col items-center gap-1 text-center sm:flex">
+                        <span className="relative h-[34px] w-[34px] shrink-0 overflow-hidden rounded-[10px] border border-[#1E1E1E] bg-[#050505]">
                           <Image
                             src="/cdn/logos/logotipo.png"
                             alt="Flowdesk"
                             fill
-                            sizes="54px"
-                            className="object-contain p-2"
+                            sizes="34px"
+                            className="object-contain p-1.5"
                           />
                         </span>
-                        <span className="flex flex-col">
-                          <span className="text-[18px] font-medium text-[#D6D6D6]">
+                        <span className="flex flex-col items-center">
+                          <span className="text-[14px] leading-[1.1] font-medium text-[#D6D6D6]">
                             Flowdesk
                           </span>
-                          <span className="text-[12px] text-[#818181]">
-                            Privacidade • Termos
+                          <span className="mt-1 text-[10px] leading-[1.2] text-[#818181]">
+                            Privacidade - Termos
                           </span>
                         </span>
                       </span>
