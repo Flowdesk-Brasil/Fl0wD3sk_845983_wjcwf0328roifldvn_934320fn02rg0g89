@@ -38,6 +38,7 @@ type HumanCheckResponse = {
   ok: boolean;
   verified?: boolean;
   challengeToken?: string | null;
+  verificationToken?: string | null;
   minSolveMs?: number;
   message?: string;
   authenticatedUser?: LinkSyncResponse["authenticatedUser"];
@@ -112,6 +113,9 @@ export function DiscordLinkPageClient({
   const [humanCheckChallengeToken, setHumanCheckChallengeToken] = useState<string | null>(
     null,
   );
+  const [humanCheckVerificationToken, setHumanCheckVerificationToken] = useState<string | null>(
+    null,
+  );
   const [humanCheckError, setHumanCheckError] = useState<string | null>(null);
   const [humanCheckMinimumSolveMs, setHumanCheckMinimumSolveMs] = useState(900);
   const humanCheckIssuedAtRef = useRef<number | null>(null);
@@ -163,6 +167,7 @@ export function DiscordLinkPageClient({
     if (initialStatus === "linked") {
       setHumanCheckPhase("verified");
       setHumanCheckChallengeToken(null);
+      setHumanCheckVerificationToken(null);
       setHumanCheckError(null);
       setHasLoadedAuthenticatedUser(true);
       return;
@@ -201,6 +206,7 @@ export function DiscordLinkPageClient({
     if (payload.verified) {
       setHumanCheckPhase("verified");
       setHumanCheckChallengeToken(null);
+      setHumanCheckVerificationToken(payload.verificationToken || null);
       void syncLinkRef.current?.(false);
       return;
     }
@@ -209,6 +215,7 @@ export function DiscordLinkPageClient({
     humanCheckInteractionCountRef.current = 0;
     humanCheckPointerTypeRef.current = "mouse";
     setHumanCheckChallengeToken(payload.challengeToken || null);
+    setHumanCheckVerificationToken(null);
     setHumanCheckPhase("ready");
   }, [
     accessToken,
@@ -234,6 +241,7 @@ export function DiscordLinkPageClient({
       body: JSON.stringify({
         source: "official_link_page",
         accessToken,
+        humanVerificationToken: humanCheckVerificationToken,
       }),
     });
 
@@ -331,7 +339,13 @@ export function DiscordLinkPageClient({
       actionLabel: "Voltar ao Discord oficial",
       roleName: payload.roleName || OFFICIAL_DISCORD_LINKED_ROLE_NAME,
     });
-  }, [accessToken, applyAuthenticatedUserPayload, clearRetryTimer, initialStatus]);
+  }, [
+    accessToken,
+    applyAuthenticatedUserPayload,
+    clearRetryTimer,
+    humanCheckVerificationToken,
+    initialStatus,
+  ]);
 
   useEffect(() => {
     syncLinkRef.current = syncLink;
@@ -403,10 +417,9 @@ export function DiscordLinkPageClient({
 
     setHumanCheckPhase("verified");
     setHumanCheckChallengeToken(null);
+    setHumanCheckVerificationToken(payload.verificationToken || null);
     clearHumanCheckTransitionTimer();
-    humanCheckTransitionTimerRef.current = window.setTimeout(() => {
-      void syncLink(false);
-    }, 260);
+    void syncLink(false);
   }, [
     accessToken,
     applyAuthenticatedUserPayload,
@@ -573,11 +586,7 @@ export function DiscordLinkPageClient({
             {shouldRenderHumanCheck ? (
               <>
                 <div
-                  className={`flex w-full flex-col rounded-[3px] border border-[#242424] bg-[#080808] px-4 py-4 text-left sm:px-5 sm:py-4 ${
-                    humanCheckPhase === "loading"
-                      ? "flowdesk-panel-glow"
-                      : "flowdesk-panel-glow transition-colors"
-                  }`}
+                  className="flex w-full flex-col rounded-[3px] border border-[#242424] bg-[#080808] px-4 py-4 text-left sm:px-5 sm:py-4"
                 >
                   {humanCheckPhase === "loading" ? (
                     <div className="flex w-full items-center justify-between gap-4 flowdesk-shimmer">
@@ -594,17 +603,24 @@ export function DiscordLinkPageClient({
                       </div>
                     </div>
                   ) : (
-                    <button
-                      type="button"
-                      disabled={humanCheckPhase === "verifying"}
+                    <div
+                      role="button"
+                      tabIndex={humanCheckPhase === "verifying" ? -1 : 0}
+                      aria-disabled={humanCheckPhase === "verifying"}
                       onPointerMove={(event) => {
                         registerHumanInteraction(event.pointerType);
                       }}
                       onPointerDown={(event) => {
                         registerHumanInteraction(event.pointerType);
                       }}
-                      onKeyDown={() => {
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" && event.key !== " ") {
+                          return;
+                        }
+
+                        event.preventDefault();
                         registerHumanInteraction("keyboard");
+                        void handleHumanCheckConfirm();
                       }}
                       onClick={() => {
                         registerHumanInteraction(
@@ -645,12 +661,30 @@ export function DiscordLinkPageClient({
                           <span className="text-[14px] leading-[1.1] font-medium text-[#D6D6D6]">
                             Flowdesk
                           </span>
-                          <span className="mt-1 text-[10px] leading-[1.2] text-[#818181]">
-                            Privacidade - Termos
+                          <span className="mt-1 flex items-center gap-1 text-[10px] leading-[1.2] text-[#818181]">
+                            <Link
+                              href={footerLinks.privacyUrl}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                              }}
+                              className="transition-colors hover:text-[#BFBFBF]"
+                            >
+                              Privacidade
+                            </Link>
+                            <span>•</span>
+                            <Link
+                              href={footerLinks.termsUrl}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                              }}
+                              className="transition-colors hover:text-[#BFBFBF]"
+                            >
+                              Termos
+                            </Link>
                           </span>
                         </span>
                       </span>
-                    </button>
+                    </div>
                   )}
                 </div>
 

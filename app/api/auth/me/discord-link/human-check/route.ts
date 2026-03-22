@@ -293,6 +293,7 @@ export async function POST(request: NextRequest) {
       NextResponse.json({
         ok: true,
         verified: true,
+        verificationToken: verificationToken.token,
         authenticatedUser,
       }),
     ),

@@ -6,7 +6,10 @@ import {
   OFFICIAL_DISCORD_LINKED_ROLE_ID,
   OFFICIAL_DISCORD_LINKED_ROLE_NAME,
 } from "@/lib/discordLink/config";
-import { validateDiscordLinkHumanVerification } from "@/lib/discordLink/humanCheck";
+import {
+  validateDiscordLinkHumanVerification,
+  validateDiscordLinkHumanVerificationToken,
+} from "@/lib/discordLink/humanCheck";
 import { validateDiscordLinkAccessToken } from "@/lib/discordLink/linkAccess";
 import {
   getDiscordLinkRecordForUser,
@@ -171,6 +174,12 @@ export async function POST(request: NextRequest) {
       payload && typeof payload === "object" && typeof payload.source === "string"
         ? payload.source.trim().slice(0, 64)
         : "official_link_page";
+    const humanVerificationToken =
+      payload &&
+      typeof payload === "object" &&
+      typeof payload.humanVerificationToken === "string"
+        ? payload.humanVerificationToken.trim()
+        : null;
     const accessValidation = await validateDiscordLinkAccessToken(linkAccessToken);
 
     if (!accessValidation.ok) {
@@ -206,9 +215,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const humanVerification = await validateDiscordLinkHumanVerification({
-      accessNonce: accessValidation.payload.nonce,
-    });
+    const humanVerification =
+      humanVerificationToken
+        ? validateDiscordLinkHumanVerificationToken({
+            token: humanVerificationToken,
+            accessNonce: accessValidation.payload.nonce,
+          })
+        : await validateDiscordLinkHumanVerification({
+            accessNonce: accessValidation.payload.nonce,
+          });
 
     if (!humanVerification.ok) {
       await logSecurityAuditEventSafe(authenticatedContext, {

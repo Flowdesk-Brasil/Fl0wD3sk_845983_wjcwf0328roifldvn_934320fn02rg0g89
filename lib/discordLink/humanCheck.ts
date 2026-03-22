@@ -207,11 +207,11 @@ export async function getDiscordLinkHumanCookieValue() {
   return cookieStore.get(DISCORD_LINK_HUMAN_COOKIE_NAME)?.value || null;
 }
 
-export async function validateDiscordLinkHumanVerification(input: {
+export function validateDiscordLinkHumanVerificationToken(input: {
+  token: string | null | undefined;
   accessNonce: string;
 }) {
-  const cookieValue = await getDiscordLinkHumanCookieValue();
-  const parsed = parseToken(cookieValue);
+  const parsed = parseToken(input.token);
   if (!parsed.ok) {
     return {
       ok: false as const,
@@ -257,4 +257,14 @@ export async function validateDiscordLinkHumanVerification(input: {
     ok: true as const,
     payload: payload as DiscordLinkHumanVerificationPayload,
   };
+}
+
+export async function validateDiscordLinkHumanVerification(input: {
+  accessNonce: string;
+}) {
+  const cookieValue = await getDiscordLinkHumanCookieValue();
+  return validateDiscordLinkHumanVerificationToken({
+    token: cookieValue,
+    accessNonce: input.accessNonce,
+  });
 }
