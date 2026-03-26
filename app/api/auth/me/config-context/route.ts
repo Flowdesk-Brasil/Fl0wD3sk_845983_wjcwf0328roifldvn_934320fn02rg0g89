@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import {
   normalizeConfigStep,
   sanitizeConfigDraft,
@@ -9,6 +9,7 @@ import {
 } from "@/lib/auth/session";
 import {
   assertUserAdminInGuildOrNull,
+  hasAcceptedTeamAccessToGuild,
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
 import {
@@ -207,7 +208,17 @@ export async function PUT(request: Request) {
         activeGuildId,
       );
 
-      if (!accessibleGuild) {
+      const hasTeamAccess = accessibleGuild
+        ? false
+        : await hasAcceptedTeamAccessToGuild(
+            {
+              authSession: sessionData.authSession,
+              accessToken: sessionData.accessToken,
+            },
+            activeGuildId,
+          );
+
+      if (!accessibleGuild && !hasTeamAccess) {
         return attachRequestId(applyNoStoreHeaders(NextResponse.json(
           { ok: false, message: "Servidor nao encontrado para este usuario." },
           { status: 403 },
@@ -287,3 +298,4 @@ export async function PUT(request: Request) {
     )), baseRequestContext.requestId);
   }
 }
+

@@ -11,6 +11,7 @@ import {
   updateSessionDiscordTokens,
   updateSessionGuildsCache,
 } from "@/lib/auth/session";
+import { getAcceptedTeamGuildIdsForUser } from "@/lib/teams/userTeams";
 
 const DISCORD_ADMINISTRATOR = BigInt(8);
 const DISCORD_MANAGE_GUILD = BigInt(32);
@@ -153,8 +154,56 @@ export async function assertUserAdminInGuildOrNull(
   return guild || null;
 }
 
+export async function hasAcceptedTeamAccessToGuild(
+  sessionContext: SessionAccessContext,
+  guildId: string,
+) {
+  const guildIds = await getAcceptedTeamGuildIdsForUser({
+    authUserId: sessionContext.authSession.user.id,
+    discordUserId: sessionContext.authSession.user.discord_user_id,
+  });
+
+  return guildIds.includes(guildId);
+}
+
+type BotGuildSummary = Pick<DiscordGuild, "id" | "name" | "icon">;
+
 function resolveBotToken() {
   return process.env.DISCORD_BOT_TOKEN || process.env.DISCORD_TOKEN || null;
+}
+
+export async function fetchGuildSummaryByBot(guildId: string): Promise<BotGuildSummary | null> {
+  const botToken = resolveBotToken();
+  if (!botToken) {
+    return null;
+  }
+
+  const response = await fetch(`https://discord.com/api/v10/guilds/${guildId}`, {
+    headers: {
+      Authorization: `Bot ${botToken}`,
+    },
+    cache: "no-store",
+  });
+
+  if (response.status === 404 || response.status === 403) {
+    return null;
+  }
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Falha ao buscar resumo do servidor: ${text}`);
+  }
+
+  const payload = (await response.json()) as Partial<DiscordGuild>;
+  if (typeof payload.id !== "string" || typeof payload.name !== "string") {
+    return null;
+  }
+
+  return {
+    id: payload.id,
+    name: payload.name,
+    icon: typeof payload.icon === "string" ? payload.icon : null,
+  };
 }
 
 export async function fetchGuildChannelsByBot(guildId: string) {

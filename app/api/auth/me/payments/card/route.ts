@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import {
   assertUserAdminInGuildOrNull,
+  hasAcceptedTeamAccessToGuild,
   isGuildId,
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
@@ -239,7 +240,7 @@ function resolveCardRetryCooldownSeconds(input: {
   const cooldownWindowMs =
     detail.includes("high_risk") ||
     detail.includes("analise antifraude do emissor") ||
-    detail.includes("análise antifraude do emissor") ||
+    detail.includes("anÃ¡lise antifraude do emissor") ||
     (detail.includes("issuer") && detail.includes("fraud")) ||
     (detail.includes("emissor") && detail.includes("fraud"))
       ? CARD_ISSUER_ANTIFRAUD_COOLDOWN_MS
@@ -373,7 +374,7 @@ function isIssuerAntifraudProviderMessage(message: string) {
     normalizedMessage.includes("cc_rejected_high_risk") ||
     normalizedMessage.includes("high_risk") ||
     normalizedMessage.includes("analise antifraude do emissor") ||
-    normalizedMessage.includes("análise antifraude do emissor") ||
+    normalizedMessage.includes("anÃ¡lise antifraude do emissor") ||
     (normalizedMessage.includes("issuer") &&
       normalizedMessage.includes("fraud")) ||
     (normalizedMessage.includes("emissor") &&
@@ -432,7 +433,17 @@ async function ensureGuildAccess(guildId: string) {
     accessibleGuild = null;
   }
 
-  if (!accessibleGuild && sessionData.authSession.activeGuildId !== guildId) {
+  const hasTeamAccess = accessibleGuild
+    ? false
+    : await hasAcceptedTeamAccessToGuild(
+        {
+          authSession: sessionData.authSession,
+          accessToken: sessionData.accessToken,
+        },
+        guildId,
+      );
+
+  if (!accessibleGuild && !hasTeamAccess && sessionData.authSession.activeGuildId !== guildId) {
     return {
       ok: false as const,
       response: NextResponse.json(
@@ -896,7 +907,7 @@ export async function POST(request: Request) {
         {
           ok: false,
           message:
-            "A configuracao desse servidor expirou apos 30 minutos sem pagamento. Refaça a configuracao antes de gerar um novo checkout.",
+            "A configuracao desse servidor expirou apos 30 minutos sem pagamento. RefaÃ§a a configuracao antes de gerar um novo checkout.",
         },
         { status: 409 },
       );
@@ -1498,3 +1509,4 @@ export async function POST(request: Request) {
     );
   }
 }
+

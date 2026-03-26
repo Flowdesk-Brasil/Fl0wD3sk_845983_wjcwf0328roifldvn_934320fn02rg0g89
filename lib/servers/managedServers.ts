@@ -1,7 +1,9 @@
 import {
+  fetchGuildSummaryByBot,
   getAccessibleGuildsForSession,
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
+import type { DiscordGuild } from "@/lib/auth/discord";
 import {
   getLockedGuildLicenseMap,
   resolveLatestLicenseCoverageMapForGuilds,
@@ -19,6 +21,7 @@ export type ManagedServer = {
   iconUrl: string | null;
   status: ManagedServerStatus;
   accessMode: "owner" | "viewer";
+  canManage: boolean;
   licenseOwnerUserId: number;
   licensePaidAt: string;
   licenseExpiresAt: string;
@@ -44,6 +47,24 @@ function daysLeft(targetMs: number) {
   const diff = targetMs - Date.now();
   const rounded = Math.ceil(diff / (24 * 60 * 60 * 1000));
   return Math.max(0, rounded);
+}
+
+function buildFallbackGuildName(guildId: string) {
+  return `Servidor ${guildId.slice(-6)}`;
+}
+
+function buildGuildLookup(guilds: DiscordGuild[] | null) {
+  return new Map(
+    (guilds || []).map((guild) => [
+      guild.id,
+      {
+        id: guild.id,
+        name: guild.name,
+        icon: guild.icon,
+        owner: guild.owner,
+      },
+    ]),
+  );
 }
 
 export async function getManagedServersForCurrentSession(): Promise<ManagedServer[]> {
@@ -105,26 +126,81 @@ export async function getManagedServersForCurrentSession(): Promise<ManagedServe
     authSession: sessionData.authSession,
     accessToken: sessionData.accessToken,
   });
-
-  const lockedGuildMap = await getLockedGuildLicenseMap(
-    accessibleGuilds.map((guild) => guild.id),
+  const accessibleGuildLookup = buildGuildLookup(accessibleGuilds);
+  const sessionGuildLookup = buildGuildLookup(
+    sessionData.authSession.discordGuildsCache,
   );
+
   const acceptedTeamGuildIds = new Set(
     await getAcceptedTeamGuildIdsForUser({
       authUserId: sessionData.authSession.user.id,
       discordUserId: sessionData.authSession.user.discord_user_id,
     }),
   );
+  const guildIdsForLookup = Array.from(
+    new Set([
+      ...accessibleGuilds.map((guild) => guild.id),
+      ...acceptedTeamGuildIds,
+      ...latestOwnedCoverageByGuild.keys(),
+    ]),
+  );
+  const missingTeamGuildIds = Array.from(acceptedTeamGuildIds).filter(
+    (guildId) => !accessibleGuildLookup.has(guildId),
+  );
+
+  const supplementalTeamGuilds = await Promise.all(
+    missingTeamGuildIds.map(async (guildId) => {
+      const cachedGuild = sessionGuildLookup.get(guildId);
+      if (cachedGuild) {
+        return cachedGuild;
+      }
+
+      try {
+        const botGuild = await fetchGuildSummaryByBot(guildId);
+        if (botGuild) {
+          return {
+            id: botGuild.id,
+            name: botGuild.name,
+            icon: botGuild.icon,
+            owner: false,
+          };
+        }
+      } catch {
+        // fallback local abaixo; nao bloquear a listagem inteira por um resumo individual
+      }
+
+      return {
+        id: guildId,
+        name: buildFallbackGuildName(guildId),
+        icon: null,
+        owner: false,
+      };
+    }),
+  );
+  const guildCatalog = new Map(
+    [
+      ...accessibleGuilds.map((guild) => ({
+        id: guild.id,
+        name: guild.name,
+        icon: guild.icon,
+        owner: guild.owner,
+      })),
+      ...supplementalTeamGuilds,
+    ].map((guild) => [guild.id, guild]),
+  );
+
+  const lockedGuildMap = await getLockedGuildLicenseMap(guildIdsForLookup);
 
   if (!latestApprovedOrderByGuild.size && !lockedGuildMap.size) {
-    return accessibleGuilds
+    return Array.from(guildCatalog.values())
       .filter((guild) => acceptedTeamGuildIds.has(guild.id))
       .map((guild) => ({
         guildId: guild.id,
         guildName: guild.name,
         iconUrl: buildGuildIconUrl(guild.id, guild.icon),
         status: "off" as const,
-        accessMode: "viewer" as const,
+        accessMode: guild.owner ? ("owner" as const) : ("viewer" as const),
+        canManage: acceptedTeamGuildIds.has(guild.id) || guild.owner,
         licenseOwnerUserId: sessionData.authSession.user.id,
         licensePaidAt: new Date().toISOString(),
         licenseExpiresAt: new Date().toISOString(),
@@ -134,7 +210,7 @@ export async function getManagedServersForCurrentSession(): Promise<ManagedServe
       }));
   }
 
-  return accessibleGuilds
+  return Array.from(guildCatalog.values())
     .filter(
       (guild) =>
         latestOwnedCoverageByGuild.has(guild.id) ||
@@ -144,14 +220,10 @@ export async function getManagedServersForCurrentSession(): Promise<ManagedServe
     .map((guild) => {
       const ownedCoverage = latestOwnedCoverageByGuild.get(guild.id) || null;
       const lockedRecord = lockedGuildMap.get(guild.id) || null;
-      const currentLicenseBelongsToViewer =
-        lockedRecord?.userId !== sessionData.authSession.user.id;
-      const isLicenseOwner = lockedRecord
-        ? !currentLicenseBelongsToViewer
-        : Boolean(ownedCoverage);
-      const accessMode: ManagedServer["accessMode"] = isLicenseOwner
-        ? "owner"
-        : "viewer";
+      const currentLicenseBelongsToViewer = Boolean(
+        lockedRecord && lockedRecord.userId !== sessionData.authSession.user.id,
+      );
+      const accessMode: ManagedServer["accessMode"] = guild.owner ? "owner" : "viewer";
 
       const status: ManagedServerStatus = currentLicenseBelongsToViewer
         ? lockedRecord?.status || "off"
@@ -181,6 +253,7 @@ export async function getManagedServersForCurrentSession(): Promise<ManagedServe
         iconUrl: buildGuildIconUrl(guild.id, guild.icon),
         status,
         accessMode,
+        canManage: acceptedTeamGuildIds.has(guild.id) || guild.owner,
         licenseOwnerUserId:
           lockedRecord?.userId || sessionData.authSession.user.id,
         licensePaidAt:

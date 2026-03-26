@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import {
   assertUserAdminInGuildOrNull,
+  hasAcceptedTeamAccessToGuild,
   isGuildId,
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
@@ -264,7 +265,17 @@ async function ensureGuildAccess(guildId: string) {
     accessibleGuild = null;
   }
 
-  if (!accessibleGuild && sessionData.authSession.activeGuildId !== guildId) {
+  const hasTeamAccess = accessibleGuild
+    ? false
+    : await hasAcceptedTeamAccessToGuild(
+        {
+          authSession: sessionData.authSession,
+          accessToken: sessionData.accessToken,
+        },
+        guildId,
+      );
+
+  if (!accessibleGuild && !hasTeamAccess && sessionData.authSession.activeGuildId !== guildId) {
     return {
       ok: false as const,
       response: NextResponse.json(
@@ -533,7 +544,7 @@ export async function POST(request: Request) {
         {
           ok: false,
           message:
-            "A configuracao desse servidor expirou apos 30 minutos sem pagamento. Refaça a configuracao antes de abrir um novo checkout.",
+            "A configuracao desse servidor expirou apos 30 minutos sem pagamento. RefaÃ§a a configuracao antes de abrir um novo checkout.",
         },
         { status: 409 },
       );
@@ -790,3 +801,4 @@ export async function POST(request: Request) {
     );
   }
 }
+

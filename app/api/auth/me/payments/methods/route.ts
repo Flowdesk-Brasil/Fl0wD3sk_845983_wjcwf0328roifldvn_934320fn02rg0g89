@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import {
   assertUserAdminInGuildOrNull,
+  hasAcceptedTeamAccessToGuild,
   isGuildId,
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
@@ -367,7 +368,17 @@ async function ensureGuildAccess(guildId: string): Promise<AccessContext> {
     accessibleGuild = null;
   }
 
-  if (!accessibleGuild && sessionData.authSession.activeGuildId !== guildId) {
+  const hasTeamAccess = accessibleGuild
+    ? false
+    : await hasAcceptedTeamAccessToGuild(
+        {
+          authSession: sessionData.authSession,
+          accessToken: sessionData.accessToken,
+        },
+        guildId,
+      );
+
+  if (!accessibleGuild && !hasTeamAccess && sessionData.authSession.activeGuildId !== guildId) {
     return {
       ok: false,
       response: NextResponse.json(
@@ -1365,3 +1376,4 @@ export async function DELETE(request: Request) {
     ), baseRequestContext.requestId);
   }
 }
+

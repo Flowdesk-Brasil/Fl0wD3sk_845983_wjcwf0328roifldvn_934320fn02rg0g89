@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import {
   assertUserAdminInGuildOrNull,
+  hasAcceptedTeamAccessToGuild,
   fetchGuildRolesByBot,
   isGuildId,
   resolveSessionAccessToken,
@@ -62,7 +63,17 @@ export async function GET(request: Request) {
       guildId,
     );
 
-    if (!accessibleGuild && sessionData.authSession.activeGuildId !== guildId) {
+    const hasTeamAccess = accessibleGuild
+    ? false
+    : await hasAcceptedTeamAccessToGuild(
+        {
+          authSession: sessionData.authSession,
+          accessToken: sessionData.accessToken,
+        },
+        guildId,
+      );
+
+  if (!accessibleGuild && !hasTeamAccess && sessionData.authSession.activeGuildId !== guildId) {
       return applyNoStoreHeaders(
         NextResponse.json(
         { ok: false, message: "Servidor nao encontrado para este usuario." },
@@ -117,3 +128,4 @@ export async function GET(request: Request) {
     );
   }
 }
+

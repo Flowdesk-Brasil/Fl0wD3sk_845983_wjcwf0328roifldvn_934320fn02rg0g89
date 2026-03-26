@@ -1,7 +1,8 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { authConfig } from "@/lib/auth/config";
 import {
   assertUserAdminInGuildOrNull,
+  hasAcceptedTeamAccessToGuild,
   buildBotInviteUrl,
   isGuildId,
   resolveSessionAccessToken,
@@ -152,8 +153,18 @@ export async function POST(request: Request) {
       guildId,
     );
 
+    const hasTeamAccess = accessibleGuild
+      ? false
+      : await hasAcceptedTeamAccessToGuild(
+          {
+            authSession: sessionData.authSession,
+            accessToken: sessionData.accessToken,
+          },
+          guildId,
+        );
+
     const isActiveGuild = sessionData.authSession.activeGuildId === guildId;
-    if (!accessibleGuild && !isActiveGuild) {
+    if (!accessibleGuild && !hasTeamAccess && !isActiveGuild) {
       return NextResponse.json(
         { ok: false, message: "Servidor nao encontrado para este usuario." },
         { status: 403 },
@@ -203,3 +214,4 @@ export async function POST(request: Request) {
     );
   }
 }
+

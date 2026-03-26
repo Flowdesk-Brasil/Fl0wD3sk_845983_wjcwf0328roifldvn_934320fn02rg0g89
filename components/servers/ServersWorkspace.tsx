@@ -4,6 +4,34 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
+import {
+  BadgePercent,
+  BarChart3,
+  Check as CheckLucide,
+  ChevronDown,
+  ChevronRight,
+  CircleHelp,
+  Cog,
+  Copy as CopyLucide,
+  Ellipsis,
+  FolderKanban,
+  Grid2x2,
+  HardDrive,
+  LifeBuoy,
+  List as ListLucide,
+  LogOut,
+  Palette,
+  Plus as PlusLucide,
+  PlugZap,
+  Search as SearchLucide,
+  Settings2,
+  SlidersHorizontal,
+  UserRound,
+  Users,
+  WalletCards,
+  Workflow,
+  type LucideIcon,
+} from "lucide-react";
 import { LandingActionButton } from "@/components/landing/LandingActionButton";
 import { LandingGlowTag } from "@/components/landing/LandingGlowTag";
 import { LandingReveal } from "@/components/landing/LandingReveal";
@@ -15,6 +43,13 @@ import type { PendingTeamInvite, UserTeam } from "@/lib/teams/userTeams";
 
 type ServersWorkspaceProps = {
   displayName: string;
+  currentAccount: {
+    authUserId: number;
+    discordUserId: string;
+    displayName: string;
+    username: string;
+    avatarUrl: string | null;
+  };
   initialGuildId?: string | null;
   initialTab?: "settings" | "payments" | "methods" | "plans";
   initialServers?: ManagedServer[] | null;
@@ -41,6 +76,15 @@ type TeamsApiResponse = {
   createdTeamId?: number;
 };
 
+type SavedPanelAccount = {
+  authUserId: number;
+  discordUserId: string;
+  displayName: string;
+  username: string;
+  avatarUrl: string | null;
+  lastSeenAt: number;
+};
+
 const FILTER_LABEL: Record<FilterOption, string> = {
   all: "Todos",
   paid: "Pago",
@@ -64,24 +108,25 @@ type SidebarItem = {
   tab?: ServerEditorTab | null;
   disabled?: boolean;
   chevron?: boolean;
+  searchAliases?: string[];
 };
 
 const SIDEBAR_SECTIONS: SidebarItem[][] = [
   [
-    { label: "Projetos", kind: "overview", tab: null },
-    { label: "Configuracoes", kind: "settings", tab: "settings" },
-    { label: "Pagamentos", kind: "payments", tab: "payments" },
-    { label: "Metodos", kind: "methods", tab: "methods" },
-    { label: "Planos", kind: "plans", tab: "plans" },
+    { label: "Projetos", kind: "overview", tab: null, searchAliases: ["overview", "servidores", "dashboard", "inicio"] },
+    { label: "Configuracoes", kind: "settings", tab: "settings", searchAliases: ["config", "setup", "painel", "ticket", "tickets"] },
+    { label: "Pagamentos", kind: "payments", tab: "payments", searchAliases: ["financeiro", "cobranca", "pix", "cartao", "payment"] },
+    { label: "Metodos", kind: "methods", tab: "methods", searchAliases: ["metodos", "metodos de pagamento", "formas", "checkout"] },
+    { label: "Planos", kind: "plans", tab: "plans", searchAliases: ["pricing", "assinatura", "licenca", "licenças"] },
   ],
   [
-    { label: "Analytics", kind: "analytics", disabled: true },
-    { label: "Integracoes", kind: "integrations", disabled: true, chevron: true },
-    { label: "Storage", kind: "storage", disabled: true },
+    { label: "Analytics", kind: "analytics", disabled: true, searchAliases: ["analise", "metricas", "insights", "dados"] },
+    { label: "Integracoes", kind: "integrations", disabled: true, chevron: true, searchAliases: ["integracoes", "apps", "plugins", "webhook", "discord"] },
+    { label: "Storage", kind: "storage", disabled: true, searchAliases: ["armazenamento", "dados", "backup"] },
   ],
   [
-    { label: "Suporte", kind: "support", disabled: true },
-    { label: "Settings", kind: "preferences", disabled: true, chevron: true },
+    { label: "Suporte", kind: "support", disabled: true, searchAliases: ["ajuda", "help", "atendimento", "suporte"] },
+    { label: "Settings", kind: "preferences", disabled: true, chevron: true, searchAliases: ["preferencias", "ajustes", "conta"] },
   ],
 ];
 
@@ -90,6 +135,8 @@ const shellClass =
 
 const sidebarShellClass =
   "relative overflow-hidden border border-[#0E0E0E] bg-[#050505] shadow-[0_24px_80px_rgba(0,0,0,0.42)]";
+
+const SAVED_PANEL_ACCOUNTS_KEY = "flowdesk_saved_panel_accounts_v1";
 
 const TEAM_ICON_OPTIONS = [
   {
@@ -219,96 +266,54 @@ function statusDescription(server: ManagedServer) {
 function serverMetaLabel(server: ManagedServer) {
   return server.accessMode === "owner"
     ? `Dono da licenca • renovado em ${formatDateLabel(server.licensePaidAt)}`
-    : `Acesso de visualizacao • valido ate ${formatDateLabel(server.licenseExpiresAt)}`;
+    : server.canManage
+      ? `Gestao por equipe • valido ate ${formatDateLabel(server.licenseExpiresAt)}`
+      : `Acesso de visualizacao • valido ate ${formatDateLabel(server.licenseExpiresAt)}`;
+}
+
+function serverAccessBadgeLabel(server: ManagedServer) {
+  if (server.accessMode === "owner") return "owner";
+  return server.canManage ? "equipe" : "viewer";
+}
+
+function serverLicenseScopeLabel(server: ManagedServer) {
+  if (server.accessMode === "owner") return "licenca principal";
+  return server.canManage ? "gestao por equipe" : "acesso de visualizacao";
 }
 function SearchIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] shrink-0 text-[#6F6F6F]" fill="none" aria-hidden="true">
-      <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.8" />
-      <path d="M16 16L20 20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-    </svg>
-  );
+  return <SearchLucide className="h-[18px] w-[18px] shrink-0 text-[#6F6F6F]" strokeWidth={1.85} aria-hidden="true" />;
 }
 
 function FilterIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] shrink-0" fill="none" aria-hidden="true">
-      <path d="M5 7H19" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      <path d="M8 12H16" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      <path d="M10 17H14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-    </svg>
-  );
+  return <SlidersHorizontal className="h-[18px] w-[18px] shrink-0" strokeWidth={1.85} aria-hidden="true" />;
 }
 
 function GridIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] shrink-0" fill="none" aria-hidden="true">
-      <path d="M5 5H10V10H5V5Z" stroke="currentColor" strokeWidth="1.7" />
-      <path d="M14 5H19V10H14V5Z" stroke="currentColor" strokeWidth="1.7" />
-      <path d="M5 14H10V19H5V14Z" stroke="currentColor" strokeWidth="1.7" />
-      <path d="M14 14H19V19H14V14Z" stroke="currentColor" strokeWidth="1.7" />
-    </svg>
-  );
+  return <Grid2x2 className="h-[18px] w-[18px] shrink-0" strokeWidth={1.8} aria-hidden="true" />;
 }
 
 function ListIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] shrink-0" fill="none" aria-hidden="true">
-      <path d="M8 6.5H19" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      <path d="M8 12H19" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      <path d="M8 17.5H19" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      <circle cx="5" cy="6.5" r="1" fill="currentColor" />
-      <circle cx="5" cy="12" r="1" fill="currentColor" />
-      <circle cx="5" cy="17.5" r="1" fill="currentColor" />
-    </svg>
-  );
+  return <ListLucide className="h-[18px] w-[18px] shrink-0" strokeWidth={1.8} aria-hidden="true" />;
 }
 
 function MenuDotsIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] shrink-0" fill="currentColor" aria-hidden="true">
-      <circle cx="5" cy="12" r="1.5" />
-      <circle cx="12" cy="12" r="1.5" />
-      <circle cx="19" cy="12" r="1.5" />
-    </svg>
-  );
+  return <Ellipsis className="h-[18px] w-[18px] shrink-0" strokeWidth={1.85} aria-hidden="true" />;
 }
 
 function CopyIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-[15px] w-[15px] shrink-0" fill="none" aria-hidden="true">
-      <rect x="9" y="9" width="10" height="10" rx="2" stroke="currentColor" strokeWidth="1.7" />
-      <path d="M15 9V7A2 2 0 0 0 13 5H7A2 2 0 0 0 5 7V13A2 2 0 0 0 7 15H9" stroke="currentColor" strokeWidth="1.7" />
-    </svg>
-  );
+  return <CopyLucide className="h-[15px] w-[15px] shrink-0" strokeWidth={1.8} aria-hidden="true" />;
 }
 
 function CheckIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-[15px] w-[15px] shrink-0" fill="none" aria-hidden="true">
-      <path d="M20 7L10 17L5 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
+  return <CheckLucide className="h-[15px] w-[15px] shrink-0" strokeWidth={2.2} aria-hidden="true" />;
 }
 
 function PlusIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] shrink-0" fill="none" aria-hidden="true">
-      <path d="M12 5V19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-      <path d="M5 12H19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    </svg>
-  );
+  return <PlusLucide className="h-[18px] w-[18px] shrink-0" strokeWidth={2.2} aria-hidden="true" />;
 }
 
 function TeamIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] shrink-0" fill="none" aria-hidden="true">
-      <circle cx="9" cy="9" r="3" stroke="currentColor" strokeWidth="1.7" />
-      <circle cx="17" cy="8" r="2.3" stroke="currentColor" strokeWidth="1.7" />
-      <path d="M4.5 18.5C5.3 15.95 7.45 14.5 10 14.5C12.55 14.5 14.7 15.95 15.5 18.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-      <path d="M15.5 16.2C16.12 15.1 17.2 14.5 18.45 14.5C19.06 14.5 19.63 14.64 20.13 14.9" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-    </svg>
-  );
+  return <Users className="h-[18px] w-[18px] shrink-0" strokeWidth={1.85} aria-hidden="true" />;
 }
 
 function TeamAvatar({
@@ -339,6 +344,84 @@ function TeamAvatar({
   );
 }
 
+function accountInitial(name: string, username: string) {
+  const source = name.trim() || username.trim();
+  return source ? source.charAt(0).toUpperCase() : "F";
+}
+
+function normalizeSavedPanelAccounts(input: unknown) {
+  if (!Array.isArray(input)) return [];
+
+  return input
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const record = item as Partial<SavedPanelAccount>;
+      if (
+        typeof record.authUserId !== "number" ||
+        typeof record.discordUserId !== "string" ||
+        typeof record.displayName !== "string" ||
+        typeof record.username !== "string" ||
+        typeof record.lastSeenAt !== "number"
+      ) {
+        return null;
+      }
+
+      return {
+        authUserId: record.authUserId,
+        discordUserId: record.discordUserId,
+        displayName: record.displayName,
+        username: record.username,
+        avatarUrl: typeof record.avatarUrl === "string" ? record.avatarUrl : null,
+        lastSeenAt: record.lastSeenAt,
+      } satisfies SavedPanelAccount;
+    })
+    .filter((value): value is SavedPanelAccount => value !== null)
+    .slice(0, 3);
+}
+
+function mergeSavedPanelAccounts(
+  currentAccount: SavedPanelAccount,
+  previousAccounts: SavedPanelAccount[],
+) {
+  return [currentAccount, ...previousAccounts.filter((account) => account.discordUserId !== currentAccount.discordUserId)]
+    .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
+    .slice(0, 3);
+}
+
+function AccountAvatar({
+  avatarUrl,
+  displayName,
+  username,
+  className = "",
+}: {
+  avatarUrl: string | null;
+  displayName: string;
+  username: string;
+  className?: string;
+}) {
+  if (avatarUrl) {
+    return (
+      <Image
+        src={avatarUrl}
+        alt={displayName}
+        width={44}
+        height={44}
+        className={`rounded-full object-cover ${className}`.trim()}
+        unoptimized
+      />
+    );
+  }
+
+  return (
+    <div
+      className={`relative flex items-center justify-center rounded-full bg-[radial-gradient(circle_at_top,#7D3BFF_0%,#3C0F6D_54%,#170822_100%)] font-semibold text-[#F0F0F0] shadow-[0_0_28px_rgba(125,59,255,0.14)] ${className}`.trim()}
+    >
+      {accountInitial(displayName, username)}
+      <span className="absolute bottom-[2px] right-[2px] h-[8px] w-[8px] rounded-full bg-[#0062FF]" />
+    </div>
+  );
+}
+
 function SidebarWorkspaceIcon() {
   return (
     <div className="flex h-[34px] w-[34px] items-center justify-center rounded-full bg-[radial-gradient(circle_at_32%_28%,#E7A540_0%,#C77B12_58%,#6B3600_100%)] shadow-[0_0_30px_rgba(231,165,64,0.18)]">
@@ -351,12 +434,12 @@ function SidebarWorkspaceIcon() {
   );
 }
 
-function SidebarMiniChevron() {
-  return (
-    <svg viewBox="0 0 20 20" className="h-[14px] w-[14px] shrink-0" fill="none" aria-hidden="true">
-      <path d="M5.5 7.5L10 12L14.5 7.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
+function SidebarDropdownChevronIcon() {
+  return <ChevronDown className="h-[14px] w-[14px] shrink-0" strokeWidth={1.9} aria-hidden="true" />;
+}
+
+function SidebarChevronRightIcon() {
+  return <ChevronRight className="h-[14px] w-[14px] shrink-0" strokeWidth={1.9} aria-hidden="true" />;
 }
 
 function SidebarSearchShortcutIcon() {
@@ -367,24 +450,8 @@ function SidebarSearchShortcutIcon() {
   );
 }
 
-function SidebarBellIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-[17px] w-[17px] shrink-0" fill="none" aria-hidden="true">
-      <path d="M8 17H16" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-      <path d="M10 20H14" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-      <path d="M6.5 17V11.5C6.5 8.47 8.97 6 12 6C15.03 6 17.5 8.47 17.5 11.5V17" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 function SidebarLogoutIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-[17px] w-[17px] shrink-0" fill="none" aria-hidden="true">
-      <path d="M9 6H7A2 2 0 0 0 5 8V16A2 2 0 0 0 7 18H9" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-      <path d="M13 8L17 12L13 16" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M10 12H17" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-    </svg>
-  );
+  return <LogOut className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />;
 }
 
 function SidebarNavIcon({
@@ -394,103 +461,20 @@ function SidebarNavIcon({
   kind: SidebarItem["kind"];
   active?: boolean;
 }) {
-  const stroke = active ? "#E5E5E5" : "currentColor";
+  const Icon: LucideIcon = {
+    overview: FolderKanban,
+    settings: Settings2,
+    payments: WalletCards,
+    methods: Workflow,
+    plans: BadgePercent,
+    analytics: BarChart3,
+    integrations: PlugZap,
+    storage: HardDrive,
+    support: LifeBuoy,
+    preferences: Cog,
+  }[kind];
 
-  if (kind === "overview") {
-    return (
-      <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] shrink-0" fill="none" aria-hidden="true">
-        <path d="M5 5H10V10H5V5Z" stroke={stroke} strokeWidth="1.7" />
-        <path d="M14 5H19V10H14V5Z" stroke={stroke} strokeWidth="1.7" />
-        <path d="M5 14H10V19H5V14Z" stroke={stroke} strokeWidth="1.7" />
-        <path d="M14 14H19V19H14V14Z" stroke={stroke} strokeWidth="1.7" />
-      </svg>
-    );
-  }
-
-  if (kind === "settings") {
-    return (
-      <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] shrink-0" fill="none" aria-hidden="true">
-        <path d="M12 4L19 8V16L12 20L5 16V8L12 4Z" stroke={stroke} strokeWidth="1.7" strokeLinejoin="round" />
-        <path d="M12 4V20" stroke={stroke} strokeWidth="1.4" />
-      </svg>
-    );
-  }
-
-  if (kind === "payments") {
-    return (
-      <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] shrink-0" fill="none" aria-hidden="true">
-        <path d="M6 7H18" stroke={stroke} strokeWidth="1.7" strokeLinecap="round" />
-        <path d="M6 12H18" stroke={stroke} strokeWidth="1.7" strokeLinecap="round" />
-        <path d="M6 17H14" stroke={stroke} strokeWidth="1.7" strokeLinecap="round" />
-      </svg>
-    );
-  }
-
-  if (kind === "methods") {
-    return (
-      <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] shrink-0" fill="none" aria-hidden="true">
-        <path d="M5 18V6" stroke={stroke} strokeWidth="1.7" strokeLinecap="round" />
-        <path d="M5 18L11 12L15 15L19 7" stroke={stroke} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    );
-  }
-
-  if (kind === "plans") {
-    return (
-      <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] shrink-0" fill="none" aria-hidden="true">
-        <circle cx="12" cy="12" r="7" stroke={stroke} strokeWidth="1.7" />
-        <path d="M9.5 12H14.5" stroke={stroke} strokeWidth="1.7" strokeLinecap="round" />
-      </svg>
-    );
-  }
-
-  if (kind === "analytics") {
-    return (
-      <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] shrink-0" fill="none" aria-hidden="true">
-        <path d="M6 18V10" stroke={stroke} strokeWidth="1.7" strokeLinecap="round" />
-        <path d="M12 18V6" stroke={stroke} strokeWidth="1.7" strokeLinecap="round" />
-        <path d="M18 18V13" stroke={stroke} strokeWidth="1.7" strokeLinecap="round" />
-      </svg>
-    );
-  }
-
-  if (kind === "integrations") {
-    return (
-      <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] shrink-0" fill="none" aria-hidden="true">
-        <path d="M8 8H16V16H8V8Z" stroke={stroke} strokeWidth="1.7" />
-        <path d="M12 4V8" stroke={stroke} strokeWidth="1.7" strokeLinecap="round" />
-        <path d="M12 16V20" stroke={stroke} strokeWidth="1.7" strokeLinecap="round" />
-        <path d="M4 12H8" stroke={stroke} strokeWidth="1.7" strokeLinecap="round" />
-        <path d="M16 12H20" stroke={stroke} strokeWidth="1.7" strokeLinecap="round" />
-      </svg>
-    );
-  }
-
-  if (kind === "storage") {
-    return (
-      <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] shrink-0" fill="none" aria-hidden="true">
-        <ellipse cx="12" cy="7" rx="6.5" ry="2.8" stroke={stroke} strokeWidth="1.7" />
-        <path d="M5.5 7V17C5.5 18.55 8.41 19.8 12 19.8C15.59 19.8 18.5 18.55 18.5 17V7" stroke={stroke} strokeWidth="1.7" />
-      </svg>
-    );
-  }
-
-  if (kind === "support") {
-    return (
-      <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] shrink-0" fill="none" aria-hidden="true">
-        <path d="M7.5 15.5V9.5C7.5 7.01 9.51 5 12 5C14.49 5 16.5 7.01 16.5 9.5V15.5" stroke={stroke} strokeWidth="1.7" strokeLinecap="round" />
-        <path d="M6 15H7.5V17.5H6C5.17 17.5 4.5 16.83 4.5 16V16C4.5 15.17 5.17 14.5 6 14.5V15Z" stroke={stroke} strokeWidth="1.7" />
-        <path d="M18 15H16.5V17.5H18C18.83 17.5 19.5 16.83 19.5 16V16C19.5 15.17 18.83 14.5 18 14.5V15Z" stroke={stroke} strokeWidth="1.7" />
-      </svg>
-    );
-  }
-
-  return (
-    <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] shrink-0" fill="none" aria-hidden="true">
-      <path d="M12 4.5L13.7 6.5L16.3 6.2L16.8 8.8L19 10L17.8 12.2L18.1 14.8L15.5 15.3L13.5 17L12 19.5L10.5 17L8.5 15.3L5.9 14.8L6.2 12.2L5 10L7.2 8.8L7.7 6.2L10.3 6.5L12 4.5Z" stroke={stroke} strokeWidth="1.5" strokeLinejoin="round" />
-      <circle cx="12" cy="12" r="2.8" stroke={stroke} strokeWidth="1.5" />
-    </svg>
-  );
+  return <Icon className="h-[18px] w-[18px] shrink-0" strokeWidth={active ? 2 : 1.85} aria-hidden="true" />;
 }
 
 function StatusRing({ status }: { status: ManagedServerStatus }) {
@@ -563,7 +547,9 @@ function ServerListRow({
             <p className="text-[13px] leading-[1.45] text-[#777777]">{statusDescription(server)}</p>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-[12px] xl:ml-[18px]">
-            <span className="inline-flex items-center rounded-full border border-[#1B1B1B] bg-[#111111] px-[12px] py-[8px] text-[12px] leading-none text-[#D0D0D0]">owner {String(server.licenseOwnerUserId).slice(0, 10)}</span>
+            <span className="inline-flex items-center rounded-full border border-[#1B1B1B] bg-[#111111] px-[12px] py-[8px] text-[12px] leading-none text-[#D0D0D0]">
+              conta {String(server.licenseOwnerUserId).slice(0, 10)}
+            </span>
             <StatusRing status={server.status} />
             <div
               className={`relative ${
@@ -747,14 +733,14 @@ function ServerGridCard({
               {style.badgeText}
             </p>
             <span className={`inline-flex items-center rounded-full px-[10px] py-[6px] text-[11px] leading-none font-medium ${style.badgeClass}`}>
-              {server.accessMode === "owner" ? "owner" : "viewer"}
+              {serverAccessBadgeLabel(server)}
             </span>
           </div>
           <p className="mt-[14px] text-[17px] leading-[1.28] font-medium tracking-[-0.03em] text-[#E9E9E9]">
             {statusDescription(server)}
           </p>
           <p className="mt-[10px] text-[14px] leading-[1.45] text-[#8C8C8C]">
-            {formatDateLabel(server.licensePaidAt)} • {server.accessMode === "owner" ? "licenca principal" : "acesso de visualizacao"}
+            {formatDateLabel(server.licensePaidAt)} • {serverLicenseScopeLabel(server)}
           </p>
         </div>
       </article>
@@ -764,6 +750,7 @@ function ServerGridCard({
 
 export function ServersWorkspace({
   displayName,
+  currentAccount,
   initialGuildId = null,
   initialTab = "settings",
   initialServers = null,
@@ -776,6 +763,7 @@ export function ServersWorkspace({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [searchText, setSearchText] = useState("");
+  const [sidebarSearchText, setSidebarSearchText] = useState("");
   const [statusFilter, setStatusFilter] = useState<FilterOption>("all");
   const [viewMode, setViewMode] = useState<ViewMode>("overview");
   const [isStatusOpen, setIsStatusOpen] = useState(false);
@@ -797,6 +785,8 @@ export function ServersWorkspace({
   const [createTeamMemberIds, setCreateTeamMemberIds] = useState<string[]>([]);
   const [isMemberSubmodalOpen, setIsMemberSubmodalOpen] = useState(false);
   const [memberDraftIds, setMemberDraftIds] = useState<string[]>([""]);
+  const [savedAccounts, setSavedAccounts] = useState<SavedPanelAccount[]>([]);
+  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [teamActionMessage, setTeamActionMessage] = useState<string | null>(null);
   const [teamActionError, setTeamActionError] = useState<string | null>(null);
   const [isCreatingTeam, setIsCreatingTeam] = useState(false);
@@ -806,6 +796,10 @@ export function ServersWorkspace({
   const statusRef = useRef<HTMLDivElement | null>(null);
   const desktopTeamMenuRef = useRef<HTMLDivElement | null>(null);
   const mobileTeamMenuRef = useRef<HTMLDivElement | null>(null);
+  const desktopProfileMenuRef = useRef<HTMLDivElement | null>(null);
+  const mobileProfileMenuRef = useRef<HTMLDivElement | null>(null);
+  const desktopSidebarSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const mobileSidebarSearchInputRef = useRef<HTMLInputElement | null>(null);
 
   const applyTeamsSnapshot = useCallback(
     (payload: TeamsApiResponse, preferredTeamId: number | null = null) => {
@@ -825,6 +819,29 @@ export function ServersWorkspace({
     },
     [],
   );
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(SAVED_PANEL_ACCOUNTS_KEY);
+      const currentSnapshot: SavedPanelAccount = {
+        ...currentAccount,
+        lastSeenAt: Date.now(),
+      };
+      const nextAccounts = mergeSavedPanelAccounts(
+        currentSnapshot,
+        normalizeSavedPanelAccounts(raw ? JSON.parse(raw) : []),
+      );
+      setSavedAccounts(nextAccounts);
+      window.localStorage.setItem(SAVED_PANEL_ACCOUNTS_KEY, JSON.stringify(nextAccounts));
+    } catch {
+      setSavedAccounts([
+        {
+          ...currentAccount,
+          lastSeenAt: Date.now(),
+        },
+      ]);
+    }
+  }, [currentAccount]);
 
   useEffect(() => {
     if (initialServers !== null) {
@@ -922,12 +939,24 @@ export function ServersWorkspace({
       if (!clickedInsideDesktopMenu && !clickedInsideMobileMenu) {
         setIsTeamMenuOpen(false);
       }
+      const clickedInsideDesktopProfile =
+        target && desktopProfileMenuRef.current
+          ? desktopProfileMenuRef.current.contains(target)
+          : false;
+      const clickedInsideMobileProfile =
+        target && mobileProfileMenuRef.current
+          ? mobileProfileMenuRef.current.contains(target)
+          : false;
+      if (!clickedInsideDesktopProfile && !clickedInsideMobileProfile) {
+        setIsProfileMenuOpen(false);
+      }
     }
     function handleEscape(event: KeyboardEvent) {
       if (event.key === "Escape") {
         setIsStatusOpen(false);
         setOpenCardMenuGuildId(null);
         setIsTeamMenuOpen(false);
+        setIsProfileMenuOpen(false);
         setIsMemberSubmodalOpen(false);
         setIsCreateTeamModalOpen(false);
       }
@@ -940,6 +969,59 @@ export function ServersWorkspace({
     };
   }, []);
 
+  const focusSidebarSearchInput = useCallback(() => {
+    const inputCandidates = [
+      desktopSidebarSearchInputRef.current,
+      mobileSidebarSearchInputRef.current,
+    ].filter((input): input is HTMLInputElement => Boolean(input));
+
+    const visibleInput = inputCandidates.find((input) => {
+      const style = window.getComputedStyle(input);
+      const rect = input.getBoundingClientRect();
+      return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+    });
+
+    const targetInput = visibleInput ?? inputCandidates[0] ?? null;
+    if (!targetInput) return;
+
+    targetInput.focus();
+    targetInput.select();
+  }, []);
+
+  useEffect(() => {
+    function handleSidebarSearchShortcut(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.repeat || event.ctrlKey || event.metaKey || event.altKey) {
+        return;
+      }
+      if (event.key.toLowerCase() !== "f") {
+        return;
+      }
+
+      const target = event.target;
+      if (target instanceof HTMLElement) {
+        const tagName = target.tagName;
+        const isEditable =
+          target.isContentEditable ||
+          tagName === "INPUT" ||
+          tagName === "TEXTAREA" ||
+          tagName === "SELECT" ||
+          Boolean(target.closest("[contenteditable='true']"));
+
+        if (isEditable) {
+          return;
+        }
+      }
+
+      event.preventDefault();
+      focusSidebarSearchInput();
+    }
+
+    document.addEventListener("keydown", handleSidebarSearchShortcut);
+    return () => {
+      document.removeEventListener("keydown", handleSidebarSearchShortcut);
+    };
+  }, [focusSidebarSearchInput]);
+
   useEffect(() => {
     if (!isCreateTeamModalOpen) return;
     const previousOverflow = document.body.style.overflow;
@@ -950,6 +1032,10 @@ export function ServersWorkspace({
   }, [isCreateTeamModalOpen]);
 
   const normalizedQuery = useMemo(() => normalizeSearchText(searchText), [searchText]);
+  const normalizedSidebarQuery = useMemo(
+    () => normalizeSearchText(sidebarSearchText),
+    [sidebarSearchText],
+  );
   const normalizedInviteDraftDiscordIds = useMemo(() => {
     return Array.from(
       new Set(
@@ -983,6 +1069,22 @@ export function ServersWorkspace({
       .sort((a, b) => (a.score !== b.score ? b.score - a.score : a.server.guildName.localeCompare(b.server.guildName, "pt-BR")))
       .map((item) => item.server);
   }, [normalizedQuery, visibleServers, statusFilter]);
+  const filteredSidebarSections = useMemo(() => {
+    if (!normalizedSidebarQuery) return SIDEBAR_SECTIONS;
+
+    return SIDEBAR_SECTIONS
+      .map((section) =>
+        section
+          .map((item) => {
+            const haystack = [item.label, ...(item.searchAliases || [])].join(" ");
+            return { item, score: getSearchScore(haystack, normalizedSidebarQuery) };
+          })
+          .filter((entry) => entry.score > 0)
+          .sort((a, b) => (a.score !== b.score ? b.score - a.score : a.item.label.localeCompare(b.item.label, "pt-BR")))
+          .map((entry) => entry.item),
+      )
+      .filter((section) => section.length > 0);
+  }, [normalizedSidebarQuery]);
   const activeTeamServerCount = visibleServers.length;
 
   const buildServerConfigUrl = useCallback((guildId: string, tab: ServerEditorTab) => {
@@ -1003,6 +1105,57 @@ export function ServersWorkspace({
     setIsLoggingOut(true);
     try { await fetch("/api/auth/logout", { method: "POST" }); } finally { window.location.assign("/login"); }
   }, [isLoggingOut]);
+
+  const openDiscordLoginFlow = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const nextPath = `${window.location.pathname}${window.location.search}`;
+    window.location.assign(`/api/auth/discord?next=${encodeURIComponent(nextPath)}`);
+  }, []);
+
+  const handleAddAnotherAccount = useCallback(() => {
+    setIsProfileMenuOpen(false);
+    openDiscordLoginFlow();
+  }, [openDiscordLoginFlow]);
+
+  const handleSwitchSavedAccount = useCallback(
+    (account: SavedPanelAccount) => {
+      if (account.discordUserId === currentAccount.discordUserId) {
+        setIsProfileMenuOpen(false);
+        return;
+      }
+
+      try {
+        window.localStorage.setItem(
+          "flowdesk_pending_account_switch_v1",
+          JSON.stringify({
+            discordUserId: account.discordUserId,
+            requestedAt: Date.now(),
+          }),
+        );
+      } catch {
+        // noop
+      }
+
+      setIsProfileMenuOpen(false);
+      openDiscordLoginFlow();
+    },
+    [currentAccount.discordUserId, openDiscordLoginFlow],
+  );
+
+  const handleOpenAccountSettings = useCallback(() => {
+    setIsProfileMenuOpen(false);
+    window.location.assign("/config");
+  }, []);
+
+  const handleOpenMyAccount = useCallback(() => {
+    setIsProfileMenuOpen(false);
+    window.location.assign("/discord/link");
+  }, []);
+
+  const handleOpenHelp = useCallback(() => {
+    setIsProfileMenuOpen(false);
+    window.open("https://discord.gg/ddXtHhvvrx", "_blank", "noopener,noreferrer");
+  }, []);
 
   const handleCopyGuildId = useCallback(async (guildId: string) => {
     try {
@@ -1067,8 +1220,11 @@ export function ServersWorkspace({
   }, []);
 
   const handleMemberDraftChange = useCallback((index: number, value: string) => {
+    const normalizedValue = typeof value === "string" ? value : "";
     setMemberDraftIds((current) =>
-      current.map((draft, draftIndex) => (draftIndex === index ? value : draft)),
+      current.map((draft, draftIndex) =>
+        draftIndex === index ? normalizedValue : (typeof draft === "string" ? draft : ""),
+      ),
     );
   }, []);
 
@@ -1238,12 +1394,19 @@ export function ServersWorkspace({
         : pendingTeamInvites.length
           ? `${pendingTeamInvites.length} convite(s) pendente(s)`
           : "Nenhuma equipe criada";
-  const renderSidebarContent = (teamDropdownRef: RefObject<HTMLDivElement | null>) => (
+  const renderSidebarContent = (
+    teamDropdownRef: RefObject<HTMLDivElement | null>,
+    profileDropdownRef: RefObject<HTMLDivElement | null>,
+    sidebarSearchInputRef: RefObject<HTMLInputElement | null>,
+  ) => (
     <div className="flex h-full flex-col px-[14px] py-[14px]">
       <div ref={teamDropdownRef} className="relative">
         <button
           type="button"
-          onClick={() => setIsTeamMenuOpen((current) => !current)}
+          onClick={() => {
+            setIsProfileMenuOpen(false);
+            setIsTeamMenuOpen((current) => !current);
+          }}
           className="flex w-full items-center justify-between gap-[12px] rounded-[18px] border border-[#111111] bg-[#080808] px-[10px] py-[10px] text-left transition-colors hover:border-[#1A1A1A] hover:bg-[#0B0B0B]"
           aria-expanded={isTeamMenuOpen}
           aria-haspopup="dialog"
@@ -1268,7 +1431,7 @@ export function ServersWorkspace({
           </div>
           <div className="flex items-center">
             <span className="inline-flex h-[28px] w-[28px] items-center justify-center rounded-[10px] text-[#7E7E7E] transition-colors hover:bg-[#101010] hover:text-[#D8D8D8]">
-              <SidebarMiniChevron />
+              <SidebarDropdownChevronIcon />
             </span>
           </div>
         </button>
@@ -1425,15 +1588,19 @@ export function ServersWorkspace({
       <div className="mt-[14px] flex items-center gap-[10px] rounded-[16px] border border-[#141414] bg-[#080808] px-[14px] py-[12px]">
         <SearchIcon />
         <input
+          ref={sidebarSearchInputRef}
           type="text"
-          placeholder="Find..."
+          value={typeof sidebarSearchText === "string" ? sidebarSearchText : ""}
+          onChange={(event) => setSidebarSearchText(String(event.currentTarget.value ?? ""))}
+          placeholder="Buscar..."
+          autoComplete="off"
           className="min-w-0 flex-1 bg-transparent text-[15px] text-[#D5D5D5] outline-none placeholder:text-[#5A5A5A]"
         />
         <SidebarSearchShortcutIcon />
       </div>
 
       <div className="mt-[14px] flex-1 overflow-y-auto pr-[2px]">
-        {SIDEBAR_SECTIONS.map((section, sectionIndex) => (
+        {filteredSidebarSections.length ? filteredSidebarSections.map((section, sectionIndex) => (
           <div key={sectionIndex} className={sectionIndex === 0 ? "" : "mt-[12px] border-t border-[#121212] pt-[12px]"}>
             <div className="space-y-[4px]">
               {section.map((item) => {
@@ -1473,7 +1640,7 @@ export function ServersWorkspace({
                     <span className="min-w-0 flex-1 truncate text-[15px] leading-none font-medium tracking-[-0.03em]">{item.label}</span>
                     {item.chevron ? (
                       <span className={`${isDisabled ? "text-[#4C4C4C]" : "text-[#686868] group-hover:text-[#BEBEBE]"}`}>
-                        <SidebarMiniChevron />
+                        <SidebarChevronRightIcon />
                       </span>
                     ) : null}
                   </button>
@@ -1481,27 +1648,168 @@ export function ServersWorkspace({
               })}
             </div>
           </div>
-        ))}
+        )) : (
+          <div className="rounded-[18px] border border-[#131313] bg-[#080808] px-[14px] py-[16px]">
+            <p className="text-[13px] leading-[1.55] text-[#767676]">
+              Nenhuma area encontrada para essa busca.
+            </p>
+          </div>
+        )}
       </div>
 
-      <div className="mt-[14px] border-t border-[#121212] pt-[14px]">
-        <div className="flex items-center gap-[10px]">
-          <div className="flex min-w-0 flex-1 items-center gap-[10px]">
-            <div className="relative flex h-[38px] w-[38px] items-center justify-center rounded-full bg-[radial-gradient(circle_at_top,#7D3BFF_0%,#3C0F6D_54%,#170822_100%)] text-[14px] font-semibold text-[#F0F0F0] shadow-[0_0_28px_rgba(125,59,255,0.14)]">
-              {displayName.trim().charAt(0).toUpperCase() || "F"}
-              <span className="absolute bottom-[2px] right-[2px] h-[8px] w-[8px] rounded-full bg-[#0062FF]" />
+      <div ref={profileDropdownRef} className="mt-[14px] border-t border-[#121212] pt-[14px]">
+        <div className="relative">
+          {isProfileMenuOpen ? (
+            <div className="absolute inset-x-0 bottom-[calc(100%+10px)] z-[140] overflow-hidden rounded-[22px] border border-[#151515] bg-[#070707] p-[12px] shadow-[0_26px_80px_rgba(0,0,0,0.54)]">
+              <div className="space-y-[8px]">
+                <button
+                  type="button"
+                  onClick={handleAddAnotherAccount}
+                  className="flex w-full items-center gap-[12px] rounded-[16px] border border-[#171717] bg-[#0D0D0D] px-[12px] py-[12px] text-left text-[#D8D8D8] transition-colors hover:border-[#222222] hover:bg-[#111111]"
+                >
+                  <span className="inline-flex h-[32px] w-[32px] items-center justify-center rounded-[11px] border border-[#1A1A1A] bg-[#101010] text-[#CFCFCF]">
+                    <PlusIcon />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[14px] leading-none font-medium tracking-[-0.03em]">
+                      Adicionar outra conta
+                    </span>
+                    <span className="mt-[6px] block truncate text-[11px] leading-none text-[#686868]">
+                      Ate 3 contas salvas neste navegador
+                    </span>
+                  </span>
+                </button>
+
+                <div className="border-t border-[#121212] pt-[12px]">
+                  <p className="px-[4px] text-[11px] uppercase tracking-[0.16em] text-[#5F5F5F]">
+                    Contas salvas
+                  </p>
+                  <div className="mt-[10px] space-y-[6px]">
+                    {savedAccounts.map((account) => {
+                      const isCurrent = account.discordUserId === currentAccount.discordUserId;
+                      return (
+                        <button
+                          key={account.discordUserId}
+                          type="button"
+                          onClick={() => handleSwitchSavedAccount(account)}
+                          className={`flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-colors ${
+                            isCurrent
+                              ? "bg-[#141414] text-[#ECECEC]"
+                              : "text-[#A7A7A7] hover:bg-[#111111] hover:text-[#E6E6E6]"
+                          }`}
+                        >
+                          <AccountAvatar
+                            avatarUrl={account.avatarUrl}
+                            displayName={account.displayName}
+                            username={account.username}
+                            className="h-[36px] w-[36px] shrink-0"
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-[14px] leading-none font-medium tracking-[-0.03em]">
+                              {account.displayName}
+                            </span>
+                            <span className="mt-[6px] block truncate text-[11px] leading-none text-[#666666]">
+                              @{account.username}
+                            </span>
+                          </span>
+                          {isCurrent ? (
+                            <span className="inline-flex rounded-full border border-[rgba(0,98,255,0.28)] bg-[rgba(0,98,255,0.1)] px-[8px] py-[5px] text-[10px] leading-none font-medium text-[#8AB6FF]">
+                              ativa
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="border-t border-[#121212] pt-[12px]">
+                  <div className="space-y-[4px]">
+                    <button
+                      type="button"
+                      onClick={handleOpenMyAccount}
+                      className="flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#B7B7B7] transition-colors hover:bg-[#111111] hover:text-[#ECECEC]"
+                    >
+                      <UserRound className="h-[18px] w-[18px] shrink-0" strokeWidth={1.9} />
+                      <span className="text-[14px] leading-none font-medium">Minha conta</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleOpenAccountSettings}
+                      className="flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#B7B7B7] transition-colors hover:bg-[#111111] hover:text-[#ECECEC]"
+                    >
+                      <Cog className="h-[18px] w-[18px] shrink-0" strokeWidth={1.9} />
+                      <span className="text-[14px] leading-none font-medium">Configuracoes</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled
+                      className="flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#656565]"
+                    >
+                      <Palette className="h-[18px] w-[18px] shrink-0" strokeWidth={1.9} />
+                      <span className="text-[14px] leading-none font-medium">Personalizacao</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleOpenHelp}
+                      className="flex w-full items-center justify-between gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#B7B7B7] transition-colors hover:bg-[#111111] hover:text-[#ECECEC]"
+                    >
+                      <span className="inline-flex items-center gap-[12px]">
+                        <CircleHelp className="h-[18px] w-[18px] shrink-0" strokeWidth={1.9} />
+                        <span className="text-[14px] leading-none font-medium">Ajuda</span>
+                      </span>
+                      <SidebarChevronRightIcon />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void handleLogout();
+                      }}
+                      disabled={isLoggingOut}
+                      className="flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#DB9E9E] transition-colors hover:bg-[#111111] hover:text-[#F1C0C0] disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      {isLoggingOut ? (
+                        <ButtonLoader size={16} colorClassName="text-[#DB8A8A]" />
+                      ) : (
+                        <SidebarLogoutIcon />
+                      )}
+                      <span className="text-[14px] leading-none font-medium">Sair</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div className="min-w-0">
-              <p className="truncate text-[15px] leading-none font-medium tracking-[-0.03em] text-[#E5E5E5]">{displayName}</p>
-              <p className="mt-[5px] truncate text-[12px] leading-none text-[#686868]">workspace online</p>
+          ) : null}
+
+          <button
+            type="button"
+            onClick={() => {
+              setIsTeamMenuOpen(false);
+              setIsProfileMenuOpen((current) => !current);
+            }}
+            className="flex w-full items-center justify-between gap-[12px] rounded-[18px] border border-[#111111] bg-[#080808] px-[10px] py-[10px] text-left transition-colors hover:border-[#1A1A1A] hover:bg-[#0B0B0B]"
+            aria-expanded={isProfileMenuOpen}
+            aria-haspopup="menu"
+          >
+            <div className="flex min-w-0 items-center gap-[10px]">
+              <AccountAvatar
+                avatarUrl={currentAccount.avatarUrl}
+                displayName={currentAccount.displayName}
+                username={currentAccount.username}
+                className="h-[38px] w-[38px] shrink-0"
+              />
+              <div className="min-w-0">
+                <p className="truncate text-[15px] leading-none font-medium tracking-[-0.03em] text-[#E5E5E5]">
+                  {currentAccount.displayName}
+                </p>
+                <p className="mt-[5px] truncate text-[12px] leading-none text-[#686868]">
+                  @{currentAccount.username}
+                </p>
+              </div>
             </div>
-          </div>
-          <button type="button" className="relative inline-flex h-[38px] w-[38px] items-center justify-center rounded-full border border-[#161616] bg-[#090909] text-[#868686] transition-colors hover:bg-[#101010] hover:text-[#E1E1E1]" aria-label="Notificacoes">
-            <SidebarBellIcon />
-            <span className="absolute right-[9px] top-[8px] h-[7px] w-[7px] rounded-full bg-[#0062FF]" />
-          </button>
-          <button type="button" onClick={() => { void handleLogout(); }} disabled={isLoggingOut} className="inline-flex h-[38px] w-[38px] items-center justify-center rounded-full border border-[#161616] bg-[#090909] text-[#9A6E6E] transition-colors hover:bg-[#101010] hover:text-[#E8B4B4] disabled:cursor-not-allowed disabled:opacity-60" aria-label="Logout">
-            {isLoggingOut ? <ButtonLoader size={16} colorClassName="text-[#DB8A8A]" /> : <SidebarLogoutIcon />}
+            <span className="inline-flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded-[10px] text-[#7E7E7E] transition-colors hover:bg-[#101010] hover:text-[#D8D8D8]">
+              <SidebarDropdownChevronIcon />
+            </span>
           </button>
         </div>
       </div>
@@ -1514,7 +1822,7 @@ export function ServersWorkspace({
         <aside className="fixed inset-y-0 left-0 z-20 w-[318px]">
           <div className={`${sidebarShellClass} h-full rounded-none border-y-0 border-l-0 border-r-[#151515]`}>
             <LandingReveal delay={90}>
-              {renderSidebarContent(desktopTeamMenuRef)}
+              {renderSidebarContent(desktopTeamMenuRef, desktopProfileMenuRef, desktopSidebarSearchInputRef)}
             </LandingReveal>
           </div>
         </aside>
@@ -1524,26 +1832,116 @@ export function ServersWorkspace({
           <aside className="mb-[20px] min-w-0 xl:hidden">
             <LandingReveal delay={90}>
               <div className={`${sidebarShellClass} rounded-[28px]`}>
-                {renderSidebarContent(mobileTeamMenuRef)}
+                {renderSidebarContent(mobileTeamMenuRef, mobileProfileMenuRef, mobileSidebarSearchInputRef)}
               </div>
             </LandingReveal>
           </aside>
           <section className="min-w-0">
             <LandingReveal delay={120}>
-              <div className="flex flex-col gap-[18px]">
+              <div className="relative z-[700] flex flex-col gap-[18px]">
                 <div className="flex flex-col gap-[14px] md:flex-row md:items-end md:justify-between">
                   <div><LandingGlowTag className="px-[24px]">Central de servidores</LandingGlowTag><h1 className="mt-[18px] bg-[linear-gradient(90deg,#DADADA_0%,#C1C1C1_100%)] bg-clip-text text-[34px] leading-[1.02] font-normal tracking-[-0.05em] text-transparent md:text-[42px]">{panelTitle}</h1><p className="mt-[14px] max-w-[760px] text-[14px] leading-[1.55] text-[#7D7D7D] md:text-[15px]">{panelDescription}</p></div>
                   {!isEditingServer ? <LandingActionButton href="/config/#/step/1" variant="light" className="h-[44px] rounded-[14px] px-[18px] text-[15px]"><span className="inline-flex items-center gap-[10px]"><PlusIcon />Add New</span></LandingActionButton> : null}
                 </div>
-                {!isEditingServer ? <div className={`${shellClass} relative z-[120] px-[14px] py-[14px] sm:px-[18px] sm:py-[18px]`}><div className="flex flex-col gap-[12px] xl:flex-row xl:items-center"><div className="flex min-w-0 flex-1 items-center rounded-[18px] border border-[#151515] bg-[#080808] px-[16px] py-[14px]"><SearchIcon /><input type="text" value={searchText} onChange={(event) => setSearchText(event.currentTarget.value)} placeholder="Pesquisar servidor..." className="ml-[12px] w-full bg-transparent text-[15px] text-[#D8D8D8] outline-none placeholder:text-[#4F4F4F]" /></div><div className="flex flex-wrap items-center gap-[10px] xl:justify-end"><div ref={statusRef} className="relative z-[140]"><button type="button" onClick={() => setIsStatusOpen((current) => !current)} className={`flex h-[52px] w-[52px] items-center justify-center rounded-[16px] border transition-colors ${isStatusOpen ? "border-[rgba(0,98,255,0.28)] bg-[rgba(0,98,255,0.08)] text-[#DADADA]" : "border-[#171717] bg-[#0D0D0D] text-[#9C9C9C] hover:border-[#242424] hover:text-[#DADADA]"}`} aria-label="Filtrar por status"><FilterIcon /></button>{isStatusOpen ? <div className="absolute right-0 top-[60px] z-[180] min-w-[190px] rounded-[18px] border border-[#171717] bg-[#0A0A0A] p-[8px] shadow-[0_22px_60px_rgba(0,0,0,0.44)]">{(["all", "paid", "expired", "off"] as const).map((option) => <button key={option} type="button" onClick={() => { setStatusFilter(option); setIsStatusOpen(false); }} className={`flex w-full items-center justify-between rounded-[12px] px-[12px] py-[10px] text-left text-[13px] transition-colors ${statusFilter === option ? "bg-[#111111] text-[#E5E5E5]" : "text-[#9B9B9B] hover:bg-[#111111] hover:text-[#D5D5D5]"}`}><span>{FILTER_LABEL[option]}</span>{statusFilter === option ? <span className="h-[7px] w-[7px] rounded-full bg-[#0062FF]" /> : null}</button>)}</div> : null}</div><div className="inline-flex items-center gap-[8px] rounded-[18px] border border-[#171717] bg-[#0D0D0D] p-[6px]"><button type="button" onClick={() => setViewMode("overview")} className={`flex h-[40px] w-[40px] items-center justify-center rounded-[12px] transition-colors ${viewMode === "overview" ? "bg-[#131313] text-[#E5E5E5]" : "text-[#7C7C7C] hover:text-[#D5D5D5]"}`} aria-label="Visual overview"><GridIcon /></button><button type="button" onClick={() => setViewMode("list")} className={`flex h-[40px] w-[40px] items-center justify-center rounded-[12px] transition-colors ${viewMode === "list" ? "bg-[#131313] text-[#E5E5E5]" : "text-[#7C7C7C] hover:text-[#D5D5D5]"}`} aria-label="Visual lista"><ListIcon /></button></div></div></div></div> : null}
+                {!isEditingServer ? (
+                  <div
+                    className={`${shellClass} relative z-[900] overflow-visible px-[14px] py-[14px] sm:px-[18px] sm:py-[18px]`}
+                  >
+                    <div className="flex flex-col gap-[12px] xl:flex-row xl:items-center">
+                      <div className="flex min-w-0 flex-1 items-center rounded-[18px] border border-[#151515] bg-[#080808] px-[16px] py-[14px]">
+                        <SearchIcon />
+                        <input
+                          type="text"
+                          value={typeof searchText === "string" ? searchText : ""}
+                          onChange={(event) => setSearchText(String(event.currentTarget.value ?? ""))}
+                          placeholder="Pesquisar servidor..."
+                          autoComplete="off"
+                          className="ml-[12px] w-full bg-transparent text-[15px] text-[#D8D8D8] outline-none placeholder:text-[#4F4F4F]"
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-[10px] xl:justify-end">
+                        <div ref={statusRef} className="relative z-[1200]">
+                          <button
+                            type="button"
+                            onClick={() => setIsStatusOpen((current) => !current)}
+                            className={`flex h-[52px] w-[52px] items-center justify-center rounded-[16px] border transition-colors ${
+                              isStatusOpen
+                                ? "border-[rgba(0,98,255,0.28)] bg-[rgba(0,98,255,0.08)] text-[#DADADA]"
+                                : "border-[#171717] bg-[#0D0D0D] text-[#9C9C9C] hover:border-[#242424] hover:text-[#DADADA]"
+                            }`}
+                            aria-label="Filtrar por status"
+                          >
+                            <FilterIcon />
+                          </button>
+
+                          {isStatusOpen ? (
+                            <div
+                              className="absolute right-0 top-[60px] z-[2000] min-w-[190px] rounded-[18px] border border-[#171717] bg-[#0A0A0A] p-[8px] shadow-[0_22px_60px_rgba(0,0,0,0.44)]"
+                              onMouseDown={(event) => event.stopPropagation()}
+                            >
+                              {(["all", "paid", "expired", "off"] as const).map((option) => (
+                                <button
+                                  key={option}
+                                  type="button"
+                                  onClick={() => {
+                                    setStatusFilter(option);
+                                    setIsStatusOpen(false);
+                                  }}
+                                  className={`flex w-full items-center justify-between rounded-[12px] px-[12px] py-[10px] text-left text-[13px] transition-colors ${
+                                    statusFilter === option
+                                      ? "bg-[#111111] text-[#E5E5E5]"
+                                      : "text-[#9B9B9B] hover:bg-[#111111] hover:text-[#D5D5D5]"
+                                  }`}
+                                >
+                                  <span>{FILTER_LABEL[option]}</span>
+                                  {statusFilter === option ? (
+                                    <span className="h-[7px] w-[7px] rounded-full bg-[#0062FF]" />
+                                  ) : null}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+
+                        <div className="inline-flex items-center gap-[8px] rounded-[18px] border border-[#171717] bg-[#0D0D0D] p-[6px]">
+                          <button
+                            type="button"
+                            onClick={() => setViewMode("overview")}
+                            className={`flex h-[40px] w-[40px] items-center justify-center rounded-[12px] transition-colors ${
+                              viewMode === "overview"
+                                ? "bg-[#131313] text-[#E5E5E5]"
+                                : "text-[#7C7C7C] hover:text-[#D5D5D5]"
+                            }`}
+                            aria-label="Visual overview"
+                          >
+                            <GridIcon />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setViewMode("list")}
+                            className={`flex h-[40px] w-[40px] items-center justify-center rounded-[12px] transition-colors ${
+                              viewMode === "list"
+                                ? "bg-[#131313] text-[#E5E5E5]"
+                                : "text-[#7C7C7C] hover:text-[#D5D5D5]"
+                            }`}
+                            aria-label="Visual lista"
+                          >
+                            <ListIcon />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </LandingReveal>
-            <div className="mt-[22px]">
+            <div className="relative z-[10] mt-[22px]">
               {selectedServer ? (
                 <LandingReveal delay={180}>
                   <div className="space-y-[18px]">
                     <div className={`${shellClass} px-[18px] py-[18px]`}><div className="flex flex-col gap-[14px] md:flex-row md:items-center md:justify-between"><div><p className="text-[12px] uppercase tracking-[0.18em] text-[#666666]">Servidor em edicao</p><h2 className="mt-[10px] text-[28px] leading-none font-medium tracking-[-0.04em] text-[#E5E5E5]">{selectedServer.guildName}</h2></div><LandingActionButton href="/servers" variant="dark" className="h-[42px] rounded-[12px] px-[18px] text-[15px]" onClick={() => { setSelectedGuildIdForConfig(null); setSelectedEditorTabForConfig("settings"); navigateToUrl("/servers", "push"); }}>Voltar para a lista</LandingActionButton></div></div>
-                    <ServerSettingsEditor guildId={selectedServer.guildId} guildName={selectedServer.guildName} status={selectedServer.status} daysUntilExpire={selectedServer.daysUntilExpire} daysUntilOff={selectedServer.daysUntilOff} accessMode={selectedServer.accessMode} allServers={servers} initialTab={selectedEditorTabForConfig} onTabChange={(tab) => { setSelectedEditorTabForConfig(tab); navigateToUrl(buildServerConfigUrl(selectedServer.guildId, tab), "replace"); }} standalone onClose={() => { setSelectedGuildIdForConfig(null); setSelectedEditorTabForConfig("settings"); navigateToUrl("/servers", "push"); }} />
+                    <ServerSettingsEditor guildId={selectedServer.guildId} guildName={selectedServer.guildName} status={selectedServer.status} daysUntilExpire={selectedServer.daysUntilExpire} daysUntilOff={selectedServer.daysUntilOff} accessMode={selectedServer.accessMode} canManage={selectedServer.canManage} allServers={servers} initialTab={selectedEditorTabForConfig} onTabChange={(tab) => { setSelectedEditorTabForConfig(tab); navigateToUrl(buildServerConfigUrl(selectedServer.guildId, tab), "replace"); }} standalone onClose={() => { setSelectedGuildIdForConfig(null); setSelectedEditorTabForConfig("settings"); navigateToUrl("/servers", "push"); }} />
                   </div>
                 </LandingReveal>
               ) : shouldShowEditorSkeleton ? (
@@ -1674,35 +2072,6 @@ export function ServersWorkspace({
                 </div>
 
                 <div className="mt-[22px]">
-                  <div className="grid grid-cols-3 gap-[8px] rounded-[18px] border border-[#141414] bg-[#090909] p-[6px]">
-                    {([
-                      ["name", "Nome da equipe"],
-                      ["servers", "Servidores"],
-                      ["members", "Convidar membros"],
-                    ] as const).map(([step, label]) => {
-                      const isActive = createTeamStep === step;
-                      return (
-                        <button
-                          key={step}
-                          type="button"
-                          onClick={() => {
-                            if (step === "servers" && createTeamName.trim().length < 3) return;
-                            if (step === "members" && !createTeamServerIds.length) return;
-                            setCreateTeamStep(step);
-                            setTeamActionError(null);
-                          }}
-                          className={`rounded-[12px] px-[10px] py-[10px] text-[12px] leading-[1.2] font-medium transition-colors ${
-                            isActive
-                              ? "bg-[#131313] text-[#ECECEC]"
-                              : "text-[#6F6F6F] hover:text-[#CFCFCF]"
-                          }`}
-                        >
-                          {label}
-                        </button>
-                      );
-                    })}
-                  </div>
-
                   {createTeamStep === "name" ? (
                     <div className="mt-[18px] space-y-[14px]">
                       <label className="block">
@@ -1711,9 +2080,10 @@ export function ServersWorkspace({
                         </span>
                         <input
                           type="text"
-                          value={createTeamName}
-                          onChange={(event) => setCreateTeamName(event.currentTarget.value)}
+                          value={typeof createTeamName === "string" ? createTeamName : ""}
+                          onChange={(event) => setCreateTeamName(String(event.currentTarget.value ?? ""))}
                           placeholder="Ex: Moderacao principal"
+                          autoComplete="off"
                           maxLength={64}
                           className="h-[50px] w-full rounded-[16px] border border-[#151515] bg-[#0A0A0A] px-[16px] text-[15px] text-[#E0E0E0] outline-none transition-colors placeholder:text-[#575757] focus:border-[rgba(0,98,255,0.34)]"
                         />
@@ -1721,7 +2091,7 @@ export function ServersWorkspace({
 
                       <div>
                         <span className="mb-[8px] block text-[12px] uppercase tracking-[0.16em] text-[#666666]">
-                          Icones genericos
+                          Cor da equipe
                         </span>
                         <div className="grid grid-cols-3 gap-[10px]">
                           {TEAM_ICON_OPTIONS.map((option) => {
@@ -1954,11 +2324,16 @@ export function ServersWorkspace({
                     />
                     <span className="relative z-10 inline-flex items-center justify-center whitespace-nowrap leading-none text-[#B7B7B7]">
                       {isCreatingTeam ? (
-                        <ButtonLoader size={16} colorClassName="text-[#B7B7B7]" />
-                      ) : createTeamStep === "members" ? (
-                        "Criar equipe"
+                        <span className="relative inline-flex items-center justify-center">
+                          <span className="invisible">
+                            {createTeamStep === "members" ? "Criar equipe" : "Proximo"}
+                          </span>
+                          <span className="absolute inset-0 flex items-center justify-center">
+                            <ButtonLoader size={16} colorClassName="text-[#B7B7B7]" />
+                          </span>
+                        </span>
                       ) : (
-                        "Proximo"
+                        createTeamStep === "members" ? "Criar equipe" : "Proximo"
                       )}
                     </span>
                   </button>
@@ -2006,11 +2381,12 @@ export function ServersWorkspace({
                     <input
                       key={index}
                       type="text"
-                      value={draft}
-                      onChange={(event) => handleMemberDraftChange(index, event.currentTarget.value)}
+                      value={typeof draft === "string" ? draft : ""}
+                      onChange={(event) => handleMemberDraftChange(index, String(event.currentTarget.value ?? ""))}
                       placeholder={
                         'ID do membro ' + (index + 1)
                       }
+                      autoComplete="off"
                       className="h-[48px] w-full rounded-[14px] border border-[#151515] bg-[#0A0A0A] px-[16px] text-[14px] text-[#E0E0E0] outline-none transition-colors placeholder:text-[#575757] focus:border-[rgba(0,98,255,0.34)]"
                     />
                   ))}

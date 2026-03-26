@@ -141,6 +141,7 @@ type ServerSettingsEditorProps = {
   daysUntilExpire?: number;
   daysUntilOff?: number;
   accessMode?: "owner" | "viewer";
+  canManage?: boolean;
   allServers: Array<{
     guildId: string;
     guildName: string;
@@ -1106,6 +1107,7 @@ export function ServerSettingsEditor({
   daysUntilExpire = 0,
   daysUntilOff = 0,
   accessMode = "owner",
+  canManage,
   allServers,
   initialTab = "settings",
   onTabChange,
@@ -1190,10 +1192,10 @@ export function ServerSettingsEditor({
   const locked = status === "expired" || status === "off";
   const renewalWindowOpen = status === "paid" && daysUntilExpire <= 3;
   const canRenewPlan = status !== "paid" || renewalWindowOpen;
-  const isViewerOnly = accessMode === "viewer";
+  const isViewerOnly = !(canManage ?? accessMode === "owner");
   const settingsReadOnly = locked || isViewerOnly;
   const viewerOnlyMessage =
-    "Este servidor possui uma licenca ativa vinculada a outra conta administradora. Nesta conta o painel esta disponivel somente para visualizacao.";
+    "Neste acesso o painel esta disponivel somente para visualizacao.";
   const financialViewerMessage =
     "As funcoes financeiras deste servidor ficam disponiveis apenas para a conta responsavel pela licenca ativa.";
   const headerStatus = statusBadge(status);
