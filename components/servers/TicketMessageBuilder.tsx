@@ -120,6 +120,7 @@ const CUSTOM_EMOJI_REGEX = /<(a?):([a-zA-Z0-9_]+):(\d{17,20})>/g;
 const INLINE_MARKDOWN_REGEX = /(\[[^\]]+\]\(https?:\/\/[^\s)]+\)|\*\*[^*]+\*\*|`[^`]+`)/g;
 const emojiPreviewUrlCache = new Map<string, string | null>();
 const guildEmojiAutocompleteCache = new Map<string, GuildEmojiSuggestion[]>();
+const EMOJI_CATALOG_STORAGE_KEY_PREFIX = "flowdesk-ticket-emoji-catalog:";
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -205,6 +206,47 @@ function getEmojiAutocompleteMatch(value: string, cursor: number) {
   };
 }
 
+function buildDiscordEmojiCdnUrl(emojiId: string, animated: boolean) {
+  const extension = animated ? "gif" : "webp";
+  return `https://cdn.discordapp.com/emojis/${emojiId}.${extension}?size=96&quality=lossless`;
+}
+
+function readEmojiCatalogFromStorage(guildId: string) {
+  if (typeof window === "undefined" || !guildId) {
+    return null;
+  }
+
+  try {
+    const raw = window.sessionStorage.getItem(
+      `${EMOJI_CATALOG_STORAGE_KEY_PREFIX}${guildId}`,
+    );
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as GuildEmojiSuggestion[];
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeEmojiCatalogToStorage(
+  guildId: string,
+  catalog: GuildEmojiSuggestion[],
+) {
+  if (typeof window === "undefined" || !guildId) {
+    return;
+  }
+
+  try {
+    window.sessionStorage.setItem(
+      `${EMOJI_CATALOG_STORAGE_KEY_PREFIX}${guildId}`,
+      JSON.stringify(catalog),
+    );
+  } catch {
+    // Ignora falhas de storage para nao afetar o builder.
+  }
+}
+
 function CustomEmojiPreview({
   guildId,
   emojiId,
@@ -222,67 +264,16 @@ function CustomEmojiPreview({
   const cachedEmojiUrl = emojiPreviewUrlCache.has(cacheKey)
     ? emojiPreviewUrlCache.get(cacheKey)
     : undefined;
-  const [fetchedEmojiUrl, setFetchedEmojiUrl] = useState<string | null | undefined>(
-    cachedEmojiUrl,
+  const optimisticUrl =
+    guildId && emojiId ? buildDiscordEmojiCdnUrl(emojiId, animated) : null;
+  if (cachedEmojiUrl === undefined && optimisticUrl) {
+    emojiPreviewUrlCache.set(cacheKey, optimisticUrl);
+  }
+  const [emojiUrl, setEmojiUrl] = useState<string | null | undefined>(
+    cachedEmojiUrl !== undefined
+      ? cachedEmojiUrl
+      : optimisticUrl,
   );
-  const emojiUrl = cachedEmojiUrl !== undefined ? cachedEmojiUrl : fetchedEmojiUrl;
-
-  useEffect(() => {
-    let isMounted = true;
-
-    if (!guildId || !emojiId) {
-      return;
-    }
-
-    if (cachedEmojiUrl !== undefined) {
-      return;
-    }
-
-    const controller = new AbortController();
-
-    const loadEmoji = async () => {
-      try {
-        const params = new URLSearchParams({
-          guildId,
-          emojiId,
-        });
-
-        const response = await fetch(
-          `/api/auth/me/guilds/custom-emoji?${params.toString()}`,
-          {
-            signal: controller.signal,
-            cache: "no-store",
-          },
-        );
-
-        const payload = (await response.json().catch(() => null)) as
-          | { ok?: boolean; url?: string | null }
-          | null;
-
-        const resolvedUrl =
-          response.ok && payload?.ok && typeof payload.url === "string"
-            ? payload.url
-            : null;
-
-        emojiPreviewUrlCache.set(cacheKey, resolvedUrl);
-        if (isMounted) {
-          setFetchedEmojiUrl(resolvedUrl);
-        }
-      } catch {
-        emojiPreviewUrlCache.set(cacheKey, null);
-        if (isMounted) {
-          setFetchedEmojiUrl(null);
-        }
-      }
-    };
-
-    void loadEmoji();
-
-    return () => {
-      isMounted = false;
-      controller.abort();
-    };
-  }, [cacheKey, cachedEmojiUrl, emojiId, guildId]);
 
   if (!emojiUrl) {
     return <span>{raw}</span>;
@@ -296,6 +287,20 @@ function CustomEmojiPreview({
       loading="lazy"
       draggable={false}
       data-animated={animated ? "true" : "false"}
+      onError={(event) => {
+        const target = event.currentTarget;
+        const fallbackStaticUrl = buildDiscordEmojiCdnUrl(emojiId, false);
+
+        if (animated && target.src !== fallbackStaticUrl) {
+          target.src = fallbackStaticUrl;
+          emojiPreviewUrlCache.set(cacheKey, fallbackStaticUrl);
+          setEmojiUrl(fallbackStaticUrl);
+          return;
+        }
+
+        emojiPreviewUrlCache.set(cacheKey, null);
+        setEmojiUrl(null);
+      }}
     />
   );
 }
@@ -317,7 +322,7 @@ function InlineMarkdownText({
         if (token.type === "emoji") {
           return (
             <CustomEmojiPreview
-              key={`${guildId}-${token.id}-${index}`}
+              key={`${guildId}-${token.raw}-${index}`}
               guildId={guildId}
               emojiId={token.id}
               animated={token.animated}
@@ -881,7 +886,12 @@ function TicketMessageBuilder({
     const cachedCatalog = guildEmojiAutocompleteCache.get(guildId);
     if (cachedCatalog) {
       setEmojiCatalog(cachedCatalog);
-      return;
+    } else {
+      const storedCatalog = readEmojiCatalogFromStorage(guildId);
+      if (storedCatalog?.length) {
+        guildEmojiAutocompleteCache.set(guildId, storedCatalog);
+        setEmojiCatalog(storedCatalog);
+      }
     }
 
     const controller = new AbortController();
@@ -910,6 +920,7 @@ function TicketMessageBuilder({
             : [];
 
         guildEmojiAutocompleteCache.set(guildId, nextCatalog);
+        writeEmojiCatalogToStorage(guildId, nextCatalog);
         if (isMounted) {
           setEmojiCatalog(nextCatalog);
         }
