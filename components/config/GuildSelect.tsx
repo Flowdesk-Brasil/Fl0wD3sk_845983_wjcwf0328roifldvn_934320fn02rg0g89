@@ -1,8 +1,8 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import { configStepScale } from "@/components/config/configStepScale";
+import { Check, Crown, Search, ShieldCheck, Star } from "lucide-react";
 
 type GuildItem = {
   id: string;
@@ -10,14 +10,13 @@ type GuildItem = {
   icon_url: string | null;
   owner: boolean;
   admin: boolean;
+  description?: string | null;
 };
 
 type GuildSelectProps = {
   guilds: GuildItem[];
   selectedGuildId: string | null;
   onSelect: (guildId: string) => void;
-  isOpen: boolean;
-  onToggle: () => void;
   isLoading: boolean;
 };
 
@@ -25,6 +24,21 @@ type GuildFavoritesApiResponse = {
   ok: boolean;
   favoriteGuildIds?: string[];
 };
+
+type GuildPalette = {
+  from: string;
+  via: string;
+  glow: string;
+};
+
+const GUILD_BACKDROP_PALETTES: GuildPalette[] = [
+  { from: "#0E1A2B", via: "#0A0A0A", glow: "rgba(62,124,255,0.22)" },
+  { from: "#1D152D", via: "#0A0A0A", glow: "rgba(155,92,255,0.2)" },
+  { from: "#142117", via: "#0A0A0A", glow: "rgba(72,196,114,0.18)" },
+  { from: "#26190F", via: "#0A0A0A", glow: "rgba(255,157,71,0.2)" },
+  { from: "#1E1117", via: "#0A0A0A", glow: "rgba(255,96,124,0.18)" },
+  { from: "#111C24", via: "#0A0A0A", glow: "rgba(90,196,255,0.18)" },
+];
 
 function normalizeSearchText(value: string) {
   return value
@@ -48,48 +62,73 @@ function isSubsequence(query: string, target: string) {
   return false;
 }
 
-function getGuildSearchScore(guildName: string, searchQuery: string) {
+function getGuildSearchScore(guild: GuildItem, searchQuery: string) {
   if (!searchQuery) return 1;
 
-  const normalizedName = normalizeSearchText(guildName);
+  const normalizedName = normalizeSearchText(guild.name);
   const compactName = normalizedName.replace(/\s+/g, "");
   const compactQuery = searchQuery.replace(/\s+/g, "");
+  const normalizedId = guild.id.toLowerCase();
 
-  if (normalizedName === searchQuery) return 100;
-  if (normalizedName.startsWith(searchQuery)) return 90;
-  if (normalizedName.includes(searchQuery)) return 80;
+  if (normalizedId === searchQuery) return 140;
+  if (normalizedName === searchQuery) return 120;
+  if (normalizedId.startsWith(searchQuery)) return 110;
+  if (normalizedName.startsWith(searchQuery)) return 100;
+  if (normalizedName.includes(searchQuery)) return 85;
+  if (normalizedId.includes(searchQuery)) return 72;
 
   const queryTokens = searchQuery.split(/\s+/).filter(Boolean);
   if (queryTokens.length > 1 && queryTokens.every((token) => normalizedName.includes(token))) {
-    return 65;
+    return 62;
   }
 
-  if (compactQuery && isSubsequence(compactQuery, compactName)) return 50;
+  if (compactQuery && isSubsequence(compactQuery, compactName)) return 48;
   return 0;
+}
+
+function hashGuildId(guildId: string) {
+  let hash = 0;
+  for (let index = 0; index < guildId.length; index += 1) {
+    hash = (hash * 31 + guildId.charCodeAt(index)) >>> 0;
+  }
+  return hash;
+}
+
+function resolveGuildPalette(guildId: string) {
+  return GUILD_BACKDROP_PALETTES[hashGuildId(guildId) % GUILD_BACKDROP_PALETTES.length];
+}
+
+function resolveGuildDescription(guild: GuildItem) {
+  const customDescription = typeof guild.description === "string" ? guild.description.trim() : "";
+  if (customDescription) {
+    return customDescription.slice(0, 170);
+  }
+
+  if (guild.owner) {
+    return "Servidor com posse da conta atual. Ideal para concluir a ativacao do Flowdesk com todos os fluxos de ticket e operacao liberados.";
+  }
+
+  if (guild.admin) {
+    return "Servidor com acesso administrativo. O proximo passo valida o bot, canais e cargos para continuar a configuracao com seguranca.";
+  }
+
+  return "Servidor elegivel para continuar a configuracao do ticket e estruturar o atendimento no painel.";
+}
+
+function buildGuildFooterLabel(selected: boolean) {
+  return selected ? "Pronto para continuar" : "Escolher servidor";
 }
 
 function StarIcon({ active }: { active: boolean }) {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      className="shrink-0"
-      fill={active ? "#F2D15B" : "none"}
-      stroke={active ? "#F2D15B" : "#242424"}
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      style={{
-        width: `${configStepScale.starSize}px`,
-        height: `${configStepScale.starSize}px`,
-      }}
-    >
-      <path d="M12 3.5l2.7 5.47 6.03.88-4.37 4.26 1.03 6.02L12 17.3l-5.39 2.83 1.03-6.02-4.37-4.26 6.03-.88z" />
-    </svg>
+    <Star
+      className={`h-[16px] w-[16px] ${active ? "fill-[#F4D25C] text-[#F4D25C]" : "text-[#7A7A7A]"}`}
+      strokeWidth={2}
+    />
   );
 }
 
-function GuildAvatar({ guild }: { guild: GuildItem }) {
+function GuildAvatar({ guild, className = "" }: { guild: GuildItem; className?: string }) {
   if (guild.icon_url) {
     const isAnimated = guild.icon_url.includes(".gif");
 
@@ -97,30 +136,39 @@ function GuildAvatar({ guild }: { guild: GuildItem }) {
       <Image
         src={guild.icon_url}
         alt={guild.name}
-        width={configStepScale.avatarSize}
-        height={configStepScale.avatarSize}
+        width={68}
+        height={68}
         unoptimized={isAnimated}
-        className="object-cover"
-        style={{
-          width: `${configStepScale.avatarSize}px`,
-          height: `${configStepScale.avatarSize}px`,
-          borderRadius: `${configStepScale.avatarRadius}px`,
-        }}
+        className={`object-cover object-center ${className}`.trim()}
       />
     );
   }
 
   return (
-    <div
-      className="flex items-center justify-center bg-[#0F0F0F] font-medium text-[#D8D8D8]"
-      style={{
-        width: `${configStepScale.avatarSize}px`,
-        height: `${configStepScale.avatarSize}px`,
-        borderRadius: `${configStepScale.avatarRadius}px`,
-        fontSize: `${configStepScale.guildNameSize}px`,
-      }}
-    >
+    <div className={`flex items-center justify-center bg-[#090909] text-[24px] font-semibold text-[#F1F1F1] ${className}`.trim()}>
       {guild.name.slice(0, 1).toUpperCase()}
+    </div>
+  );
+}
+
+function GuildCardSkeleton() {
+  return (
+    <div className="flowdesk-shimmer overflow-hidden rounded-[28px] border border-[#151515] bg-[#090909] shadow-[0_22px_60px_rgba(0,0,0,0.34)]">
+      <div className="h-[126px] bg-[linear-gradient(180deg,#101010_0%,#090909_100%)]" />
+      <div className="px-[18px] pb-[18px] pt-[16px]">
+        <div className="-mt-[34px] flex items-start gap-[14px]">
+          <div className="h-[68px] w-[68px] rounded-[22px] border border-[#171717] bg-[#121212]" />
+          <div className="min-w-0 flex-1 pt-[38px]">
+            <div className="h-[16px] w-[58%] rounded-full bg-[#131313]" />
+            <div className="mt-[12px] h-[12px] w-[88%] rounded-full bg-[#101010]" />
+            <div className="mt-[8px] h-[12px] w-[76%] rounded-full bg-[#101010]" />
+          </div>
+        </div>
+        <div className="mt-[18px] flex items-center justify-between">
+          <div className="h-[11px] w-[90px] rounded-full bg-[#101010]" />
+          <div className="h-[11px] w-[108px] rounded-full bg-[#101010]" />
+        </div>
+      </div>
     </div>
   );
 }
@@ -129,14 +177,18 @@ export function GuildSelect({
   guilds,
   selectedGuildId,
   onSelect,
-  isOpen,
-  onToggle,
   isLoading,
 }: GuildSelectProps) {
   const [favoriteGuildIds, setFavoriteGuildIds] = useState<string[]>([]);
   const [hasLoadedFavorites, setHasLoadedFavorites] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [displayedGuilds, setDisplayedGuilds] = useState<GuildItem[]>([]);
+  const [gridPhase, setGridPhase] = useState<"idle" | "out" | "in">("idle");
+  const [gridRenderVersion, setGridRenderVersion] = useState(0);
   const skipFirstPersistRef = useRef(true);
+  const transitionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const settleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasHydratedResultsRef = useRef(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -174,7 +226,7 @@ export function GuildSelect({
       }
     }
 
-    loadFavorites();
+    void loadFavorites();
 
     return () => {
       isMounted = false;
@@ -210,22 +262,17 @@ export function GuildSelect({
     void persistFavorites();
   }, [favoriteGuildIds, hasLoadedFavorites]);
 
-  const normalizedQuery = useMemo(
-    () => normalizeSearchText(searchQuery),
-    [searchQuery],
-  );
+  const normalizedQuery = useMemo(() => normalizeSearchText(searchQuery), [searchQuery]);
 
   const orderedGuilds = useMemo(() => {
     const orderIndex = new Map(guilds.map((guild, index) => [guild.id, index]));
-    const favoriteOrder = new Map(
-      favoriteGuildIds.map((guildId, index) => [guildId, index]),
-    );
+    const favoriteOrder = new Map(favoriteGuildIds.map((guildId, index) => [guildId, index]));
     const hasSearch = normalizedQuery.length > 0;
 
     const mapped = guilds
       .map((guild) => ({
         guild,
-        score: hasSearch ? getGuildSearchScore(guild.name, normalizedQuery) : 1,
+        score: hasSearch ? getGuildSearchScore(guild, normalizedQuery) : 1,
       }))
       .filter((item) => item.score > 0);
 
@@ -250,7 +297,63 @@ export function GuildSelect({
     });
 
     return mapped.map((item) => item.guild);
-  }, [guilds, favoriteGuildIds, normalizedQuery]);
+  }, [favoriteGuildIds, guilds, normalizedQuery]);
+
+  const orderedGuildIdsKey = useMemo(
+    () => orderedGuilds.map((guild) => guild.id).join("|"),
+    [orderedGuilds],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (transitionTimeoutRef.current) {
+        clearTimeout(transitionTimeoutRef.current);
+      }
+      if (settleTimeoutRef.current) {
+        clearTimeout(settleTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isLoading) {
+      return;
+    }
+
+    if (!hasHydratedResultsRef.current) {
+      hasHydratedResultsRef.current = true;
+      setDisplayedGuilds(orderedGuilds);
+      setGridRenderVersion((current) => current + 1);
+      setGridPhase("in");
+
+      if (settleTimeoutRef.current) {
+        clearTimeout(settleTimeoutRef.current);
+      }
+
+      settleTimeoutRef.current = setTimeout(() => {
+        setGridPhase("idle");
+      }, 320);
+      return;
+    }
+
+    if (transitionTimeoutRef.current) {
+      clearTimeout(transitionTimeoutRef.current);
+    }
+    if (settleTimeoutRef.current) {
+      clearTimeout(settleTimeoutRef.current);
+    }
+
+    setGridPhase("out");
+    transitionTimeoutRef.current = setTimeout(() => {
+      setDisplayedGuilds(orderedGuilds);
+      setGridRenderVersion((current) => current + 1);
+      setGridPhase("in");
+
+      settleTimeoutRef.current = setTimeout(() => {
+        setGridPhase("idle");
+      }, 320);
+    }, 110);
+  }, [isLoading, orderedGuildIdsKey, orderedGuilds]);
 
   function toggleFavorite(guildId: string) {
     if (!hasLoadedFavorites) return;
@@ -268,196 +371,174 @@ export function GuildSelect({
     return favoriteGuildIds.includes(guildId);
   }
 
-  const selectedGuild =
-    guilds.find((guild) => guild.id === selectedGuildId) || null;
-  const scrollClass = "guild-select-scroll";
-  const controlValue = isOpen ? searchQuery : (selectedGuild?.name || searchQuery);
-
-  function handleToggleList() {
-    if (isOpen) {
-      setSearchQuery("");
-    }
-
-    onToggle();
-  }
-
   return (
-    <div className="w-full">
-      <div
-        className="flex w-full items-center border border-[#2E2E2E] bg-[#0A0A0A]"
-        style={{
-          height: `${configStepScale.controlHeight}px`,
-          borderRadius: `${configStepScale.controlRadius}px`,
-          paddingLeft: `${configStepScale.sidePadding}px`,
-          paddingRight: `${Math.max(8, configStepScale.sidePadding - 12)}px`,
-        }}
-      >
-        <input
-          type="text"
-          value={controlValue}
-          onFocus={() => {
-            if (!isOpen) {
-              setSearchQuery("");
-              onToggle();
-            }
-          }}
-          onChange={(event) => {
-            if (!isOpen) {
-              onToggle();
-            }
-            setSearchQuery(event.currentTarget.value);
-          }}
-          placeholder="Escolha um servidor para continuar"
-          className="w-full bg-transparent text-[#D8D8D8] placeholder:text-[#242424] outline-none"
-          style={{ fontSize: `${configStepScale.controlTextSize}px` }}
-          aria-label="Pesquisar servidor"
-        />
-
-        <button
-          type="button"
-          onClick={handleToggleList}
-          className="ml-3 inline-flex items-center justify-center"
-          aria-label={isOpen ? "Fechar lista" : "Abrir lista"}
-          style={{
-            width: `${configStepScale.arrowSize}px`,
-            height: `${configStepScale.arrowSize}px`,
-          }}
-        >
-          <Image
-            src="/icons/seta.png"
-            alt="Abrir lista"
-            width={configStepScale.arrowSize}
-            height={configStepScale.arrowSize}
-            className={
-              isOpen
-                ? "rotate-180 transition-transform duration-300 ease-out"
-                : "rotate-0 transition-transform duration-300 ease-out"
-            }
+    <div className="space-y-[20px]">
+      <div className="relative overflow-hidden rounded-[18px] border border-[#151515] bg-[#090909]">
+        <span aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-[1px] bg-[linear-gradient(90deg,transparent_0%,rgba(255,255,255,0.12)_50%,transparent_100%)]" />
+        <div className="relative min-w-0">
+          <span className="pointer-events-none absolute inset-y-0 left-[16px] flex items-center text-[#666666]">
+            <Search className="h-[16px] w-[16px]" strokeWidth={2.1} />
+          </span>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.currentTarget.value)}
+            placeholder="Pesquisar servidor por nome ou ID"
+            className="h-[52px] w-full bg-transparent pl-[46px] pr-[16px] text-[15px] text-[#E4E4E4] outline-none placeholder:text-[#555555]"
+            aria-label="Pesquisar servidor"
+            autoComplete="off"
           />
-        </button>
+        </div>
       </div>
 
-      <div
-        className={`${scrollClass} overflow-y-auto border bg-[#0A0A0A] transition-all duration-300 ease-out`}
-        style={{
-          marginTop: isOpen ? `${configStepScale.listTopSpacing}px` : "0px",
-          height: isOpen ? `${configStepScale.listHeight}px` : "0px",
-          opacity: isOpen ? 1 : 0,
-          transform: isOpen ? "translateY(0)" : "translateY(-8px)",
-          borderColor: isOpen ? "#2E2E2E" : "transparent",
-          borderRadius: `${configStepScale.controlRadius}px`,
-          paddingInline: "0px",
-          pointerEvents: isOpen ? "auto" : "none",
-        }}
-      >
-        {isLoading ? (
-          <div
-            className="flex h-full items-center justify-center text-[#D8D8D8]"
-            style={{ fontSize: `${configStepScale.guildNameSize}px` }}
-          >
-            Carregando servidores...
-          </div>
-        ) : orderedGuilds.length ? (
-          orderedGuilds.map((guild, index) => (
-            <div
-              key={guild.id}
-              style={{
-                height: `${configStepScale.rowHeight}px`,
-                borderBottom:
-                  index === orderedGuilds.length - 1
-                    ? "none"
-                    : `${configStepScale.rowDivider}px solid #161616`,
-              }}
-            >
+      <div className="grid gap-[16px] md:grid-cols-2 2xl:grid-cols-3">
+        {isLoading
+          ? Array.from({ length: 6 }).map((_, index) => (
               <div
-                role="button"
-                tabIndex={0}
-                onClick={() => {
-                  onSelect(guild.id);
-                  setSearchQuery("");
-
-                  if (isOpen) {
-                    onToggle();
-                  }
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    onSelect(guild.id);
-                    setSearchQuery("");
-
-                    if (isOpen) {
-                      onToggle();
-                    }
-                  }
-                }}
-                className={`flex h-full w-full items-center border border-transparent px-[10px] transition-colors ${
-                  selectedGuildId === guild.id
-                    ? "rounded-[3px] border-[#2E2E2E] bg-[#111111]"
-                    : "rounded-[3px] hover:border-[#2E2E2E] hover:bg-[#111111]"
-                }`}
+                key={`guild-skeleton-${index}`}
+                className="flowdesk-card-rise"
+                style={{ animationDelay: `${Math.min(index, 5) * 48}ms` }}
               >
-                <GuildAvatar guild={guild} />
-                <span
-                  className="truncate font-medium text-[#D8D8D8]"
-                  style={{
-                    marginLeft: `${configStepScale.guildNameGap}px`,
-                    fontSize: `${configStepScale.guildNameSize}px`,
-                  }}
-                >
-                  {guild.name}
-                </span>
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    toggleFavorite(guild.id);
-                  }}
-                  disabled={!hasLoadedFavorites}
-                  aria-label={
-                    isFavorite(guild.id)
-                      ? `Remover ${guild.name} dos favoritos`
-                      : `Favoritar ${guild.name}`
-                  }
-                  className="ml-auto inline-flex items-center justify-center disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <StarIcon active={isFavorite(guild.id)} />
-                </button>
+                <GuildCardSkeleton />
               </div>
-            </div>
-          ))
-        ) : (
-          <div
-            className="flex h-full items-center justify-center text-[#D8D8D8]"
-            style={{ fontSize: `${configStepScale.guildNameSize}px` }}
-          >
-            Nenhum servidor encontrado para essa pesquisa
-          </div>
-        )}
+            ))
+          : displayedGuilds.map((guild, index) => {
+              const isSelected = guild.id === selectedGuildId;
+              const isAnimated = Boolean(guild.icon_url?.includes(".gif"));
+              const palette = resolveGuildPalette(guild.id);
+              const description = resolveGuildDescription(guild);
+
+              return (
+                <button
+                  key={`${guild.id}-${gridRenderVersion}`}
+                  type="button"
+                  onClick={() => onSelect(guild.id)}
+                  style={
+                    gridPhase === "in"
+                      ? { animationDelay: `${Math.min(index, 5) * 46}ms` }
+                      : undefined
+                  }
+                  className={`group relative overflow-hidden rounded-[28px] border text-left shadow-[0_22px_60px_rgba(0,0,0,0.34)] transition-[opacity,transform,border-color,background-color,box-shadow] duration-250 ${
+                    isSelected
+                      ? "border-[rgba(119,180,255,0.34)] bg-[#0D0D0D] shadow-[0_26px_80px_rgba(21,74,170,0.16)]"
+                      : "border-[#151515] bg-[#090909] hover:border-[#202020] hover:bg-[#0C0C0C] hover:-translate-y-[2px]"
+                  } ${
+                    gridPhase === "in"
+                      ? "flowdesk-card-rise"
+                      : gridPhase === "out"
+                        ? "opacity-0 translate-y-[10px] scale-[0.985]"
+                        : "opacity-100 translate-y-0 scale-100"
+                  }`}
+                >
+                  <div className="relative h-[126px] overflow-hidden">
+                    <div
+                      className="absolute inset-0"
+                      style={{
+                        background: `linear-gradient(135deg, ${palette.from} 0%, ${palette.via} 72%)`,
+                      }}
+                    />
+                    {guild.icon_url ? (
+                      <Image
+                        src={guild.icon_url}
+                        alt={guild.name}
+                        fill
+                        unoptimized={isAnimated}
+                        className="object-cover object-center opacity-40 saturate-[1.08]"
+                      />
+                    ) : null}
+                    <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(4,4,4,0.04)_0%,rgba(4,4,4,0.18)_35%,rgba(4,4,4,0.82)_100%)]" />
+                    <div
+                      className="absolute inset-0"
+                      style={{
+                        background: `radial-gradient(circle_at_top_left, ${palette.glow} 0%, rgba(255,255,255,0.04) 24%, transparent 62%)`,
+                      }}
+                    />
+
+                    <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-[10px] p-[16px]">
+                      <div className="flex flex-wrap gap-[8px]">
+                        {isSelected ? (
+                          <span className="inline-flex h-[28px] items-center gap-[6px] rounded-full border border-[rgba(141,193,255,0.26)] bg-[rgba(9,16,26,0.56)] px-[11px] text-[11px] font-medium uppercase tracking-[0.14em] text-[#DDEEFF] backdrop-blur-[14px]">
+                            <Check className="h-[12px] w-[12px]" strokeWidth={2.2} />
+                            Selecionado
+                          </span>
+                        ) : null}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          toggleFavorite(guild.id);
+                        }}
+                        disabled={!hasLoadedFavorites}
+                        aria-label={
+                          isFavorite(guild.id)
+                            ? `Remover ${guild.name} dos favoritos`
+                            : `Favoritar ${guild.name}`
+                        }
+                        className="inline-flex h-[34px] w-[34px] items-center justify-center rounded-full border border-[rgba(255,255,255,0.08)] bg-[rgba(8,8,8,0.54)] text-[#7A7A7A] backdrop-blur-[14px] transition-colors hover:text-[#F4D25C] disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <StarIcon active={isFavorite(guild.id)} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="relative px-[18px] pb-[18px] pt-[16px]">
+                    <div className="-mt-[36px] flex items-start gap-[14px]">
+                      <div className="relative h-[68px] w-[68px] shrink-0 overflow-hidden rounded-[22px] border border-[rgba(255,255,255,0.08)] bg-[#090909] shadow-[0_18px_34px_rgba(0,0,0,0.38)]">
+                        <GuildAvatar guild={guild} className="h-full w-full" />
+                      </div>
+
+                      <div className="min-w-0 flex-1 pt-[38px]">
+                        <div className="flex min-w-0 items-center gap-[8px]">
+                          <h3 className="min-w-0 flex-1 truncate whitespace-nowrap text-[18px] font-medium tracking-[-0.03em] text-[#F1F1F1]">
+                            {guild.name}
+                          </h3>
+                          {guild.owner ? (
+                            <span className="inline-flex h-[26px] shrink-0 items-center gap-[6px] rounded-full border border-[#1D2734] bg-[#0D141E] px-[10px] text-[11px] font-medium text-[#BCD7FF]">
+                              <Crown className="h-[12px] w-[12px]" strokeWidth={2.1} />
+                              Dono
+                            </span>
+                          ) : guild.admin ? (
+                            <span className="inline-flex h-[26px] shrink-0 items-center gap-[6px] rounded-full border border-[#18211C] bg-[#0D1510] px-[10px] text-[11px] font-medium text-[#C3F0CF]">
+                              <ShieldCheck className="h-[12px] w-[12px]" strokeWidth={2.1} />
+                              Admin
+                            </span>
+                          ) : null}
+                        </div>
+
+                        <p className="mt-[10px] line-clamp-3 text-[13px] leading-[1.62] text-[#8B8B8B]">
+                          {description}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-[18px] flex items-center justify-between gap-[12px] border-t border-[#131313] pt-[14px]">
+                      <span className="truncate text-[12px] font-medium text-[#666666]">
+                        ID {guild.id}
+                      </span>
+                      <span className={`text-[12px] font-medium ${isSelected ? "text-[#DCEAFF]" : "text-[#7E7E7E]"}`}>
+                        {buildGuildFooterLabel(isSelected)}
+                      </span>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
       </div>
 
-      <style jsx>{`
-        .${scrollClass} {
-          scrollbar-width: thin;
-          scrollbar-color: #2e2e2e #0a0a0a;
-        }
-
-        .${scrollClass}::-webkit-scrollbar {
-          width: 6px;
-        }
-
-        .${scrollClass}::-webkit-scrollbar-track {
-          background: #0a0a0a;
-          border-radius: 999px;
-        }
-
-        .${scrollClass}::-webkit-scrollbar-thumb {
-          background: #2e2e2e;
-          border-radius: 999px;
-          border: 1px solid #0a0a0a;
-        }
-      `}</style>
+      {!isLoading && !displayedGuilds.length ? (
+        <div className={`rounded-[28px] border border-dashed border-[#1B1B1B] bg-[#090909] px-[22px] py-[34px] text-center transition-[opacity,transform] duration-180 ${
+          gridPhase === "out" ? "opacity-0 translate-y-[8px]" : "opacity-100 translate-y-0"
+        }`}>
+          <p className="text-[17px] font-medium text-[#E4E4E4]">Nenhum servidor encontrado</p>
+          <p className="mt-[8px] text-[14px] leading-[1.65] text-[#7A7A7A]">
+            Tente pesquisar por outro nome ou pelo ID do servidor para continuar.
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 }
+

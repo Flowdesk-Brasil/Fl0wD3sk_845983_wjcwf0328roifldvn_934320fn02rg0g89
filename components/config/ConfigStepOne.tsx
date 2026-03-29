@@ -1,11 +1,11 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Image from "next/image";
 import { GuildSelect } from "@/components/config/GuildSelect";
 import { BotMissingModal } from "@/components/config/BotMissingModal";
-import { configStepScale } from "@/components/config/configStepScale";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
+import { LandingFrameLines } from "@/components/landing/LandingFrameLines";
+import { LandingGlowTag } from "@/components/landing/LandingGlowTag";
 
 type GuildItem = {
   id: string;
@@ -13,6 +13,7 @@ type GuildItem = {
   icon_url: string | null;
   owner: boolean;
   admin: boolean;
+  description?: string | null;
 };
 
 type ConfigStepOneProps = {
@@ -77,6 +78,22 @@ function writeGuildsCache(guilds: GuildItem[]) {
   }
 }
 
+function resolveSelectionDescription(guild: GuildItem | null) {
+  if (!guild) {
+    return "Escolha um servidor acima para validar o bot, liberar os proximos passos e continuar a configuracao do ticket com mais seguranca.";
+  }
+
+  if (guild.owner) {
+    return "A conta atual possui a posse deste servidor. No proximo passo vamos validar o bot em tempo real e preparar o fluxo de canais para a configuracao.";
+  }
+
+  if (guild.admin) {
+    return "Voce tem acesso administrativo neste servidor. O proximo passo confirma a presenca do bot e libera a configuracao de tickets, canais e cargos.";
+  }
+
+  return "Este servidor esta pronto para seguir na configuracao. O proximo passo valida o bot e prepara os canais principais do atendimento.";
+}
+
 export function ConfigStepOne({
   displayName,
   initialSelectedGuildId = null,
@@ -89,7 +106,6 @@ export function ConfigStepOne({
   const [selectedGuildId, setSelectedGuildId] = useState<string | null>(
     initialSelectedGuildId,
   );
-  const [isOpen, setIsOpen] = useState(true);
   const [isValidatingNext, setIsValidatingNext] = useState(false);
   const [nextActionError, setNextActionError] = useState<string | null>(null);
   const [isBotModalOpen, setIsBotModalOpen] = useState(false);
@@ -142,7 +158,7 @@ export function ConfigStepOne({
       }
     }
 
-    loadGuilds();
+    void loadGuilds();
 
     return () => {
       isMounted = false;
@@ -350,78 +366,92 @@ export function ConfigStepOne({
     botBlockReason === "missing_admin_permission"
       ? "O bot esta no servidor, mas sem permissao de administrador. Reautorize para continuar."
       : "Precisamos adicionar o bot neste servidor para continuar a configuracao.";
-
   return (
-    <main className="flex min-h-screen items-center justify-center bg-black px-6 py-8">
-      <section className="w-full" style={{ maxWidth: `${configStepScale.maxWidth}px` }}>
-        <div className="flex flex-col items-center" style={{ gap: `${configStepScale.spacing}px` }}>
-          <div
-            className="relative shrink-0"
-            style={{
-              width: `${configStepScale.logoSize}px`,
-              height: `${configStepScale.logoSize}px`,
-            }}
-          >
-            <Image
-              src="/cdn/logos/logotipo_.svg"
-              alt="Flowdesk"
-              fill
-              sizes={`${configStepScale.logoSize}px`}
-              className="object-contain"
-              priority
+    <main className="relative min-h-screen overflow-x-clip bg-[#040404] text-white">
+      <LandingFrameLines />
+
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05)_0%,rgba(255,255,255,0.015)_24%,transparent_62%)]"
+      />
+
+      <div className="relative mx-auto flex min-h-screen w-full max-w-[1582px] items-start justify-center px-[20px] pt-[88px] pb-[34px] md:px-6 lg:px-8 xl:px-10 2xl:px-[20px]">
+        <section className="w-full max-w-[1240px] flowdesk-stage-fade">
+          <div className="mx-auto max-w-[820px] text-center">
+            <LandingGlowTag>Configuracao do ticket • Etapa 1</LandingGlowTag>
+
+            <h1 className="mt-[24px] bg-[linear-gradient(90deg,#E7E7E7_0%,#BFBFBF_100%)] bg-clip-text text-[38px] leading-[0.98] font-normal tracking-[-0.06em] text-transparent sm:text-[48px] lg:text-[56px]">
+              Escolha o servidor que vai receber o Flowdesk
+            </h1>
+
+            <p className="mx-auto mt-[16px] max-w-[720px] text-[15px] leading-[1.7] text-[#8A8A8A] sm:text-[16px]">
+              A etapa inicial agora mostra seus servidores em cards mais vivos, com GIF preservado, favoritos salvos e uma selecao visual muito mais clara antes da validacao do bot.
+            </p>
+          </div>
+
+          <div className="mt-[34px]">
+            <GuildSelect
+              guilds={guilds}
+              selectedGuildId={selectedGuildId}
+              onSelect={handleSelectGuild}
+              isLoading={isLoadingGuilds}
             />
           </div>
 
-          <h1
-            className="whitespace-normal text-center leading-[1.15] font-medium text-[#D8D8D8] min-[960px]:whitespace-nowrap"
-            style={{ fontSize: `${configStepScale.titleSize}px` }}
-          >
-            Escolha qual servidor deseja adicionar o Flowdesk
-          </h1>
+          <div className="mt-[26px] flex flex-col gap-[16px] border-t border-[#111111] pt-[18px] lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <p className="text-[16px] font-medium text-[#E7E7E7]">
+                {selectedGuild ? selectedGuild.name : "Escolha um servidor para continuar"}
+              </p>
+              <p className="mt-[6px] max-w-[760px] text-[13px] leading-[1.65] text-[#7A7A7A]">
+                {resolveSelectionDescription(selectedGuild)}
+              </p>
+              {nextActionError ? (
+                <p className="mt-[10px] text-[13px] leading-[1.6] text-[#D88F8F]">
+                  {nextActionError}
+                </p>
+              ) : null}
+            </div>
 
-          <div
-            className="w-full bg-[#242424]"
-            style={{ height: `${configStepScale.separatorHeight}px` }}
-          />
-
-          <GuildSelect
-            guilds={guilds}
-            selectedGuildId={selectedGuildId}
-            onSelect={handleSelectGuild}
-            isOpen={isOpen}
-            onToggle={() => setIsOpen((value) => !value)}
-            isLoading={isLoadingGuilds}
-          />
-
-          <div
-            className="w-full bg-[#242424]"
-            style={{ height: `${configStepScale.separatorHeight}px` }}
-          />
-
-          <button
-            type="button"
-            onClick={() => {
-              void handleNextClick();
-            }}
-            disabled={!selectedGuild || isValidatingNext}
-            aria-busy={isValidatingNext}
-            className="flex w-full items-center justify-center bg-[#D8D8D8] font-medium text-black transition-opacity disabled:cursor-not-allowed disabled:opacity-45"
-            style={{
-              height: `${configStepScale.nextButtonHeight}px`,
-              borderRadius: `${configStepScale.controlRadius}px`,
-              fontSize: `${configStepScale.nextButtonTextSize}px`,
-            }}
-          >
-            {isValidatingNext ? <ButtonLoader size={24} /> : "Proximo"}
-          </button>
-
-          {nextActionError ? (
-            <p className="text-center text-[12px] text-[#C2C2C2]">{nextActionError}</p>
-          ) : null}
+            <button
+              type="button"
+              onClick={() => {
+                void handleNextClick();
+              }}
+              disabled={!selectedGuild || isValidatingNext}
+              aria-busy={isValidatingNext}
+              className={`group relative inline-flex h-[46px] min-w-[220px] shrink-0 items-center justify-center overflow-hidden rounded-[12px] px-6 text-[16px] leading-none font-semibold ${
+                !selectedGuild || isValidatingNext ? "cursor-not-allowed" : ""
+              }`}
+            >
+              <span
+                aria-hidden="true"
+                className={`absolute inset-0 rounded-[12px] transition-transform duration-150 ease-out ${
+                  selectedGuild
+                    ? "bg-[linear-gradient(180deg,#FFFFFF_0%,#D1D1D1_100%)] group-hover:scale-[1.02] group-active:scale-[0.985]"
+                    : "bg-[#111111]"
+                }`}
+              />
+              <span
+                className={`relative z-10 inline-flex items-center justify-center ${
+                  selectedGuild ? "text-[#282828]" : "text-[#B7B7B7]"
+                }`}
+              >
+                {isValidatingNext ? (
+                  <ButtonLoader
+                    size={18}
+                    colorClassName={selectedGuild ? "text-[#282828]" : "text-[#B7B7B7]"}
+                  />
+                ) : (
+                  "Proximo"
+                )}
+              </span>
+            </button>
+          </div>
 
           <span className="sr-only">{displayName}</span>
-        </div>
-      </section>
+        </section>
+      </div>
 
       <BotMissingModal
         isOpen={isBotModalOpen}
@@ -436,3 +466,4 @@ export function ConfigStepOne({
     </main>
   );
 }
+

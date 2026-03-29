@@ -204,6 +204,24 @@ html {
   animation: flowdesk-fade-up-soft 360ms ease-out both;
 }
 
+@keyframes flowdesk-card-rise {
+  0% {
+    opacity: 0;
+    transform: translateY(18px) scale(0.985);
+    filter: blur(8px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+.flowdesk-card-rise {
+  animation: flowdesk-card-rise 340ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 @keyframes flowdesk-scale-in-soft {
   0% {
     opacity: 0;

@@ -69,7 +69,6 @@ type EmojiAutocompleteState = {
   query: string;
   replaceStart: number;
   replaceEnd: number;
-  anchor: MenuAnchor;
 };
 type OpenMenu =
   | { kind: "root" }
@@ -646,14 +645,14 @@ function Menu<T extends string>({ items, onSelect, align = "left", anchor }: { i
 }
 
 function EmojiAutocompleteMenu({
-  anchor,
+  anchorElement,
   items,
   activeIndex,
   loading,
   onHover,
   onSelect,
 }: {
-  anchor: MenuAnchor | null;
+  anchorElement: HTMLElement | null;
   items: GuildEmojiSuggestion[];
   activeIndex: number;
   loading: boolean;
@@ -661,13 +660,20 @@ function EmojiAutocompleteMenu({
   onSelect: (emoji: GuildEmojiSuggestion) => void;
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const [position, setPosition] = useState<{ top: number; left: number; placement: "top" | "bottom" } | null>(null);
+  const [position, setPosition] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    placement: "top" | "bottom";
+  } | null>(null);
 
   useLayoutEffect(() => {
-    if (!anchor || !menuRef.current) return;
+    if (!anchorElement || !menuRef.current) return;
 
     const updatePosition = () => {
-      if (!menuRef.current) return;
+      if (!menuRef.current || !anchorElement) return;
+
+      const anchor = anchorElement.getBoundingClientRect();
 
       const viewportPadding = 12;
       const offset = 8;
@@ -694,6 +700,7 @@ function EmojiAutocompleteMenu({
       setPosition({
         top: nextTop,
         left: nextLeft,
+        width: Math.max(anchor.width, 320),
         placement: shouldOpenUpward ? "top" : "bottom",
       });
     };
@@ -706,9 +713,9 @@ function EmojiAutocompleteMenu({
       window.removeEventListener("resize", updatePosition);
       window.removeEventListener("scroll", updatePosition, true);
     };
-  }, [anchor, items.length, loading]);
+  }, [anchorElement, items.length, loading]);
 
-  if (!anchor || typeof document === "undefined") return null;
+  if (!anchorElement || typeof document === "undefined") return null;
 
   return createPortal(
     <div
@@ -718,7 +725,11 @@ function EmojiAutocompleteMenu({
         "flowdesk-scale-in-soft fixed z-[425] overflow-hidden rounded-[22px] border border-[#171717] bg-[#090909] shadow-[0_28px_70px_rgba(0,0,0,0.52)]",
         (position?.placement ?? "bottom") === "top" ? "origin-bottom" : "origin-top",
       )}
-      style={position ? { top: position.top, left: position.left, width: Math.max(anchor.width, 320) } : { top: anchor.bottom + 8, left: anchor.left, width: Math.max(anchor.width, 320) }}
+      style={
+        position
+          ? { top: position.top, left: position.left, width: position.width }
+          : undefined
+      }
     >
       <div className="border-b border-[#141414] px-[14px] py-[12px]">
         <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[#6B6B6B]">
@@ -1034,9 +1045,8 @@ function TicketMessageBuilder({
       query: match.query,
       replaceStart: match.replaceStart,
       replaceEnd: match.replaceEnd,
-      anchor: getMenuAnchor(element),
     });
-  }, [getMenuAnchor]);
+  }, []);
 
   const commit = useCallback((next: TicketPanelLayout) => onChange(normalizeTicketPanelLayout(next)), [onChange]);
   const updateRoot = useCallback((id: string, updater: (component: TicketPanelComponent) => TicketPanelComponent) => commit(layout.map((component) => component.id === id ? updater(component) : component)), [commit, layout]);
@@ -1654,7 +1664,7 @@ function TicketMessageBuilder({
 
       {emojiAutocomplete ? (
         <EmojiAutocompleteMenu
-          anchor={emojiAutocomplete.anchor}
+          anchorElement={contentTextareaRefs.current[scopeKey(emojiAutocomplete.scope)] ?? null}
           items={filteredEmojiSuggestions}
           activeIndex={Math.min(emojiHighlightIndex, Math.max(filteredEmojiSuggestions.length - 1, 0))}
           loading={emojiCatalogLoading}
