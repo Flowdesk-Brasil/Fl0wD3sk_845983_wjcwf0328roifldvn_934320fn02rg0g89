@@ -21,6 +21,7 @@ import {
   resolveEffectivePlanSelection,
   syncUserPlanStateFromOrder,
 } from "@/lib/plans/state";
+import { resolvePlanCycleExpirationIso } from "@/lib/plans/cycle";
 import { ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
@@ -354,9 +355,11 @@ export async function POST(request: Request) {
 
     const supabase = getSupabaseAdminClientOrThrow();
     const nowIso = new Date().toISOString();
-    const expiresAt = new Date(
-      Date.now() + checkoutPlan.plan.billingCycleDays * 24 * 60 * 60 * 1000,
-    ).toISOString();
+    const expiresAt =
+      resolvePlanCycleExpirationIso({
+        baseTimestamp: nowIso,
+        billingCycleDays: checkoutPlan.plan.billingCycleDays,
+      }) || nowIso;
 
     const createdOrderResult = await supabase
       .from("payment_orders")

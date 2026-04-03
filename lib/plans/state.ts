@@ -9,6 +9,10 @@ import {
   type PlanBillingPeriodCode,
   type PlanCode,
 } from "@/lib/plans/catalog";
+import {
+  resolveBillingPeriodMonthsFromCycleDays,
+  resolvePlanCycleExpirationIso,
+} from "@/lib/plans/cycle";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 export type GuildPlanSettingsRecord = {
@@ -43,6 +47,12 @@ export type UserPlanStateRecord = {
   updated_at: string;
 };
 
+const USER_PLAN_STATE_SELECT_COLUMNS =
+  "user_id, plan_code, plan_name, status, amount, compare_amount, currency, billing_cycle_days, max_licensed_servers, max_active_tickets, max_automations, max_monthly_actions, last_payment_order_id, last_payment_guild_id, activated_at, expires_at, metadata, created_at, updated_at";
+
+const LATEST_APPROVED_ORDER_FOR_PLAN_STATE_SELECT_COLUMNS =
+  "id, user_id, guild_id, plan_code, plan_name, amount, currency, plan_billing_cycle_days, plan_max_licensed_servers, plan_max_active_tickets, plan_max_automations, plan_max_monthly_actions, paid_at, created_at";
+
 type PaymentOrderPlanRecord = {
   id: number;
   user_id: number;
@@ -59,8 +69,6 @@ type PaymentOrderPlanRecord = {
   paid_at?: string | null;
   created_at: string;
 };
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 function parseNumeric(value: string | number | null | undefined, fallback = 0) {
   if (typeof value === "number") {
@@ -108,19 +116,72 @@ export async function getGuildPlanSettingsRecord(userId: number, guildId: string
 
 export async function getUserPlanState(userId: number) {
   const supabase = getSupabaseAdminClientOrThrow();
-  const result = await supabase
-    .from("auth_user_plan_state")
-    .select(
-      "user_id, plan_code, plan_name, status, amount, compare_amount, currency, billing_cycle_days, max_licensed_servers, max_active_tickets, max_automations, max_monthly_actions, last_payment_order_id, last_payment_guild_id, activated_at, expires_at, metadata, created_at, updated_at",
-    )
-    .eq("user_id", userId)
-    .maybeSingle<UserPlanStateRecord>();
+  const [planStateResult, latestApprovedOrderResult] = await Promise.all([
+    supabase
+      .from("auth_user_plan_state")
+      .select(USER_PLAN_STATE_SELECT_COLUMNS)
+      .eq("user_id", userId)
+      .maybeSingle<UserPlanStateRecord>(),
+    supabase
+      .from("payment_orders")
+      .select(LATEST_APPROVED_ORDER_FOR_PLAN_STATE_SELECT_COLUMNS)
+      .eq("user_id", userId)
+      .eq("status", "approved")
+      .order("paid_at", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<PaymentOrderPlanRecord>(),
+  ]);
 
-  if (result.error) {
-    throw new Error(`Erro ao carregar plano da conta: ${result.error.message}`);
+  if (planStateResult.error) {
+    throw new Error(`Erro ao carregar plano da conta: ${planStateResult.error.message}`);
   }
 
-  return result.data || null;
+  if (latestApprovedOrderResult.error) {
+    throw new Error(
+      `Erro ao carregar o ultimo pagamento aprovado da conta: ${latestApprovedOrderResult.error.message}`,
+    );
+  }
+
+  const currentPlanState = planStateResult.data || null;
+  const latestApprovedOrder = latestApprovedOrderResult.data || null;
+
+  if (!latestApprovedOrder) {
+    return currentPlanState;
+  }
+
+  const resolvedPlanCode = isPlanCode(latestApprovedOrder.plan_code)
+    ? latestApprovedOrder.plan_code
+    : DEFAULT_PLAN_CODE;
+  const resolvedPlan = resolvePlanDefinition(resolvedPlanCode);
+  const resolvedBillingCycleDays = Math.max(
+    latestApprovedOrder.plan_billing_cycle_days || resolvedPlan.billingCycleDays,
+    1,
+  );
+  const expectedActivatedAt =
+    latestApprovedOrder.paid_at || latestApprovedOrder.created_at;
+  const expectedExpiresAt = resolvePlanCycleExpirationIso({
+    baseTimestamp: expectedActivatedAt,
+    billingCycleDays: resolvedBillingCycleDays,
+    billingPeriodMonths: resolveBillingPeriodMonthsFromCycleDays(
+      resolvedBillingCycleDays,
+    ),
+    fallbackBillingCycleDays: resolvedPlan.billingCycleDays,
+  });
+
+  const shouldResyncPlanState =
+    !currentPlanState ||
+    currentPlanState.last_payment_order_id !== latestApprovedOrder.id ||
+    currentPlanState.plan_code !== resolvedPlanCode ||
+    currentPlanState.billing_cycle_days !== resolvedBillingCycleDays ||
+    currentPlanState.activated_at !== expectedActivatedAt ||
+    currentPlanState.expires_at !== expectedExpiresAt;
+
+  if (shouldResyncPlanState) {
+    return syncUserPlanStateFromOrder(latestApprovedOrder);
+  }
+
+  return currentPlanState;
 }
 
 export async function resolveEffectivePlanSelection(input: {
@@ -169,13 +230,18 @@ export async function syncUserPlanStateFromOrder(order: PaymentOrderPlanRecord) 
   const resolvedPlanCode = isPlanCode(order.plan_code) ? order.plan_code : DEFAULT_PLAN_CODE;
   const plan = resolvePlanDefinition(resolvedPlanCode);
   const activatedAt = order.paid_at || order.created_at;
-  const activatedAtMs = Date.parse(activatedAt);
-  const expiresAt = Number.isFinite(activatedAtMs)
-    ? new Date(
-        activatedAtMs +
-          Math.max(order.plan_billing_cycle_days || plan.billingCycleDays, 1) * DAY_MS,
-      ).toISOString()
-    : null;
+  const resolvedBillingCycleDays = Math.max(
+    order.plan_billing_cycle_days || plan.billingCycleDays,
+    1,
+  );
+  const resolvedBillingPeriodMonths =
+    resolveBillingPeriodMonthsFromCycleDays(resolvedBillingCycleDays);
+  const expiresAt = resolvePlanCycleExpirationIso({
+    baseTimestamp: activatedAt,
+    billingCycleDays: resolvedBillingCycleDays,
+    billingPeriodMonths: resolvedBillingPeriodMonths,
+    fallbackBillingCycleDays: plan.billingCycleDays,
+  });
 
   const payload = {
     user_id: order.user_id,
@@ -185,7 +251,7 @@ export async function syncUserPlanStateFromOrder(order: PaymentOrderPlanRecord) 
     amount: parseNumeric(order.amount, plan.price),
     compare_amount: plan.comparePrice,
     currency: (order.currency || plan.currency || "BRL").trim() || "BRL",
-    billing_cycle_days: Math.max(order.plan_billing_cycle_days || plan.billingCycleDays, 1),
+    billing_cycle_days: resolvedBillingCycleDays,
     max_licensed_servers: Math.max(
       order.plan_max_licensed_servers || plan.entitlements.maxLicensedServers,
       1,
@@ -207,7 +273,11 @@ export async function syncUserPlanStateFromOrder(order: PaymentOrderPlanRecord) 
     activated_at: activatedAt,
     expires_at: expiresAt,
     metadata: {
-      plan: buildPlanSnapshot(resolvedPlanCode),
+      plan: {
+        ...buildPlanSnapshot(resolvedPlanCode),
+        billingCycleDays: resolvedBillingCycleDays,
+        billingPeriodMonths: resolvedBillingPeriodMonths,
+      },
     },
   };
 
@@ -216,7 +286,7 @@ export async function syncUserPlanStateFromOrder(order: PaymentOrderPlanRecord) 
     .upsert(payload, {
       onConflict: "user_id",
     })
-    .select("user_id, plan_code, plan_name, status, amount, compare_amount, currency, billing_cycle_days, max_licensed_servers, max_active_tickets, max_automations, max_monthly_actions, last_payment_order_id, last_payment_guild_id, activated_at, expires_at, metadata, created_at, updated_at")
+    .select(USER_PLAN_STATE_SELECT_COLUMNS)
     .single<UserPlanStateRecord>();
 
   if (result.error || !result.data) {

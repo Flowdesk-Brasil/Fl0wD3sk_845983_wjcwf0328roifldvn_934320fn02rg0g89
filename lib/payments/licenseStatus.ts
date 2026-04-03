@@ -1,4 +1,5 @@
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
+import { resolvePlanCycleExpirationMs } from "@/lib/plans/cycle";
 
 export type GuildLicenseStatus = "paid" | "expired" | "off" | "not_paid";
 
@@ -130,15 +131,18 @@ export function resolveLicenseBaseTimestamp(order: ApprovedOrderRecord) {
   return Date.now();
 }
 
-function resolveLicenseValidityMs(order: LicenseApprovedOrderRecord) {
-  const cycleDays =
-    typeof order.plan_billing_cycle_days === "number" &&
-    Number.isFinite(order.plan_billing_cycle_days) &&
-    order.plan_billing_cycle_days > 0
-      ? order.plan_billing_cycle_days
-      : LICENSE_VALIDITY_DAYS;
-
-  return cycleDays * 24 * 60 * 60 * 1000;
+function resolveLicenseExpiresAtMs(
+  order: LicenseApprovedOrderRecord,
+  licenseStartsAtMs: number,
+) {
+  return (
+    resolvePlanCycleExpirationMs({
+      baseTimestamp: licenseStartsAtMs,
+      billingCycleDays: order.plan_billing_cycle_days,
+      fallbackBillingCycleDays: LICENSE_VALIDITY_DAYS,
+    }) ||
+    licenseStartsAtMs + LICENSE_VALIDITY_MS
+  );
 }
 
 export function resolveLicenseCoverageForApprovedOrders<
@@ -185,7 +189,7 @@ export function resolveLicenseCoverageForApprovedOrders<
       }
     }
 
-    const licenseExpiresAtMs = licenseStartsAtMs + resolveLicenseValidityMs(order);
+    const licenseExpiresAtMs = resolveLicenseExpiresAtMs(order, licenseStartsAtMs);
     const graceExpiresAtMs = licenseExpiresAtMs + EXPIRED_GRACE_MS;
     const renewalWindowStartsAtMs =
       licenseExpiresAtMs - LICENSE_RENEWAL_WINDOW_MS;

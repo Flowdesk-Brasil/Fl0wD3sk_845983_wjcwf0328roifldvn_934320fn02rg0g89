@@ -31,6 +31,7 @@ import {
   resolveEffectivePlanSelection,
   syncUserPlanStateFromOrder,
 } from "@/lib/plans/state";
+import { resolvePlanCycleExpirationIso } from "@/lib/plans/cycle";
 import { ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -200,15 +201,14 @@ function resolveLicenseBaseTimestamp(order: PaymentOrderRecord) {
 }
 
 function resolveLicenseExpiresAt(order: PaymentOrderRecord) {
-  const cycleDays =
-    typeof order.plan_billing_cycle_days === "number" &&
-    Number.isFinite(order.plan_billing_cycle_days) &&
-    order.plan_billing_cycle_days > 0
-      ? order.plan_billing_cycle_days
-      : LICENSE_VALIDITY_DAYS;
-  return new Date(
-    resolveLicenseBaseTimestamp(order) + cycleDays * 24 * 60 * 60 * 1000,
-  ).toISOString();
+  return (
+    resolvePlanCycleExpirationIso({
+      baseTimestamp: resolveLicenseBaseTimestamp(order),
+      billingCycleDays: order.plan_billing_cycle_days,
+      fallbackBillingCycleDays: LICENSE_VALIDITY_DAYS,
+    }) ||
+    new Date(resolveLicenseBaseTimestamp(order) + LICENSE_VALIDITY_DAYS * 24 * 60 * 60 * 1000).toISOString()
+  );
 }
 
 function isLicenseActiveForOrder(order: PaymentOrderRecord) {
