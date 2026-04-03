@@ -62,6 +62,7 @@ export async function GET(request: NextRequest) {
         NextResponse.json(
           {
             ok: false,
+            authenticated: Boolean(authenticatedUser),
             message: accessValidation.message,
             authenticatedUser,
           },
@@ -81,6 +82,7 @@ export async function GET(request: NextRequest) {
       applyNoStoreHeaders(
         NextResponse.json({
           ok: true,
+          authenticated: Boolean(authenticatedUser),
           verified: true,
           minSolveMs: getDiscordLinkHumanMinimumSolveMs(),
           authenticatedUser,
@@ -99,6 +101,7 @@ export async function GET(request: NextRequest) {
     applyNoStoreHeaders(
       NextResponse.json({
         ok: true,
+        authenticated: Boolean(authenticatedUser),
         verified: false,
         challengeToken: challenge.token,
         minSolveMs: getDiscordLinkHumanMinimumSolveMs(),

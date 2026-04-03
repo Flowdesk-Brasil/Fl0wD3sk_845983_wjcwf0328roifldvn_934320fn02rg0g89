@@ -3,7 +3,6 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ConfigLogoutButton } from "@/components/config/ConfigLogoutButton";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { buildDiscordAuthStartHref } from "@/lib/auth/paths";
 import {
@@ -37,6 +36,7 @@ type LinkSyncResponse = {
 
 type HumanCheckResponse = {
   ok: boolean;
+  authenticated?: boolean;
   verified?: boolean;
   challengeToken?: string | null;
   verificationToken?: string | null;
@@ -70,9 +70,9 @@ type ViewState =
 
 const INITIAL_CHECKING_STATE: ViewState = {
   phase: "checking",
-  title: "Validando vinculacao da conta",
+  title: "Preparando a vinculacao segura",
   description:
-    "Estamos confirmando o login seguro e sincronizando sua conta com o Discord oficial.",
+    "Estamos validando sua sessao, protegendo a tentativa e preparando a sincronizacao com o Discord oficial.",
 };
 
 type DiscordLinkPageClientProps = {
@@ -91,7 +91,7 @@ export function DiscordLinkPageClient({
           phase: "success",
           title: "Conta vinculada com sucesso",
           description:
-            "Sua vinculacao foi concluida. Estamos apenas confirmando a sincronizacao final com o Discord oficial.",
+            "Sua conta ja esta protegida e vinculada. Estamos apenas conferindo a sincronizacao final com o Discord oficial.",
           actionHref: buildOfficialDiscordChannelUrl(),
           actionLabel: "Voltar ao Discord oficial",
           roleName: OFFICIAL_DISCORD_LINKED_ROLE_NAME,
@@ -161,6 +161,28 @@ export function DiscordLinkPageClient({
     );
   }, []);
 
+  const scheduleSecureLoginRedirect = useCallback(() => {
+    setState({
+      phase: "redirecting",
+      title: "Reconectando a sessao segura",
+      description:
+        "Sua sessao autenticada nao foi encontrada neste navegador. Vamos abrir o login seguro da Flowdesk para continuar automaticamente.",
+    });
+    setHumanCheckPhase("loading");
+    setHumanCheckChallengeToken(null);
+    setHumanCheckVerificationToken(null);
+    setHumanCheckError(null);
+
+    if (redirectTimerRef.current) {
+      window.clearTimeout(redirectTimerRef.current);
+    }
+
+    const nextPath = `${OFFICIAL_DISCORD_LINK_PATH}?access=${encodeURIComponent(accessToken)}`;
+    redirectTimerRef.current = window.setTimeout(() => {
+      window.location.assign(buildDiscordAuthStartHref(nextPath));
+    }, 450);
+  }, [accessToken]);
+
   const bootstrapHumanCheck = useCallback(async () => {
     clearRetryTimer();
     clearHumanCheckTransitionTimer();
@@ -200,6 +222,11 @@ export function DiscordLinkPageClient({
       return;
     }
 
+    if (payload.authenticated === false) {
+      scheduleSecureLoginRedirect();
+      return;
+    }
+
     setHumanCheckMinimumSolveMs(
       Number.isFinite(payload.minSolveMs) ? Number(payload.minSolveMs) : 900,
     );
@@ -224,6 +251,7 @@ export function DiscordLinkPageClient({
     clearHumanCheckTransitionTimer,
     clearRetryTimer,
     initialStatus,
+    scheduleSecureLoginRedirect,
   ]);
 
   const syncLink = useCallback(async (resetState = true) => {
@@ -251,22 +279,7 @@ export function DiscordLinkPageClient({
     applyAuthenticatedUserPayload(payload?.authenticatedUser || null);
 
     if (response.status === 401) {
-      setState({
-        phase: "redirecting",
-        title: "Abrindo login seguro",
-        description:
-          "Sua sessao nao foi encontrada. Vamos abrir o login do Flowdesk para continuar a vinculacao automaticamente.",
-      });
-
-      if (redirectTimerRef.current) {
-        window.clearTimeout(redirectTimerRef.current);
-      }
-
-      const nextPath = `${OFFICIAL_DISCORD_LINK_PATH}?access=${encodeURIComponent(accessToken)}`;
-      redirectTimerRef.current = window.setTimeout(() => {
-        window.location.assign(buildDiscordAuthStartHref(nextPath));
-      }, 500);
-
+      scheduleSecureLoginRedirect();
       return;
     }
 
@@ -310,8 +323,14 @@ export function DiscordLinkPageClient({
 
       setState({
         phase: "syncing",
-        title: INITIAL_CHECKING_STATE.title,
-        description: INITIAL_CHECKING_STATE.description,
+        title:
+          payload.status === "pending_member"
+            ? "Entre no Discord oficial"
+            : "Sincronizando acesso e cargo",
+        description:
+          payload.status === "pending_member"
+            ? "Abra o Discord oficial com esta mesma conta. Assim que sua entrada for detectada, a Flowdesk conclui a vinculacao e sincroniza o cargo automaticamente."
+            : "Sua conta foi localizada. Agora estamos sincronizando o acesso e liberando o cargo oficial com seguranca.",
         helperHref:
           payload.openDiscordUrl ||
           payload.inviteUrl ||
@@ -333,7 +352,8 @@ export function DiscordLinkPageClient({
     setState({
       phase: "success",
       title: "Vinculacao concluida",
-      description: "",
+      description:
+        "Tudo certo. Sua conta foi confirmada e a Flowdesk finalizou a sincronizacao do acesso com o Discord oficial.",
       actionHref: payload.openDiscordUrl || buildOfficialDiscordChannelUrl(),
       actionLabel: "Voltar ao Discord oficial",
       roleName: payload.roleName || OFFICIAL_DISCORD_LINKED_ROLE_NAME,
@@ -344,6 +364,7 @@ export function DiscordLinkPageClient({
     clearRetryTimer,
     humanCheckVerificationToken,
     initialStatus,
+    scheduleSecureLoginRedirect,
   ]);
 
   useEffect(() => {
@@ -477,6 +498,10 @@ export function DiscordLinkPageClient({
         return;
       }
 
+      if (state.phase === "redirecting" || redirectTimerRef.current) {
+        return;
+      }
+
       if (humanCheckPhase === "verified") {
         void syncLink(false);
         return;
@@ -494,7 +519,7 @@ export function DiscordLinkPageClient({
       document.removeEventListener("visibilitychange", handleForegroundReturn);
       window.removeEventListener("focus", handleForegroundReturn);
     };
-  }, [humanCheckPhase, initialStatus, syncLink]);
+  }, [humanCheckPhase, initialStatus, state.phase, syncLink]);
 
   const footerLinks = useMemo(
     () => ({
@@ -514,289 +539,186 @@ export function DiscordLinkPageClient({
     state.phase !== "success" &&
     state.phase !== "redirecting" &&
     humanCheckPhase !== "verified";
+  const isExpiredSecureLink =
+    state.phase === "error" &&
+    (state.description.includes("link seguro") ||
+      state.description.includes("nao esta mais disponivel") ||
+      state.description.includes("expirou"));
+  const officialDiscordHref = buildOfficialDiscordChannelUrl();
+  const humanCheckSolveSeconds = Math.max(
+    1,
+    Math.ceil(humanCheckMinimumSolveMs / 1000),
+  );
+  const panelEyebrow = shouldRenderHumanCheck
+    ? "Solicitacao de vinculacao"
+    : state.phase === "success"
+      ? "Conta vinculada"
+      : state.phase === "error"
+        ? "Falha na vinculacao"
+        : state.phase === "redirecting"
+          ? "Reconectando sessao"
+          : "Sincronizando";
+  const panelTitle = shouldRenderHumanCheck
+    ? "Flowdesk quer vincular esta conta ao Discord oficial"
+    : state.phase === "success"
+      ? "Conta vinculada com sucesso"
+      : state.phase === "syncing"
+        ? "Aguardando confirmacao do Discord"
+        : state.title;
+  const panelDescription = shouldRenderHumanCheck
+    ? "Confirme a verificacao humana para autorizar a sincronizacao da mesma conta autenticada no Flowdesk."
+    : state.phase === "success"
+      ? state.description
+      : state.phase === "syncing"
+        ? state.description
+        : state.description;
+  const accountDisplayName = authenticatedUser?.displayName || "Sua conta";
+  const accountSubtitle = authenticatedUser
+    ? `@${authenticatedUser.username}`
+    : hasLoadedAuthenticatedUser
+      ? "Conta autenticada"
+      : "Carregando conta";
+  const handleRetryAction = useCallback(() => {
+    if (isExpiredSecureLink) {
+      window.location.assign(OFFICIAL_DISCORD_LINK_START_PATH);
+      return;
+    }
+
+    if (humanCheckPhase !== "verified") {
+      void bootstrapHumanCheck();
+      return;
+    }
+
+    void syncLink();
+  }, [bootstrapHumanCheck, humanCheckPhase, isExpiredSecureLink, syncLink]);
 
   return (
-    <main className="flex min-h-screen w-full items-center justify-center bg-black px-6 py-10">
-      <section className="w-full max-w-[760px]">
-        <div className="mx-auto flex w-full flex-col items-center gap-7">
-          <div className="relative h-[68px] w-[68px] shrink-0">
-            <Image
-              src="/cdn/logos/logotipo_.svg"
-              alt="Flowdesk"
-              fill
-              sizes="68px"
-              className="object-contain"
-              priority
-            />
-          </div>
+    <main className="relative min-h-screen overflow-hidden bg-black text-[#F2F2F2]">
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0">
+        <div className="absolute inset-x-0 top-[-16%] h-[520px] bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.06)_0%,rgba(255,255,255,0.015)_34%,transparent_72%)]" />
+        <div className="absolute left-1/2 top-[12%] h-[360px] w-[360px] -translate-x-1/2 rounded-full bg-[radial-gradient(circle,rgba(255,255,255,0.04)_0%,transparent_72%)] blur-3xl" />
+      </div>
 
-          <div className="flex w-full flex-col items-center gap-3 text-center">
-            <h1 className="text-[32px] leading-[1.1] font-medium text-[#D8D8D8] sm:text-[44px]">
-              Vincule sua conta com o Discord
-            </h1>
-            <p className="max-w-[720px] text-[14px] leading-[1.6] text-[#A2A2A2] sm:text-[15px]">
-              O Flowdesk usa o mesmo login Discord para validar sua identidade, sincronizar
-              o acesso ao painel e liberar automaticamente o cargo oficial no servidor de
-              suporte.
-            </p>
-            {!shouldHideAuthenticatedUserCard && !hasLoadedAuthenticatedUser ? (
-              <div className="mt-2 flex w-full items-center gap-3 rounded-[14px] border border-[#242424] bg-[#0A0A0A] px-4 py-3 text-left flowdesk-shimmer">
-                <div className="h-[38px] w-[38px] rounded-full bg-[#151515]" />
-                <div className="flex flex-1 flex-col gap-2">
-                  <div className="h-[12px] w-[168px] rounded-full bg-[#181818]" />
-                  <div className="h-[10px] w-[94px] rounded-full bg-[#151515]" />
-                  <div className="h-[10px] w-full max-w-[430px] rounded-full bg-[#141414]" />
-                </div>
-              </div>
-            ) : null}
+      <section className="relative mx-auto flex min-h-screen w-full max-w-[760px] items-center justify-center px-4 py-8 sm:px-6">
+        <div className="relative w-full overflow-hidden rounded-[32px] px-[24px] py-[24px] shadow-[0_32px_120px_rgba(0,0,0,0.44)] sm:px-[34px] sm:py-[34px]">
+          <span className="pointer-events-none absolute inset-0 rounded-[32px] border border-[#0E0E0E]" />
+          <span className="flowdesk-tag-border-glow pointer-events-none absolute inset-[-2px] rounded-[32px]" />
+          <span className="flowdesk-tag-border-core pointer-events-none absolute inset-[-1px] rounded-[32px]" />
+          <span className="pointer-events-none absolute inset-[1px] rounded-[31px] bg-[linear-gradient(180deg,rgba(8,8,8,0.98)_0%,rgba(4,4,4,0.98)_100%)]" />
+          <div className="pointer-events-none absolute inset-x-[1px] top-[1px] h-[180px] rounded-t-[31px] bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.06)_0%,rgba(255,255,255,0.015)_34%,transparent_74%)]" />
 
-            {authenticatedUser && !shouldHideAuthenticatedUserCard ? (
-              <div className="mt-2 flex w-full items-center gap-3 rounded-[14px] border border-[#242424] bg-[#0A0A0A] px-4 py-3 text-left">
-                {authenticatedUser.avatarUrl ? (
-                  <Image
-                    src={authenticatedUser.avatarUrl}
-                    alt={authenticatedUser.displayName}
-                    width={38}
-                    height={38}
-                    className="rounded-full object-cover"
-                  />
-                ) : (
-                  <div className="flex h-[38px] w-[38px] items-center justify-center rounded-full bg-[#151515] text-[14px] font-medium text-[#D8D8D8]">
-                    {authenticatedUser.displayName.slice(0, 1).toUpperCase()}
-                  </div>
-                )}
-                <div className="text-[12px] leading-[1.65] text-[#8F8F8F]">
-                  <p className="font-medium text-[#D8D8D8]">
-                    Conta detectada: {authenticatedUser.displayName}
-                  </p>
-                  <p>@{authenticatedUser.username}</p>
-                  <p>
-                    Se o Discord aberto no navegador ou launcher estiver em outra conta,
-                    troque para esta conta antes de concluir a vinculacao.
-                  </p>
-                </div>
-              </div>
-            ) : null}
-          </div>
-
-          <div className="h-px w-full bg-[#242424]" />
-
-          <div className="flex w-full flex-col items-center gap-5 text-center">
-            {shouldRenderHumanCheck ? (
-              <>
-                <div
-                  className="flex w-full flex-col rounded-[3px] border border-[#242424] bg-[#080808] px-4 py-2.5 text-left sm:px-5 sm:py-2.5"
-                >
-                  {humanCheckPhase === "loading" ? (
-                    <div className="flex w-full items-center justify-between gap-4 flowdesk-shimmer">
-                      <div className="flex min-w-0 flex-1 items-center gap-4">
-                        <div className="h-[28px] w-[28px] rounded-[4px] border border-[#3A3A3A] bg-[#111111]" />
-                        <div className="flex flex-1 flex-col gap-2">
-                          <div className="h-[14px] w-[178px] max-w-full rounded-full bg-[#161616]" />
-                        </div>
-                      </div>
-                      <div className="hidden flex-col items-center gap-2 sm:flex">
-                        <div className="h-[28px] w-[28px] rounded-[9px] bg-[#131313]" />
-                        <div className="h-[8px] w-[54px] rounded-full bg-[#161616]" />
-                        <div className="h-[7px] w-[68px] rounded-full bg-[#131313]" />
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex w-full items-center justify-between gap-4 text-left">
-                      <span className="flex min-w-0 flex-1 items-center gap-4 sm:gap-5">
-                        <button
-                          type="button"
-                          disabled={humanCheckPhase === "verifying"}
-                          onPointerMove={(event) => {
-                            registerHumanInteraction(event.pointerType);
-                          }}
-                          onPointerDown={(event) => {
-                            registerHumanInteraction(event.pointerType);
-                          }}
-                          onClick={() => {
-                            registerHumanInteraction(
-                              humanCheckPointerTypeRef.current || "mouse",
-                            );
-                            void handleHumanCheckConfirm();
-                          }}
-                          className={`flex h-[28px] w-[28px] items-center justify-center rounded-[4px] border border-[#5A5A5A] bg-[#0C0C0C] transition-colors ${
-                            humanCheckPhase === "verifying"
-                              ? "cursor-default"
-                              : "cursor-pointer hover:border-[#7A7A7A]"
-                          }`}
-                        >
-                          {humanCheckPhase === "verifying" ? (
-                            <ButtonLoader size={14} colorClassName="text-[#D8D8D8]" />
-                          ) : (
-                            <span className="block h-full w-full rounded-[4px]" />
-                          )}
-                        </button>
-                        <span className="min-w-0">
-                          <span className="block text-[12px] leading-[1.05] font-medium text-[#D8D8D8] sm:text-[17px]">
-                            Nao sou um robo
-                          </span>
-                        </span>
-                      </span>
-
-                      <span className="hidden min-w-[72px] flex-col items-center gap-0.5 text-center sm:flex">
-                        <span className="relative h-[28px] w-[28px] shrink-0 overflow-hidden rounded-[9px] bg-[#050505]">
-                          <Image
-                            src="/cdn/logos/logotipo_.svg"
-                            alt="Flowdesk"
-                            fill
-                            sizes="28px"
-                            className="object-contain p-1"
-                          />
-                        </span>
-                        <span className="flex flex-col items-center">
-                          <span className="text-[10px] leading-[1.05] font-medium text-[#D6D6D6]">
-                            Flowdesk
-                          </span>
-                          <span className="mt-0.5 flex items-center gap-1 text-[8px] leading-[1.05] text-[#818181]">
-                            <Link
-                              href={footerLinks.privacyUrl}
-                              className="transition-colors hover:text-[#BFBFBF]"
-                            >
-                              Privacidade
-                            </Link>
-                            <span>&bull;</span>
-                            <Link
-                              href={footerLinks.termsUrl}
-                              className="transition-colors hover:text-[#BFBFBF]"
-                            >
-                              Termos
-                            </Link>
-                          </span>
-                        </span>
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                {humanCheckError ? (
-                  <p className="max-w-[640px] text-[13px] leading-[1.75] text-[#D38A8A]">
-                    {humanCheckError}
-                  </p>
-                ) : null}
-              </>
-            ) : (
-              <>
-                {state.phase === "error" ? (
-                  <>
-                    <h2 className="text-[22px] leading-[1.2] font-medium text-[#D8D8D8] sm:text-[26px]">
-                      {state.title}
-                    </h2>
-                    {state.description ? (
-                      <p className="max-w-[640px] text-[14px] leading-[1.75] text-[#A8A8A8]">
-                        {state.description}
-                      </p>
-                    ) : null}
-                  </>
-                ) : null}
-
-                <div
-                  className={`flex h-[320px] w-full items-center justify-center rounded-[3px] border border-[#242424] bg-[#080808] p-8 ${
-                    state.phase === "success" ? "flowdesk-success-glow" : "flowdesk-panel-glow"
-                  }`}
-                >
-                  {state.phase === "success" ? (
-                    <Image
-                      src="/cdn/icons/check.png"
-                      alt="Vinculacao concluida"
-                      width={146}
-                      height={146}
-                      className="h-[146px] w-[146px] object-contain"
-                      priority
-                    />
-                  ) : (
-                    <ButtonLoader size={46} colorClassName="text-[#D8D8D8]" />
-                  )}
-                </div>
-
-                {state.phase === "error" && state.requestId ? (
-                  <p className="text-[12px] leading-[1.6] text-[#7E7E7E]">
-                    Protocolo tecnico:{" "}
-                    <span className="text-[#B8B8B8]">{state.requestId}</span>
-                  </p>
-                ) : null}
-
-                <div className="flex w-full max-w-[420px] flex-col gap-3 pt-1">
-                  {state.phase === "success" ? (
-                    <a
-                      href={state.actionHref}
-                      className="inline-flex h-[52px] items-center justify-center rounded-[14px] bg-[#F3F3F3] px-5 text-[15px] font-medium text-black transition hover:bg-white"
-                    >
-                      {state.actionLabel}
-                    </a>
-                  ) : null}
-
-                  {state.phase === "syncing" && state.helperHref && state.helperLabel ? (
-                    <a
-                      href={state.helperHref}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-[13px] font-medium text-[#8E8E8E] underline-offset-4 hover:text-[#D4D4D4] hover:underline"
-                    >
-                      {state.helperLabel}
-                    </a>
-                  ) : null}
-
-                  {state.phase === "error" ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (
-                          state.description.includes("link seguro") ||
-                          state.description.includes("nao esta mais disponivel") ||
-                          state.description.includes("expirou")
-                        ) {
-                          window.location.assign(OFFICIAL_DISCORD_LINK_START_PATH);
-                          return;
-                        }
-
-                        if (humanCheckPhase !== "verified") {
-                          void bootstrapHumanCheck();
-                          return;
-                        }
-
-                        void syncLink();
-                      }}
-                      className="inline-flex h-[52px] items-center justify-center rounded-[14px] bg-[#F3F3F3] px-5 text-[15px] font-medium text-black transition hover:bg-white"
-                    >
-                      {state.description.includes("link seguro") ||
-                      state.description.includes("nao esta mais disponivel") ||
-                      state.description.includes("expirou")
-                        ? "Gerar novo link seguro"
-                        : "Tentar novamente"}
-                    </button>
-                  ) : null}
-                </div>
-              </>
-            )}
-          </div>
-
-          <div className="h-px w-full bg-[#242424]" />
-
-          <p className="max-w-[760px] text-center text-[12px] leading-[1.8] text-[#727272]">
-            Ao continuar, voce concorda com nossos{" "}
-            <Link href={footerLinks.termsUrl} className="text-[#BDBDBD] hover:underline">
-              Termos de Uso
-            </Link>{" "}
-            e{" "}
-            <Link href={footerLinks.privacyUrl} className="text-[#BDBDBD] hover:underline">
-              Politica de Privacidade
+          <div className="relative z-10">
+            <Link href="/" className="relative mx-auto block h-[34px] w-[168px]" aria-label="Voltar para a pagina inicial da Flowdesk">
+              <Image src="/cdn/logos/logo.png" alt="Flowdesk" fill sizes="168px" className="object-contain object-center" priority />
             </Link>
-            . O Flowdesk vincula apenas a conta autenticada no login para manter a
-            sincronizacao segura entre site e Discord.
-          </p>
+
+            <div className="mx-auto mt-[28px] flex max-w-[520px] items-center justify-center gap-3 sm:gap-5">
+              <div className="min-w-0 flex-1">
+                <div className="mx-auto flex h-[76px] w-[76px] items-center justify-center overflow-hidden rounded-full border border-[#171717] bg-[#0B0B0B] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                  <div className="relative h-[40px] w-[40px]">
+                    <Image src="/cdn/logos/logotipo_.svg" alt="Flowdesk" fill sizes="40px" className="object-contain" priority />
+                  </div>
+                </div>
+                <p className="mt-3 text-center text-[15px] font-medium tracking-[-0.03em] text-[#F2F2F2]">Flowdesk</p>
+                <p className="mt-1 text-center text-[12px] text-[#818181]">Sistema oficial</p>
+              </div>
+
+              <div className="flex min-w-[84px] items-center gap-2 sm:min-w-[112px] sm:gap-3">
+                <span className="h-px flex-1 bg-[#242424]" />
+                <span className={`flex h-[34px] w-[34px] items-center justify-center rounded-full border text-[16px] font-semibold ${
+                  state.phase === "success"
+                    ? "border-[#EAEAEA] bg-[#F3F3F3] text-black"
+                    : state.phase === "error"
+                      ? "border-[#3B1E1E] bg-[#120B0B] text-[#E5B9B9]"
+                      : "border-[#222222] bg-[#0D0D0D] text-[#E6E6E6]"
+                }`}>
+                  {state.phase === "success" ? "OK" : state.phase === "error" ? "!" : "."}
+                </span>
+                <span className="h-px flex-1 bg-[#242424]" />
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <div className="mx-auto flex h-[76px] w-[76px] items-center justify-center overflow-hidden rounded-full border border-[#171717] bg-[#0B0B0B] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                  {!shouldHideAuthenticatedUserCard && authenticatedUser?.avatarUrl ? (
+                    <Image src={authenticatedUser.avatarUrl} alt={accountDisplayName} width={76} height={76} className="h-full w-full object-cover" />
+                  ) : (
+                    <span className="text-[26px] font-medium tracking-[-0.04em] text-[#F2F2F2]">{accountDisplayName.slice(0, 1).toUpperCase()}</span>
+                  )}
+                </div>
+                <p className="mt-3 truncate text-center text-[15px] font-medium tracking-[-0.03em] text-[#F2F2F2]">
+                  {shouldHideAuthenticatedUserCard ? "Conta Discord" : accountDisplayName}
+                </p>
+                <p className="mt-1 truncate text-center text-[12px] text-[#818181]">
+                  {shouldHideAuthenticatedUserCard ? "Aguardando autenticacao" : accountSubtitle}
+                </p>
+              </div>
+            </div>
+
+            <div className="mx-auto mt-[30px] max-w-[520px] text-center">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#707070]">{panelEyebrow}</p>
+              <h1 className="mt-[14px] text-[30px] leading-[1.02] font-normal tracking-[-0.05em] text-[#F5F5F5] sm:text-[38px]">{panelTitle}</h1>
+              <p className="mt-[14px] text-[14px] leading-[1.8] text-[#9A9A9A] sm:text-[15px]">{panelDescription}</p>
+            </div>
+
+            <div className="mx-auto mt-[28px] flex max-w-[420px] flex-col items-center border-t border-[#161616] pt-[28px] text-center">
+              {shouldRenderHumanCheck ? (
+                <>
+                  <button
+                    type="button"
+                    disabled={humanCheckPhase === "loading" || humanCheckPhase === "verifying"}
+                    onPointerMove={(event) => { registerHumanInteraction(event.pointerType); }}
+                    onPointerDown={(event) => { registerHumanInteraction(event.pointerType); }}
+                    onClick={() => {
+                      registerHumanInteraction(humanCheckPointerTypeRef.current || "mouse");
+                      void handleHumanCheckConfirm();
+                    }}
+                    className="inline-flex h-[54px] w-full items-center justify-center rounded-[16px] bg-[#F3F3F3] px-5 text-[15px] font-medium text-black transition hover:bg-white disabled:cursor-not-allowed disabled:bg-[#D8D8D8]"
+                  >
+                    {humanCheckPhase === "loading" ? <span className="inline-flex items-center gap-3"><ButtonLoader size={16} colorClassName="text-black" />Preparando verificacao</span> : humanCheckPhase === "verifying" ? <span className="inline-flex items-center gap-3"><ButtonLoader size={16} colorClassName="text-black" />Confirmando vinculacao</span> : "Continuar com esta conta"}
+                  </button>
+                  <p className="mt-4 text-[13px] leading-[1.75] text-[#8A8A8A]">A verificacao leva cerca de {humanCheckSolveSeconds}s e usa apenas a conta autenticada neste navegador.</p>
+                  {humanCheckError ? <p className="mt-3 text-[13px] leading-[1.75] text-[#D7A5A5]">{humanCheckError}</p> : null}
+                </>
+              ) : state.phase === "success" ? (
+                <>
+                  <span className="flex h-[64px] w-[64px] items-center justify-center rounded-full border border-[#1A1A1A] bg-[#0B0B0B] text-[20px] font-medium text-[#F3F3F3]">OK</span>
+                  <p className="mt-5 text-[14px] leading-[1.8] text-[#9A9A9A]">Sua vinculacao foi concluida. Aguarde alguns instantes enquanto o Discord oficial reconhece o acesso.</p>
+                  <a href={state.actionHref} className="mt-6 inline-flex h-[54px] w-full items-center justify-center rounded-[16px] bg-[#F3F3F3] px-5 text-[15px] font-medium text-black transition hover:bg-white">{state.actionLabel}</a>
+                  {state.actionHref !== officialDiscordHref ? <a href={officialDiscordHref} target="_blank" rel="noreferrer" className="mt-3 text-[13px] font-medium text-[#8E8E8E] transition-colors hover:text-[#DADADA]">Abrir Discord oficial</a> : null}
+                </>
+              ) : state.phase === "error" ? (
+                <>
+                  <span className="flex h-[64px] w-[64px] items-center justify-center rounded-full border border-[#2A1717] bg-[#120B0B] text-[28px] text-[#E5B9B9]">!</span>
+                  <p className="mt-5 text-[14px] leading-[1.8] text-[#9A9A9A]">{state.description}</p>
+                  {state.requestId ? <p className="mt-3 text-[12px] leading-[1.7] text-[#6F6F6F]">Protocolo tecnico: <span className="text-[#AFAFAF]">{state.requestId}</span></p> : null}
+                  <button type="button" onClick={() => { void handleRetryAction(); }} className="mt-6 inline-flex h-[54px] w-full items-center justify-center rounded-[16px] bg-[#F3F3F3] px-5 text-[15px] font-medium text-black transition hover:bg-white">
+                    {isExpiredSecureLink ? "Gerar novo link seguro" : "Tentar novamente"}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="flex h-[64px] w-[64px] items-center justify-center rounded-full border border-[#1A1A1A] bg-[#0B0B0B]"><ButtonLoader size={24} colorClassName="text-[#F3F3F3]" /></span>
+                  <p className="mt-5 text-[14px] leading-[1.8] text-[#9A9A9A]">{state.description}</p>
+                  {state.phase === "syncing" && state.helperHref && state.helperLabel ? <a href={state.helperHref} target="_blank" rel="noreferrer" className="mt-5 inline-flex h-[48px] w-full items-center justify-center rounded-[14px] border border-[#1A1A1A] bg-[#0B0B0B] px-5 text-[14px] font-medium text-[#E2E2E2] transition-colors hover:border-[#2A2A2A] hover:bg-[#111111]">{state.helperLabel}</a> : null}
+                </>
+              )}
+            </div>
+
+            <p className="mx-auto mt-[26px] max-w-[460px] text-center text-[12px] leading-[1.8] text-[#7B7B7B]">
+              Ao continuar, voce concorda com nossos <Link href={footerLinks.termsUrl} className="text-[#CACACA] transition-colors hover:text-white">Termos</Link> e a nossa <Link href={footerLinks.privacyUrl} className="text-[#CACACA] transition-colors hover:text-white">Politica de Privacidade</Link>.
+            </p>
+
+            <button
+              type="button"
+              onClick={() => { void handleLogout(); }}
+              disabled={isLoggingOut}
+              className="mx-auto mt-[16px] inline-flex h-[40px] items-center justify-center rounded-full px-[14px] text-[13px] font-medium text-[#9A9A9A] transition-colors hover:text-[#F3F3F3] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isLoggingOut ? "Saindo..." : "Trocar conta"}
+            </button>
+          </div>
         </div>
       </section>
-      <ConfigLogoutButton
-        onClick={() => {
-          void handleLogout();
-        }}
-        disabled={isLoggingOut}
-      />
     </main>
   );
 }
