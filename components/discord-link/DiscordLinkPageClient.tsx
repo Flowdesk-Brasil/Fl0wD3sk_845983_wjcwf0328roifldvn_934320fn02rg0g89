@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConfigLogoutButton } from "@/components/config/ConfigLogoutButton";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
+import { buildDiscordAuthStartHref } from "@/lib/auth/paths";
 import {
   buildOfficialDiscordChannelUrl,
   OFFICIAL_DISCORD_INVITE_URL,
@@ -263,9 +264,7 @@ export function DiscordLinkPageClient({
 
       const nextPath = `${OFFICIAL_DISCORD_LINK_PATH}?access=${encodeURIComponent(accessToken)}`;
       redirectTimerRef.current = window.setTimeout(() => {
-        window.location.assign(
-          `/api/auth/discord?next=${encodeURIComponent(nextPath)}`,
-        );
+        window.location.assign(buildDiscordAuthStartHref(nextPath));
       }, 500);
 
       return;

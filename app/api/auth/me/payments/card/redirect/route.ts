@@ -73,6 +73,7 @@ type PaymentOrderRecord = {
   provider_external_reference: string | null;
   provider_payload: unknown;
   paid_at: string | null;
+  expires_at: string | null;
   checkout_link_nonce: string | null;
   checkout_link_expires_at: string | null;
   checkout_link_invalidated_at: string | null;
@@ -88,10 +89,10 @@ type CheckoutRedirectPayload = {
 
 const DEFAULT_CURRENCY = "BRL";
 const CHECKOUT_REDIRECT_REUSE_WINDOW_MS = 20 * 60 * 1000;
+const ORDER_EXPIRATION_SAFETY_BUFFER_MS = 45 * 1000;
 const LICENSE_VALIDITY_DAYS = 30;
-const LICENSE_VALIDITY_MS = LICENSE_VALIDITY_DAYS * 24 * 60 * 60 * 1000;
 const PAYMENT_ORDER_SELECT_COLUMNS =
-  `id, order_number, user_id, guild_id, payment_method, status, amount, currency, plan_code, plan_name, plan_billing_cycle_days, plan_max_licensed_servers, plan_max_active_tickets, plan_max_automations, plan_max_monthly_actions, provider_payment_id, provider_external_reference, provider_payload, paid_at, created_at, ${PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS}`;
+  `id, order_number, user_id, guild_id, payment_method, status, amount, currency, plan_code, plan_name, plan_billing_cycle_days, plan_max_licensed_servers, plan_max_active_tickets, plan_max_automations, plan_max_monthly_actions, provider_payment_id, provider_external_reference, provider_payload, paid_at, expires_at, created_at, ${PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS}`;
 const SERVER_TABS = new Set(["settings", "payments", "methods", "plans"]);
 
 function normalizeGuildId(value: unknown) {
@@ -134,10 +135,6 @@ function shouldForwardSessionEmailToHostedCardCheckout() {
   return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
-function resolveAmount() {
-  return 0;
-}
-
 function resolveCurrency() {
   return process.env.MERCADO_PAGO_PIX_CURRENCY || DEFAULT_CURRENCY;
 }
@@ -146,6 +143,30 @@ function parseAmount(amount: string | number) {
   if (typeof amount === "number") return amount;
   const numeric = Number(amount);
   return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function parseTimestampMs(value: string | null | undefined) {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function isOrderExpiredOrExpiringSoon(
+  order: Pick<PaymentOrderRecord, "status" | "expires_at" | "created_at">,
+  bufferMs = 0,
+) {
+  if (order.status === "expired") {
+    return true;
+  }
+
+  const directExpiresAtMs = parseTimestampMs(order.expires_at);
+  const fallbackExpiresAtMs = parseTimestampMs(
+    resolveUnpaidSetupExpiresAt(order.created_at),
+  );
+  const expiresAtMs = directExpiresAtMs ?? fallbackExpiresAtMs;
+  if (expiresAtMs === null) return false;
+
+  return expiresAtMs <= Date.now() + Math.max(0, bufferMs);
 }
 
 async function resolveCheckoutPlanForGuild(input: {
@@ -204,6 +225,9 @@ function resolveReusableRedirectUrl(order: PaymentOrderRecord) {
   if (order.status !== "pending") return null;
   if (order.provider_payment_id) return null;
   if (order.payment_method !== "card") return null;
+  if (isOrderExpiredOrExpiringSoon(order, ORDER_EXPIRATION_SAFETY_BUFFER_MS)) {
+    return null;
+  }
 
   const checkoutPayload = resolveCheckoutPayload(order.provider_payload);
   const redirectUrl =
@@ -217,6 +241,14 @@ function resolveReusableRedirectUrl(order: PaymentOrderRecord) {
   if (Date.now() - createdAtMs > CHECKOUT_REDIRECT_REUSE_WINDOW_MS) return null;
 
   return redirectUrl;
+}
+
+function canReuseDraftCardRedirectOrder(order: PaymentOrderRecord) {
+  return (
+    order.status === "pending" &&
+    !order.provider_payment_id &&
+    !isOrderExpiredOrExpiringSoon(order, ORDER_EXPIRATION_SAFETY_BUFFER_MS)
+  );
 }
 
 function buildConfigReturnUrl(input: {
@@ -681,7 +713,11 @@ export async function POST(request: Request) {
       latestOrder &&
       latestOrder.status === "pending" &&
       latestOrder.payment_method === "card" &&
-      latestOrder.provider_payment_id
+      latestOrder.provider_payment_id &&
+      !isOrderExpiredOrExpiringSoon(
+        latestOrder,
+        ORDER_EXPIRATION_SAFETY_BUFFER_MS,
+      )
     ) {
       return respond({
         ok: false,
@@ -693,12 +729,12 @@ export async function POST(request: Request) {
 
     const supabase = getSupabaseAdminClientOrThrow();
     let createdOrder: PaymentOrderRecord;
-    const canReuseDraftOrderForPayment =
-      !!latestOrder &&
-      latestOrder.status === "pending" &&
-      !latestOrder.provider_payment_id;
+    const draftOrderToReuse =
+      latestOrder && canReuseDraftCardRedirectOrder(latestOrder)
+        ? latestOrder
+        : null;
 
-    if (canReuseDraftOrderForPayment) {
+    if (draftOrderToReuse) {
       const reusedOrderResult = await supabase
         .from("payment_orders")
         .update({
@@ -713,7 +749,7 @@ export async function POST(request: Request) {
           plan_max_active_tickets: checkoutPlan.plan.entitlements.maxActiveTickets,
           plan_max_automations: checkoutPlan.plan.entitlements.maxAutomations,
           plan_max_monthly_actions: checkoutPlan.plan.entitlements.maxMonthlyActions,
-          expires_at: resolveUnpaidSetupExpiresAt(latestOrder.created_at),
+          expires_at: resolveUnpaidSetupExpiresAt(draftOrderToReuse.created_at),
           provider_external_reference: null,
           provider_payload: {
             source: "flowdesk_card_redirect_checkout",
@@ -731,7 +767,7 @@ export async function POST(request: Request) {
             },
           },
         })
-        .eq("id", latestOrder.id)
+        .eq("id", draftOrderToReuse.id)
         .select(PAYMENT_ORDER_SELECT_COLUMNS)
         .single<PaymentOrderRecord>();
 

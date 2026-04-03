@@ -100,6 +100,7 @@ type PaymentOrderEventPayload = Record<string, unknown>;
 
 const DEFAULT_PIX_CURRENCY = "BRL";
 const PENDING_REUSE_WINDOW_MS = 25 * 60 * 1000;
+const ORDER_EXPIRATION_SAFETY_BUFFER_MS = 45 * 1000;
 const PAYMENT_ORDER_SELECT_COLUMNS =
   `id, order_number, guild_id, payment_method, status, amount, currency, plan_code, plan_name, plan_billing_cycle_days, plan_max_licensed_servers, plan_max_active_tickets, plan_max_automations, plan_max_monthly_actions, payer_name, payer_document, payer_document_type, provider_payment_id, provider_external_reference, provider_qr_code, provider_qr_base64, provider_ticket_url, provider_status, provider_status_detail, paid_at, expires_at, user_id, created_at, updated_at, ${PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS}`;
 
@@ -184,6 +185,113 @@ function currenciesMatch(left: string | null | undefined, right: string) {
 
 function resolvePixCurrency() {
   return process.env.MERCADO_PAGO_PIX_CURRENCY || DEFAULT_PIX_CURRENCY;
+}
+
+function isRecentOrderTimestamp(
+  value: string | null | undefined,
+  windowMs: number,
+) {
+  const timestamp = parseTimestampMs(value);
+  if (timestamp === null) return false;
+  return Date.now() - timestamp <= windowMs;
+}
+
+function parseTimestampMs(value: string | null | undefined) {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function isExpirationRelatedProviderErrorMessage(message: string) {
+  const normalizedMessage = message.toLowerCase();
+  return (
+    normalizedMessage.includes("date_of_expiration") ||
+    normalizedMessage.includes("date of expiration") ||
+    normalizedMessage.includes("expiration") ||
+    normalizedMessage.includes("expired") ||
+    normalizedMessage.includes("prazo") ||
+    normalizedMessage.includes("expir")
+  );
+}
+
+function isOrderExpiredOrExpiringSoon(
+  order: Pick<
+    PaymentOrderRecord,
+    "status" | "provider_status" | "provider_status_detail" | "expires_at" | "created_at"
+  >,
+  bufferMs = 0,
+) {
+  const resolvedProviderStatus = resolvePaymentStatus(
+    order.provider_status || order.status,
+  );
+  if (order.status === "expired" || resolvedProviderStatus === "expired") {
+    return true;
+  }
+
+  const providerDetail = (order.provider_status_detail || "").trim().toLowerCase();
+  if (
+    providerDetail === "expired" ||
+    providerDetail === "unpaid_setup_timeout_cleanup" ||
+    providerDetail === "auto_refund_after_unpaid_setup_timeout"
+  ) {
+    return true;
+  }
+
+  const directExpiresAtMs = parseTimestampMs(order.expires_at);
+  const fallbackExpiresAtMs = parseTimestampMs(
+    resolveUnpaidSetupExpiresAt(order.created_at),
+  );
+  const expiresAtMs = directExpiresAtMs ?? fallbackExpiresAtMs;
+  if (expiresAtMs === null) return false;
+
+  return expiresAtMs <= Date.now() + Math.max(0, bufferMs);
+}
+
+function canReuseDraftCheckoutOrder(order: PaymentOrderRecord) {
+  return (
+    order.status === "pending" &&
+    !order.provider_payment_id &&
+    !isOrderExpiredOrExpiringSoon(order, ORDER_EXPIRATION_SAFETY_BUFFER_MS)
+  );
+}
+
+function canReuseExistingPixCheckoutOrder(
+  order: PaymentOrderRecord,
+  amount: number,
+  currency: string,
+) {
+  return (
+    order.payment_method === "pix" &&
+    order.status === "pending" &&
+    Boolean(order.provider_payment_id) &&
+    Boolean(order.provider_qr_code) &&
+    amountsMatch(order.amount, amount) &&
+    currenciesMatch(order.currency, currency) &&
+    isRecentOrderTimestamp(order.created_at, PENDING_REUSE_WINDOW_MS) &&
+    !isOrderExpiredOrExpiringSoon(order, ORDER_EXPIRATION_SAFETY_BUFFER_MS) &&
+    resolvePaymentStatus(order.provider_status || order.status) === "pending"
+  );
+}
+
+function resolveFriendlyPixProviderErrorMessage(message: string) {
+  if (isProviderDocumentErrorMessage(message)) {
+    return "CPF/CNPJ invalido para pagamento.";
+  }
+
+  if (isExpirationRelatedProviderErrorMessage(message)) {
+    return "A tentativa anterior do PIX venceu e o sistema preparou uma nova base segura. Tente novamente para gerar um novo codigo valido.";
+  }
+
+  const normalizedMessage = message.toLowerCase();
+  if (
+    normalizedMessage.includes("mercado pago") ||
+    normalizedMessage.includes("payment") ||
+    normalizedMessage.includes("pix")
+  ) {
+    return "Nao foi possivel confirmar a geracao do PIX com o provedor agora. Tente novamente em instantes.";
+  }
+
+  return "Nao foi possivel gerar o PIX agora. Tente novamente em instantes.";
 }
 
 async function resolveCheckoutPlanForGuild(input: {
@@ -843,7 +951,7 @@ export async function GET(request: Request) {
       });
     }
 
-    const latestOrder = await getLatestOrderForUserAndGuild(
+    let latestOrder = await getLatestOrderForUserAndGuild(
       sessionData.authSession.user.id,
       guildId,
     );
@@ -863,6 +971,25 @@ export async function GET(request: Request) {
         },
         { status: 409 },
       );
+    }
+
+    if (
+      latestOrder &&
+      latestOrder.payment_method === "pix" &&
+      latestOrder.status === "pending" &&
+      latestOrder.provider_payment_id
+    ) {
+      try {
+        latestOrder = await reconcilePixOrderFromProvider(latestOrder, "poll");
+      } catch {
+        await createPaymentOrderEventSafe(
+          latestOrder.id,
+          "provider_payment_reconcile_failed",
+          {
+            source: "checkout_bootstrap",
+          },
+        );
+      }
     }
 
     const latestPendingPixOrder =
@@ -885,7 +1012,9 @@ export async function GET(request: Request) {
       latestPendingPixOrder &&
       !doesOrderMatchCheckoutPlan(latestPendingPixOrder, checkoutPlan)
     ) {
-      order = latestPendingPixOrder.provider_payment_id
+      order =
+        latestPendingPixOrder.provider_payment_id ||
+        !canReuseDraftCheckoutOrder(latestPendingPixOrder)
         ? await createDraftOrderForCheckout({
             userId: sessionData.authSession.user.id,
             guildId,
@@ -899,6 +1028,20 @@ export async function GET(request: Request) {
             currency: checkoutPlan.currency,
             plan: checkoutPlan.plan,
           });
+    } else if (
+      latestPendingPixOrder &&
+      isOrderExpiredOrExpiringSoon(
+        latestPendingPixOrder,
+        ORDER_EXPIRATION_SAFETY_BUFFER_MS,
+      )
+    ) {
+      order = await createDraftOrderForCheckout({
+        userId: sessionData.authSession.user.id,
+        guildId,
+        amount: checkoutPlan.amount,
+        currency: checkoutPlan.currency,
+        plan: checkoutPlan.plan,
+      });
     } else if (!order) {
       order = await createDraftOrderForCheckout({
         userId: sessionData.authSession.user.id,
@@ -960,26 +1103,12 @@ export async function POST(request: Request) {
     }
 
     const guildId = normalizeGuildId(body.guildId);
-    const payerName = normalizePayerName(body.payerName);
-    const payerDocument = normalizePayerDocument(body.payerDocument);
+    const requestedPayerName = normalizePayerName(body.payerName);
+    const requestedPayerDocument = normalizePayerDocument(body.payerDocument);
 
     if (!guildId) {
       return respond(
         { ok: false, message: "Guild ID invalido para pagamento." },
-        { status: 400 },
-      );
-    }
-
-    if (!payerName) {
-      return respond(
-        { ok: false, message: "Nome completo invalido para pagamento." },
-        { status: 400 },
-      );
-    }
-
-    if (!payerDocument) {
-      return respond(
-        { ok: false, message: "CPF/CNPJ invalido para pagamento." },
         { status: 400 },
       );
     }
@@ -1068,7 +1197,42 @@ export async function POST(request: Request) {
     }
 
     const supabase = getSupabaseAdminClientOrThrow();
-    const latestOrder = await getLatestOrderForUserAndGuild(user.id, guildId);
+    let latestOrder = await getLatestOrderForUserAndGuild(user.id, guildId);
+
+    if (
+      latestOrder &&
+      latestOrder.payment_method === "pix" &&
+      latestOrder.status === "pending" &&
+      latestOrder.provider_payment_id
+    ) {
+      try {
+        latestOrder = await reconcilePixOrderFromProvider(latestOrder, "poll");
+      } catch {
+        await createPaymentOrderEventSafe(latestOrder.id, "provider_payment_reconcile_failed", {
+          source: "payment_pix_post",
+        });
+      }
+    }
+
+    const payerName =
+      requestedPayerName || normalizePayerName(latestOrder?.payer_name);
+    const payerDocument =
+      requestedPayerDocument || normalizePayerDocument(latestOrder?.payer_document);
+
+    if (!payerName) {
+      return respond(
+        { ok: false, message: "Nome completo invalido para pagamento." },
+        { status: 400 },
+      );
+    }
+
+    if (!payerDocument) {
+      return respond(
+        { ok: false, message: "CPF/CNPJ invalido para pagamento." },
+        { status: 400 },
+      );
+    }
+
     const checkoutPlan = await resolveCheckoutPlanForGuild({
       userId: user.id,
       guildId,
@@ -1096,13 +1260,12 @@ export async function POST(request: Request) {
 
     if (
       latestOrder &&
-      latestOrder.status === "pending" &&
-      latestOrder.payment_method === "pix" &&
       latestOrder.plan_code === checkoutPlan.plan.code &&
-      latestOrder.provider_qr_code &&
-      amountsMatch(latestOrder.amount, pricing.totalAmount) &&
-      currenciesMatch(latestOrder.currency, pricing.currency) &&
-      Date.now() - new Date(latestOrder.created_at).getTime() < PENDING_REUSE_WINDOW_MS
+      canReuseExistingPixCheckoutOrder(
+        latestOrder,
+        pricing.totalAmount,
+        pricing.currency,
+      )
     ) {
       const securedOrder = await ensureCheckoutAccessTokenForOrder({
         order: latestOrder,
@@ -1123,12 +1286,12 @@ export async function POST(request: Request) {
     const currency = pricing.currency;
 
     let createdOrder: PaymentOrderRecord;
-    const canReuseDraftOrderForPayment =
-      !!latestOrder &&
-      latestOrder.status === "pending" &&
-      !latestOrder.provider_payment_id;
+    const draftOrderToReuse =
+      latestOrder && canReuseDraftCheckoutOrder(latestOrder)
+        ? latestOrder
+        : null;
 
-    if (canReuseDraftOrderForPayment) {
+    if (draftOrderToReuse) {
       const reusedOrderResult = await supabase
         .from("payment_orders")
         .update({
@@ -1161,9 +1324,9 @@ export async function POST(request: Request) {
               },
             },
           },
-          expires_at: resolveUnpaidSetupExpiresAt(latestOrder.created_at),
+          expires_at: resolveUnpaidSetupExpiresAt(draftOrderToReuse.created_at),
         })
-        .eq("id", latestOrder.id)
+        .eq("id", draftOrderToReuse.id)
         .select(PAYMENT_ORDER_SELECT_COLUMNS)
         .single<PaymentOrderRecord>();
 
@@ -1486,14 +1649,13 @@ export async function POST(request: Request) {
         message,
       });
 
-      if (isProviderDocumentErrorMessage(message)) {
-        return respond(
-          { ok: false, message: "CPF/CNPJ invalido para pagamento." },
-          { status: 400 },
-        );
-      }
+      const friendlyMessage = resolveFriendlyPixProviderErrorMessage(message);
+      const responseStatus = isProviderDocumentErrorMessage(message) ? 400 : 503;
 
-      throw new Error(message);
+      return respond(
+        { ok: false, message: friendlyMessage },
+        { status: responseStatus },
+      );
     }
   } catch (error) {
     await logSecurityAuditEventSafe(auditContext, {

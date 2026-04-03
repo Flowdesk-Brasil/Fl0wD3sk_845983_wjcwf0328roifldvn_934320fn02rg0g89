@@ -38,6 +38,7 @@ import { LandingReveal } from "@/components/landing/LandingReveal";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { ServerSettingsEditor } from "@/components/servers/ServerSettingsEditor";
 import { ServerSettingsEditorSkeleton } from "@/components/servers/ServerSettingsEditorSkeleton";
+import { buildDiscordAuthStartHref } from "@/lib/auth/paths";
 import type { ManagedServer, ManagedServerStatus } from "@/lib/servers/managedServers";
 import { prefetchServerDashboardSettings } from "@/lib/servers/serverDashboardSettingsClient";
 import {
@@ -1607,7 +1608,7 @@ export function ServersWorkspace({
   const openDiscordLoginFlow = useCallback(() => {
     if (typeof window === "undefined") return;
     const nextPath = `${window.location.pathname}${window.location.search}`;
-    window.location.assign(`/api/auth/discord?next=${encodeURIComponent(nextPath)}`);
+    window.location.assign(buildDiscordAuthStartHref(nextPath));
   }, []);
 
   const handleAddAnotherAccount = useCallback(() => {
@@ -3117,4 +3118,3 @@ export function ServersWorkspace({
     </div>
   );
 }
-

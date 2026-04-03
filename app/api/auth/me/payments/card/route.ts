@@ -101,8 +101,8 @@ const DEFAULT_CURRENCY = "BRL";
 const CARD_RETRY_COOLDOWN_MS = 2 * 60 * 1000;
 const CARD_ISSUER_ANTIFRAUD_COOLDOWN_MS = 10 * 60 * 1000;
 const CARD_PENDING_REUSE_WINDOW_MS = 15 * 60 * 1000;
+const ORDER_EXPIRATION_SAFETY_BUFFER_MS = 45 * 1000;
 const LICENSE_VALIDITY_DAYS = 30;
-const LICENSE_VALIDITY_MS = LICENSE_VALIDITY_DAYS * 24 * 60 * 60 * 1000;
 const PAYMENT_ORDER_SELECT_COLUMNS =
   "id, order_number, user_id, guild_id, payment_method, status, amount, currency, plan_code, plan_name, plan_billing_cycle_days, plan_max_licensed_servers, plan_max_active_tickets, plan_max_automations, plan_max_monthly_actions, payer_name, payer_document, payer_document_type, provider_payment_id, provider_qr_code, provider_qr_base64, provider_ticket_url, provider_status, provider_status_detail, paid_at, expires_at, created_at, updated_at";
 
@@ -277,6 +277,41 @@ function isRecentOrderTimestamp(
   return Date.now() - timestamp <= windowMs;
 }
 
+function parseTimestampMs(value: string | null | undefined) {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function isOrderExpiredOrExpiringSoon(
+  order: Pick<PaymentOrderRecord, "status" | "provider_status" | "expires_at" | "created_at">,
+  bufferMs = 0,
+) {
+  const resolvedProviderStatus = resolvePaymentStatus(
+    order.provider_status || order.status,
+  );
+  if (order.status === "expired" || resolvedProviderStatus === "expired") {
+    return true;
+  }
+
+  const directExpiresAtMs = parseTimestampMs(order.expires_at);
+  const fallbackExpiresAtMs = parseTimestampMs(
+    resolveUnpaidSetupExpiresAt(order.created_at),
+  );
+  const expiresAtMs = directExpiresAtMs ?? fallbackExpiresAtMs;
+  if (expiresAtMs === null) return false;
+
+  return expiresAtMs <= Date.now() + Math.max(0, bufferMs);
+}
+
+function canReuseDraftCardOrder(order: PaymentOrderRecord) {
+  return (
+    order.status === "pending" &&
+    !order.provider_payment_id &&
+    !isOrderExpiredOrExpiringSoon(order, ORDER_EXPIRATION_SAFETY_BUFFER_MS)
+  );
+}
+
 function resolveLicenseBaseTimestamp(order: PaymentOrderRecord) {
   const paidAtMs = order.paid_at ? Date.parse(order.paid_at) : Number.NaN;
   if (Number.isFinite(paidAtMs)) return paidAtMs;
@@ -302,16 +337,6 @@ function resolveLicenseExpiresAt(order: PaymentOrderRecord) {
 function isLicenseActiveForOrder(order: PaymentOrderRecord) {
   if (order.status !== "approved") return false;
   return Date.now() < Date.parse(resolveLicenseExpiresAt(order));
-}
-
-function resolveAmount() {
-  const rawValue = process.env.MERCADO_PAGO_PIX_AMOUNT;
-  if (!rawValue) return DEFAULT_AMOUNT;
-
-  const parsed = Number(rawValue);
-  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_AMOUNT;
-
-  return Math.round(parsed * 100) / 100;
 }
 
 function resolveCurrency() {
@@ -1006,6 +1031,10 @@ export async function POST(request: Request) {
       latestCardOrder.payment_method === "card" &&
       latestCardOrder.status === "pending" &&
       !!latestCardOrder.provider_payment_id &&
+      !isOrderExpiredOrExpiringSoon(
+        latestCardOrder,
+        ORDER_EXPIRATION_SAFETY_BUFFER_MS,
+      ) &&
       (isRecentOrderTimestamp(
         latestCardOrder.updated_at,
         CARD_PENDING_REUSE_WINDOW_MS,
@@ -1108,12 +1137,12 @@ export async function POST(request: Request) {
       cardEnvironment === "production" ? "card_production" : "card_test";
 
     let createdOrder: PaymentOrderRecord;
-    const canReuseDraftOrderForPayment =
-      !!latestOrder &&
-      latestOrder.status === "pending" &&
-      !latestOrder.provider_payment_id;
+    const draftOrderToReuse =
+      latestOrder && canReuseDraftCardOrder(latestOrder)
+        ? latestOrder
+        : null;
 
-    if (canReuseDraftOrderForPayment) {
+    if (draftOrderToReuse) {
       const reusedOrderResult = await supabase
         .from("payment_orders")
         .update({
@@ -1128,7 +1157,7 @@ export async function POST(request: Request) {
           plan_max_active_tickets: checkoutPlan.plan.entitlements.maxActiveTickets,
           plan_max_automations: checkoutPlan.plan.entitlements.maxAutomations,
           plan_max_monthly_actions: checkoutPlan.plan.entitlements.maxMonthlyActions,
-          expires_at: resolveUnpaidSetupExpiresAt(latestOrder.created_at),
+          expires_at: resolveUnpaidSetupExpiresAt(draftOrderToReuse.created_at),
           payer_name: payerName,
           payer_document: payerDocument.normalized,
           payer_document_type: payerDocument.type,
@@ -1159,7 +1188,7 @@ export async function POST(request: Request) {
             },
           },
         })
-        .eq("id", latestOrder.id)
+        .eq("id", draftOrderToReuse.id)
         .select(PAYMENT_ORDER_SELECT_COLUMNS)
         .single<PaymentOrderRecord>();
 

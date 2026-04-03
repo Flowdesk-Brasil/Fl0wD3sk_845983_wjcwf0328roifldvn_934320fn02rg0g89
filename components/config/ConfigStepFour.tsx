@@ -32,10 +32,8 @@ import {
   buildConfigCheckoutPath,
   DEFAULT_PLAN_BILLING_PERIOD_CODE,
   DEFAULT_PLAN_CODE,
-  formatPlanUsageLimit,
   getAllPlanPricingDefinitions,
   getAvailableBillingPeriodsForPlan,
-  isPlanBillingPeriodCode,
   isPlanCode,
   normalizePlanBillingPeriodCode,
   normalizePlanCode,
@@ -160,13 +158,15 @@ declare global {
 type MethodSelectorPanelProps = {
   className: string;
   onChoosePix: () => void;
+  onStartPixFlow: () => void;
+  onTogglePixTerms: (checked: boolean) => void;
   onSelectHostedRail: (rail: Exclude<CheckoutRail, "pix">) => void;
   methodMessage: string | null;
   canInteract: boolean;
   cardEnabled: boolean;
   selectedRail: CheckoutRail | null;
-  showHeader?: boolean;
-  showLegalText?: boolean;
+  pixTermsAccepted: boolean;
+  view: StepFourView;
 };
 
 type PixFormPanelProps = {
@@ -223,15 +223,6 @@ type PixCheckoutPanelProps = {
   copied: boolean;
   onCopy: () => void;
   onBackToMethods: () => void;
-};
-
-type StatusResultPanelProps = {
-  className: string;
-  iconPath?: string | null;
-  label: string;
-  useLoader?: boolean;
-  loaderColorClassName?: string;
-  panelTone?: "neutral" | "live" | "success";
 };
 
 type DiscountPreviewApiResponse = {
@@ -373,7 +364,7 @@ function BillingPeriodSwitcher({
 }) {
   const selectedPeriod =
     periods.find((period) => period.code === selectedBillingPeriodCode) || null;
-  const selectWidth = `${Math.max((selectedPeriod?.label.length || 9) + 6, 14)}ch`;
+  const selectWidth = `${Math.max((selectedPeriod?.label.length || 9) + 7, 16)}ch`;
 
   return (
     <div
@@ -393,7 +384,7 @@ function BillingPeriodSwitcher({
         }
         disabled={disabled || periods.length <= 1}
         loading={false}
-        controlHeightPx={46}
+        controlHeightPx={56}
         variant="immersive"
       />
     </div>
@@ -1175,15 +1166,40 @@ function parseMercadoPagoCardTokenError(payload: MercadoPagoCardTokenPayload) {
   return null;
 }
 
+function normalizePaymentUiMessage(message: string | null | undefined) {
+  if (!message) return null;
+
+  const normalized = message.trim().replace(/^Mercado Pago:\s*/i, "");
+  if (!normalized) return null;
+
+  const lowercaseMessage = normalized.toLowerCase();
+  if (
+    lowercaseMessage.includes("date_of_expiration") ||
+    lowercaseMessage.includes("date of expiration") ||
+    lowercaseMessage.includes("expiration") ||
+    lowercaseMessage.includes("expired")
+  ) {
+    return "A tentativa anterior expirou. O sistema vai preparar uma nova cobranca segura.";
+  }
+
+  if (
+    lowercaseMessage.includes("provider_payment_id") ||
+    lowercaseMessage.includes("checkout link") ||
+    lowercaseMessage.includes("secure token")
+  ) {
+    return "Estamos atualizando esta tentativa de pagamento com seguranca. Tente novamente em instantes.";
+  }
+
+  return normalized;
+}
+
 function parseUnknownErrorMessage(error: unknown) {
   if (error instanceof Error) {
-    const message = error.message?.trim();
-    return message || null;
+    return normalizePaymentUiMessage(error.message);
   }
 
   if (typeof error === "string") {
-    const message = error.trim();
-    return message || null;
+    return normalizePaymentUiMessage(error);
   }
 
   if (!error || typeof error !== "object") {
@@ -1194,12 +1210,12 @@ function parseUnknownErrorMessage(error: unknown) {
 
   const directMessage = data.message;
   if (typeof directMessage === "string" && directMessage.trim()) {
-    return directMessage.trim();
+    return normalizePaymentUiMessage(directMessage);
   }
 
   const errorMessage = data.errorMessage;
   if (typeof errorMessage === "string" && errorMessage.trim()) {
-    return errorMessage.trim();
+    return normalizePaymentUiMessage(errorMessage);
   }
 
   const cause = data.cause;
@@ -1208,12 +1224,31 @@ function parseUnknownErrorMessage(error: unknown) {
     if (firstCause && typeof firstCause === "object") {
       const description = (firstCause as UnknownErrorObject).description;
       if (typeof description === "string" && description.trim()) {
-        return description.trim();
+        return normalizePaymentUiMessage(description);
       }
     }
   }
 
   return null;
+}
+
+function parseTimestampMs(value: string | null | undefined) {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function isPixOrderExpiredOrUnavailable(order: PixOrder | null | undefined) {
+  if (!order || order.method !== "pix") return false;
+
+  const providerStatus = (order.providerStatus || "").trim().toLowerCase();
+  if (order.status === "expired" || providerStatus === "expired") {
+    return true;
+  }
+
+  const expiresAtMs = parseTimestampMs(order.expiresAt);
+  if (expiresAtMs === null) return false;
+  return expiresAtMs <= Date.now();
 }
 
 async function loadMercadoPagoSdk() {
@@ -1767,156 +1802,6 @@ function paymentStatusLabel(order: PixOrder | null | undefined) {
   }
 }
 
-type StatusVisual = {
-  title: string;
-  label: string;
-  colorClassName: string;
-  iconPath: string | null;
-  showRegenerate: boolean;
-  useLoaderPanel?: boolean;
-};
-
-function resolveStatusVisual(order: PixOrder | null | undefined): StatusVisual {
-  const status = order?.status || "pending";
-  const method = order?.method || "pix";
-  const diagnostic = resolveOrderDiagnostic(order);
-
-  if (status === "approved") {
-    return {
-      title:
-        method === "trial"
-          ? "Plano gratuito ativado, seu servidor ja pode seguir com a operacao"
-          : "Ja Aprovado, Todos seus sistemas estao ja online!!",
-      label: method === "trial" ? "Plano gratuito ativado" : "Pagamento aprovado",
-      colorClassName: "text-[#6AE25A]",
-      iconPath: "/cdn/icons/check.png",
-      showRegenerate: false,
-      useLoaderPanel: false,
-    };
-  }
-
-  if (status === "pending" && method === "card") {
-    return {
-      title: "Pagamento em analise, aguardando confirmacao do emissor",
-      label: "Pagamento em analise",
-      colorClassName: "text-[#D8D8D8]",
-      iconPath: null,
-      showRegenerate: false,
-      useLoaderPanel: true,
-    };
-  }
-
-  if (status === "expired") {
-    return {
-      title: "Pagamento Expirado, Gere outro pagamento",
-      label: "Pagamento Expirado",
-      colorClassName: "text-[#F2C823]",
-      iconPath: "/cdn/icons/expired.png",
-      showRegenerate: true,
-      useLoaderPanel: false,
-    };
-  }
-
-  if (status === "cancelled") {
-    return {
-      title:
-        method === "card"
-          ? diagnostic?.category === "checkout_closed"
-            ? "Checkout encerrado antes da confirmacao do pagamento"
-            : "Checkout cancelado, Crie um novo novamente"
-          : "Pagamento Cancelado, Gere outro pagamento",
-      label: method === "card" ? "Checkout cancelado" : "Pagamento Cancelado",
-      colorClassName: "text-[#DB4646]",
-      iconPath: "/cdn/icons/canceled.png",
-      showRegenerate: true,
-      useLoaderPanel: false,
-    };
-  }
-
-  if (status === "rejected") {
-    return {
-      title:
-        method === "card" && diagnostic?.category === "antifraud"
-          ? "Pagamento nao aprovado na analise de seguranca"
-          : method === "card" && diagnostic?.category === "issuer"
-            ? "Pagamento nao aprovado pelo banco emissor"
-            : "Pagamento nao aprovado, revise os dados e tente novamente",
-      label: "Pagamento nao aprovado",
-      colorClassName: "text-[#DB4646]",
-      iconPath: "/cdn/icons/canceled.png",
-      showRegenerate: true,
-      useLoaderPanel: false,
-    };
-  }
-
-  if (status === "failed") {
-    return {
-      title:
-        method === "card"
-          ? diagnostic?.category === "checkout_failed"
-            ? "Tentativa com cartao nao foi concluida com seguranca"
-            : "Falha ao concluir o checkout, gere uma nova tentativa"
-          : "Pagamento Cancelado, Gere outro pagamento",
-      label: method === "card" ? "Falha no checkout" : "Pagamento Cancelado",
-      colorClassName: "text-[#DB4646]",
-      iconPath: "/cdn/icons/canceled.png",
-      showRegenerate: true,
-      useLoaderPanel: false,
-    };
-  }
-
-  return {
-    title: "Ultima etapa, Realize o pagamento para confirmacao",
-    label: "Pagamento pendente",
-    colorClassName: "text-[#D8D8D8]",
-    iconPath: null,
-    showRegenerate: false,
-    useLoaderPanel: false,
-  };
-}
-
-function resolveStatusSupportCopy(order: PixOrder | null | undefined) {
-  if (!order) {
-    return "Apos a confirmacao do pagamento, a aprovacao sera imediata, juntamente com a liberacao do sistema.";
-  }
-
-  const diagnostic = resolveOrderDiagnostic(order);
-
-  if (order.method === "trial" && order.status === "approved") {
-    return "O periodo gratuito ja foi liberado para este servidor. A ativacao foi concluida automaticamente e o painel segue pronto para voce continuar.";
-  }
-
-  if (order.method === "card" && order.status === "pending") {
-    return diagnostic
-      ? `${diagnostic.summary} ${diagnostic.recommendation}`
-      : "Seu pagamento com cartao foi enviado para analise do emissor. Em alguns casos, a confirmacao pode levar alguns instantes. Se o status mudar, esta tela sera atualizada automaticamente.";
-  }
-
-  if (order.method === "card" && order.status === "rejected") {
-    return diagnostic
-      ? `${diagnostic.summary} ${diagnostic.recommendation}`
-      : "O emissor do cartao nao aprovou esta tentativa. Revise os dados, utilize o mesmo titular do cartao e tente novamente. Se preferir, voce tambem pode concluir por PIX.";
-  }
-
-  if (order.method === "card" && order.status === "cancelled") {
-    return diagnostic
-      ? `${diagnostic.summary} ${diagnostic.recommendation}`
-      : "O checkout com cartao foi encerrado antes da confirmacao do pagamento. Quando quiser, voce pode gerar uma nova tentativa segura e concluir novamente.";
-  }
-
-  if (order.method === "card" && order.status === "failed") {
-    return diagnostic
-      ? `${diagnostic.summary} ${diagnostic.recommendation}`
-      : "Nao foi possivel concluir o checkout do cartao nesta tentativa. Gere um novo checkout para continuar com seguranca.";
-  }
-
-  if (order.status === "expired") {
-    return "O prazo deste pagamento terminou. Gere um novo pagamento para continuar a liberacao do sistema neste servidor.";
-  }
-
-  return "Apos a confirmacao do pagamento, a aprovacao sera imediata, juntamente com a liberacao do sistema.";
-}
-
 function resolveHostedCardReturnFallbackOrder(input: {
   order: PixOrder | null;
   returnStatus: string | null;
@@ -1953,35 +1838,6 @@ function resolveHostedCardReturnFallbackOrder(input: {
     providerStatusDetail,
     updatedAt: new Date().toISOString(),
   } satisfies PixOrder;
-}
-
-function resolveRegenerateButtonLabel(order: PixOrder | null | undefined) {
-  if (!order) return "Gerar novo pagamento";
-
-  if (order.method === "card") {
-    switch (order.status) {
-      case "cancelled":
-        return "Escolher pagamento novamente";
-      case "rejected":
-        return "Escolher pagamento novamente";
-      case "failed":
-        return "Escolher pagamento novamente";
-      case "expired":
-        return "Escolher pagamento novamente";
-      default:
-        return "Escolher pagamento novamente";
-    }
-  }
-
-  switch (order.status) {
-    case "expired":
-      return "Gerar novo PIX";
-    case "cancelled":
-    case "failed":
-      return "Gerar novo pagamento";
-    default:
-      return "Gerar novo pagamento";
-  }
 }
 
 function resolveDocumentStatus(digits: string): ValidationStatus {
@@ -2072,12 +1928,20 @@ function CheckoutLegalText({ className }: { className: string }) {
   );
 }
 
-function PaymentMethodChevron({ disabled = false }: { disabled?: boolean }) {
+function PaymentMethodChevron({
+  disabled = false,
+  expanded = false,
+}: {
+  disabled?: boolean;
+  expanded?: boolean;
+}) {
   return (
     <svg
       aria-hidden="true"
       viewBox="0 0 20 20"
-      className={`h-[18px] w-[18px] ${disabled ? "text-[#4E4E4E]" : "text-[#AFAFAF]"}`}
+      className={`h-[18px] w-[18px] transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+        expanded ? "rotate-180" : "rotate-0"
+      } ${disabled ? "text-[#4E4E4E]" : "text-[#AFAFAF]"}`}
       fill="none"
       stroke="currentColor"
       strokeWidth="1.8"
@@ -2086,6 +1950,25 @@ function PaymentMethodChevron({ disabled = false }: { disabled?: boolean }) {
     >
       <path d="m5 7.5 5 5 5-5" />
     </svg>
+  );
+}
+
+function PixRailWordmark() {
+  return (
+    <span className="inline-flex items-center gap-[8px]">
+      <span className="relative h-[22px] w-[22px] shrink-0">
+        <Image
+          src="/cdn/icons/pix_.png"
+          alt="PIX"
+          fill
+          sizes="22px"
+          className="object-contain"
+        />
+      </span>
+      <span className="text-[15px] font-semibold tracking-[-0.03em] text-[#DDFCF4]">
+        PIX
+      </span>
+    </span>
   );
 }
 
@@ -2164,6 +2047,7 @@ function PaymentMethodRow({
   label,
   description,
   active = false,
+  expanded = false,
   disabled = false,
   onClick,
   leading,
@@ -2172,6 +2056,7 @@ function PaymentMethodRow({
   label: string;
   description: string;
   active?: boolean;
+  expanded?: boolean;
   disabled?: boolean;
   onClick?: () => void;
   leading?: ReactNode;
@@ -2182,9 +2067,15 @@ function PaymentMethodRow({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`flex min-h-[74px] w-full items-center justify-between gap-[16px] rounded-[20px] border px-[18px] py-[14px] text-left transition-[border-color,background-color,opacity,transform] ${
+      className={`flex min-h-[78px] w-full items-center justify-between gap-[16px] border px-[22px] py-[16px] text-left transition-[border-color,background-color,opacity,transform] ${
+        expanded
+          ? "rounded-t-[22px] rounded-b-none border-b-transparent"
+          : "rounded-[22px]"
+      } ${
         active
-          ? "border-[rgba(84,148,255,0.42)] bg-[rgba(11,20,34,0.92)]"
+          ? expanded
+            ? "border-[#323232] bg-[#101010]"
+            : "border-[#323232] bg-[#101010] shadow-[0_22px_60px_rgba(0,0,0,0.16)]"
           : "border-[#1C1C1C] bg-[#0B0B0B] hover:border-[#2B2B2B] hover:bg-[#101010]"
       } disabled:cursor-not-allowed disabled:opacity-45`}
     >
@@ -2212,73 +2103,154 @@ function PaymentMethodRow({
 function MethodSelectorPanel({
   className,
   onChoosePix,
+  onStartPixFlow,
+  onTogglePixTerms,
   onSelectHostedRail,
   methodMessage,
   canInteract,
   cardEnabled,
   selectedRail,
-  showHeader = true,
-  showLegalText = true,
+  pixTermsAccepted,
+  view,
 }: MethodSelectorPanelProps) {
+  const isPixExpanded = selectedRail === "pix";
+  const isPixDetailsStage = view === "methods";
+  const isPixIdentityStage = view === "pix_form";
+  const canStartPixFlow = canInteract && pixTermsAccepted && !isPixIdentityStage;
+
   return (
-    <div className={className}>
-      {showHeader ? (
-        <>
-          <h2 className="text-center text-[33px] font-medium text-[#D8D8D8] max-[1529px]:hidden">
-            Escolha o metodo de pagamento
-          </h2>
-
-          <div className="mt-[25px] mb-[25px] h-[2px] w-full bg-[#242424] max-[1529px]:hidden" />
-        </>
-      ) : null}
-
-      <div className="space-y-[10px]">
-        <p className="text-[14px] font-medium text-[#9D9D9D]">
-          Pagamento instantaneo
+    <div className={`${className} flowdesk-stage-fade`}>
+      <div className="space-y-[12px]">
+        <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[#7A7A7A]">
+          Metodos de pagamento
         </p>
 
-        <PaymentMethodRow
-          label="PIX"
-          description="QR Code e copia e cola liberados em segundos."
-          active={selectedRail === "pix"}
-          disabled={!canInteract}
-          onClick={onChoosePix}
-          leading={
-            <Image
-              src="/cdn/icons/pix_.png"
-              alt="PIX"
-              fill
-              sizes="24px"
-              className="object-contain"
-            />
-          }
-          trailing={
-            <>
-              <span className="text-[12px] font-semibold text-[#0ECF9C]">
-                Instantaneo
-              </span>
-              <PaymentMethodChevron disabled={!canInteract} />
-            </>
-          }
-        />
+        <div className={isPixExpanded ? "overflow-hidden rounded-[22px] shadow-[0_22px_60px_rgba(0,0,0,0.16)]" : undefined}>
+          <PaymentMethodRow
+            label="PIX via QR Code"
+            description="Gere o QR Code dentro da Flowdesk e pague em segundos."
+            active={selectedRail === "pix"}
+            expanded={isPixExpanded}
+            disabled={!canInteract}
+            onClick={onChoosePix}
+            trailing={
+              <>
+                <PixRailWordmark />
+                <PaymentMethodChevron
+                  disabled={!canInteract}
+                  expanded={selectedRail === "pix"}
+                />
+              </>
+            }
+          />
+
+          <div
+            className={`grid overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+              isPixExpanded
+                ? "grid-rows-[1fr] opacity-100"
+                : "grid-rows-[0fr] opacity-0"
+            }`}
+          >
+            <div
+              className={`min-h-0 overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                isPixExpanded ? "translate-y-0" : "-translate-y-[10px]"
+              }`}
+            >
+              <div className="-mt-px rounded-b-[22px] border-x border-b border-[#323232] bg-[#101010] px-[22px] pb-[20px] pt-[6px]">
+              <label className="flex items-start gap-[12px] border-t border-[#191919] pt-[16px]">
+                <input
+                  type="checkbox"
+                  checked={pixTermsAccepted}
+                  onChange={(event) => onTogglePixTerms(event.currentTarget.checked)}
+                  className="mt-[4px] h-[18px] w-[18px] shrink-0 rounded-[5px] border border-[#353535] bg-transparent accent-[#D8D8D8]"
+                />
+                <span className="text-[14px] leading-[1.7] text-[#CFCFCF]">
+                  Ao continuar com o PIX, voce concorda com nossos{" "}
+                  <Link
+                    href={TERMS_PATH}
+                    className="underline decoration-[#5A5A5A] underline-offset-4 hover:text-white"
+                  >
+                    Termos
+                  </Link>{" "}
+                  e a nossa{" "}
+                  <Link
+                    href={PRIVACY_PATH}
+                    className="underline decoration-[#5A5A5A] underline-offset-4 hover:text-white"
+                  >
+                    Politica de Privacidade
+                  </Link>
+                  .
+                </span>
+              </label>
+
+              {isPixDetailsStage ? (
+                <button
+                  type="button"
+                  onClick={onStartPixFlow}
+                  disabled={!canStartPixFlow}
+                  className="mt-[18px] inline-flex h-[56px] items-center justify-center rounded-[16px] bg-[linear-gradient(180deg,#0062FF_0%,#0153D5_100%)] px-[18px] text-[16px] font-semibold text-white transition-transform duration-150 ease-out hover:scale-[1.01] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  Enviar pagamento
+                </button>
+              ) : (
+                <div className="mt-[18px] border-t border-[#191919] pt-[16px] text-[14px] leading-[1.65] text-[#BEBEBE]">
+                  Continue neste mesmo card para confirmar nome completo e CPF antes
+                  de gerar o QR Code PIX.
+                </div>
+              )}
+
+              <div className="mt-[16px] grid gap-[10px] border-t border-[#191919] pt-[16px] text-[14px] text-[#D5D5D5]">
+                <div className="flex items-center gap-[10px]">
+                  <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-full bg-[#171717] text-[#D8D8D8]">
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 20 20"
+                      className="h-[12px] w-[12px]"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.9"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="m4.5 10 2.7 2.7L15.5 4.5" />
+                    </svg>
+                  </span>
+                  <span>Pagamento instantaneo e liberacao automatica apos confirmacao.</span>
+                </div>
+                <div className="flex items-center gap-[10px]">
+                  <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-full bg-[#171717] text-[#D8D8D8]">
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 20 20"
+                      className="h-[12px] w-[12px]"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.9"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M10 3.8 5.4 5.9v3.8c0 2.9 1.8 5.5 4.6 6.6 2.8-1.1 4.6-3.7 4.6-6.6V5.9L10 3.8Z" />
+                      <path d="m8.3 9.8 1.2 1.2 2.3-2.5" />
+                    </svg>
+                  </span>
+                  <span>Transacao criptografada e protegida dentro do ambiente Flowdesk.</span>
+                </div>
+              </div>
+              </div>
+            </div>
+          </div>
+        </div>
 
         <PaymentMethodRow
           label="Cartao"
-          description="Ativacao direta indisponivel nesta etapa."
+          description="Checkout dedicado com cartao sera liberado em seguida."
           disabled
-          leading={
-            <Image
-              src="/cdn/icons/card_.png"
-              alt="Cartao"
-              fill
-              sizes="24px"
-              className="object-contain"
-            />
-          }
           trailing={
             <>
               <CardBrandCluster />
-              <PaymentMethodChevron disabled />
+              <span className="rounded-full border border-[#252525] bg-[#111111] px-[10px] py-[6px] text-[11px] font-semibold uppercase tracking-[0.14em] text-[#8D8D8D]">
+                {CARD_PAYMENTS_COMING_SOON_BADGE}
+              </span>
             </>
           }
         />
@@ -2292,7 +2264,10 @@ function MethodSelectorPanel({
           trailing={
             <>
               <HostedPaymentWordmark rail="google_pay" />
-              <PaymentMethodChevron disabled={!canInteract || !cardEnabled} />
+              <PaymentMethodChevron
+                disabled={!canInteract || !cardEnabled}
+                expanded={selectedRail === "google_pay"}
+              />
             </>
           }
         />
@@ -2306,7 +2281,10 @@ function MethodSelectorPanel({
           trailing={
             <>
               <HostedPaymentWordmark rail="nupay" />
-              <PaymentMethodChevron disabled={!canInteract || !cardEnabled} />
+              <PaymentMethodChevron
+                disabled={!canInteract || !cardEnabled}
+                expanded={selectedRail === "nupay"}
+              />
             </>
           }
         />
@@ -2320,7 +2298,10 @@ function MethodSelectorPanel({
           trailing={
             <>
               <HostedPaymentWordmark rail="paypal" />
-              <PaymentMethodChevron disabled={!canInteract || !cardEnabled} />
+              <PaymentMethodChevron
+                disabled={!canInteract || !cardEnabled}
+                expanded={selectedRail === "paypal"}
+              />
             </>
           }
         />
@@ -2333,14 +2314,10 @@ function MethodSelectorPanel({
         </div>
       ) : null}
 
-      {methodMessage ? <p className="mt-[14px] text-center text-[12px] text-[#C2C2C2]">{methodMessage}</p> : null}
-
-      {showLegalText ? (
-        <>
-          <div className="mt-[25px] h-[2px] w-full bg-[#242424]" />
-
-          <CheckoutLegalText className="mt-[25px] hidden text-center text-[12px] leading-[1.6] text-[#949494] min-[1530px]:block" />
-        </>
+      {methodMessage ? (
+        <p className="mt-[14px] text-center text-[12px] leading-[1.7] text-[#C2C2C2]">
+          {methodMessage}
+        </p>
       ) : null}
     </div>
   );
@@ -2363,52 +2340,62 @@ function PixFormPanel({
   errorAnimationTick,
 }: PixFormPanelProps) {
   return (
-    <div className={className}>
-      <div className="mx-auto mb-[14px] flex h-[64px] w-[64px] items-center justify-center">
-        <span className="relative h-[64px] w-[64px]">
-          <Image src="/cdn/icons/pix_.png" alt="PIX" fill sizes="64px" className="object-contain" />
+    <div className={`${className} flowdesk-stage-fade`}>
+      <div className="inline-flex items-center gap-[10px] rounded-full border border-[#252525] bg-[#111111] px-[12px] py-[7px] text-[11px] font-semibold uppercase tracking-[0.16em] text-[#D9D9D9]">
+        <span className="relative h-[16px] w-[16px] shrink-0">
+          <Image src="/cdn/icons/pix_.png" alt="PIX" fill sizes="16px" className="object-contain" />
         </span>
+        Dados do pagador
       </div>
 
-      <h2 className="text-center text-[33px] font-medium text-[#D8D8D8]">Pagamento com PIX</h2>
+      <h2 className="mt-[16px] text-[26px] font-semibold tracking-[-0.05em] text-[#F4F4F4]">
+        Confirme os dados para gerar seu QR Code
+      </h2>
+      <p className="mt-[8px] text-[14px] leading-[1.7] text-[#9C9C9C]">
+        Vamos usar essas informacoes para emitir o PIX e liberar o QR Code aqui
+        no mesmo card do carrinho.
+      </p>
 
-      <div className="mt-[25px] h-[2px] w-full bg-[#242424]" />
-
-      <p className="mt-[25px] text-[18px] font-medium text-[#D8D8D8]">Dados do pagamento</p>
-
-      <div className="mt-[14px] flex flex-col gap-4">
-        <div key={`payer-document-${errorAnimationTick}`} className={hasInputError ? "flowdesk-input-shake" : undefined}>
+      <div className="mt-[20px] flex flex-col gap-[14px]">
+        <div key={`payer-name-${errorAnimationTick}`} className={hasInputError ? "flowdesk-input-shake" : undefined}>
+          <label className="mb-[8px] block text-[13px] font-medium text-[#CFCFCF]">
+            Nome completo
+          </label>
           <div className="relative">
-            <input type="text" value={payerDocument} onChange={(event) => onPayerDocumentChange(event.currentTarget.value)} placeholder="CPF/CNPJ" className={`h-[56px] w-full rounded-[16px] border bg-[#050505] px-[20px] pr-[62px] text-[18px] text-[#F0F0F0] outline-none placeholder:text-[18px] placeholder:text-[#424242] ${resolveInputBorderClass(hasInputError, payerDocumentStatus)}`} inputMode="numeric" aria-invalid={hasInputError} />
-            <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2"><ValidationIndicator status={payerDocumentStatus} /></span>
+            <input type="text" value={payerName} onChange={(event) => onPayerNameChange(event.currentTarget.value)} placeholder="Digite o nome do titular" className={`h-[58px] w-full rounded-[18px] border bg-[#090909] px-[18px] pr-[62px] text-[16px] text-[#F0F0F0] outline-none placeholder:text-[#525252] ${resolveInputBorderClass(hasInputError, payerNameStatus)}`} aria-invalid={hasInputError} />
+            <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2"><ValidationIndicator status={payerNameStatus} /></span>
           </div>
         </div>
 
-        <div key={`payer-name-${errorAnimationTick}`} className={hasInputError ? "flowdesk-input-shake" : undefined}>
+        <div key={`payer-document-${errorAnimationTick}`} className={hasInputError ? "flowdesk-input-shake" : undefined}>
+          <label className="mb-[8px] block text-[13px] font-medium text-[#CFCFCF]">
+            CPF
+          </label>
           <div className="relative">
-            <input type="text" value={payerName} onChange={(event) => onPayerNameChange(event.currentTarget.value)} placeholder="Nome Completo" className={`h-[56px] w-full rounded-[16px] border bg-[#050505] px-[20px] pr-[62px] text-[18px] text-[#F0F0F0] outline-none placeholder:text-[18px] placeholder:text-[#424242] ${resolveInputBorderClass(hasInputError, payerNameStatus)}`} aria-invalid={hasInputError} />
-            <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2"><ValidationIndicator status={payerNameStatus} /></span>
+            <input type="text" value={payerDocument} onChange={(event) => onPayerDocumentChange(event.currentTarget.value)} placeholder="000.000.000-00" className={`h-[58px] w-full rounded-[18px] border bg-[#090909] px-[18px] pr-[62px] text-[16px] text-[#F0F0F0] outline-none placeholder:text-[#525252] ${resolveInputBorderClass(hasInputError, payerDocumentStatus)}`} inputMode="numeric" aria-invalid={hasInputError} />
+            <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2"><ValidationIndicator status={payerDocumentStatus} /></span>
           </div>
         </div>
       </div>
 
       {errorMessage ? (
-        <p key={`pix-form-error-${errorAnimationTick}-${errorMessage}`} className="mt-[10px] flowdesk-slide-down text-left text-[12px] text-[#DB4646]">
+        <p key={`pix-form-error-${errorAnimationTick}-${errorMessage}`} className="mt-[12px] flowdesk-slide-down text-left text-[12px] leading-[1.6] text-[#DB4646]">
           {errorMessage}
         </p>
       ) : null}
 
-      <button type="button" onClick={onSubmit} disabled={!canSubmit || isSubmitting} className="mt-[16px] flex h-[56px] w-full items-center justify-center rounded-[16px] bg-[#F0F0F0] text-[18px] font-semibold text-[#101010] transition-opacity hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-45">
-        {isSubmitting ? <ButtonLoader size={24} /> : "Confirmar pagamento"}
+      <button type="button" onClick={onSubmit} disabled={!canSubmit || isSubmitting} className="mt-[18px] flex h-[58px] w-full items-center justify-center rounded-[18px] bg-[linear-gradient(180deg,#0062FF_0%,#0153D5_100%)] text-[16px] font-semibold text-white transition-transform duration-150 ease-out hover:scale-[1.01] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-45">
+        {isSubmitting ? <ButtonLoader size={22} colorClassName="text-white" /> : "Gerar QR Code PIX"}
       </button>
 
       <button type="button" onClick={onBack} disabled={isSubmitting} className="mt-[12px] w-full text-center text-[12px] text-[#8E8E8E] transition-colors hover:text-[#B5B5B5] disabled:cursor-not-allowed disabled:opacity-50">
-        Voltar para metodos
+        Voltar para formas de pagamento
       </button>
 
-      <div className="mt-[25px] h-[2px] w-full bg-[#242424]" />
-
-      <CheckoutLegalText className="mt-[25px] hidden text-center text-[12px] leading-[1.6] text-[#949494] min-[1530px]:block" />
+      <div className="mt-[18px] rounded-[18px] border border-[#202020] bg-[#101010] px-[16px] py-[14px] text-[13px] leading-[1.65] text-[#B8B8B8]">
+        O QR Code sera gerado imediatamente apos a validacao dos dados. Se quiser
+        trocar de metodo, voce pode voltar sem perder o pedido.
+      </div>
     </div>
   );
 }
@@ -2416,7 +2403,7 @@ function PixFormPanel({
 function CardFormPanel(props: CardFormPanelProps) {
   const { className, onBack, isSubmitting, errorMessage } = props;
   return (
-    <div className={`${className} flowdesk-stage-fade`}>
+    <div className={`${className} flowdesk-stage-fade rounded-[30px] border border-[#171717] bg-[linear-gradient(180deg,rgba(12,12,12,0.98)_0%,rgba(8,8,8,0.98)_100%)] p-[22px] shadow-[0_28px_90px_rgba(0,0,0,0.32)] sm:p-[24px]`}>
       <div className="mx-auto mb-[14px] flex h-[64px] w-[64px] items-center justify-center">
         <span className="relative h-[64px] w-[64px]">
           <Image
@@ -2500,12 +2487,36 @@ function PixCheckoutPanel({
   );
 
   return (
-    <div className={className}>
-      <h2 className="text-center text-[33px] font-medium text-[#D8D8D8] max-[1529px]:hidden">Finalizando seu pagamento</h2>
+    <div className={`${className} flowdesk-stage-fade`}>
+      <div className="flex flex-col gap-[14px] sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="inline-flex items-center gap-[10px] rounded-full border border-[rgba(14,207,156,0.18)] bg-[rgba(14,207,156,0.08)] px-[12px] py-[7px] text-[11px] font-semibold uppercase tracking-[0.16em] text-[#83E5C7]">
+            <span className="relative h-[16px] w-[16px] shrink-0">
+              <Image src="/cdn/icons/pix_.png" alt="PIX" fill sizes="16px" className="object-contain" />
+            </span>
+            QR Code gerado
+          </div>
+          <h2 className="mt-[16px] text-[26px] font-semibold tracking-[-0.05em] text-[#F4F4F4]">
+            Pague com o QR Code ou copie o codigo PIX
+          </h2>
+          <p className="mt-[8px] max-w-[680px] text-[14px] leading-[1.7] text-[#9C9C9C]">
+            Abra o app do seu banco, escaneie o QR Code abaixo ou use o copia e
+            cola. A confirmacao aparece automaticamente assim que o pagamento for
+            aprovado.
+          </p>
+        </div>
 
-      <div className="mt-[25px] mb-[25px] h-[2px] w-full bg-[#242424] max-[1529px]:hidden" />
+        <button
+          type="button"
+          onClick={onBackToMethods}
+          className="inline-flex h-[44px] items-center justify-center rounded-[14px] border border-[#171717] bg-[#0B0B0B] px-[16px] text-[13px] font-medium text-[#DADADA] transition-colors hover:border-[#2B2B2B] hover:bg-[#111111]"
+        >
+          Trocar metodo
+        </button>
+      </div>
 
-      <div className="relative aspect-square w-full overflow-hidden border border-[#2E2E2E] bg-[#0A0A0A]">
+      <div className="mt-[22px] rounded-[26px] border border-[#171717] bg-[linear-gradient(180deg,rgba(13,13,13,0.98)_0%,rgba(8,8,8,0.98)_100%)] p-[18px] shadow-[0_20px_70px_rgba(0,0,0,0.22)] sm:p-[22px]">
+        <div className="relative mx-auto aspect-square w-full max-w-[360px] overflow-hidden rounded-[24px] border border-[#2E2E2E] bg-[#0A0A0A] p-[18px]">
         {isQrImageLoading ? (
           <div className="absolute inset-0 z-10 flex items-center justify-center">
             <ButtonLoader size={34} />
@@ -2524,7 +2535,7 @@ function PixCheckoutPanel({
             src={qrCodeDataUri}
             alt="QR Code PIX"
             fill
-            sizes="(max-width: 1280px) 100vw, 536px"
+            sizes="(max-width: 1280px) 100vw, 360px"
             onLoad={() => {
               setLoadedQrImageKey(qrCodeDataUri);
               setQrImageErrorKey((current) =>
@@ -2540,63 +2551,36 @@ function PixCheckoutPanel({
             unoptimized
           />
         ) : null}
-      </div>
+        </div>
 
-      <button type="button" onClick={onCopy} disabled={!qrCodeText} className="mt-[16px] flex h-[56px] w-full items-center rounded-[16px] border border-[#171717] bg-[#0B0B0B] px-5 text-left disabled:cursor-not-allowed disabled:opacity-45" aria-label="Copiar codigo PIX">
-        <span className={`truncate pr-2 text-[16px] ${qrCodeText ? "text-[#D8D8D8]" : "text-[#242424]"}`} title={qrCodeText || "Codigo copia e cola indisponivel"}>
-          {qrCodeText || "CODIGO COPIA E COLA DO PIX PARA O PAGAMENTO"}
-        </span>
-        <span className="ml-auto inline-flex items-center justify-center text-[#D8D8D8]">
-          <svg viewBox="0 0 24 24" className="h-[23px] w-[23px]" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <rect x="9" y="9" width="10" height="10" rx="2" />
-            <path d="M5 15V5a2 2 0 0 1 2-2h10" />
-          </svg>
-        </span>
-      </button>
+        <button type="button" onClick={onCopy} disabled={!qrCodeText} className="mt-[18px] flex h-[58px] w-full items-center rounded-[18px] border border-[#171717] bg-[#0B0B0B] px-5 text-left disabled:cursor-not-allowed disabled:opacity-45" aria-label="Copiar codigo PIX">
+          <span className={`truncate pr-2 text-[15px] ${qrCodeText ? "text-[#D8D8D8]" : "text-[#242424]"}`} title={qrCodeText || "Codigo copia e cola indisponivel"}>
+            {qrCodeText || "Codigo PIX indisponivel no momento"}
+          </span>
+          <span className="ml-auto inline-flex items-center justify-center text-[#D8D8D8]">
+            <svg viewBox="0 0 24 24" className="h-[23px] w-[23px]" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="9" y="9" width="10" height="10" rx="2" />
+              <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+            </svg>
+          </span>
+        </button>
 
-      {copied ? <p className="mt-[11px] text-center text-[14px] text-[#D8D8D8]">Codigo copiado</p> : null}
+        {copied ? <p className="mt-[11px] text-center text-[14px] text-[#D8D8D8]">Codigo copiado</p> : null}
 
-      <button type="button" onClick={onBackToMethods} className="mt-[12px] w-full text-center text-[12px] text-[#8E8E8E] transition-colors hover:text-[#B5B5B5]">
-        Voltar para metodos
-      </button>
-    </div>
-  );
-}
+        <div className="mt-[16px] rounded-[18px] border border-[#171717] bg-[#090909] px-[16px] py-[15px]">
+          <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-[#7E7E7E]">
+            Copia e cola
+          </p>
+          <p className="mt-[10px] break-all text-[14px] leading-[1.75] text-[#DEDEDE]">
+            {qrCodeText || "Codigo PIX indisponivel no momento"}
+          </p>
+        </div>
 
-function StatusResultPanel({
-  className,
-  iconPath = null,
-  label,
-  useLoader = false,
-  loaderColorClassName = "text-[#D8D8D8]",
-  panelTone = "neutral",
-}: StatusResultPanelProps) {
-  const panelEffectClass =
-    panelTone === "success"
-      ? "flowdesk-success-glow"
-      : panelTone === "live"
-        ? "flowdesk-panel-glow"
-        : "flowdesk-scale-in-soft";
-
-  return (
-    <div className={`${className} flowdesk-stage-fade`}>
-      <div
-        className={`relative mx-auto h-[390px] w-[390px] overflow-hidden border border-[#2E2E2E] bg-[#0A0A0A] max-[520px]:h-[300px] max-[520px]:w-[300px] ${panelEffectClass}`}
-      >
-        {useLoader ? (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <ButtonLoader size={42} colorClassName={loaderColorClassName} />
-          </div>
-        ) : iconPath ? (
-          <Image
-            src={iconPath}
-            alt={label}
-            fill
-            sizes="(max-width: 520px) 300px, 390px"
-            className="object-contain p-10"
-            priority
-          />
-        ) : null}
+        <div className="mt-[16px] rounded-[18px] border border-[#171C25] bg-[#0E1219] px-[16px] py-[14px] text-[13px] leading-[1.65] text-[#AEB6C3]">
+          Se o pagamento nao confirmar na hora, aguarde alguns instantes. A
+          Flowdesk atualiza o status automaticamente sem voce precisar sair desta
+          pagina.
+        </div>
       </div>
     </div>
   );
@@ -2632,6 +2616,8 @@ export function ConfigStepFour({
   const trialActivationRedirectTimeoutRef = useRef<number | null>(null);
   const lastHandledCardRedirectKeyRef = useRef(0);
   const lastAutoResolvedPendingCardOrderRef = useRef<number | null>(null);
+  const pixAutoRefreshInFlightRef = useRef(false);
+  const lastAutoRefreshedPixOrderRef = useRef<number | null>(null);
   const hydratedGuildIdRef = useRef<string | null>(null);
   const planFinancialStateRef = useRef<{
     recurringEnabled: boolean;
@@ -2667,6 +2653,7 @@ export function ConfigStepFour({
   const [isPlanLoading, setIsPlanLoading] = useState(false);
   const [methodMessage, setMethodMessage] = useState<string | null>(null);
   const [cardRedirectRequestKey, setCardRedirectRequestKey] = useState(0);
+  const [pixTermsAccepted, setPixTermsAccepted] = useState(false);
   const [couponCode, setCouponCode] = useState(
     initialStepFourDraft.couponCode || initialStepFourDraft.giftCardCode,
   );
@@ -3614,7 +3601,14 @@ export function ConfigStepFour({
 
         if (payload.order.status && payload.order.status !== "pending") {
           removeCachedOrderByGuild(activeGuildId);
-          setView("methods");
+          if (payload.order.method === "pix" && payload.order.status === "expired") {
+            setView("pix_checkout");
+            setMethodMessage("O PIX anterior venceu. Atualizando a cobranca...");
+            clearCheckoutStatusQuery();
+          } else {
+            setView("methods");
+          }
+
           if (payload.order.status === "approved") {
             setMethodMessage(
               payload.licenseActive
@@ -3625,7 +3619,7 @@ export function ConfigStepFour({
           } else if (payload.order.method === "card") {
             setMethodMessage(null);
             setCheckoutStatusQuery({ order: payload.order, guildId: activeGuildId });
-          } else {
+          } else if (payload.order.status !== "expired") {
             clearCheckoutStatusQuery();
           }
         } else if (payload.order.method === "card") {
@@ -3893,9 +3887,7 @@ export function ConfigStepFour({
           paymentId: null as string | null,
         };
   const currentPaymentStatusLabel = paymentStatusLabel(pixOrder);
-  const statusVisual = resolveStatusVisual(pixOrder);
   const orderDiagnostic = resolveOrderDiagnostic(pixOrder);
-  const regenerateButtonLabel = resolveRegenerateButtonLabel(pixOrder);
   const isHostedCardApprovalAwaitingConfirmation = Boolean(
     pixOrder &&
       pixOrder.method === "card" &&
@@ -3956,24 +3948,6 @@ export function ConfigStepFour({
     shouldShowStatusResultPanel,
     view,
   ]);
-  const statusBarEffectClass =
-    shouldShowStatusResultPanel && paymentStatus === "approved"
-      ? "flowdesk-success-glow"
-      : (view === "card_form" && isSubmittingCard) ||
-          (shouldShowStatusResultPanel &&
-            pixOrder?.method === "card" &&
-            paymentStatus === "pending")
-        ? "flowdesk-panel-glow"
-        : "";
-  const resultPanelTone: "neutral" | "live" | "success" =
-    shouldShowStatusResultPanel && paymentStatus === "approved"
-      ? "success"
-      : (view === "card_form" && isSubmittingCard) ||
-            (shouldShowStatusResultPanel &&
-              pixOrder?.method === "card" &&
-              paymentStatus === "pending")
-        ? "live"
-        : "neutral";
   const isPlanSelectionLocked = Boolean(
     isPlanLoading ||
       isLoadingOrder ||
@@ -4370,8 +4344,14 @@ export function ConfigStepFour({
     clearCheckoutStatusQuery();
 
     if (method === "pix") {
+      if (selectedRail === "pix" && view === "methods") {
+        setSelectedRail(null);
+        setMethodMessage(null);
+        return;
+      }
       setSelectedRail("pix");
-      setView("pix_form");
+      setView("methods");
+      setMethodMessage(null);
       return;
     }
 
@@ -4379,7 +4359,128 @@ export function ConfigStepFour({
     setView("card_form");
     setMethodMessage("Preparando checkout seguro do cartao.");
     setCardRedirectRequestKey((current) => current + 1);
-  }, [canChoosePaymentMethod, cardPaymentsEnabled, guildId]);
+  }, [canChoosePaymentMethod, cardPaymentsEnabled, guildId, selectedRail, view]);
+
+  const handleStartPixFlow = useCallback(() => {
+    if (!canChoosePaymentMethod) {
+      setMethodMessage("Aguardando o pedido ficar pronto para pagamento.");
+      return;
+    }
+
+    setPhase("checkout");
+    setSelectedRail("pix");
+    setView("pix_form");
+    setMethodMessage(null);
+    setPixFormHasInputError(false);
+    setPixFormError(null);
+  }, [canChoosePaymentMethod]);
+
+  const handleRefreshExpiredPixPayment = useCallback(async () => {
+    if (!guildId || pixAutoRefreshInFlightRef.current) {
+      return;
+    }
+
+    pixAutoRefreshInFlightRef.current = true;
+    setMethodMessage("O PIX anterior venceu. Gerando uma nova tentativa segura...");
+    setCopied(false);
+    setPixFormHasInputError(false);
+    setPixFormError(null);
+
+    try {
+      const payloadBody: Record<string, unknown> = {
+        guildId,
+        planCode: selectedPlanCode,
+        billingPeriodCode: selectedBillingPeriodCode,
+        couponCode,
+        giftCardCode,
+      };
+
+      const normalizedName = normalizePersonName(payerName);
+      const normalizedDocument = normalizeBrazilDocumentDigits(payerDocument);
+
+      if (normalizedName) {
+        payloadBody.payerName = normalizedName;
+      }
+
+      if (normalizedDocument) {
+        payloadBody.payerDocument = normalizedDocument;
+      }
+
+      const response = await fetch("/api/auth/me/payments/pix", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payloadBody),
+      });
+      const requestId = resolveResponseRequestId(response);
+      const payload = (await response.json()) as PixPaymentApiResponse;
+
+      if (!response.ok || !payload.ok || !payload.order) {
+        throw new Error(
+          withSupportRequestId(
+            payload.message || "Nao foi possivel renovar o pagamento PIX.",
+            requestId,
+          ),
+        );
+      }
+
+      setPixOrder(payload.order);
+      setLastKnownOrderNumber(payload.order.orderNumber);
+      writeCachedOrderByGuild(guildId, payload.order);
+      setPhase("checkout");
+      setSelectedRail("pix");
+
+      if (payload.order.status === "approved" || payload.blockedByActiveLicense) {
+        setView("methods");
+        setMethodMessage(
+          payload.licenseActive
+            ? buildActiveLicenseMessage(payload.licenseExpiresAt)
+            : "Pagamento aprovado para este servidor.",
+        );
+        setCheckoutStatusQuery({ order: payload.order, guildId });
+      } else if (payload.order.status === "pending" && payload.order.qrCodeText) {
+        setView("pix_checkout");
+        setMethodMessage(
+          "Geramos um novo PIX automaticamente para manter o pagamento valido.",
+        );
+        clearCheckoutStatusQuery();
+      } else {
+        setView("pix_form");
+        setMethodMessage(
+          "Atualizamos a tentativa de PIX. Confirme os dados para gerar um novo codigo.",
+        );
+        clearCheckoutStatusQuery();
+      }
+    } catch (error) {
+      removeCachedOrderByGuild(guildId);
+      setView("pix_form");
+      setMethodMessage(
+        parseUnknownErrorMessage(error) ||
+          "Nao foi possivel renovar o PIX automaticamente. Confirme os dados para gerar uma nova tentativa.",
+      );
+      clearCheckoutStatusQuery();
+    } finally {
+      pixAutoRefreshInFlightRef.current = false;
+    }
+  }, [
+    couponCode,
+    giftCardCode,
+    guildId,
+    payerDocument,
+    payerName,
+    selectedBillingPeriodCode,
+    selectedPlanCode,
+  ]);
+
+  useEffect(() => {
+    if (!guildId) return;
+    if (view !== "pix_checkout") return;
+    if (!pixOrder || pixOrder.method !== "pix") return;
+    if (!isPixOrderExpiredOrUnavailable(pixOrder)) return;
+    if (lastAutoRefreshedPixOrderRef.current === pixOrder.orderNumber) return;
+
+    lastAutoRefreshedPixOrderRef.current = pixOrder.orderNumber;
+    void handleRefreshExpiredPixPayment();
+  }, [guildId, handleRefreshExpiredPixPayment, pixOrder, view]);
 
   const handleActivateTrialPlan = useCallback(async () => {
     if (!guildId || isSubmittingTrial || isPlanLoading || isLoadingOrder) {
@@ -4471,18 +4572,10 @@ export function ConfigStepFour({
     }
 
     setPhase("checkout");
-    if (!selectedRail) {
-      setSelectedRail("pix");
-    }
     if (view === "methods") {
       setMethodMessage(null);
     }
-  }, [handleActivateTrialPlan, resolvedPlan.isTrial, selectedRail, view]);
-
-  const handleBackToCart = useCallback(() => {
-    setPhase("cart");
-    setMethodMessage(null);
-  }, []);
+  }, [handleActivateTrialPlan, resolvedPlan.isTrial, view]);
 
   const handleHostedRailSelection = useCallback(
     (rail: Exclude<CheckoutRail, "pix">) => {
@@ -4568,9 +4661,22 @@ export function ConfigStepFour({
             : "Pagamento aprovado para este servidor.",
         );
         setCheckoutStatusQuery({ order: payload.order, guildId });
-      } else {
+      } else if (payload.order.status === "pending" && payload.order.qrCodeText) {
         setView("pix_checkout");
+        setMethodMessage("QR Code PIX gerado. Finalize o pagamento no card principal.");
         setCheckoutStatusQuery({ order: payload.order, guildId });
+      } else if (payload.order.status === "expired") {
+        setView("pix_form");
+        setMethodMessage(
+          "A tentativa anterior venceu. Preencha novamente os dados para gerar um novo PIX.",
+        );
+        clearCheckoutStatusQuery();
+      } else {
+        setView("pix_form");
+        setMethodMessage(
+          "Nao foi possivel liberar um novo PIX valido agora. Tente novamente em instantes.",
+        );
+        clearCheckoutStatusQuery();
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro inesperado ao gerar pagamento PIX.";
@@ -5091,171 +5197,6 @@ export function ConfigStepFour({
     view,
   ]);
 
-  const handleRegeneratePayment = useCallback(() => {
-    if (!guildId) return;
-
-    const activeGuildId = guildId;
-    const lastMethod: PaymentMethod = pixOrder?.method === "card" ? "card" : "pix";
-    const normalizedName = normalizePersonName(payerName);
-    const canReusePixData =
-      resolveDocumentStatus(documentDigits) === "valid" &&
-      isValidPersonName(normalizedName);
-
-    setIsLoadingOrder(true);
-    setMethodMessage("Regerando pagamento...");
-    setCopied(false);
-    setPixFormError(null);
-    setPixFormHasInputError(false);
-    setCardFormError(null);
-    setCardFormHasInputError(false);
-    setView("methods");
-    clearCheckoutStatusQuery();
-
-    void (async () => {
-      try {
-        removeCachedOrderByGuild(activeGuildId);
-        setPixOrder(null);
-        setLastKnownOrderNumber(null);
-
-        const refreshOrderResponse = await fetch(
-          `/api/auth/me/payments/pix?${new URLSearchParams({
-            guildId: activeGuildId,
-            planCode: selectedPlanCode,
-            billingPeriodCode: selectedBillingPeriodCode,
-            forceNew: "1",
-          }).toString()}`,
-          { cache: "no-store" },
-        );
-        const refreshOrderPayload =
-          (await refreshOrderResponse.json()) as PixPaymentApiResponse;
-
-        if (
-          !refreshOrderResponse.ok ||
-          !refreshOrderPayload.ok ||
-          !refreshOrderPayload.order
-        ) {
-          throw new Error(
-            refreshOrderPayload.message ||
-              "Nao foi possivel regerar o pedido de pagamento.",
-          );
-        }
-
-        setPixOrder(refreshOrderPayload.order);
-        setLastKnownOrderNumber(refreshOrderPayload.order.orderNumber);
-        writeCachedOrderByGuild(activeGuildId, refreshOrderPayload.order);
-
-        if (
-          refreshOrderPayload.order.status === "approved" ||
-          refreshOrderPayload.blockedByActiveLicense
-        ) {
-          setView("methods");
-          setMethodMessage(
-            refreshOrderPayload.licenseActive
-              ? buildActiveLicenseMessage(refreshOrderPayload.licenseExpiresAt)
-              : "Pagamento ja aprovado para este servidor.",
-          );
-          setCheckoutStatusQuery({
-            order: refreshOrderPayload.order,
-            guildId: activeGuildId,
-          });
-          return;
-        }
-
-        if (lastMethod === "card") {
-          setView("methods");
-          setMethodMessage(
-            "Tentativa anterior encerrada. Escolha novamente como deseja pagar para abrir um novo checkout seguro.",
-          );
-          return;
-        }
-
-        if (!canReusePixData) {
-          setView("pix_form");
-          setMethodMessage(
-            "Pedido regerado. Confira os dados PIX para gerar novo QR Code.",
-          );
-          return;
-        }
-
-        const pixPaymentResponse = await fetch("/api/auth/me/payments/pix", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            guildId: activeGuildId,
-            planCode: selectedPlanCode,
-            billingPeriodCode: selectedBillingPeriodCode,
-            payerDocument: documentDigits,
-            payerName: normalizedName,
-          }),
-        });
-        const requestId = resolveResponseRequestId(pixPaymentResponse);
-
-        const pixPaymentPayload =
-          (await pixPaymentResponse.json()) as PixPaymentApiResponse;
-
-        if (!pixPaymentResponse.ok || !pixPaymentPayload.ok || !pixPaymentPayload.order) {
-          setView("pix_form");
-          setMethodMessage(
-            withSupportRequestId(
-              pixPaymentPayload.message ||
-                "Pedido regerado. Confirme os dados para gerar novo QR Code PIX.",
-              requestId,
-            ),
-          );
-          return;
-        }
-
-        setPixOrder(pixPaymentPayload.order);
-        setLastKnownOrderNumber(pixPaymentPayload.order.orderNumber);
-        writeCachedOrderByGuild(activeGuildId, pixPaymentPayload.order);
-
-        if (
-          pixPaymentPayload.order.status === "approved" ||
-          pixPaymentPayload.blockedByActiveLicense
-        ) {
-          setView("methods");
-          setMethodMessage(
-            pixPaymentPayload.licenseActive
-              ? buildActiveLicenseMessage(pixPaymentPayload.licenseExpiresAt)
-              : "Pagamento ja aprovado para este servidor.",
-          );
-          setCheckoutStatusQuery({
-            order: pixPaymentPayload.order,
-            guildId: activeGuildId,
-          });
-        } else {
-          setView("pix_checkout");
-          setMethodMessage("Novo QR Code PIX gerado com os dados anteriores.");
-          setCheckoutStatusQuery({
-            order: pixPaymentPayload.order,
-            guildId: activeGuildId,
-          });
-        }
-      } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : "Falha ao regerar pagamento.";
-
-        setMethodMessage(message);
-        setView(lastMethod === "card" ? "card_form" : "pix_form");
-        if (lastMethod === "card") {
-          setCardFormError(message);
-          setCardFormErrorAnimationTick((current) => current + 1);
-        }
-      } finally {
-        setIsLoadingOrder(false);
-      }
-    })();
-  }, [
-    documentDigits,
-    guildId,
-    payerName,
-    pixOrder?.method,
-    selectedBillingPeriodCode,
-    selectedPlanCode,
-  ]);
-
   const handleStartPixAfterCardIssue = useCallback(() => {
     if (!guildId) return;
 
@@ -5291,332 +5232,45 @@ export function ConfigStepFour({
     setCardRedirectRequestKey((current) => current + 1);
   }, [guildId]);
 
-  const rightPanel = useMemo(() => {
-    if (isLoadingOrder) {
-      return (
-        <div className="mx-auto hidden w-full max-w-[536px] min-[1530px]:flex min-[1530px]:items-center min-[1530px]:justify-center min-[1530px]:self-center">
-          <ButtonLoader size={34} />
-        </div>
-      );
-    }
-
-    if (shouldShowStatusResultPanel && (statusVisual.iconPath || statusVisual.useLoaderPanel)) {
-      return (
-        <div className="mx-auto hidden w-full max-w-[536px] min-[1530px]:block min-[1530px]:self-center">
-          <StatusResultPanel
-            className="min-[1530px]:flex min-[1530px]:items-center min-[1530px]:justify-center"
-            iconPath={statusVisual.iconPath}
-            label={currentPaymentStatusLabel}
-            useLoader={Boolean(statusVisual.useLoaderPanel)}
-            loaderColorClassName={statusVisual.colorClassName}
-            panelTone={resultPanelTone}
-          />
-          {canManuallyCancelPendingCard ? (
-            <button
-              type="button"
-              onClick={() => {
-                void handleCancelPendingCardPayment();
-              }}
-              disabled={isCancellingPendingCard}
-              className="mt-[12px] w-full text-center text-[11px] text-[#8E8E8E] transition-colors hover:text-[#BDBDBD] disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {isCancellingPendingCard ? "Cancelando..." : "Cancelar"}
-            </button>
-          ) : null}
-        </div>
-      );
-    }
-
-    if (view === "pix_form") {
-      return (
-        <PixFormPanel
-          className="mx-auto hidden w-full max-w-[536px] min-[1530px]:block min-[1530px]:self-center"
-          payerDocument={payerDocument}
-          payerName={payerName}
-          payerDocumentStatus={pixDocumentStatus}
-          payerNameStatus={pixNameStatus}
-          onPayerDocumentChange={handlePayerDocumentChange}
-          onPayerNameChange={handlePayerNameChange}
-          onSubmit={() => {
-            void handleSubmitPixPayment();
-          }}
-          onBack={() => {
-            setPixFormError(null);
-            setPixFormHasInputError(false);
-            setView("methods");
-          }}
-          isSubmitting={isSubmittingPix}
-          canSubmit={canSubmitPix}
-          errorMessage={pixFormError}
-          hasInputError={pixFormHasInputError}
-          errorAnimationTick={pixFormErrorAnimationTick}
-        />
-      );
-    }
-
-    if (view === "card_form") {
-      return (
-        <CardFormPanel
-          className="mx-auto hidden w-full max-w-[536px] min-[1530px]:block min-[1530px]:self-center"
-          cardNumber={cardNumber}
-          cardHolderName={cardHolderName}
-          cardExpiry={cardExpiry}
-          cardCvv={cardCvv}
-          cardDocument={cardDocument}
-          cardBillingZipCode={cardBillingZipCode}
-          cardBrand={cardBrand}
-          cardNumberStatus={cardNumberStatus}
-          cardHolderStatus={cardHolderStatus}
-          cardExpiryStatus={cardExpiryStatus}
-          cardCvvStatus={cardCvvStatus}
-          cardDocumentStatus={cardDocumentStatus}
-          cardBillingZipCodeStatus={cardBillingZipCodeStatus}
-          onCardNumberChange={handleCardNumberChange}
-          onCardHolderNameChange={handleCardHolderChange}
-          onCardExpiryChange={handleCardExpiryChange}
-          onCardCvvChange={handleCardCvvChange}
-          onCardDocumentChange={handleCardDocumentChange}
-          onCardBillingZipCodeChange={handleCardBillingZipCodeChange}
-          onSubmit={() => {
-            void handleSubmitCardPayment();
-          }}
-          onBack={() => {
-            setCardFormError(null);
-            setCardFormHasInputError(false);
-            setView("methods");
-          }}
+  const rightPanel =
+    view === "card_form" ? (
+      <CardFormPanel
+        className=""
+        cardNumber={cardNumber}
+        cardHolderName={cardHolderName}
+        cardExpiry={cardExpiry}
+        cardCvv={cardCvv}
+        cardDocument={cardDocument}
+        cardBillingZipCode={cardBillingZipCode}
+        cardBrand={cardBrand}
+        cardNumberStatus={cardNumberStatus}
+        cardHolderStatus={cardHolderStatus}
+        cardExpiryStatus={cardExpiryStatus}
+        cardCvvStatus={cardCvvStatus}
+        cardDocumentStatus={cardDocumentStatus}
+        cardBillingZipCodeStatus={cardBillingZipCodeStatus}
+        onCardNumberChange={handleCardNumberChange}
+        onCardHolderNameChange={handleCardHolderChange}
+        onCardExpiryChange={handleCardExpiryChange}
+        onCardCvvChange={handleCardCvvChange}
+        onCardDocumentChange={handleCardDocumentChange}
+        onCardBillingZipCodeChange={handleCardBillingZipCodeChange}
+        onSubmit={() => {
+          void handleSubmitCardPayment();
+        }}
+        onBack={() => {
+          setCardFormError(null);
+          setCardFormHasInputError(false);
+          setView("methods");
+        }}
         isSubmitting={isSubmittingCard}
         canSubmit={canSubmitCard}
         cooldownMessage={cardCooldownMessage}
         errorMessage={cardFormError}
         hasInputError={cardFormHasInputError}
         errorAnimationTick={cardFormErrorAnimationTick}
-        />
-      );
-    }
-
-    if (view === "pix_checkout") {
-      return (
-        <PixCheckoutPanel
-          className="mx-auto hidden w-full max-w-[536px] min-[1530px]:block min-[1530px]:self-center"
-          order={pixOrder}
-          copied={copied}
-          onCopy={() => {
-            void handleCopyPixCode();
-          }}
-          onBackToMethods={() => {
-            setCopied(false);
-            setView("methods");
-          }}
-        />
-      );
-    }
-
-    return (
-      <MethodSelectorPanel
-        className="mx-auto hidden w-full max-w-[536px] min-[1530px]:block min-[1530px]:self-center"
-        onChoosePix={() => handleChooseMethod("pix")}
-        onSelectHostedRail={handleHostedRailSelection}
-        methodMessage={methodMessage}
-        canInteract={canChoosePaymentMethod}
-        cardEnabled={cardPaymentsEnabled}
-        selectedRail={selectedRail}
       />
-    );
-  }, [
-    canManuallyCancelPendingCard,
-    canChoosePaymentMethod,
-    canSubmitCard,
-    canSubmitPix,
-    cardBrand,
-    cardBillingZipCode,
-    cardBillingZipCodeStatus,
-    cardPaymentsEnabled,
-    cardCvv,
-    cardCvvStatus,
-    cardDocument,
-    cardDocumentStatus,
-    cardExpiry,
-    cardExpiryStatus,
-    cardFormError,
-    cardFormErrorAnimationTick,
-    cardFormHasInputError,
-    cardHolderName,
-    cardHolderStatus,
-    cardNumber,
-    cardNumberStatus,
-    cardCooldownMessage,
-    copied,
-    handleCancelPendingCardPayment,
-    handleCardCvvChange,
-    handleCardBillingZipCodeChange,
-    handleCardDocumentChange,
-    handleCardExpiryChange,
-    handleCardHolderChange,
-    handleCardNumberChange,
-    handleChooseMethod,
-    handleHostedRailSelection,
-    handleCopyPixCode,
-    handlePayerDocumentChange,
-    handlePayerNameChange,
-    handleSubmitCardPayment,
-    handleSubmitPixPayment,
-    isCancellingPendingCard,
-    isLoadingOrder,
-    isSubmittingCard,
-    isSubmittingPix,
-    methodMessage,
-    payerDocument,
-    payerName,
-    pixDocumentStatus,
-    pixFormError,
-    pixFormErrorAnimationTick,
-    pixFormHasInputError,
-    pixNameStatus,
-    pixOrder,
-    selectedRail,
-    shouldShowStatusResultPanel,
-    statusVisual.colorClassName,
-    statusVisual.iconPath,
-    statusVisual.useLoaderPanel,
-    view,
-    currentPaymentStatusLabel,
-    resultPanelTone,
-  ]);
-
-  function renderInlinePanel() {
-    if (isLoadingOrder) {
-      return (
-        <div className="mt-[26px] flex w-full justify-center min-[1530px]:hidden">
-          <ButtonLoader size={34} />
-        </div>
-      );
-    }
-
-    if (shouldShowStatusResultPanel && (statusVisual.iconPath || statusVisual.useLoaderPanel)) {
-      return (
-        <div className="mt-[26px] w-full min-[1530px]:hidden">
-          <StatusResultPanel
-            className=""
-            iconPath={statusVisual.iconPath}
-            label={currentPaymentStatusLabel}
-            useLoader={Boolean(statusVisual.useLoaderPanel)}
-            loaderColorClassName={statusVisual.colorClassName}
-            panelTone={resultPanelTone}
-          />
-          {canManuallyCancelPendingCard ? (
-            <button
-              type="button"
-              onClick={() => {
-                void handleCancelPendingCardPayment();
-              }}
-              disabled={isCancellingPendingCard}
-              className="mt-[12px] w-full text-center text-[11px] text-[#8E8E8E] transition-colors hover:text-[#BDBDBD] disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {isCancellingPendingCard ? "Cancelando..." : "Cancelar"}
-            </button>
-          ) : null}
-        </div>
-      );
-    }
-
-    if (view === "pix_form") {
-      return (
-        <PixFormPanel
-          className="mt-[26px] w-full min-[1530px]:hidden"
-          payerDocument={payerDocument}
-          payerName={payerName}
-          payerDocumentStatus={pixDocumentStatus}
-          payerNameStatus={pixNameStatus}
-          onPayerDocumentChange={handlePayerDocumentChange}
-          onPayerNameChange={handlePayerNameChange}
-          onSubmit={() => {
-            void handleSubmitPixPayment();
-          }}
-          onBack={() => {
-            setPixFormError(null);
-            setPixFormHasInputError(false);
-            setView("methods");
-          }}
-          isSubmitting={isSubmittingPix}
-          canSubmit={canSubmitPix}
-          errorMessage={pixFormError}
-          hasInputError={pixFormHasInputError}
-          errorAnimationTick={pixFormErrorAnimationTick}
-        />
-      );
-    }
-
-    if (view === "card_form") {
-      return (
-        <CardFormPanel
-          className="mt-[26px] w-full min-[1530px]:hidden"
-          cardNumber={cardNumber}
-          cardHolderName={cardHolderName}
-          cardExpiry={cardExpiry}
-          cardCvv={cardCvv}
-          cardDocument={cardDocument}
-          cardBillingZipCode={cardBillingZipCode}
-          cardBrand={cardBrand}
-          cardNumberStatus={cardNumberStatus}
-          cardHolderStatus={cardHolderStatus}
-          cardExpiryStatus={cardExpiryStatus}
-          cardCvvStatus={cardCvvStatus}
-          cardDocumentStatus={cardDocumentStatus}
-          cardBillingZipCodeStatus={cardBillingZipCodeStatus}
-          onCardNumberChange={handleCardNumberChange}
-          onCardHolderNameChange={handleCardHolderChange}
-          onCardExpiryChange={handleCardExpiryChange}
-          onCardCvvChange={handleCardCvvChange}
-          onCardDocumentChange={handleCardDocumentChange}
-          onCardBillingZipCodeChange={handleCardBillingZipCodeChange}
-          onSubmit={() => {
-            void handleSubmitCardPayment();
-          }}
-          onBack={() => {
-            setCardFormError(null);
-            setCardFormHasInputError(false);
-            setView("methods");
-          }}
-          isSubmitting={isSubmittingCard}
-          canSubmit={canSubmitCard}
-          cooldownMessage={cardCooldownMessage}
-          errorMessage={cardFormError}
-          hasInputError={cardFormHasInputError}
-          errorAnimationTick={cardFormErrorAnimationTick}
-        />
-      );
-    }
-
-    if (view === "pix_checkout") {
-      return (
-        <PixCheckoutPanel
-          className="mt-[26px] w-full min-[1530px]:hidden"
-          order={pixOrder}
-          copied={copied}
-          onCopy={() => {
-            void handleCopyPixCode();
-          }}
-          onBackToMethods={() => {
-            setCopied(false);
-            setView("methods");
-          }}
-        />
-      );
-    }
-
-    return (
-      <MethodSelectorPanel
-        className="mt-[26px] w-full min-[1530px]:hidden"
-        onChoosePix={() => handleChooseMethod("pix")}
-        onSelectHostedRail={handleHostedRailSelection}
-        methodMessage={methodMessage}
-        canInteract={canChoosePaymentMethod}
-        cardEnabled={cardPaymentsEnabled}
-        selectedRail={selectedRail}
-      />
-    );
-  }
+    ) : null;
 
   const activeDiscountPreview =
     discountPreview ||
@@ -5624,14 +5278,6 @@ export function ConfigStepFour({
       baseAmount: baseCheckoutAmount,
       currency: checkoutCurrency,
     });
-  const totalDiscountAmount =
-    (activeDiscountPreview.coupon?.amount || 0) +
-    (activeDiscountPreview.giftCard?.amount || 0);
-  const showEmbeddedPaymentSurface =
-    shouldShowStatusResultPanel ||
-    view === "pix_form" ||
-    view === "pix_checkout" ||
-    view === "card_form";
   const checkoutStatusLabel =
     methodMessage ||
     (shouldShowStatusResultPanel ? currentPaymentStatusLabel : null);
@@ -5683,87 +5329,68 @@ export function ConfigStepFour({
 
   return (
     <main
-      className={`min-h-screen bg-black px-4 pb-[92px] ${
-        phase === "cart"
-          ? "pt-[20px] sm:px-5 lg:px-6 lg:pt-[24px]"
-          : "pt-[34px] sm:px-6 lg:px-8 lg:pt-[42px]"
-      }`}
+      className="min-h-screen bg-black px-4 pt-[20px] pb-[92px] sm:px-5 lg:px-6 lg:pt-[24px]"
     >
-      <section
-        className={`mx-auto w-full ${
-          phase === "cart" ? "max-w-[1540px]" : "max-w-[1440px]"
-        }`}
-      >
-        {phase === "cart" ? (
-          !isCartNoticeDismissed ? (
-            <div className="rounded-[28px] bg-[#0D0D0F] px-[18px] py-[18px] shadow-[0_24px_80px_rgba(0,0,0,0.28)] sm:px-[28px] sm:py-[24px]">
-              <div className="flex items-center justify-between gap-[16px]">
-                <div className="flex items-center gap-[14px] sm:gap-[18px]">
-                  <div className="flex h-[32px] w-[32px] shrink-0 items-center justify-center rounded-full border border-[rgba(0,98,255,0.42)] bg-[rgba(0,98,255,0.12)] text-[#63A5FF]">
-                    <svg
-                      aria-hidden="true"
-                      viewBox="0 0 20 20"
-                      className="h-[16px] w-[16px]"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                    >
-                      <circle cx="10" cy="10" r="7.2" />
-                      <path d="M10 8.2v4.6" strokeLinecap="round" />
-                      <circle cx="10" cy="5.9" r="0.9" fill="currentColor" stroke="none" />
-                    </svg>
-                  </div>
-                  <p className="max-w-[1180px] text-[15px] leading-[1.55] text-[#EAEAEA] sm:text-[17px]">
-                    Voce foi direcionado para o checkout Flowdesk, que e onde sua conta esta registrada.
-                    Os valores do pedido foram atualizados de acordo com sua regiao.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsCartNoticeDismissed(true)}
-                  className="inline-flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full text-[#BBBBBB] transition-colors hover:bg-[#151515] hover:text-white"
-                  aria-label="Fechar aviso"
-                >
+      <section className="mx-auto w-full max-w-[1540px]">
+        {!isCartNoticeDismissed ? (
+          <div className="rounded-[28px] bg-[#0D0D0F] px-[18px] py-[18px] shadow-[0_24px_80px_rgba(0,0,0,0.28)] sm:px-[28px] sm:py-[24px]">
+            <div className="flex items-center justify-between gap-[16px]">
+              <div className="flex items-center gap-[14px] sm:gap-[18px]">
+                <div className="flex h-[32px] w-[32px] shrink-0 items-center justify-center rounded-full border border-[rgba(0,98,255,0.42)] bg-[rgba(0,98,255,0.12)] text-[#63A5FF]">
                   <svg
                     aria-hidden="true"
                     viewBox="0 0 20 20"
-                    className="h-[18px] w-[18px]"
+                    className="h-[16px] w-[16px]"
                     fill="none"
                     stroke="currentColor"
                     strokeWidth="1.8"
-                    strokeLinecap="round"
                   >
-                    <path d="M5 5l10 10" />
-                    <path d="M15 5 5 15" />
+                    <circle cx="10" cy="10" r="7.2" />
+                    <path d="M10 8.2v4.6" strokeLinecap="round" />
+                    <circle cx="10" cy="5.9" r="0.9" fill="currentColor" stroke="none" />
                   </svg>
-                </button>
+                </div>
+                <p className="max-w-[1180px] text-[15px] leading-[1.55] text-[#EAEAEA] sm:text-[17px]">
+                  Voce foi direcionado para o checkout Flowdesk, que e onde sua conta esta registrada.
+                  Os valores do pedido foram atualizados de acordo com sua regiao.
+                </p>
               </div>
+              <button
+                type="button"
+                onClick={() => setIsCartNoticeDismissed(true)}
+                className="inline-flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full text-[#BBBBBB] transition-colors hover:bg-[#151515] hover:text-white"
+                aria-label="Fechar aviso"
+              >
+                <svg
+                  aria-hidden="true"
+                  viewBox="0 0 20 20"
+                  className="h-[18px] w-[18px]"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                >
+                  <path d="M5 5l10 10" />
+                  <path d="M15 5 5 15" />
+                </svg>
+              </button>
             </div>
-          ) : null
-        ) : (
-          <div className="rounded-[28px] border border-[#171717] bg-[#0B0B0B] px-[18px] py-[16px] text-[13px] leading-[1.7] text-[#A2A2A2] shadow-[0_24px_80px_rgba(0,0,0,0.28)] sm:px-[22px]">
-            O carrinho confirma o pedido primeiro. Depois voce entra no checkout para escolher PIX ou seguir para a camada hospedada dos wallets.
           </div>
-        )}
+        ) : null}
 
         <div
           key={`payment-${statusStageKey}-${phase}`}
-          className={`mt-[22px] grid gap-[20px] ${
-            phase === "cart"
-              ? "xl:grid-cols-[minmax(0,1.62fr)_minmax(360px,0.9fr)] xl:items-start"
-              : "xl:grid-cols-[minmax(0,1fr)_380px]"
-          }`}
+          className="mt-[22px] grid gap-[20px] xl:grid-cols-[minmax(0,1.62fr)_minmax(360px,0.9fr)] xl:items-start"
         >
           <div className="space-y-[18px]">
-            {phase === "cart" ? (
-              <div>
-                <p className="text-[18px] font-semibold text-[#F4F4F4] sm:text-[21px]">
-                  Seu carrinho
-                </p>
+            <div>
+              <p className="text-[18px] font-semibold text-[#F4F4F4] sm:text-[21px]">
+                Seu carrinho
+              </p>
 
-                <div className="mt-[22px] rounded-[30px] bg-[linear-gradient(180deg,rgba(13,13,13,0.98)_0%,rgba(8,8,8,0.98)_100%)] px-[20px] py-[22px] shadow-[0_28px_90px_rgba(0,0,0,0.32)] sm:px-[34px] sm:py-[34px]">
-                  <div className="flex flex-col gap-[22px]">
-                    <div className="flex flex-col gap-[16px] xl:flex-row xl:items-center xl:justify-between">
+              <div className="mt-[22px] rounded-[30px] bg-[linear-gradient(180deg,rgba(13,13,13,0.98)_0%,rgba(8,8,8,0.98)_100%)] px-[20px] py-[22px] shadow-[0_28px_90px_rgba(0,0,0,0.32)] sm:px-[34px] sm:py-[34px]">
+                <div className="flex flex-col gap-[22px]">
+                  <div className="flex flex-col gap-[16px] xl:flex-row xl:items-center xl:justify-between">
                       <div className="flex items-center gap-[16px] sm:gap-[18px]">
                         <div className="flex h-[56px] w-[56px] shrink-0 items-center justify-center rounded-[18px] bg-[#171717] text-[#EFEFEF]">
                           <svg
@@ -5830,6 +5457,8 @@ export function ConfigStepFour({
                       </div>
                     </div>
 
+                  {phase === "cart" ? (
+                    <>
                     <div className="mt-[2px]">
                       <p className="text-[16px] font-medium text-[#F0F0F0]">Periodo</p>
                       {availableBillingPeriodOptions.length > 0 ? (
@@ -5841,7 +5470,7 @@ export function ConfigStepFour({
                           disabled={isPlanSelectionLocked}
                         />
                       ) : (
-                        <div className="mt-[12px] inline-flex h-[42px] items-center rounded-[14px] border border-[#202020] bg-[#111111] px-[14px] text-[13px] font-medium text-[#D9D9D9]">
+                        <div className="mt-[12px] inline-flex h-[56px] items-center rounded-[18px] border border-[#202020] bg-[#111111] px-[16px] text-[13px] font-medium text-[#D9D9D9]">
                           {resolvedPlan.billingPeriodLabel}
                         </div>
                       )}
@@ -5898,68 +5527,83 @@ export function ConfigStepFour({
                       </span>
                       <p>Boa noticia! A ativacao automatica ja esta incluida neste pedido.</p>
                     </div>
-                    </div>
-                  </div>
-                </div>
-            ) : (
-              <div>
-                <p className="text-[18px] font-semibold text-[#F4F4F4] sm:text-[21px]">
-                  Pagamento
-                </p>
-
-                <div className="mt-[22px] rounded-[30px] bg-[linear-gradient(180deg,rgba(13,13,13,0.98)_0%,rgba(8,8,8,0.98)_100%)] px-[20px] py-[22px] shadow-[0_28px_90px_rgba(0,0,0,0.32)] sm:px-[34px] sm:py-[34px]">
-                  <div className="flex flex-col gap-[22px]">
+                    </>
+                  ) : (
+                    <>
                     <div className="flex flex-col gap-[14px] xl:flex-row xl:items-start xl:justify-between">
                       <div className="min-w-0">
-                        <p className="text-[24px] font-semibold tracking-[-0.04em] text-[#F5F5F5] sm:text-[27px]">
-                          Escolha como deseja pagar
+                        <p className="text-[16px] font-medium text-[#F0F0F0]">
+                          {view === "pix_checkout"
+                            ? "QR Code PIX"
+                            : view === "pix_form"
+                              ? "Dados do pagador"
+                              : "Pagamento"}
                         </p>
                         <p className="mt-[8px] max-w-[720px] text-[14px] leading-[1.65] text-[#8C8C8C] sm:text-[15px]">
-                          A tela continua no mesmo checkout. O PIX abre aqui e os
-                          wallets seguem pela camada protegida do Mercado Pago,
-                          sem mudar o visual do carrinho.
+                          {view === "pix_checkout"
+                            ? "Pague pelo app do seu banco ou use o copia e cola logo abaixo."
+                            : view === "pix_form"
+                              ? "Preencha nome completo e CPF abaixo para gerar o PIX sem sair deste card."
+                              : "Escolha como deseja pagar sem sair da tela do carrinho."}
                         </p>
                       </div>
-
-                      <div className="flex items-center gap-[12px] xl:justify-end">
-                        <button
-                          type="button"
-                          onClick={handleBackToCart}
-                          className="inline-flex h-[44px] items-center justify-center rounded-[14px] border border-[#171717] bg-[#0B0B0B] px-[16px] text-[14px] font-medium text-[#DADADA] transition-colors hover:border-[#2B2B2B] hover:bg-[#111111]"
-                        >
-                          Voltar
-                        </button>
-                        <div className="rounded-[16px] border border-[#171717] bg-[#0B0B0B] px-[14px] py-[10px] text-right">
-                          <p className="text-[11px] uppercase tracking-[0.18em] text-[#666666]">
-                            Metodo
-                          </p>
-                          <p className="mt-[6px] text-[15px] font-medium text-[#F1F1F1]">
-                            {resolveCheckoutRailLabel(selectedRail)}
-                          </p>
-                        </div>
-                      </div>
                     </div>
 
-                    <div className="rounded-[24px] border border-[#171717] bg-[#090909] p-[18px]">
-                      <MethodSelectorPanel
-                        className=""
-                        onChoosePix={() => handleChooseMethod("pix")}
-                        onSelectHostedRail={handleHostedRailSelection}
-                        methodMessage={checkoutStatusLabel}
-                        canInteract={canChoosePaymentMethod}
-                        cardEnabled={cardPaymentsEnabled}
-                        selectedRail={selectedRail}
-                        showHeader={false}
-                        showLegalText={false}
-                      />
+                    <div>
+                      {view === "pix_form" ? (
+                        <PixFormPanel
+                          className=""
+                          payerDocument={payerDocument}
+                          payerName={payerName}
+                          payerDocumentStatus={pixDocumentStatus}
+                          payerNameStatus={pixNameStatus}
+                          onPayerDocumentChange={handlePayerDocumentChange}
+                          onPayerNameChange={handlePayerNameChange}
+                          onSubmit={() => {
+                            void handleSubmitPixPayment();
+                          }}
+                          onBack={() => {
+                            setPixFormError(null);
+                            setPixFormHasInputError(false);
+                            setView("methods");
+                          }}
+                          isSubmitting={isSubmittingPix}
+                          canSubmit={canSubmitPix}
+                          errorMessage={pixFormError}
+                          hasInputError={pixFormHasInputError}
+                          errorAnimationTick={pixFormErrorAnimationTick}
+                        />
+                      ) : view === "pix_checkout" ? (
+                        <PixCheckoutPanel
+                          className=""
+                          order={pixOrder}
+                          copied={copied}
+                          onCopy={() => {
+                            void handleCopyPixCode();
+                          }}
+                          onBackToMethods={() => {
+                            setCopied(false);
+                            setView("methods");
+                          }}
+                        />
+                      ) : (
+                        <MethodSelectorPanel
+                          className=""
+                          onChoosePix={() => handleChooseMethod("pix")}
+                          onStartPixFlow={handleStartPixFlow}
+                          onTogglePixTerms={(checked) => {
+                            setPixTermsAccepted(checked);
+                          }}
+                          onSelectHostedRail={handleHostedRailSelection}
+                          methodMessage={checkoutStatusLabel}
+                          canInteract={canChoosePaymentMethod}
+                          cardEnabled={cardPaymentsEnabled}
+                          selectedRail={selectedRail}
+                          pixTermsAccepted={pixTermsAccepted}
+                          view={view}
+                        />
+                      )}
                     </div>
-
-                    {showEmbeddedPaymentSurface ? (
-                      <>
-                        <div className="min-[1530px]:hidden">{renderInlinePanel()}</div>
-                        <div className="hidden min-[1530px]:block">{rightPanel}</div>
-                      </>
-                    ) : null}
 
                     {shouldShowCardRecoveryActions && orderDiagnostic ? (
                       <div className={`rounded-[22px] border px-[18px] py-[16px] ${diagnosticToneClass}`}>
@@ -5974,14 +5618,17 @@ export function ConfigStepFour({
                         </div>
                       </div>
                     ) : null}
-                  </div>
+                    </>
+                  )}
                 </div>
               </div>
-            )}
+            </div>
           </div>
 
-          <aside className={phase === "cart" ? "xl:pt-[54px]" : "space-y-[18px]"}>
-            {phase === "cart" ? (
+          <aside className="space-y-[18px] xl:pt-[54px]">
+            {phase === "checkout" && rightPanel ? (
+              rightPanel
+            ) : (
               <div className="rounded-[30px] bg-[linear-gradient(180deg,rgba(13,13,13,0.98)_0%,rgba(8,8,8,0.98)_100%)] px-[22px] py-[24px] shadow-[0_28px_90px_rgba(0,0,0,0.32)] sm:px-[30px] sm:py-[32px]">
                 <p className="text-[22px] font-semibold text-[#F5F5F5] sm:text-[24px]">
                   Resumo do pedido
@@ -6075,78 +5722,98 @@ export function ConfigStepFour({
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setIsDiscountEditorOpen((current) => !current)}
-                    className="mt-[24px] inline-flex items-center gap-[10px] text-left text-[16px] font-semibold text-[#63A5FF] transition-colors hover:text-[#8CC0FF]"
-                  >
-                    Tem um cupom ou vale-presente?
-                    <span
-                      aria-hidden="true"
-                      className={`inline-flex transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                        showCartDiscountEditor ? "rotate-180" : "rotate-0"
-                      }`}
-                    >
-                      <svg
-                        viewBox="0 0 20 20"
-                        className="h-[16px] w-[16px]"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
+                  {phase === "cart" ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setIsDiscountEditorOpen((current) => !current)}
+                        className="mt-[24px] inline-flex items-center gap-[10px] text-left text-[16px] font-semibold text-[#63A5FF] transition-colors hover:text-[#8CC0FF]"
                       >
-                        <path d="m5 7.5 5 5 5-5" />
-                      </svg>
-                    </span>
-                  </button>
+                        Tem um cupom ou vale-presente?
+                        <span
+                          aria-hidden="true"
+                          className={`inline-flex transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                            showCartDiscountEditor ? "rotate-180" : "rotate-0"
+                          }`}
+                        >
+                          <svg
+                            viewBox="0 0 20 20"
+                            className="h-[16px] w-[16px]"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.8"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="m5 7.5 5 5 5-5" />
+                          </svg>
+                        </span>
+                      </button>
 
-                  <div
-                    className={`grid overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                      showCartDiscountEditor
-                        ? "mt-[16px] grid-rows-[1fr] opacity-100"
-                        : "mt-0 grid-rows-[0fr] opacity-0"
-                    }`}
-                  >
-                    <div
-                      className={`min-h-0 overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                        showCartDiscountEditor
-                          ? "translate-y-0"
-                          : "-translate-y-[10px]"
-                      }`}
-                    >
-                      <div className="space-y-[12px] pb-[2px]">
-                      <input
-                        type="text"
-                        value={couponCode}
-                        onChange={(event) =>
-                          setCouponCode(event.currentTarget.value.toUpperCase().slice(0, 64))
-                        }
-                        placeholder="Cupom ou vale-presente"
-                        className="h-[52px] w-full rounded-[16px] border border-[#242424] bg-[#121212] px-[16px] text-[14px] text-[#F5F5F5] outline-none placeholder:text-[#5B5B5B]"
-                      />
+                      <div
+                        className={`grid overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                          showCartDiscountEditor
+                            ? "mt-[16px] grid-rows-[1fr] opacity-100"
+                            : "mt-0 grid-rows-[0fr] opacity-0"
+                        }`}
+                      >
+                        <div
+                          className={`min-h-0 overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                            showCartDiscountEditor
+                              ? "translate-y-0"
+                              : "-translate-y-[10px]"
+                          }`}
+                        >
+                          <div className="space-y-[12px] pb-[2px]">
+                          <input
+                            type="text"
+                            value={couponCode}
+                            onChange={(event) =>
+                              setCouponCode(event.currentTarget.value.toUpperCase().slice(0, 64))
+                            }
+                            placeholder="Cupom ou vale-presente"
+                            className="h-[52px] w-full rounded-[16px] border border-[#242424] bg-[#121212] px-[16px] text-[14px] text-[#F5F5F5] outline-none placeholder:text-[#5B5B5B]"
+                          />
 
-                      {discountMessage ? (
-                        <p className="flowdesk-slide-down text-[13px] leading-[1.6] text-[#A8A8A8]">
-                          {discountMessage}
-                        </p>
-                      ) : null}
+                          {discountMessage ? (
+                            <p className="flowdesk-slide-down text-[13px] leading-[1.6] text-[#A8A8A8]">
+                              {discountMessage}
+                            </p>
+                          ) : null}
 
-                      {isDiscountLoading ? (
-                        <div className="inline-flex items-center gap-[8px] text-[12px] text-[#B4B4B4]">
-                          <ButtonLoader size={14} colorClassName="text-[#B4B4B4]" />
-                          Validando codigo
+                          {isDiscountLoading ? (
+                            <div className="inline-flex items-center gap-[8px] text-[12px] text-[#B4B4B4]">
+                              <ButtonLoader size={14} colorClassName="text-[#B4B4B4]" />
+                              Validando codigo
+                            </div>
+                          ) : null}
                         </div>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {canManuallyCancelPendingCard ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void handleCancelPendingCardPayment();
+                          }}
+                          disabled={isCancellingPendingCard}
+                          className="mt-[12px] inline-flex h-[46px] w-full items-center justify-center rounded-[14px] border border-[#232323] bg-[#0E0E0E] text-[14px] font-medium text-[#DADADA] transition-colors hover:border-[#303030] hover:bg-[#131313] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {isCancellingPendingCard ? "Cancelando..." : "Cancelar checkout"}
+                        </button>
                       ) : null}
-                    </div>
-                    </div>
-                  </div>
+
+                    </>
+                  )}
 
                   <button
                     type="button"
                     onClick={handleContinueToCheckout}
-                    disabled={isPlanSelectionLocked}
-                    className="group relative mt-[24px] inline-flex h-[65px] w-full shrink-0 items-center justify-center overflow-visible whitespace-nowrap rounded-[12px] px-6 text-[18px] leading-none font-semibold transition-transform duration-150 ease-out hover:scale-[1.00] active:scale-[0.995] disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={isPlanSelectionLocked || phase !== "cart"}
+                    className="group relative mt-[24px] inline-flex h-[55px] w-full shrink-0 items-center justify-center overflow-visible whitespace-nowrap rounded-[12px] px-6 text-[18px] leading-none font-semibold transition-transform duration-150 ease-out hover:scale-[1.00] active:scale-[0.995] disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <span
                       aria-hidden="true"
@@ -6169,78 +5836,6 @@ export function ConfigStepFour({
                   ) : null}
                 </div>
               </div>
-            ) : (
-              <>
-                <div className="rounded-[30px] border border-[#171717] bg-[linear-gradient(180deg,rgba(12,12,12,0.98)_0%,rgba(8,8,8,0.98)_100%)] p-[22px] shadow-[0_28px_90px_rgba(0,0,0,0.32)] sm:p-[24px]">
-                  <p className="text-[24px] leading-[1.02] font-medium tracking-[-0.05em] text-[#F4F4F4]">Resumo do pedido</p>
-                  <p className="mt-[8px] text-[13px] leading-[1.65] text-[#828282]">O servidor continua vinculado a esta compra durante toda a ativacao.</p>
-
-                <div className="mt-[16px] rounded-[22px] border border-[#171717] bg-[#090909] p-[16px]">
-                  <div className="flex items-start justify-between gap-[12px]">
-                    <div>
-                        <p className="text-[16px] font-medium text-[#F1F1F1]">
-                          {planDisplayName} {resolvedPlan.billingPeriodLabel.toLowerCase()}
-                        </p>
-                        <p className="mt-[6px] text-[13px] leading-[1.6] text-[#838383]">
-                          {planPeriodLabel}. Exibido como {effectiveMonthlyLabel}
-                          {planBillingLabel}.
-                        </p>
-                      </div>
-                      <span className="text-[20px] leading-none font-medium tracking-[-0.04em] text-[#F4F4F4]">
-                        {summaryBaseLabel}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="mt-[16px] space-y-[12px] text-[14px] text-[#C8C8C8]">
-                    <div className="flex items-center justify-between"><span className="text-[#8A8A8A]">Subtotal</span><span>{formatMoney(activeDiscountPreview.subtotalAmount, activeDiscountPreview.currency)}</span></div>
-                    <div className="flex items-center justify-between"><span className="text-[#8A8A8A]">Cupom</span><span>{couponDiscountLabel}</span></div>
-                    <div className="flex items-center justify-between"><span className="text-[#8A8A8A]">Vale-presente</span><span>{giftCardDiscountLabel}</span></div>
-                    <div className="flex items-center justify-between"><span className="text-[#8A8A8A]">Impostos</span><span>{formatMoney(0, activeDiscountPreview.currency)}</span></div>
-                  </div>
-
-                  <div className="mt-[16px] rounded-[22px] border border-[#171717] bg-[#090909] px-[16px] py-[15px]">
-                    <div className="flex items-center justify-between gap-[12px]">
-                      <span className="text-[15px] font-medium text-[#EAEAEA]">Total</span>
-                      <span className="text-[26px] leading-none font-medium tracking-[-0.05em] text-[#F6F6F6]">{summaryTotalLabel}</span>
-                    </div>
-                    {totalDiscountAmount > 0 ? (
-                      <p className="mt-[8px] text-[12px] leading-[1.6] text-[#9BD694]">Economia no carrinho: {formatMoney(totalDiscountAmount, activeDiscountPreview.currency)}</p>
-                    ) : null}
-                    {isDiscountLoading ? (
-                      <div className="mt-[8px] inline-flex items-center gap-[8px] text-[12px] text-[#B4B4B4]">
-                        <ButtonLoader size={14} colorClassName="text-[#B4B4B4]" />
-                        Validando codigos
-                      </div>
-                    ) : null}
-                  </div>
-
-                  {shouldShowStatusResultPanel && statusVisual.showRegenerate ? (
-                    <button type="button" onClick={handleRegeneratePayment} className={`mt-[16px] inline-flex h-[50px] w-full items-center justify-center rounded-[14px] bg-[linear-gradient(180deg,#F4F4F4_0%,#D9D9D9_100%)] text-[15px] font-semibold text-[#111111] transition-transform hover:scale-[1.01] active:scale-[0.99] ${statusBarEffectClass}`}>
-                      {regenerateButtonLabel}
-                    </button>
-                  ) : null}
-
-                  <CheckoutLegalText className="mt-[16px] text-[12px] leading-[1.7] text-[#8C8C8C]" />
-                </div>
-
-                <div className="inline-flex items-center gap-[10px] rounded-[18px] border border-[#171717] bg-[#090909] px-[16px] py-[14px] text-[14px] font-medium text-[#D7D7D7]">
-                  <svg
-                    aria-hidden="true"
-                    viewBox="0 0 24 24"
-                    className="h-[18px] w-[18px] text-[#BDBDBD]"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.9"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M12 3.75 5.75 6.5v5.25c0 4.02 2.47 7.72 6.25 9.25 3.78-1.53 6.25-5.23 6.25-9.25V6.5L12 3.75Z" />
-                    <path d="m9.4 12.2 1.75 1.75 3.45-3.7" />
-                  </svg>
-                  <span>7 dias para pedir reembolso</span>
-                </div>
-              </>
             )}
           </aside>
 

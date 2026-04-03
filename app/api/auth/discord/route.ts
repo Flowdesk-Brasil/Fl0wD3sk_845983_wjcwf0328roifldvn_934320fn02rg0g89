@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
     });
 
     const response = applyNoStoreHeaders(
-      NextResponse.redirect(new URL("/login?error=slow_down", request.url)),
+      NextResponse.redirect(new URL("/login?error=slow_down", request.url), 302),
     );
     response.headers.set("Retry-After", String(rateLimit.retryAfterSeconds));
     return attachRequestId(response, requestContext.requestId);
@@ -53,7 +53,7 @@ export async function GET(request: NextRequest) {
   );
   const discordAuthUrl = buildDiscordAuthorizeUrl(state, redirectUri);
 
-  const response = NextResponse.redirect(discordAuthUrl);
+  const response = NextResponse.redirect(discordAuthUrl, 302);
 
   response.cookies.set(authConfig.oauthStateCookieName, state, {
     httpOnly: true,
