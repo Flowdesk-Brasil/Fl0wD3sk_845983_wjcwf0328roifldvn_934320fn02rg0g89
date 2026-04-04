@@ -10,6 +10,11 @@ import {
 import { cleanupExpiredUnpaidServerSetups } from "@/lib/payments/setupCleanup";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import { normalizeTicketPanelLayout } from "@/lib/servers/ticketPanelBuilder";
+import {
+  createDefaultWelcomeEntryLayout,
+  createDefaultWelcomeExitLayout,
+  normalizeWelcomeLayout,
+} from "@/lib/servers/welcomeMessageBuilder";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 const GUILD_CATEGORY = 4;
@@ -42,6 +47,10 @@ function sortRoles(roles: RoleOption[]) {
     if (a.position !== b.position) return b.position - a.position;
     return a.name.localeCompare(b.name, "pt-BR");
   });
+}
+
+function normalizeWelcomeThumbnailMode(value: unknown) {
+  return value === "avatar" ? "avatar" : "custom";
 }
 
 async function ensureGuildAccess(guildId: string) {
@@ -131,7 +140,7 @@ export async function GET(request: Request) {
     });
 
     const supabase = getSupabaseAdminClientOrThrow();
-    const [rawChannels, rawRoles, ticketResult, staffResult] = await Promise.all([
+    const [rawChannels, rawRoles, ticketResult, staffResult, welcomeResult] = await Promise.all([
       fetchGuildChannelsByBot(guildId),
       fetchGuildRolesByBot(guildId),
         supabase
@@ -145,6 +154,13 @@ export async function GET(request: Request) {
         .from("guild_ticket_staff_settings")
         .select(
           "admin_role_id, claim_role_ids, close_role_ids, notify_role_ids, updated_at",
+        )
+        .eq("guild_id", guildId)
+        .maybeSingle(),
+      supabase
+        .from("guild_welcome_settings")
+        .select(
+          "enabled, entry_public_channel_id, entry_log_channel_id, exit_public_channel_id, exit_log_channel_id, entry_layout, exit_layout, entry_thumbnail_mode, exit_thumbnail_mode, updated_at",
         )
         .eq("guild_id", guildId)
         .maybeSingle(),
@@ -182,6 +198,10 @@ export async function GET(request: Request) {
       throw new Error(staffResult.error.message);
     }
 
+    if (welcomeResult.error) {
+      throw new Error(welcomeResult.error.message);
+    }
+
     const categories = sortChannels(
       rawChannels
         .filter((channel) => channel.type === GUILD_CATEGORY)
@@ -206,6 +226,7 @@ export async function GET(request: Request) {
           position: channel.position || 0,
         })),
     );
+    const textSet = new Set(textChannels.map((channel) => channel.id));
 
     const roles = sortRoles(
       rawRoles
@@ -217,6 +238,9 @@ export async function GET(request: Request) {
           position: role.position,
         })),
     );
+
+    const defaultEntryLayout = createDefaultWelcomeEntryLayout();
+    const defaultExitLayout = createDefaultWelcomeExitLayout();
 
     return applyNoStoreHeaders(
       NextResponse.json({
@@ -269,6 +293,46 @@ export async function GET(request: Request) {
                   )
                 : [],
               updatedAt: staffResult.data.updated_at,
+            }
+          : null,
+        welcomeSettings: welcomeResult.data
+          ? {
+              enabled: Boolean(welcomeResult.data.enabled),
+              entryPublicChannelId:
+                welcomeResult.data.entry_public_channel_id &&
+                textSet.has(welcomeResult.data.entry_public_channel_id)
+                  ? welcomeResult.data.entry_public_channel_id
+                  : null,
+              entryLogChannelId:
+                welcomeResult.data.entry_log_channel_id &&
+                textSet.has(welcomeResult.data.entry_log_channel_id)
+                  ? welcomeResult.data.entry_log_channel_id
+                  : null,
+              exitPublicChannelId:
+                welcomeResult.data.exit_public_channel_id &&
+                textSet.has(welcomeResult.data.exit_public_channel_id)
+                  ? welcomeResult.data.exit_public_channel_id
+                  : null,
+              exitLogChannelId:
+                welcomeResult.data.exit_log_channel_id &&
+                textSet.has(welcomeResult.data.exit_log_channel_id)
+                  ? welcomeResult.data.exit_log_channel_id
+                  : null,
+              entryLayout: normalizeWelcomeLayout(
+                welcomeResult.data.entry_layout,
+                defaultEntryLayout,
+              ),
+              exitLayout: normalizeWelcomeLayout(
+                welcomeResult.data.exit_layout,
+                defaultExitLayout,
+              ),
+              entryThumbnailMode: normalizeWelcomeThumbnailMode(
+                welcomeResult.data.entry_thumbnail_mode,
+              ),
+              exitThumbnailMode: normalizeWelcomeThumbnailMode(
+                welcomeResult.data.exit_thumbnail_mode,
+              ),
+              updatedAt: welcomeResult.data.updated_at,
             }
           : null,
       }),

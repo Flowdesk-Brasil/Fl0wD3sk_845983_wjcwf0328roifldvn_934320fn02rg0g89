@@ -25,7 +25,7 @@ const FOOTER_GROUPS: FooterGroup[] = [
       { label: "Solucoes", href: "/#solutions" },
       { label: "Servicos", href: "/#services" },
       { label: "Produtos", href: "/#products" },
-      { label: "Comecar agora", href: "/config" },
+      { label: "Comecar agora", href: "/config?fresh=1" },
     ],
   },
   {
@@ -82,7 +82,7 @@ const FOOTER_GROUPS: FooterGroup[] = [
     title: "Plataforma",
     links: [
       { label: "Login", href: "/login" },
-      { label: "Configuracao", href: "/config" },
+      { label: "Configuracao", href: "/config?fresh=1" },
       { label: "Vincular Discord", href: "/discord/link" },
       { label: "Painel web", href: "#" },
       { label: "Deploy", href: "#" },

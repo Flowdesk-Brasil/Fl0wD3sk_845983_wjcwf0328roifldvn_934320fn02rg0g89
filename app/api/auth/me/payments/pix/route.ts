@@ -59,6 +59,7 @@ type CreatePixPaymentBody = {
   payerDocument?: unknown;
   couponCode?: unknown;
   giftCardCode?: unknown;
+  forceNew?: unknown;
 };
 
 type PaymentOrderRecord = {
@@ -155,6 +156,15 @@ function normalizePayerDocument(value: unknown) {
     normalized,
     type,
   };
+}
+
+function parseForceNewFlag(value: unknown) {
+  if (value === true) return true;
+  if (value === false || value === null || value === undefined) return false;
+  if (typeof value === "number") return value === 1;
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
 function maskPayerDocument(document: string | null) {
@@ -864,9 +874,7 @@ export async function GET(request: Request) {
     const checkoutToken = normalizeCheckoutToken(
       url.searchParams.get("checkoutToken"),
     );
-    const forceNew =
-      url.searchParams.get("forceNew") === "1" ||
-      url.searchParams.get("forceNew") === "true";
+    const forceNew = parseForceNewFlag(url.searchParams.get("forceNew"));
 
     const sessionData = await resolveSessionAccessToken();
     if (!sessionData?.authSession) {
@@ -1105,6 +1113,7 @@ export async function POST(request: Request) {
     const guildId = normalizeGuildId(body.guildId);
     const requestedPayerName = normalizePayerName(body.payerName);
     const requestedPayerDocument = normalizePayerDocument(body.payerDocument);
+    const forceNew = parseForceNewFlag(body.forceNew);
 
     if (!guildId) {
       return respond(
@@ -1259,6 +1268,35 @@ export async function POST(request: Request) {
     });
 
     if (
+      forceNew &&
+      latestOrder &&
+      latestOrder.payment_method === "pix" &&
+      latestOrder.status === "pending" &&
+      latestOrder.provider_payment_id &&
+      !isOrderExpiredOrExpiringSoon(
+        latestOrder,
+        ORDER_EXPIRATION_SAFETY_BUFFER_MS,
+      )
+    ) {
+      const securedOrder = await ensureCheckoutAccessTokenForOrder({
+        order: latestOrder,
+        forceRotate: false,
+        invalidateOtherOrders: false,
+      });
+
+      return respond({
+        ok: true,
+        reused: true,
+        alreadyProcessing: true,
+        order: toApiOrder(
+          securedOrder.order,
+          securedOrder.checkoutAccessToken,
+        ),
+      });
+    }
+
+    if (
+      !forceNew &&
       latestOrder &&
       latestOrder.plan_code === checkoutPlan.plan.code &&
       canReuseExistingPixCheckoutOrder(
@@ -1287,7 +1325,7 @@ export async function POST(request: Request) {
 
     let createdOrder: PaymentOrderRecord;
     const draftOrderToReuse =
-      latestOrder && canReuseDraftCheckoutOrder(latestOrder)
+      !forceNew && latestOrder && canReuseDraftCheckoutOrder(latestOrder)
         ? latestOrder
         : null;
 

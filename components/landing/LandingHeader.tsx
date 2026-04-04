@@ -580,7 +580,7 @@ export function LandingHeader() {
       ],
       sideTitle: "PRODUTO",
       sideLinks: [
-        { label: "Painel principal", href: "/config" },
+        { label: "Painel principal", href: "/config?fresh=1" },
         { label: "Planos empresariais", href: "/#plans" },
         { label: "Documentacao", href: documentationHref },
         { label: "Privacidade", href: "/privacy" },

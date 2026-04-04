@@ -69,7 +69,11 @@ type ServersWorkspaceProps = {
 };
 
 type ServerEditorTab = "settings" | "payments" | "methods" | "plans";
-type ServerSettingsSection = "overview" | "message";
+type ServerSettingsSection =
+  | "overview"
+  | "message"
+  | "entry_exit_overview"
+  | "entry_exit_message";
 type FilterOption = "all" | ManagedServerStatus;
 type ViewMode = "overview" | "list";
 type CreateTeamStep = "name" | "servers" | "members";
@@ -154,6 +158,38 @@ const TICKET_SIDEBAR_ITEMS: SidebarItem[] = [
       "descricao",
       "botao",
       "ticket",
+    ],
+  },
+];
+
+const ENTRY_EXIT_SIDEBAR_ITEMS: SidebarItem[] = [
+  {
+    label: "Canais e Logs",
+    kind: "settings",
+    tab: "settings",
+    settingsSection: "entry_exit_overview",
+    searchAliases: [
+      "entrada",
+      "saida",
+      "logs",
+      "canal",
+      "mensagem",
+      "boas vindas",
+      "entrada e saida",
+    ],
+  },
+  {
+    label: "Configurando Mensagem",
+    kind: "settings",
+    tab: "settings",
+    settingsSection: "entry_exit_message",
+    searchAliases: [
+      "mensagem",
+      "embed",
+      "entrada",
+      "saida",
+      "configurar",
+      "boas vindas",
     ],
   },
 ];
@@ -288,6 +324,20 @@ function parseWorkspaceRoute(pathname: string | null): {
       guildId: ticketSectionMatch[1],
       tab: "settings",
       settingsSection: ticketSectionMatch[2] as ServerSettingsSection,
+    };
+  }
+
+  const entryExitSectionMatch = pathname.match(
+    /^\/servers\/(\d{10,25})\/entry-exit\/(overview|message)\/?$/,
+  );
+  if (entryExitSectionMatch) {
+    return {
+      guildId: entryExitSectionMatch[1],
+      tab: "settings",
+      settingsSection:
+        entryExitSectionMatch[2] === "overview"
+          ? "entry_exit_overview"
+          : "entry_exit_message",
     };
   }
 
@@ -881,6 +931,7 @@ export function ServersWorkspace({
   const [selectedSettingsSectionForConfig, setSelectedSettingsSectionForConfig] =
     useState<ServerSettingsSection>(initialSettingsSection);
   const [isTicketSidebarOpen, setIsTicketSidebarOpen] = useState(true);
+  const [isEntryExitSidebarOpen, setIsEntryExitSidebarOpen] = useState(true);
   const statusRef = useRef<HTMLDivElement | null>(null);
   const desktopTeamMenuRef = useRef<HTMLDivElement | null>(null);
   const mobileTeamMenuRef = useRef<HTMLDivElement | null>(null);
@@ -1531,15 +1582,44 @@ export function ServersWorkspace({
       )
       .map((entry) => entry.item);
   }, [normalizedSidebarQuery]);
+
+  const filteredEntryExitSidebarItems = useMemo(() => {
+    if (!normalizedSidebarQuery) return ENTRY_EXIT_SIDEBAR_ITEMS;
+
+    return ENTRY_EXIT_SIDEBAR_ITEMS
+      .map((item) => {
+        const haystack = [item.label, ...(item.searchAliases || [])].join(" ");
+        return { item, score: getSearchScore(haystack, normalizedSidebarQuery) };
+      })
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) =>
+        a.score !== b.score
+          ? b.score - a.score
+          : a.item.label.localeCompare(b.item.label, "pt-BR"),
+      )
+      .map((entry) => entry.item);
+  }, [normalizedSidebarQuery]);
+  const isEditingServer = Boolean(selectedGuildIdForConfig);
   const activeTeamServerCount = visibleServers.length;
   const isCreateTeamNextDisabled =
     isCreatingTeam ||
     (createTeamStep === "name" && createTeamName.trim().length < 3) ||
     (createTeamStep === "servers" && !createTeamServerIds.length);
+  const isTicketGroupActive =
+    isEditingServer &&
+    selectedEditorTabForConfig === "settings" &&
+    (selectedSettingsSectionForConfig === "overview" ||
+      selectedSettingsSectionForConfig === "message");
+  const isEntryExitGroupActive =
+    isEditingServer &&
+    selectedEditorTabForConfig === "settings" &&
+    (selectedSettingsSectionForConfig === "entry_exit_overview" ||
+      selectedSettingsSectionForConfig === "entry_exit_message");
 
   useEffect(() => {
     if (selectedGuildIdForConfig || normalizedSidebarQuery) {
       setIsTicketSidebarOpen(true);
+      setIsEntryExitSidebarOpen(true);
     }
   }, [normalizedSidebarQuery, selectedGuildIdForConfig]);
 
@@ -1582,6 +1662,12 @@ export function ServersWorkspace({
     const encodedGuildId = encodeURIComponent(guildId);
     if (settingsSection === "message") {
       return `/servers/${encodedGuildId}/tickets/message/`;
+    }
+    if (settingsSection === "entry_exit_message") {
+      return `/servers/${encodedGuildId}/entry-exit/message/`;
+    }
+    if (settingsSection === "entry_exit_overview") {
+      return `/servers/${encodedGuildId}/entry-exit/overview/`;
     }
     if (options?.explicitSection) {
       return `/servers/${encodedGuildId}/tickets/overview/`;
@@ -1856,8 +1942,10 @@ export function ServersWorkspace({
     router.prefetch(buildServerConfigUrl(guildId, tab));
   }, [buildServerConfigUrl, router]);
 
-  const selectedServer = useMemo(() => servers.find((server) => server.guildId === selectedGuildIdForConfig) || null, [selectedGuildIdForConfig, servers]);
-  const isEditingServer = Boolean(selectedGuildIdForConfig);
+  const selectedServer = useMemo(
+    () => servers.find((server) => server.guildId === selectedGuildIdForConfig) || null,
+    [selectedGuildIdForConfig, servers],
+  );
   const shouldShowEditorSkeleton =
     Boolean(selectedGuildIdForConfig) && (isLoading || (!selectedServer && !errorMessage));
   const shouldShowEditorUnavailableState =
@@ -2133,7 +2221,9 @@ export function ServersWorkspace({
       </div>
 
       <div className="mt-[14px] flex-1 overflow-y-auto pr-[2px]">
-        {filteredProjectsSidebarItems.length || filteredTicketSidebarItems.length ? (
+        {filteredProjectsSidebarItems.length ||
+        filteredTicketSidebarItems.length ||
+        filteredEntryExitSidebarItems.length ? (
           <>
             {filteredProjectsSidebarItems.length ? (
               <div className="space-y-[4px]">
@@ -2172,13 +2262,13 @@ export function ServersWorkspace({
                   type="button"
                   onClick={() => setIsTicketSidebarOpen((current) => !current)}
                   className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-all duration-200 ${
-                    isEditingServer && selectedEditorTabForConfig === "settings"
+                    isTicketGroupActive
                       ? "bg-[#1E1E1E] text-[#F0F0F0]"
                       : "text-[#B5B5B5] hover:bg-[#111111] hover:text-[#E3E3E3]"
                   }`}
                 >
-                  <span className={`inline-flex h-[22px] w-[22px] items-center justify-center ${isEditingServer && selectedEditorTabForConfig === "settings" ? "text-[#F0F0F0]" : "text-[#8A8A8A] group-hover:text-[#DADADA]"}`}>
-                    <SidebarNavIcon kind="settings" active={isEditingServer && selectedEditorTabForConfig === "settings"} />
+                  <span className={`inline-flex h-[22px] w-[22px] items-center justify-center ${isTicketGroupActive ? "text-[#F0F0F0]" : "text-[#8A8A8A] group-hover:text-[#DADADA]"}`}>
+                    <SidebarNavIcon kind="settings" active={isTicketGroupActive} />
                   </span>
                   <span className="min-w-0 flex-1 truncate text-[15px] leading-none font-medium tracking-[-0.03em]">
                     Ticket
@@ -2197,6 +2287,90 @@ export function ServersWorkspace({
                 {isTicketSidebarOpen || normalizedSidebarQuery ? (
                   <div className="mt-[6px] space-y-[4px] pl-[12px]">
                     {filteredTicketSidebarItems.map((item) => {
+                      const isDisabled = item.disabled || !selectedServer || !item.tab;
+                      const isActive =
+                        Boolean(
+                          item.tab &&
+                            selectedEditorTabForConfig === item.tab &&
+                            selectedSettingsSectionForConfig === item.settingsSection &&
+                            isEditingServer,
+                        );
+
+                      return (
+                        <button
+                          key={item.label}
+                          type="button"
+                          onClick={() => {
+                            if (isDisabled || !selectedServer || !item.tab) return;
+                            setSelectedGuildIdForConfig(selectedServer.guildId);
+                            setSelectedEditorTabForConfig(item.tab);
+                            setSelectedSettingsSectionForConfig(
+                              item.settingsSection || "overview",
+                            );
+                            navigateToUrl(
+                              buildServerConfigUrl(
+                                selectedServer.guildId,
+                                item.tab,
+                                item.settingsSection || "overview",
+                                { explicitSection: true },
+                              ),
+                              "replace",
+                            );
+                          }}
+                          disabled={isDisabled}
+                          className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[10px] text-left transition-all duration-200 ${
+                            isActive
+                              ? "bg-[#1A1A1A] text-[#F0F0F0]"
+                              : isDisabled
+                                ? "text-[#585858]"
+                                : "text-[#AFAFAF] hover:bg-[#101010] hover:text-[#E3E3E3]"
+                          }`}
+                        >
+                          <span className={`inline-flex h-[20px] w-[20px] items-center justify-center ${isActive ? "text-[#F0F0F0]" : isDisabled ? "text-[#4A4A4A]" : "text-[#7F7F7F] group-hover:text-[#DADADA]"}`}>
+                            <SidebarNavIcon kind={item.kind} active={isActive} />
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-[14px] leading-none font-medium tracking-[-0.03em]">
+                            {item.label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {filteredEntryExitSidebarItems.length ? (
+              <div className="mt-[12px] border-t border-[#121212] pt-[12px]">
+                <button
+                  type="button"
+                  onClick={() => setIsEntryExitSidebarOpen((current) => !current)}
+                  className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-all duration-200 ${
+                    isEntryExitGroupActive
+                      ? "bg-[#1E1E1E] text-[#F0F0F0]"
+                      : "text-[#B5B5B5] hover:bg-[#111111] hover:text-[#E3E3E3]"
+                  }`}
+                >
+                  <span className={`inline-flex h-[22px] w-[22px] items-center justify-center ${isEntryExitGroupActive ? "text-[#F0F0F0]" : "text-[#8A8A8A] group-hover:text-[#DADADA]"}`}>
+                    <SidebarNavIcon kind="settings" active={isEntryExitGroupActive} />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[15px] leading-none font-medium tracking-[-0.03em]">
+                    Mensagem Entrada/Saida
+                  </span>
+                  <span
+                    className={`transition-transform duration-200 ${
+                      isEntryExitSidebarOpen || normalizedSidebarQuery
+                        ? "rotate-180 text-[#C9C9C9]"
+                        : "rotate-0 text-[#6F6F6F] group-hover:text-[#BEBEBE]"
+                    }`}
+                  >
+                    <SidebarDropdownChevronIcon />
+                  </span>
+                </button>
+
+                {isEntryExitSidebarOpen || normalizedSidebarQuery ? (
+                  <div className="mt-[6px] space-y-[4px] pl-[12px]">
+                    {filteredEntryExitSidebarItems.map((item) => {
                       const isDisabled = item.disabled || !selectedServer || !item.tab;
                       const isActive =
                         Boolean(

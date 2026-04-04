@@ -50,6 +50,7 @@ type ConfigStepFourProps = {
   initialPlanCode: PlanCode;
   initialBillingPeriodCode?: PlanBillingPeriodCode;
   hasExplicitInitialPlan?: boolean;
+  forceFreshCheckout?: boolean;
   initialDraft?: StepFourDraft | null;
   onDraftChange?: (guildId: string, draft: StepFourDraft) => void;
 };
@@ -2745,6 +2746,7 @@ export function ConfigStepFour({
   initialPlanCode,
   initialBillingPeriodCode = DEFAULT_PLAN_BILLING_PERIOD_CODE,
   hasExplicitInitialPlan = false,
+  forceFreshCheckout = false,
   initialDraft = null,
   onDraftChange,
 }: ConfigStepFourProps) {
@@ -2772,6 +2774,7 @@ export function ConfigStepFour({
   const pixAutoRefreshInFlightRef = useRef(false);
   const lastAutoRefreshedPixOrderRef = useRef<number | null>(null);
   const hydratedGuildIdRef = useRef<string | null>(null);
+  const forceNewCheckoutRef = useRef(Boolean(forceFreshCheckout));
   const planFinancialStateRef = useRef<{
     recurringEnabled: boolean;
     recurringMethodId: string | null;
@@ -2881,6 +2884,12 @@ export function ConfigStepFour({
   const [isLoadingOrder, setIsLoadingOrder] = useState(true);
   const [isPreparingBaseOrder, setIsPreparingBaseOrder] = useState(false);
   const [isCancellingPendingCard, setIsCancellingPendingCard] = useState(false);
+
+  useEffect(() => {
+    if (forceFreshCheckout) {
+      forceNewCheckoutRef.current = true;
+    }
+  }, [forceFreshCheckout]);
 
   const documentDigits = useMemo(() => normalizeBrazilDocumentDigits(payerDocument), [payerDocument]);
   const cardDocumentDigits = useMemo(() => normalizeBrazilDocumentDigits(cardDocument), [cardDocument]);
@@ -3336,6 +3345,8 @@ export function ConfigStepFour({
       }
 
       try {
+        const shouldForceNewOrder =
+          forceNewCheckoutRef.current && !shouldLoadOrderByCode;
         const lookupUrl =
           shouldLoadOrderByCode && checkoutQuery.code !== null
             ? buildPaymentOrderLookupUrl({
@@ -3346,11 +3357,19 @@ export function ConfigStepFour({
                 paymentRef: checkoutQuery.paymentRef,
                 status: checkoutQuery.status,
               })
-            : `/api/auth/me/payments/pix?${new URLSearchParams({
-                guildId: activeGuildId,
-                planCode: activePlanCode,
-                billingPeriodCode: activeBillingPeriodCode,
-              }).toString()}`;
+            : (() => {
+                const params = new URLSearchParams({
+                  guildId: activeGuildId,
+                  planCode: activePlanCode,
+                  billingPeriodCode: activeBillingPeriodCode,
+                });
+
+                if (shouldForceNewOrder) {
+                  params.set("forceNew", "1");
+                }
+
+                return `/api/auth/me/payments/pix?${params.toString()}`;
+              })();
 
         const response = await fetch(lookupUrl, {
           cache: "no-store",
@@ -3358,6 +3377,15 @@ export function ConfigStepFour({
         });
         const payload = (await response.json()) as PixPaymentApiResponse;
         if (!isMounted) return;
+
+        if (
+          shouldForceNewOrder &&
+          response.ok &&
+          payload.ok &&
+          payload.order
+        ) {
+          forceNewCheckoutRef.current = false;
+        }
 
         const remoteOrder =
           response.ok && payload.ok && payload.order ? payload.order : null;
@@ -3440,6 +3468,10 @@ export function ConfigStepFour({
               ? "Confirmando pagamento aprovado com o Mercado Pago..."
               : "Pagamento com cartao em analise.",
           );
+        }
+
+        if (order?.status === "pending") {
+          setCheckoutStatusQuery({ order, guildId: activeGuildId });
         }
 
         const restoredView = resolveRestoredView({
@@ -3640,12 +3672,18 @@ export function ConfigStepFour({
 
     void (async () => {
       try {
+        const shouldForceNewOrder = forceNewCheckoutRef.current;
+        const params = new URLSearchParams({
+          guildId,
+          planCode: selectedPlanCode,
+          billingPeriodCode: selectedBillingPeriodCode,
+        });
+        if (shouldForceNewOrder) {
+          params.set("forceNew", "1");
+        }
+
         const response = await fetch(
-          `/api/auth/me/payments/pix?${new URLSearchParams({
-            guildId,
-            planCode: selectedPlanCode,
-            billingPeriodCode: selectedBillingPeriodCode,
-          }).toString()}`,
+          `/api/auth/me/payments/pix?${params.toString()}`,
           {
             cache: "no-store",
             signal: controller.signal,
@@ -3662,6 +3700,9 @@ export function ConfigStepFour({
         setPixOrder(payload.order);
         setLastKnownOrderNumber(payload.order.orderNumber);
         writeCachedOrderByGuild(guildId, payload.order);
+        if (shouldForceNewOrder) {
+          forceNewCheckoutRef.current = false;
+        }
       } catch (error) {
         const message =
           parseUnknownErrorMessage(error) ||
@@ -4386,6 +4427,7 @@ export function ConfigStepFour({
           returnTarget,
           returnGuildId,
           returnTab,
+          forceNew: forceNewCheckoutRef.current,
         }),
       });
       const requestId = resolveResponseRequestId(response);
@@ -4434,6 +4476,7 @@ export function ConfigStepFour({
             : null,
       });
 
+      forceNewCheckoutRef.current = false;
       redirected = true;
       window.setTimeout(() => {
         window.location.assign(payload.redirectUrl!);
@@ -4558,6 +4601,7 @@ export function ConfigStepFour({
         billingPeriodCode: selectedBillingPeriodCode,
         couponCode,
         giftCardCode,
+        forceNew: forceNewCheckoutRef.current,
       };
 
       const normalizedName = normalizePersonName(payerName);
@@ -4591,6 +4635,7 @@ export function ConfigStepFour({
       setPixOrder(payload.order);
       setLastKnownOrderNumber(payload.order.orderNumber);
       writeCachedOrderByGuild(guildId, payload.order);
+      forceNewCheckoutRef.current = false;
       setPhase("checkout");
       setSelectedRail("pix");
 
@@ -4607,7 +4652,7 @@ export function ConfigStepFour({
         setMethodMessage(
           "Geramos um novo PIX automaticamente para manter o pagamento valido.",
         );
-        clearCheckoutStatusQuery();
+        setCheckoutStatusQuery({ order: payload.order, guildId });
       } else {
         setView("pix_form");
         setMethodMessage(
@@ -4799,6 +4844,7 @@ export function ConfigStepFour({
           giftCardCode,
           payerDocument: documentDigits,
           payerName: normalizedName,
+          forceNew: forceNewCheckoutRef.current,
         }),
       });
       const requestId = resolveResponseRequestId(response);
@@ -4817,6 +4863,7 @@ export function ConfigStepFour({
       setPixOrder(payload.order);
       setLastKnownOrderNumber(payload.order.orderNumber);
       writeCachedOrderByGuild(guildId, payload.order);
+      forceNewCheckoutRef.current = false;
 
       if (payload.order.status === "approved" || payload.blockedByActiveLicense) {
         setView("methods");
@@ -5020,6 +5067,7 @@ export function ConfigStepFour({
           installments: 1,
           issuerId,
           deviceSessionId,
+          forceNew: forceNewCheckoutRef.current,
         }),
       });
       const requestId = resolveResponseRequestId(response);
@@ -5044,6 +5092,7 @@ export function ConfigStepFour({
       setPixOrder(payload.order);
       setLastKnownOrderNumber(payload.order.orderNumber);
       writeCachedOrderByGuild(guildId, payload.order);
+      forceNewCheckoutRef.current = false;
       setView("methods");
       setCardFormHasInputError(false);
       setCardFormError(null);
@@ -5065,7 +5114,7 @@ export function ConfigStepFour({
         setCheckoutStatusQuery({ order: payload.order, guildId });
       } else if (payload.order.status === "pending") {
         setMethodMessage("Pagamento com cartao em analise.");
-        clearCheckoutStatusQuery();
+        setCheckoutStatusQuery({ order: payload.order, guildId });
       } else if (payload.order.status === "rejected") {
         setMethodMessage(
           retryAfterSeconds

@@ -118,6 +118,16 @@ function normalizeStepHash(hash: string) {
   return hash.trim().toLowerCase().split("?")[0].replace(/\/+$/, "");
 }
 
+function shouldForceFreshStart(url: URL) {
+  const freshValue = url.searchParams.get("fresh")?.trim().toLowerCase();
+  if (freshValue === "1" || freshValue === "true" || freshValue === "yes") {
+    return true;
+  }
+
+  const sourceValue = url.searchParams.get("source")?.trim().toLowerCase();
+  return sourceValue === "landing";
+}
+
 function parseStepFromHash(hash: string): ConfigStep {
   const normalized = normalizeStepHash(hash);
   if (normalized === STEP_ONE_HASH) return 1;
@@ -409,6 +419,7 @@ export function ConfigFlow({
   const [managedServerStatusByGuild, setManagedServerStatusByGuild] = useState<
     Record<string, ManagedServerStatus>
   >({});
+  const [forceFreshCheckout, setForceFreshCheckout] = useState(false);
 
   const contextSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingContextPatchRef = useRef<ConfigContextPatch | null>(null);
@@ -519,7 +530,9 @@ export function ConfigFlow({
   useEffect(() => {
     function syncStepFromHash() {
       const currentUrl = new URL(window.location.href);
-      const checkoutQuery = readCheckoutStatusQuery(currentUrl);
+      const checkoutQuery = shouldForceFreshStart(currentUrl)
+        ? null
+        : readCheckoutStatusQuery(currentUrl);
 
       if (checkoutQuery) {
         setCurrentStep(4);
@@ -537,37 +550,41 @@ export function ConfigFlow({
     let isMounted = true;
 
     async function loadConfigContext() {
-      const localContext = readLocalConfigContext();
+      const initialUrl = new URL(window.location.href);
+      const shouldForceFresh = shouldForceFreshStart(initialUrl);
+      setForceFreshCheckout(shouldForceFresh);
+      const localContext = shouldForceFresh ? null : readLocalConfigContext();
       const initialHash = window.location.hash;
       const initialHashStep = parseStepFromHash(initialHash);
       const shouldRespectHash = hasStepHash(initialHash);
-      const initialUrl = new URL(window.location.href);
-      const checkoutQuery = readCheckoutStatusQuery(initialUrl);
+      const checkoutQuery = shouldForceFresh ? null : readCheckoutStatusQuery(initialUrl);
       const queryGuildId = normalizeGuildIdFromQuery(
         initialUrl.searchParams.get("guild"),
       );
       let serverContext: StoredConfigContext | null = null;
 
       try {
-        const response = await fetch("/api/auth/me/config-context", {
-          cache: "no-store",
-        });
-        const payload = (await response.json()) as ConfigContextApiResponse;
-
-        if (response.ok && payload.ok) {
-          const sanitizedServerContext = sanitizeStoredConfigContext({
-            activeGuildId: payload.activeGuildId,
-            activeStep: payload.activeStep,
-            draft: payload.draft,
-            updatedAt: payload.updatedAt,
+        if (!shouldForceFresh) {
+          const response = await fetch("/api/auth/me/config-context", {
+            cache: "no-store",
           });
-          if (sanitizedServerContext) {
-            serverContext = toStoredConfigContext({
-              activeGuildId: sanitizedServerContext.activeGuildId,
-              activeStep: sanitizedServerContext.activeStep,
-              draft: sanitizedServerContext.draft,
-              updatedAt: sanitizedServerContext.updatedAt,
+          const payload = (await response.json()) as ConfigContextApiResponse;
+
+          if (response.ok && payload.ok) {
+            const sanitizedServerContext = sanitizeStoredConfigContext({
+              activeGuildId: payload.activeGuildId,
+              activeStep: payload.activeStep,
+              draft: payload.draft,
+              updatedAt: payload.updatedAt,
             });
+            if (sanitizedServerContext) {
+              serverContext = toStoredConfigContext({
+                activeGuildId: sanitizedServerContext.activeGuildId,
+                activeStep: sanitizedServerContext.activeStep,
+                draft: sanitizedServerContext.draft,
+                updatedAt: sanitizedServerContext.updatedAt,
+              });
+            }
           }
         }
       } catch {
@@ -575,23 +592,48 @@ export function ConfigFlow({
       } finally {
         if (!isMounted) return;
 
-        const mergedContext = mergeStoredContexts(localContext, serverContext);
+        if (shouldForceFresh) {
+          try {
+            window.sessionStorage.removeItem(CONFIG_CONTEXT_STORAGE_KEY);
+            window.sessionStorage.removeItem(LEGACY_GUILD_STORAGE_KEY);
+            window.sessionStorage.removeItem("flowdesk_payment_order_cache_v1");
+            window.sessionStorage.removeItem("flowdesk_approved_redirected_orders_v1");
+            window.sessionStorage.removeItem("flowdesk_pending_card_redirect_v1");
+          } catch {
+            // Melhor esforco para limpeza de cache local.
+          }
+        }
+
+        const mergedContext = shouldForceFresh
+          ? toStoredConfigContext({
+              activeGuildId: null,
+              activeStep: 1,
+              draft: createEmptyConfigDraft(),
+              updatedAt: null,
+            })
+          : mergeStoredContexts(localContext, serverContext);
         const resolvedActiveGuildId =
-          checkoutQuery?.guildId || queryGuildId || mergedContext.activeGuildId;
+          shouldForceFresh
+            ? queryGuildId
+            : checkoutQuery?.guildId || queryGuildId || mergedContext.activeGuildId;
         const resolvedActiveStep =
-          checkoutQuery
-            ? 4
-            : shouldRespectHash && resolvedActiveGuildId
-            ? initialHashStep
-            : shouldRespectHash && !resolvedActiveGuildId
-              ? 1
-              : queryGuildId
-                ? 2
-                : mergedContext.activeStep;
+          shouldForceFresh
+            ? resolvedActiveGuildId
+              ? 2
+              : 1
+            : checkoutQuery
+              ? 4
+              : shouldRespectHash && resolvedActiveGuildId
+                ? initialHashStep
+                : shouldRespectHash && !resolvedActiveGuildId
+                  ? 1
+                  : queryGuildId
+                    ? 2
+                    : mergedContext.activeStep;
         const hydratedContext = toStoredConfigContext({
           activeGuildId: resolvedActiveGuildId,
           activeStep: resolvedActiveStep,
-          draft: mergedContext.draft,
+          draft: shouldForceFresh ? createEmptyConfigDraft() : mergedContext.draft,
           updatedAt: mergedContext.updatedAt,
         });
 
@@ -609,6 +651,24 @@ export function ConfigFlow({
         writeLocalConfigContext(hydratedContext);
         setIsContextHydrated(true);
         setIsConfigContextLoading(false);
+
+        if (shouldForceFresh) {
+          const cleanedUrl = new URL(window.location.href);
+          cleanedUrl.searchParams.delete("fresh");
+          cleanedUrl.searchParams.delete("source");
+          for (const key of CHECKOUT_QUERY_KEYS) {
+            cleanedUrl.searchParams.delete(key);
+          }
+          window.history.replaceState(
+            null,
+            "",
+            buildConfigUrlWithHashRoute(
+              cleanedUrl.pathname,
+              cleanedUrl.search,
+              cleanedUrl.hash,
+            ),
+          );
+        }
 
         const shouldBackfillServerActiveGuild =
           Boolean(
@@ -1015,6 +1075,7 @@ export function ConfigFlow({
           initialPlanCode={initialPlanCode}
           initialBillingPeriodCode={initialBillingPeriodCode}
           hasExplicitInitialPlan={hasExplicitInitialPlan}
+          forceFreshCheckout={forceFreshCheckout}
           initialDraft={stepFourDraft}
           onDraftChange={handleStepFourDraftChange}
         />

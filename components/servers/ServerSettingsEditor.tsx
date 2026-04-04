@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { ClientErrorBoundary } from "@/components/common/ClientErrorBoundary";
+import { BotMissingModal } from "@/components/config/BotMissingModal";
 import { ConfigStepMultiSelect } from "@/components/config/ConfigStepMultiSelect";
 import { ConfigStepSelect } from "@/components/config/ConfigStepSelect";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
@@ -24,6 +25,13 @@ import {
   type TicketPanelLayout,
 } from "@/lib/servers/ticketPanelBuilder";
 import {
+  createDefaultWelcomeEntryLayout,
+  createDefaultWelcomeExitLayout,
+  normalizeWelcomeLayout,
+  welcomeLayoutHasContent,
+  type WelcomeThumbnailMode,
+} from "@/lib/servers/welcomeMessageBuilder";
+import {
   isValidBrazilDocument,
   normalizeBrazilDocumentDigits,
   resolveBrazilDocumentType,
@@ -37,7 +45,11 @@ import {
 
 type ManagedServerStatus = "paid" | "expired" | "off";
 type EditorTab = "settings" | "payments" | "methods" | "plans";
-type ServerSettingsSection = "overview" | "message";
+type ServerSettingsSection =
+  | "overview"
+  | "message"
+  | "entry_exit_overview"
+  | "entry_exit_message";
 type PaymentStatus =
   | "pending"
   | "approved"
@@ -69,6 +81,18 @@ type ServerSettingsDraft = {
   claimRoleIds: string[];
   closeRoleIds: string[];
   notifyRoleIds: string[];
+};
+
+type WelcomeSettingsDraft = {
+  enabled: boolean;
+  entryPublicChannelId: string | null;
+  entryLogChannelId: string | null;
+  exitPublicChannelId: string | null;
+  exitLogChannelId: string | null;
+  entryLayout: TicketPanelLayout;
+  exitLayout: TicketPanelLayout;
+  entryThumbnailMode: WelcomeThumbnailMode;
+  exitThumbnailMode: WelcomeThumbnailMode;
 };
 
 type PaymentOrder = {
@@ -190,6 +214,17 @@ const TAB_INDEX: Record<EditorTab, number> = {
   plans: 3,
 };
 
+const WELCOME_VARIABLES = [
+  { token: "{user}", description: "Menciona o usuario." },
+  { token: "{user.id}", description: "ID do usuario no Discord." },
+  { token: "{user.tag}", description: "Usuario#0000." },
+  { token: "{user.avatar}", description: "URL da foto do usuario." },
+  { token: "{inviter}", description: "Quem convidou o usuario." },
+  { token: "{server}", description: "Nome do servidor." },
+  { token: "{server.id}", description: "ID do servidor." },
+  { token: "{memberCount}", description: "Total de membros." },
+];
+
 function normalizeSearch(value: string) {
   if (typeof value !== "string") return "";
   return value
@@ -231,6 +266,31 @@ function areServerSettingsDraftsEqual(
   if (!left || !right) return left === right;
 
   return JSON.stringify(normalizeServerSettingsDraft(left)) === JSON.stringify(normalizeServerSettingsDraft(right));
+}
+
+function normalizeWelcomeSettingsDraft(
+  draft: WelcomeSettingsDraft,
+): WelcomeSettingsDraft {
+  return {
+    enabled: draft.enabled,
+    entryPublicChannelId: draft.entryPublicChannelId,
+    entryLogChannelId: draft.entryLogChannelId,
+    exitPublicChannelId: draft.exitPublicChannelId,
+    exitLogChannelId: draft.exitLogChannelId,
+    entryLayout: normalizeTicketPanelLayout(draft.entryLayout),
+    exitLayout: normalizeTicketPanelLayout(draft.exitLayout),
+    entryThumbnailMode: draft.entryThumbnailMode,
+    exitThumbnailMode: draft.exitThumbnailMode,
+  };
+}
+
+function areWelcomeSettingsDraftsEqual(
+  left: WelcomeSettingsDraft | null,
+  right: WelcomeSettingsDraft | null,
+) {
+  if (!left || !right) return left === right;
+
+  return JSON.stringify(normalizeWelcomeSettingsDraft(left)) === JSON.stringify(normalizeWelcomeSettingsDraft(right));
 }
 
 function orderStatusBadge(status: PaymentStatus) {
@@ -1195,6 +1255,21 @@ export function ServerSettingsEditor({
   const [panelLayout, setPanelLayout] = useState<TicketPanelLayout>(
     createDefaultTicketPanelLayout(),
   );
+  const [welcomeEnabled, setWelcomeEnabled] = useState(false);
+  const [entryPublicChannelId, setEntryPublicChannelId] = useState<string | null>(null);
+  const [entryLogChannelId, setEntryLogChannelId] = useState<string | null>(null);
+  const [exitPublicChannelId, setExitPublicChannelId] = useState<string | null>(null);
+  const [exitLogChannelId, setExitLogChannelId] = useState<string | null>(null);
+  const [entryLayout, setEntryLayout] = useState<TicketPanelLayout>(
+    createDefaultWelcomeEntryLayout(),
+  );
+  const [exitLayout, setExitLayout] = useState<TicketPanelLayout>(
+    createDefaultWelcomeExitLayout(),
+  );
+  const [entryThumbnailMode, setEntryThumbnailMode] =
+    useState<WelcomeThumbnailMode>("custom");
+  const [exitThumbnailMode, setExitThumbnailMode] =
+    useState<WelcomeThumbnailMode>("custom");
 
   const [adminRoleId, setAdminRoleId] = useState<string | null>(null);
   const [claimRoleIds, setClaimRoleIds] = useState<string[]>([]);
@@ -1202,7 +1277,17 @@ export function ServerSettingsEditor({
   const [notifyRoleIds, setNotifyRoleIds] = useState<string[]>([]);
   const [savedSettingsDraft, setSavedSettingsDraft] =
     useState<ServerSettingsDraft | null>(null);
+  const [savedWelcomeSettingsDraft, setSavedWelcomeSettingsDraft] =
+    useState<WelcomeSettingsDraft | null>(null);
   const [isStaffCardCollapsed, setIsStaffCardCollapsed] = useState(true);
+  const [welcomeMessageTab, setWelcomeMessageTab] = useState<"entry" | "exit">(
+    "entry",
+  );
+  const [isWelcomeActivationModalOpen, setIsWelcomeActivationModalOpen] =
+    useState(false);
+  const [hasDismissedWelcomeModal, setHasDismissedWelcomeModal] =
+    useState(false);
+  const [isActivatingWelcome, setIsActivatingWelcome] = useState(false);
 
   const [isPaymentsLoading, setIsPaymentsLoading] = useState(true);
   const [paymentsError, setPaymentsError] = useState<string | null>(null);
@@ -1312,6 +1397,56 @@ export function ServerSettingsEditor({
         payload.ticketSettings || undefined,
       );
 
+      const defaultEntryLayout = createDefaultWelcomeEntryLayout();
+      const defaultExitLayout = createDefaultWelcomeExitLayout();
+      const hasWelcomeSettings = Boolean(payload.welcomeSettings);
+      const defaultTextChannelId = text[0]?.id ?? null;
+      const nextWelcomeEnabled = Boolean(payload.welcomeSettings?.enabled);
+      const nextEntryPublicChannelId = hasWelcomeSettings
+        ? payload.welcomeSettings?.entryPublicChannelId &&
+          textSet.has(payload.welcomeSettings.entryPublicChannelId)
+          ? payload.welcomeSettings.entryPublicChannelId
+          : null
+        : defaultTextChannelId;
+      const nextEntryLogChannelId = hasWelcomeSettings
+        ? payload.welcomeSettings?.entryLogChannelId &&
+          textSet.has(payload.welcomeSettings.entryLogChannelId)
+          ? payload.welcomeSettings.entryLogChannelId
+          : null
+        : defaultTextChannelId;
+      const nextExitPublicChannelId = hasWelcomeSettings
+        ? payload.welcomeSettings?.exitPublicChannelId &&
+          textSet.has(payload.welcomeSettings.exitPublicChannelId)
+          ? payload.welcomeSettings.exitPublicChannelId
+          : null
+        : defaultTextChannelId;
+      const nextExitLogChannelId = hasWelcomeSettings
+        ? payload.welcomeSettings?.exitLogChannelId &&
+          textSet.has(payload.welcomeSettings.exitLogChannelId)
+          ? payload.welcomeSettings.exitLogChannelId
+          : null
+        : defaultTextChannelId;
+      const nextEntryLayout = hasWelcomeSettings
+        ? normalizeWelcomeLayout(
+            payload.welcomeSettings?.entryLayout,
+            defaultEntryLayout,
+          )
+        : defaultEntryLayout;
+      const nextExitLayout = hasWelcomeSettings
+        ? normalizeWelcomeLayout(
+            payload.welcomeSettings?.exitLayout,
+            defaultExitLayout,
+          )
+        : defaultExitLayout;
+      const nextEntryThumbnailMode =
+        payload.welcomeSettings?.entryThumbnailMode === "avatar"
+          ? "avatar"
+          : "custom";
+      const nextExitThumbnailMode =
+        payload.welcomeSettings?.exitThumbnailMode === "avatar"
+          ? "avatar"
+          : "custom";
+
       const nextAdminRoleId =
         payload.staffSettings?.adminRoleId &&
         roleSet.has(payload.staffSettings.adminRoleId)
@@ -1332,6 +1467,15 @@ export function ServerSettingsEditor({
       setLogsCreatedChannelId(nextLogsCreatedChannelId);
       setLogsClosedChannelId(nextLogsClosedChannelId);
       setPanelLayout(nextPanelLayout);
+      setWelcomeEnabled(nextWelcomeEnabled);
+      setEntryPublicChannelId(nextEntryPublicChannelId);
+      setEntryLogChannelId(nextEntryLogChannelId);
+      setExitPublicChannelId(nextExitPublicChannelId);
+      setExitLogChannelId(nextExitLogChannelId);
+      setEntryLayout(nextEntryLayout);
+      setExitLayout(nextExitLayout);
+      setEntryThumbnailMode(nextEntryThumbnailMode);
+      setExitThumbnailMode(nextExitThumbnailMode);
       setAdminRoleId(nextAdminRoleId);
       setClaimRoleIds(nextClaimRoleIds);
       setCloseRoleIds(nextCloseRoleIds);
@@ -1349,6 +1493,19 @@ export function ServerSettingsEditor({
           notifyRoleIds: nextNotifyRoleIds,
         }),
       );
+      setSavedWelcomeSettingsDraft(
+        normalizeWelcomeSettingsDraft({
+          enabled: nextWelcomeEnabled,
+          entryPublicChannelId: nextEntryPublicChannelId,
+          entryLogChannelId: nextEntryLogChannelId,
+          exitPublicChannelId: nextExitPublicChannelId,
+          exitLogChannelId: nextExitLogChannelId,
+          entryLayout: nextEntryLayout,
+          exitLayout: nextExitLayout,
+          entryThumbnailMode: nextEntryThumbnailMode,
+          exitThumbnailMode: nextExitThumbnailMode,
+        }),
+      );
     },
     [],
   );
@@ -1356,10 +1513,24 @@ export function ServerSettingsEditor({
   useEffect(() => {
     setActiveTab("settings");
     setSavedSettingsDraft(null);
+    setSavedWelcomeSettingsDraft(null);
     setErrorMessage(null);
     setSuccessMessage(null);
     setShowSaveSuccessBar(false);
     setPanelLayout(createDefaultTicketPanelLayout());
+    setWelcomeEnabled(false);
+    setEntryPublicChannelId(null);
+    setEntryLogChannelId(null);
+    setExitPublicChannelId(null);
+    setExitLogChannelId(null);
+    setEntryLayout(createDefaultWelcomeEntryLayout());
+    setExitLayout(createDefaultWelcomeExitLayout());
+    setEntryThumbnailMode("custom");
+    setExitThumbnailMode("custom");
+    setWelcomeMessageTab("entry");
+    setIsWelcomeActivationModalOpen(false);
+    setHasDismissedWelcomeModal(false);
+    setIsActivatingWelcome(false);
     setPaymentGuildFilter(guildId);
     setPaymentSearch("");
     setPaymentStatusFilter("all");
@@ -1975,7 +2146,22 @@ export function ServerSettingsEditor({
     );
   }, []);
 
-  const canSave = Boolean(
+  const isTicketSection =
+    settingsSection === "overview" || settingsSection === "message";
+  const isWelcomeSection =
+    settingsSection === "entry_exit_overview" ||
+    settingsSection === "entry_exit_message";
+  const isTicketMessageSection = settingsSection === "message";
+  const isWelcomeMessageSection = settingsSection === "entry_exit_message";
+
+  const entryChannelsProvided = Boolean(
+    entryPublicChannelId || entryLogChannelId,
+  );
+  const exitChannelsProvided = Boolean(exitPublicChannelId || exitLogChannelId);
+  const isEntryLayoutValid = !entryChannelsProvided || welcomeLayoutHasContent(entryLayout);
+  const isExitLayoutValid = !exitChannelsProvided || welcomeLayoutHasContent(exitLayout);
+
+  const canSaveTicket = Boolean(
     !settingsReadOnly &&
       !isLoading &&
       !isSaving &&
@@ -1990,6 +2176,17 @@ export function ServerSettingsEditor({
       claimRoleIds.length &&
       closeRoleIds.length &&
       notifyRoleIds.length,
+  );
+
+  const canSaveWelcome = Boolean(
+    !settingsReadOnly &&
+      !isLoading &&
+      !isSaving &&
+      welcomeEnabled &&
+      entryChannelsProvided &&
+      exitChannelsProvided &&
+      isEntryLayoutValid &&
+      isExitLayoutValid,
   );
 
   const canSendEmbed = Boolean(
@@ -2029,16 +2226,60 @@ export function ServerSettingsEditor({
     ],
   );
 
-  const hasLoadedSettingsDraft = !isLoading && savedSettingsDraft !== null;
-  const hasUnsavedChanges = useMemo(
+  const currentWelcomeDraft = useMemo(
     () =>
-      hasLoadedSettingsDraft &&
-      !areServerSettingsDraftsEqual(currentSettingsDraft, savedSettingsDraft),
-    [currentSettingsDraft, hasLoadedSettingsDraft, savedSettingsDraft],
+      normalizeWelcomeSettingsDraft({
+        enabled: welcomeEnabled,
+        entryPublicChannelId,
+        entryLogChannelId,
+        exitPublicChannelId,
+        exitLogChannelId,
+        entryLayout,
+        exitLayout,
+        entryThumbnailMode,
+        exitThumbnailMode,
+      }),
+    [
+      entryLayout,
+      entryLogChannelId,
+      entryPublicChannelId,
+      entryThumbnailMode,
+      exitLayout,
+      exitLogChannelId,
+      exitPublicChannelId,
+      exitThumbnailMode,
+      welcomeEnabled,
+    ],
   );
 
+  const hasLoadedTicketDraft = !isLoading && savedSettingsDraft !== null;
+  const hasLoadedWelcomeDraft = !isLoading && savedWelcomeSettingsDraft !== null;
+  const hasTicketUnsavedChanges = useMemo(
+    () =>
+      hasLoadedTicketDraft &&
+      !areServerSettingsDraftsEqual(currentSettingsDraft, savedSettingsDraft),
+    [currentSettingsDraft, hasLoadedTicketDraft, savedSettingsDraft],
+  );
+  const hasWelcomeUnsavedChanges = useMemo(
+    () =>
+      hasLoadedWelcomeDraft &&
+      !areWelcomeSettingsDraftsEqual(currentWelcomeDraft, savedWelcomeSettingsDraft),
+    [currentWelcomeDraft, hasLoadedWelcomeDraft, savedWelcomeSettingsDraft],
+  );
+
+  const hasLoadedSettingsDraft = isWelcomeSection
+    ? hasLoadedWelcomeDraft
+    : hasLoadedTicketDraft;
+  const hasUnsavedChanges = isWelcomeSection
+    ? hasWelcomeUnsavedChanges
+    : hasTicketUnsavedChanges;
+
   const canResetSettings = Boolean(
-    !settingsReadOnly && !isLoading && !isSaving && hasUnsavedChanges && savedSettingsDraft,
+    !settingsReadOnly &&
+      !isLoading &&
+      !isSaving &&
+      hasUnsavedChanges &&
+      (isWelcomeSection ? savedWelcomeSettingsDraft : savedSettingsDraft),
   );
 
   const functionButtonCount = countTicketPanelFunctionButtons(panelLayout);
@@ -2046,7 +2287,11 @@ export function ServerSettingsEditor({
   const isTicketMessageLayoutInvalid =
     !ticketPanelLayoutHasRequiredParts(panelLayout) ||
     hasTooManyFunctionButtons;
-  const canPersistSettings = Boolean(canSave && hasUnsavedChanges);
+  const isWelcomeMessageLayoutInvalid =
+    !isEntryLayoutValid || !isExitLayoutValid;
+  const canPersistSettings = Boolean(
+    (isWelcomeSection ? canSaveWelcome : canSaveTicket) && hasUnsavedChanges,
+  );
   const showFloatingSaveBar =
     activeTab === "settings" &&
     !settingsReadOnly &&
@@ -2056,12 +2301,20 @@ export function ServerSettingsEditor({
   const showInlineMessages = Boolean(
     isViewerOnly || locked || errorMessage,
   );
+  const welcomeControlsDisabled =
+    isSaving || settingsReadOnly || !welcomeEnabled || isActivatingWelcome;
   const showInvalidTicketSaveState =
-    settingsSection === "message" &&
+    isTicketMessageSection &&
     hasUnsavedChanges &&
     !isSaving &&
     !showSaveSuccessBar &&
     isTicketMessageLayoutInvalid;
+  const showInvalidWelcomeSaveState =
+    isWelcomeMessageSection &&
+    hasUnsavedChanges &&
+    !isSaving &&
+    !showSaveSuccessBar &&
+    isWelcomeMessageLayoutInvalid;
   const showSaveBarSuccessState =
     showSaveSuccessBar &&
     !hasUnsavedChanges &&
@@ -2077,9 +2330,13 @@ export function ServerSettingsEditor({
         ? hasTooManyFunctionButtons
           ? "Existe mais de um botao funcional no embed"
           : "Nao da para salvar uma mensagem vazia"
-        : !canPersistSettings && hasUnsavedChanges
-          ? "Complete os campos obrigatorios para continuar"
-          : "Cuidado — voce tem alteracoes que nao foram salvas!";
+        : showInvalidWelcomeSaveState
+          ? "Adicione pelo menos um conteudo na mensagem"
+          : !canPersistSettings && hasUnsavedChanges
+            ? isWelcomeSection
+              ? "Complete os canais de entrada e saida para continuar"
+              : "Complete os campos obrigatorios para continuar"
+            : "Cuidado — voce tem alteracoes que nao foram salvas!";
   const floatingSaveBarDescription = showSaveBarSuccessState
     ? "Tudo ficou sincronizado e o painel ja esta atualizado para a equipe."
     : isSaving
@@ -2090,8 +2347,12 @@ export function ServerSettingsEditor({
         ? hasTooManyFunctionButtons
           ? "Deixe apenas um botao funcional para abrir o ticket. Botoes de link podem continuar em quantidade livre."
           : "Adicione pelo menos um conteudo com texto e uma acao no builder antes de salvar. Enquanto a mensagem estiver sem nada, essa barra continua em alerta."
+        : showInvalidWelcomeSaveState
+          ? "Preencha a mensagem de entrada ou saida com pelo menos um bloco de texto."
         : !canPersistSettings && hasUnsavedChanges
-          ? "Preencha todos os campos de ticket e staff para liberar o salvamento."
+          ? isWelcomeSection
+            ? "Defina canais publicos e privados para entrada e saida antes de salvar."
+            : "Preencha todos os campos de ticket e staff para liberar o salvamento."
           : "Revise os campos abaixo e confirme para manter a operacao deste servidor atualizada.";
 
   useEffect(() => {
@@ -2122,6 +2383,37 @@ export function ServerSettingsEditor({
       window.clearTimeout(timeoutId);
     };
   }, [showSaveSuccessBar]);
+
+  const activeWelcomeLayout =
+    welcomeMessageTab === "entry" ? entryLayout : exitLayout;
+  const activeWelcomeThumbnailMode =
+    welcomeMessageTab === "entry" ? entryThumbnailMode : exitThumbnailMode;
+  const activeWelcomeThumbnailPreviewUrl =
+    activeWelcomeThumbnailMode === "avatar"
+      ? "/cdn/icons/discord-icon.svg"
+      : null;
+
+  const handleWelcomeLayoutChange = useCallback(
+    (nextLayout: TicketPanelLayout) => {
+      if (welcomeMessageTab === "entry") {
+        setEntryLayout(nextLayout);
+        return;
+      }
+      setExitLayout(nextLayout);
+    },
+    [welcomeMessageTab],
+  );
+
+  const handleWelcomeThumbnailModeChange = useCallback(
+    (mode: WelcomeThumbnailMode) => {
+      if (welcomeMessageTab === "entry") {
+        setEntryThumbnailMode(mode);
+        return;
+      }
+      setExitThumbnailMode(mode);
+    },
+    [welcomeMessageTab],
+  );
 
   useEffect(() => {
     if (showFloatingSaveBar) {
@@ -2808,58 +3100,106 @@ export function ServerSettingsEditor({
   ]);
 
   const handleResetSettings = useCallback(() => {
-    if (!savedSettingsDraft || !canResetSettings) return;
+    if (!canResetSettings) return;
 
-    setMenuChannelId(savedSettingsDraft.menuChannelId);
-    setTicketsCategoryId(savedSettingsDraft.ticketsCategoryId);
-    setLogsCreatedChannelId(savedSettingsDraft.logsCreatedChannelId);
-    setLogsClosedChannelId(savedSettingsDraft.logsClosedChannelId);
-    setPanelLayout(savedSettingsDraft.panelLayout);
-    setAdminRoleId(savedSettingsDraft.adminRoleId);
-    setClaimRoleIds(savedSettingsDraft.claimRoleIds);
-    setCloseRoleIds(savedSettingsDraft.closeRoleIds);
-    setNotifyRoleIds(savedSettingsDraft.notifyRoleIds);
+    if (isWelcomeSection && savedWelcomeSettingsDraft) {
+      setWelcomeEnabled(savedWelcomeSettingsDraft.enabled);
+      setEntryPublicChannelId(savedWelcomeSettingsDraft.entryPublicChannelId);
+      setEntryLogChannelId(savedWelcomeSettingsDraft.entryLogChannelId);
+      setExitPublicChannelId(savedWelcomeSettingsDraft.exitPublicChannelId);
+      setExitLogChannelId(savedWelcomeSettingsDraft.exitLogChannelId);
+      setEntryLayout(savedWelcomeSettingsDraft.entryLayout);
+      setExitLayout(savedWelcomeSettingsDraft.exitLayout);
+      setEntryThumbnailMode(savedWelcomeSettingsDraft.entryThumbnailMode);
+      setExitThumbnailMode(savedWelcomeSettingsDraft.exitThumbnailMode);
+    } else if (savedSettingsDraft) {
+      setMenuChannelId(savedSettingsDraft.menuChannelId);
+      setTicketsCategoryId(savedSettingsDraft.ticketsCategoryId);
+      setLogsCreatedChannelId(savedSettingsDraft.logsCreatedChannelId);
+      setLogsClosedChannelId(savedSettingsDraft.logsClosedChannelId);
+      setPanelLayout(savedSettingsDraft.panelLayout);
+      setAdminRoleId(savedSettingsDraft.adminRoleId);
+      setClaimRoleIds(savedSettingsDraft.claimRoleIds);
+      setCloseRoleIds(savedSettingsDraft.closeRoleIds);
+      setNotifyRoleIds(savedSettingsDraft.notifyRoleIds);
+    } else {
+      return;
+    }
+
     setErrorMessage(null);
     setSuccessMessage(null);
-  }, [canResetSettings, savedSettingsDraft]);
+  }, [
+    canResetSettings,
+    isWelcomeSection,
+    savedSettingsDraft,
+    savedWelcomeSettingsDraft,
+  ]);
 
   const handleSave = useCallback(async () => {
-    if (!canPersistSettings || !adminRoleId) return;
+    if (!canPersistSettings) return;
+    if (isTicketSection && !adminRoleId) return;
     setIsSaving(true);
     setErrorMessage(null);
     setSuccessMessage(null);
     try {
-      const [ticketRes, staffRes] = await Promise.all([
-        fetch("/api/auth/me/guilds/ticket-settings", {
+      if (isWelcomeSection) {
+        const response = await fetch("/api/auth/me/guilds/welcome-settings", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             guildId,
-            menuChannelId,
-            ticketsCategoryId,
-            logsCreatedChannelId,
-            logsClosedChannelId,
-            panelLayout,
+            enabled: welcomeEnabled,
+            entryPublicChannelId,
+            entryLogChannelId,
+            exitPublicChannelId,
+            exitLogChannelId,
+            entryLayout,
+            exitLayout,
+            entryThumbnailMode,
+            exitThumbnailMode,
           }),
-        }),
-        fetch("/api/auth/me/guilds/ticket-staff-settings", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            guildId,
-            adminRoleId,
-            claimRoleIds,
-            closeRoleIds,
-            notifyRoleIds,
-          }),
-        }),
-      ]);
+        });
 
-      const ticket = await ticketRes.json();
-      const staff = await staffRes.json();
-      if (!ticketRes.ok || !ticket.ok) throw new Error(ticket.message || "Falha ao salvar canais.");
-      if (!staffRes.ok || !staff.ok) throw new Error(staff.message || "Falha ao salvar staff.");
-      setSavedSettingsDraft(currentSettingsDraft);
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.message || "Falha ao salvar canais de entrada e saida.");
+        }
+
+        setSavedWelcomeSettingsDraft(currentWelcomeDraft);
+      } else {
+        const [ticketRes, staffRes] = await Promise.all([
+          fetch("/api/auth/me/guilds/ticket-settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              guildId,
+              menuChannelId,
+              ticketsCategoryId,
+              logsCreatedChannelId,
+              logsClosedChannelId,
+              panelLayout,
+            }),
+          }),
+          fetch("/api/auth/me/guilds/ticket-staff-settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              guildId,
+              adminRoleId,
+              claimRoleIds,
+              closeRoleIds,
+              notifyRoleIds,
+            }),
+          }),
+        ]);
+
+        const ticket = await ticketRes.json();
+        const staff = await staffRes.json();
+        if (!ticketRes.ok || !ticket.ok) throw new Error(ticket.message || "Falha ao salvar canais.");
+        if (!staffRes.ok || !staff.ok) throw new Error(staff.message || "Falha ao salvar staff.");
+        setSavedSettingsDraft(currentSettingsDraft);
+      }
+
       setSuccessMessage("Configuracoes salvas com sucesso.");
       setShowSaveSuccessBar(true);
     } catch (error) {
@@ -2868,19 +3208,32 @@ export function ServerSettingsEditor({
       setIsSaving(false);
     }
   }, [
-    adminRoleId,
     canPersistSettings,
     claimRoleIds,
     closeRoleIds,
     currentSettingsDraft,
+    currentWelcomeDraft,
+    entryLayout,
+    entryLogChannelId,
+    entryPublicChannelId,
+    entryThumbnailMode,
+    exitLayout,
+    exitLogChannelId,
+    exitPublicChannelId,
+    exitThumbnailMode,
     guildId,
+    isTicketSection,
+    isWelcomeSection,
     logsClosedChannelId,
     logsCreatedChannelId,
     menuChannelId,
     notifyRoleIds,
     panelLayout,
     setSavedSettingsDraft,
+    setSavedWelcomeSettingsDraft,
     ticketsCategoryId,
+    welcomeEnabled,
+    adminRoleId,
   ]);
 
   const handleSendEmbed = useCallback(async () => {
@@ -2914,6 +3267,107 @@ export function ServerSettingsEditor({
       setIsSendingEmbed(false);
     }
   }, [canSendEmbed, guildId, menuChannelId, panelLayout]);
+
+  const handleActivateWelcome = useCallback(async () => {
+    if (isActivatingWelcome || settingsReadOnly) return;
+    setIsActivatingWelcome(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    const fallbackChannelId = textChannelOptions[0]?.id ?? null;
+    const nextEntryPublicId = entryPublicChannelId || fallbackChannelId;
+    const nextEntryLogId = entryLogChannelId || fallbackChannelId;
+    const nextExitPublicId = exitPublicChannelId || fallbackChannelId;
+    const nextExitLogId = exitLogChannelId || fallbackChannelId;
+
+    if (!nextEntryPublicId || !nextExitPublicId) {
+      setErrorMessage(
+        "Escolha pelo menos um canal de texto antes de ativar o modulo.",
+      );
+      setIsActivatingWelcome(false);
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/auth/me/guilds/welcome-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          guildId,
+          enabled: true,
+          entryPublicChannelId: nextEntryPublicId,
+          entryLogChannelId: nextEntryLogId,
+          exitPublicChannelId: nextExitPublicId,
+          exitLogChannelId: nextExitLogId,
+          entryLayout,
+          exitLayout,
+          entryThumbnailMode,
+          exitThumbnailMode,
+        }),
+      });
+
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.message || "Falha ao ativar o modulo.");
+      }
+
+      setWelcomeEnabled(true);
+      setEntryPublicChannelId(nextEntryPublicId);
+      setEntryLogChannelId(nextEntryLogId);
+      setExitPublicChannelId(nextExitPublicId);
+      setExitLogChannelId(nextExitLogId);
+      setSavedWelcomeSettingsDraft(
+        normalizeWelcomeSettingsDraft({
+          enabled: true,
+          entryPublicChannelId: nextEntryPublicId,
+          entryLogChannelId: nextEntryLogId,
+          exitPublicChannelId: nextExitPublicId,
+          exitLogChannelId: nextExitLogId,
+          entryLayout,
+          exitLayout,
+          entryThumbnailMode,
+          exitThumbnailMode,
+        }),
+      );
+      setShowSaveSuccessBar(true);
+      setSuccessMessage("Modulo ativado com sucesso.");
+      setIsWelcomeActivationModalOpen(false);
+      setHasDismissedWelcomeModal(true);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Erro ao ativar o modulo.",
+      );
+    } finally {
+      setIsActivatingWelcome(false);
+    }
+  }, [
+    entryLayout,
+    entryLogChannelId,
+    entryPublicChannelId,
+    entryThumbnailMode,
+    exitLayout,
+    exitLogChannelId,
+    exitPublicChannelId,
+    exitThumbnailMode,
+    guildId,
+    isActivatingWelcome,
+    settingsReadOnly,
+    textChannelOptions,
+  ]);
+
+  useEffect(() => {
+    if (!isWelcomeSection) {
+      setIsWelcomeActivationModalOpen(false);
+      return;
+    }
+    if (welcomeEnabled) {
+      setIsWelcomeActivationModalOpen(false);
+      return;
+    }
+    if (!hasDismissedWelcomeModal) {
+      setIsWelcomeActivationModalOpen(true);
+    }
+  }, [hasDismissedWelcomeModal, isWelcomeSection, welcomeEnabled]);
 
   return (
     <ClientErrorBoundary
@@ -3031,7 +3485,7 @@ export function ServerSettingsEditor({
                         ) : null}
                       </div>
                     </>
-                  ) : (
+                  ) : settingsSection === "message" ? (
                     <TicketMessageBuilder
                       guildId={guildId}
                       value={panelLayout}
@@ -3041,6 +3495,208 @@ export function ServerSettingsEditor({
                       isSendingEmbed={isSendingEmbed}
                       onSendEmbed={handleSendEmbed}
                     />
+                  ) : settingsSection === "entry_exit_overview" ? (
+                    <>
+                      {!welcomeEnabled ? (
+                        <div className="rounded-[24px] border border-[#241616] bg-[linear-gradient(180deg,rgba(25,12,12,0.9)_0%,rgba(12,6,6,0.92)_100%)] px-[18px] py-[18px] text-[13px] leading-[1.6] text-[#D8A0A0] sm:px-[22px]">
+                          O modulo de mensagem de entrada/saida ainda nao esta ativado. Clique em ativar para liberar a configuracao.
+                          <div className="mt-[14px]">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setHasDismissedWelcomeModal(false);
+                                setIsWelcomeActivationModalOpen(true);
+                              }}
+                              className="inline-flex h-[40px] items-center justify-center rounded-[12px] border border-[#2A1D1D] bg-[#120C0C] px-[16px] text-[13px] font-medium text-[#F2C3C3] transition-colors hover:border-[#3A2A2A] hover:bg-[#1B1212]"
+                            >
+                              Ativar modulo
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                        <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
+                          <div>
+                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Mensagem Entrada/Saida</p>
+                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
+                              Canais de entrada
+                            </h3>
+                            <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                              Escolha onde a mensagem publica aparece e qual canal privado recebe o log de entrada.
+                            </p>
+                          </div>
+                          <span className="inline-flex h-[30px] items-center justify-center rounded-full border border-[#151515] bg-[#0B0B0B] px-[12px] text-[11px] uppercase tracking-[0.16em] text-[#686868]">
+                            Entrada
+                          </span>
+                        </div>
+
+                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
+                          <ConfigStepSelect label="Canal de entrada publico" placeholder="Escolha o canal" options={textChannelOptions} value={entryPublicChannelId} onChange={setEntryPublicChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepSelect label="Log privado de entrada" placeholder="Escolha o canal de log" options={textChannelOptions} value={entryLogChannelId} onChange={setEntryLogChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                        </div>
+                      </div>
+
+                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                        <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
+                          <div>
+                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Mensagem Entrada/Saida</p>
+                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
+                              Canais de saida
+                            </h3>
+                            <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                              Defina o canal publico de saida e o log privado para eventos de desligamento.
+                            </p>
+                          </div>
+                          <span className="inline-flex h-[30px] items-center justify-center rounded-full border border-[#151515] bg-[#0B0B0B] px-[12px] text-[11px] uppercase tracking-[0.16em] text-[#686868]">
+                            Saida
+                          </span>
+                        </div>
+
+                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
+                          <ConfigStepSelect label="Canal de saida publico" placeholder="Escolha o canal" options={textChannelOptions} value={exitPublicChannelId} onChange={setExitPublicChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepSelect label="Log privado de saida" placeholder="Escolha o canal de log" options={textChannelOptions} value={exitLogChannelId} onChange={setExitLogChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {!welcomeEnabled ? (
+                        <div className="rounded-[24px] border border-[#241616] bg-[linear-gradient(180deg,rgba(25,12,12,0.9)_0%,rgba(12,6,6,0.92)_100%)] px-[18px] py-[18px] text-[13px] leading-[1.6] text-[#D8A0A0] sm:px-[22px]">
+                          O modulo de mensagem de entrada/saida ainda nao esta ativado. Clique em ativar para liberar a configuracao.
+                          <div className="mt-[14px]">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setHasDismissedWelcomeModal(false);
+                                setIsWelcomeActivationModalOpen(true);
+                              }}
+                              className="inline-flex h-[40px] items-center justify-center rounded-[12px] border border-[#2A1D1D] bg-[#120C0C] px-[16px] text-[13px] font-medium text-[#F2C3C3] transition-colors hover:border-[#3A2A2A] hover:bg-[#1B1212]"
+                            >
+                              Ativar modulo
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
+                          <div>
+                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Mensagem Entrada/Saida</p>
+                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
+                              Configure o embed de entrada e saida
+                            </h3>
+                            <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                              Personalize as mensagens automaticas e use variaveis para mencionar o usuario, o convite e o servidor.
+                            </p>
+                          </div>
+
+                          <div className="inline-flex items-center rounded-full border border-[#151515] bg-[#0B0B0B] p-[4px]">
+                            {(["entry", "exit"] as const).map((tab) => {
+                              const isActive = welcomeMessageTab === tab;
+                              return (
+                                <button
+                                  key={tab}
+                                  type="button"
+                                  onClick={() => setWelcomeMessageTab(tab)}
+                                  disabled={welcomeControlsDisabled}
+                                  className={`rounded-full px-[16px] py-[8px] text-[12px] font-medium uppercase tracking-[0.12em] transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                                    isActive
+                                      ? "bg-[#1E1E1E] text-[#F0F0F0]"
+                                      : "text-[#7A7A7A] hover:text-[#DADADA]"
+                                  }`}
+                                >
+                                  {tab === "entry" ? "Entrada" : "Saida"}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] lg:grid-cols-[1.2fr_1fr]">
+                          <div className="rounded-[18px] border border-[#161616] bg-[#0A0A0A] px-[16px] py-[14px]">
+                            <p className="text-[12px] uppercase tracking-[0.16em] text-[#6D6D6D]">
+                              Variaveis disponiveis
+                            </p>
+                            <div className="mt-[12px] grid grid-cols-1 gap-[8px] sm:grid-cols-2">
+                              {WELCOME_VARIABLES.map((variable) => (
+                                <div
+                                  key={variable.token}
+                                  className="rounded-[12px] border border-[#141414] bg-[#070707] px-[12px] py-[10px]"
+                                >
+                                  <p className="text-[13px] font-semibold text-[#E2E2E2]">
+                                    {variable.token}
+                                  </p>
+                                  <p className="mt-[4px] text-[12px] leading-[1.5] text-[#6F6F6F]">
+                                    {variable.description}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="rounded-[18px] border border-[#161616] bg-[#0A0A0A] px-[16px] py-[14px]">
+                            <p className="text-[12px] uppercase tracking-[0.16em] text-[#6D6D6D]">
+                              Miniatura do embed
+                            </p>
+                            <p className="mt-[8px] text-[13px] leading-[1.55] text-[#7A7A7A]">
+                              Escolha se a miniatura usa o link informado no embed ou a foto do usuario automaticamente.
+                            </p>
+                            <div className="mt-[14px] flex flex-col gap-[10px]">
+                              {(["custom", "avatar"] as const).map((mode) => {
+                                const isActive = activeWelcomeThumbnailMode === mode;
+                                return (
+                                  <button
+                                    key={mode}
+                                    type="button"
+                                    onClick={() => handleWelcomeThumbnailModeChange(mode)}
+                                    disabled={welcomeControlsDisabled}
+                                    className={`flex items-center justify-between rounded-[14px] border px-[12px] py-[10px] text-left text-[13px] transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                                      isActive
+                                        ? "border-[#2A2A2A] bg-[#121212] text-[#F0F0F0]"
+                                        : "border-[#141414] bg-[#0B0B0B] text-[#8A8A8A] hover:text-[#D8D8D8]"
+                                    }`}
+                                  >
+                                    <span>
+                                      {mode === "custom"
+                                        ? "Usar link manual"
+                                        : "Usar foto do usuario"}
+                                    </span>
+                                    <span className={`inline-flex h-[18px] w-[18px] items-center justify-center rounded-full border ${isActive ? "border-[#6AE25A] bg-[#6AE25A]" : "border-[#2A2A2A]"}`}>
+                                      {isActive ? (
+                                        <span className="text-[10px] font-semibold text-black">OK</span>
+                                      ) : null}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <TicketMessageBuilder
+                        guildId={guildId}
+                        value={activeWelcomeLayout}
+                        onChange={handleWelcomeLayoutChange}
+                        disabled={welcomeControlsDisabled}
+                        canSendEmbed={false}
+                        isSendingEmbed={false}
+                        onSendEmbed={undefined}
+                        eyebrow={
+                          welcomeMessageTab === "entry"
+                            ? "Mensagem de entrada"
+                            : "Mensagem de saida"
+                        }
+                        headline={
+                          welcomeMessageTab === "entry"
+                            ? "Monte a recepcao do servidor"
+                            : "Confirme a saida com clareza"
+                        }
+                        description="O Flowdesk envia este embed automaticamente quando o evento acontecer."
+                        hideSendButton
+                        thumbnailPreviewUrl={activeWelcomeThumbnailPreviewUrl}
+                      />
+                    </>
                   )}
 
                   {showInlineMessages ? (
@@ -4118,6 +4774,20 @@ export function ServerSettingsEditor({
           </div>
         </ClientErrorBoundary>
       ) : null}
+
+      <BotMissingModal
+        isOpen={isWelcomeActivationModalOpen}
+        onClose={() => {
+          setIsWelcomeActivationModalOpen(false);
+          setHasDismissedWelcomeModal(true);
+        }}
+        onContinue={() => {
+          void handleActivateWelcome();
+        }}
+        isChecking={isActivatingWelcome}
+        title="Modulo nao ativado"
+        description="O modulo de mensagens de entrada e saida ainda nao esta ativo neste servidor. Deseja ativar agora?"
+      />
       </section>
     </ClientErrorBoundary>
   );

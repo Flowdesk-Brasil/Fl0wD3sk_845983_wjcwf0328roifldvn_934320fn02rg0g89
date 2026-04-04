@@ -52,6 +52,7 @@ type CreateCardRedirectBody = {
   returnTarget?: unknown;
   returnGuildId?: unknown;
   returnTab?: unknown;
+  forceNew?: unknown;
 };
 
 type PaymentOrderRecord = {
@@ -118,6 +119,15 @@ function normalizeReturnTab(value: unknown) {
   if (typeof value !== "string") return null;
   const tab = value.trim().toLowerCase();
   return SERVER_TABS.has(tab) ? tab : null;
+}
+
+function parseForceNewFlag(value: unknown) {
+  if (value === true) return true;
+  if (value === false || value === null || value === undefined) return false;
+  if (typeof value === "number") return value === 1;
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
 function normalizePayerEmail(value: unknown) {
@@ -553,6 +563,7 @@ export async function POST(request: Request) {
     const returnTarget = normalizeReturnTarget(body.returnTarget);
     const returnGuildId = normalizeReturnGuildId(body.returnGuildId);
     const returnTab = normalizeReturnTab(body.returnTab);
+    const forceNew = parseForceNewFlag(body.forceNew);
 
     if (!guildId) {
       return respond(
@@ -682,7 +693,7 @@ export async function POST(request: Request) {
       cardEnvironment === "production" ? "card_redirect_production" : "card_redirect_test";
     const latestOrder = await getLatestOrderForUserAndGuild(user.id, guildId);
     const reusableCheckoutToken =
-      latestOrder ? buildCheckoutAccessToken(latestOrder) : null;
+      !forceNew && latestOrder ? buildCheckoutAccessToken(latestOrder) : null;
     const reusableRedirectUrl =
       reusableCheckoutToken && latestOrder ? resolveReusableRedirectUrl(latestOrder) : null;
 
@@ -730,7 +741,7 @@ export async function POST(request: Request) {
     const supabase = getSupabaseAdminClientOrThrow();
     let createdOrder: PaymentOrderRecord;
     const draftOrderToReuse =
-      latestOrder && canReuseDraftCardRedirectOrder(latestOrder)
+      !forceNew && latestOrder && canReuseDraftCardRedirectOrder(latestOrder)
         ? latestOrder
         : null;
 

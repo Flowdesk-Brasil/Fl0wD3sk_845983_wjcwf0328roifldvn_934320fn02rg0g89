@@ -5,6 +5,7 @@ import Image from "next/image";
 import { animate } from "motion";
 import { LandingActionButton } from "@/components/landing/LandingActionButton";
 import { LandingReveal } from "@/components/landing/LandingReveal";
+import { ButtonLoader } from "@/components/login/ButtonLoader";
 import {
   buildConfigCheckoutPath,
   getAllPlanPricingDefinitions,
@@ -105,16 +106,24 @@ function PlanCta({
 }: {
   plan: PlanPricingDefinition;
 }) {
+  const planHref = `${buildConfigCheckoutPath({
+    planCode: plan.code,
+    billingPeriodCode: plan.billingPeriodCode,
+  })}?fresh=1`;
+  const [isLoading, setIsLoading] = useState(false);
+
   return (
     <LandingActionButton
-      href={buildConfigCheckoutPath({
-        planCode: plan.code,
-        billingPeriodCode: plan.billingPeriodCode,
-      })}
+      href={planHref}
       variant="light"
       className="mt-[20px] h-[50px] w-full rounded-[12px] px-6 text-[16px]"
+      onClick={() => setIsLoading(true)}
     >
-      Escolher plano
+      {isLoading ? (
+        <ButtonLoader size={18} colorClassName="text-[#2B2B2B]" />
+      ) : (
+        "Escolher plano"
+      )}
     </LandingActionButton>
   );
 }

@@ -88,7 +88,7 @@ export function LandingHero() {
 
               <LandingReveal delay={490}>
                 <LandingActionButton
-                  href="/config"
+                  href="/config?fresh=1"
                   variant="blue"
                   className="mt-[20px] h-[42px] min-w-[156px] rounded-[12px] px-[24px] text-[16px]"
                 >
@@ -276,7 +276,7 @@ export function LandingHero() {
                   </p>
 
                   <LandingActionButton
-                    href="/config"
+                    href="/config?fresh=1"
                     variant="blue"
                     className="mt-[20px] h-[42px] min-w-[156px] rounded-[12px] px-[24px] text-[16px]"
                   >
@@ -356,7 +356,7 @@ export function LandingHero() {
 
               <LandingReveal delay={1700}>
                 <LandingActionButton
-                  href="/config"
+                  href="/config?fresh=1"
                   variant="blue"
                   className="mt-[20px] h-[42px] min-w-[170px] rounded-[12px] px-[24px] text-[16px]"
                 >
@@ -479,7 +479,7 @@ export function LandingHero() {
                   Escolha um plano
                 </LandingActionButton>
                 <LandingActionButton
-                  href="/config"
+                  href="/config?fresh=1"
                   variant="blue"
                   className="h-[46px] rounded-[12px] px-6 text-[16px]"
                 >

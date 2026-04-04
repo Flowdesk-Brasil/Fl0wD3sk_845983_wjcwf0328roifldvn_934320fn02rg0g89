@@ -1,6 +1,7 @@
 "use client";
 
 import type { TicketPanelLayout } from "@/lib/servers/ticketPanelBuilder";
+import type { WelcomeThumbnailMode } from "@/lib/servers/welcomeMessageBuilder";
 
 type SelectOption = {
   id: string;
@@ -34,6 +35,18 @@ type ServerDashboardSettingsPayload = {
     claimRoleIds: string[];
     closeRoleIds: string[];
     notifyRoleIds: string[];
+    updatedAt: string | null;
+  } | null;
+  welcomeSettings: {
+    enabled: boolean;
+    entryPublicChannelId: string | null;
+    entryLogChannelId: string | null;
+    exitPublicChannelId: string | null;
+    exitLogChannelId: string | null;
+    entryLayout: TicketPanelLayout;
+    exitLayout: TicketPanelLayout;
+    entryThumbnailMode: WelcomeThumbnailMode;
+    exitThumbnailMode: WelcomeThumbnailMode;
     updatedAt: string | null;
   } | null;
 };

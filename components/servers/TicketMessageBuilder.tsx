@@ -48,6 +48,12 @@ type Props = {
   canSendEmbed?: boolean;
   isSendingEmbed?: boolean;
   onSendEmbed?: () => void;
+  eyebrow?: string;
+  headline?: string;
+  description?: string;
+  sendButtonLabel?: string;
+  hideSendButton?: boolean;
+  thumbnailPreviewUrl?: string | null;
 };
 
 type Scope = { parentId: string | null; componentId: string };
@@ -820,10 +826,15 @@ function IconButton({ label, onClick, disabled, children, draggable, onDragStart
   return <button type="button" aria-label={label} title={label} onClick={onClick} disabled={disabled} draggable={draggable} onDragStart={onDragStart} onDragEnd={onDragEnd} className="inline-flex h-[34px] w-[34px] items-center justify-center rounded-[12px] border border-[#171717] bg-[#0C0C0C] text-[#AFAFAF] transition-colors duration-200 hover:bg-[#111111] hover:text-[#F1F1F1] disabled:cursor-not-allowed disabled:opacity-45">{children}</button>;
 }
 
-function previewAccessory(accessory: TicketPanelContentAccessory | null, onOpenLink: (url: string, label: string) => void) {
+function previewAccessory(
+  accessory: TicketPanelContentAccessory | null,
+  onOpenLink: (url: string, label: string) => void,
+  thumbnailPreviewUrl?: string | null,
+) {
   if (!accessory) return null;
   if (accessory.type === "thumbnail") {
-    return <div className="inline-flex h-[72px] w-[72px] shrink-0 overflow-hidden rounded-[18px] border border-[#2B2D31] bg-[#17181B]">{accessory.imageUrl ? <img src={accessory.imageUrl} alt="" className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center text-[#7D7D7D]"><ImageIcon className="h-[24px] w-[24px]" /></div>}</div>;
+    const previewUrl = accessory.imageUrl || thumbnailPreviewUrl || "";
+    return <div className="inline-flex h-[72px] w-[72px] shrink-0 overflow-hidden rounded-[18px] border border-[#2B2D31] bg-[#17181B]">{previewUrl ? <img src={previewUrl} alt="" className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center text-[#7D7D7D]"><ImageIcon className="h-[24px] w-[24px]" /></div>}</div>;
   }
   if (accessory.type === "link_button") {
     const safeUrl = normalizeExternalUrl(accessory.url || "");
@@ -851,6 +862,12 @@ function TicketMessageBuilder({
   canSendEmbed = false,
   isSendingEmbed = false,
   onSendEmbed,
+  eyebrow = "Mensagem do ticket",
+  headline = "Monte o painel como um builder visual",
+  description = "Agora o container nasce vazio, voce adiciona o conteudo dentro dele e cada bloco de texto pode receber botao, link ou miniatura na direita. O texto agora e livre em markdown e a mensagem aceita apenas um botao funcional para abrir o ticket.",
+  sendButtonLabel = "Enviar embed",
+  hideSendButton = false,
+  thumbnailPreviewUrl = null,
 }: Props) {
   const layout = useMemo(() => normalizeTicketPanelLayout(value), [value]);
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
@@ -1483,7 +1500,7 @@ function TicketMessageBuilder({
         event.preventDefault();
         handlePreviewLinkIntent(href, linkTarget.textContent?.trim() || "Abrir link");
       }
-    }}>{renderMarkdownPreview(item.markdown, guildId)}</div>{item.accessory ? <div className="justify-self-start min-[520px]:justify-self-end">{previewAccessory(item.accessory, handlePreviewLinkIntent)}</div> : null}</div>;
+    }}>{renderMarkdownPreview(item.markdown, guildId)}</div>{item.accessory ? <div className="justify-self-start min-[520px]:justify-self-end">{previewAccessory(item.accessory, handlePreviewLinkIntent, thumbnailPreviewUrl)}</div> : null}</div>;
     if (item.type === "container") return <div key={item.id} className="relative overflow-hidden rounded-[20px] border border-[#2B2D31] bg-[#15171B]">{item.accentColor ? <div className="absolute bottom-0 left-0 top-0 w-[4px]" style={{ backgroundColor: item.accentColor }} /> : null}<div className={cn("space-y-[14px] px-[18px] py-[16px]", item.accentColor ? "pl-[20px]" : "pl-[18px]")}>{item.children.length ? renderPreview(item.children, true) : <div className="rounded-[16px] border border-dashed border-[#2E3136] bg-[#111216] px-[14px] py-[16px] text-[12px] leading-[1.55] text-[#8D9198]">Container vazio. Adicione conteudos, botoes ou separadores para montar o embed final.</div>}</div></div>;
     if (item.type === "image") return <div key={item.id} className="overflow-hidden rounded-[18px] border border-[#2B2D31] bg-[#17181B]">{item.url ? <img src={item.url} alt="" className="max-h-[240px] w-full object-cover" /> : <div className="flex h-[180px] items-center justify-center text-[#73767D]"><ImageIcon className="h-[28px] w-[28px]" /></div>}</div>;
     if (item.type === "file") return <div key={item.id} className="flex items-center justify-between gap-[14px] rounded-[18px] border border-[#2B2D31] bg-[#17181B] px-[16px] py-[14px]"><div className="flex min-w-0 items-center gap-[12px]"><span className="inline-flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-[12px] bg-[#0F1012] text-[#D5D7DB]"><FileText className="h-[18px] w-[18px]" /></span><div className="min-w-0"><p className="truncate text-[13px] font-medium text-[#F2F3F5]">{item.name || "Arquivo-flowdesk.pdf"}</p><p className="mt-[3px] text-[12px] text-[#8E939A]">{item.sizeLabel || "PDF | 1.2 MB"}</p></div></div><span className="rounded-full border border-[#2B2D31] bg-[#111216] px-[10px] py-[6px] text-[11px] font-medium uppercase tracking-[0.14em] text-[#A3A7AE]">Anexo</span></div>;
@@ -1497,19 +1514,18 @@ function TicketMessageBuilder({
         <div className="flex flex-col gap-[18px] lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-[720px]">
             <p className="text-[12px] font-medium uppercase tracking-[0.2em] text-[#666666]">
-              Mensagem do ticket
+              {eyebrow}
             </p>
             <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#DCDCDC]">
-              Monte o painel como um builder visual
+              {headline}
             </h3>
             <p className="mt-[12px] max-w-[660px] text-[14px] leading-[1.7] text-[#7C7C7C]">
-              Agora o container nasce vazio, voce adiciona o conteudo dentro dele e cada bloco
-              de texto pode receber botao, link ou miniatura na direita. O texto agora e livre em
-              markdown e a mensagem aceita apenas um botao funcional para abrir o ticket.
+              {description}
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-[10px]">
+          {!hideSendButton ? (
+            <div className="flex flex-wrap items-center gap-[10px]">
             <button
               type="button"
               disabled={disabled || !canSendEmbed || isSendingEmbed}
@@ -1518,36 +1534,37 @@ function TicketMessageBuilder({
                 "group relative inline-flex h-[46px] shrink-0 items-center justify-center overflow-visible whitespace-nowrap rounded-[12px] px-6 text-[16px] leading-none font-semibold",
                 disabled || !canSendEmbed ? "cursor-not-allowed" : "",
               )}
-            >
-              <span
-                aria-hidden="true"
-                className={cn(
-                  "absolute inset-0 rounded-[12px] transition-transform duration-150 ease-out",
-                  disabled || !canSendEmbed
-                    ? "bg-[#111111]"
-                    : "bg-[linear-gradient(180deg,#FFFFFF_0%,#D1D1D1_100%)] group-hover:scale-[1.02] group-active:scale-[0.985]",
-                )}
-              />
-              <span
-                className={cn(
-                  "relative z-10 inline-flex items-center justify-center gap-[8px] whitespace-nowrap leading-none",
-                  disabled || !canSendEmbed ? "text-[#B7B7B7]" : "text-[#282828]",
-                )}
               >
-                {isSendingEmbed ? (
-                  <>
-                    <ButtonLoader
-                      size={16}
-                      colorClassName={disabled || !canSendEmbed ? "text-[#B7B7B7]" : "text-[#282828]"}
-                    />
-                    Enviando embed
-                  </>
-                ) : (
-                  "Enviar embed"
-                )}
-              </span>
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "absolute inset-0 rounded-[12px] transition-transform duration-150 ease-out",
+                    disabled || !canSendEmbed
+                      ? "bg-[#111111]"
+                      : "bg-[linear-gradient(180deg,#FFFFFF_0%,#D1D1D1_100%)] group-hover:scale-[1.02] group-active:scale-[0.985]",
+                  )}
+                />
+                <span
+                  className={cn(
+                    "relative z-10 inline-flex items-center justify-center gap-[8px] whitespace-nowrap leading-none",
+                    disabled || !canSendEmbed ? "text-[#B7B7B7]" : "text-[#282828]",
+                  )}
+                >
+                  {isSendingEmbed ? (
+                    <>
+                      <ButtonLoader
+                        size={16}
+                        colorClassName={disabled || !canSendEmbed ? "text-[#B7B7B7]" : "text-[#282828]"}
+                      />
+                      Enviando embed
+                    </>
+                  ) : (
+                    sendButtonLabel
+                  )}
+                </span>
             </button>
           </div>
+          ) : null}
         </div>
       </div>
 

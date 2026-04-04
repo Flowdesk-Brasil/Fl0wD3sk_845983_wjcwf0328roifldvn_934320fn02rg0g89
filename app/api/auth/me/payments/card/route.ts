@@ -21,6 +21,10 @@ import {
   type MercadoPagoPaymentResponse,
 } from "@/lib/payments/mercadoPago";
 import {
+  ensureCheckoutAccessTokenForOrder,
+  PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS,
+} from "@/lib/payments/checkoutLinkSecurity";
+import {
   areCardPaymentsEnabled,
   CARD_PAYMENTS_DISABLED_MESSAGE,
 } from "@/lib/payments/cardAvailability";
@@ -58,6 +62,7 @@ type CreateCardPaymentBody = {
   installments?: unknown;
   issuerId?: unknown;
   deviceSessionId?: unknown;
+  forceNew?: unknown;
 };
 
 type AuthUserRecord = {
@@ -91,6 +96,9 @@ type PaymentOrderRecord = {
   provider_status_detail: string | null;
   paid_at: string | null;
   expires_at: string | null;
+  checkout_link_nonce: string | null;
+  checkout_link_expires_at: string | null;
+  checkout_link_invalidated_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -105,7 +113,7 @@ const CARD_PENDING_REUSE_WINDOW_MS = 15 * 60 * 1000;
 const ORDER_EXPIRATION_SAFETY_BUFFER_MS = 45 * 1000;
 const LICENSE_VALIDITY_DAYS = 30;
 const PAYMENT_ORDER_SELECT_COLUMNS =
-  "id, order_number, user_id, guild_id, payment_method, status, amount, currency, plan_code, plan_name, plan_billing_cycle_days, plan_max_licensed_servers, plan_max_active_tickets, plan_max_automations, plan_max_monthly_actions, payer_name, payer_document, payer_document_type, provider_payment_id, provider_qr_code, provider_qr_base64, provider_ticket_url, provider_status, provider_status_detail, paid_at, expires_at, created_at, updated_at";
+  `id, order_number, user_id, guild_id, payment_method, status, amount, currency, plan_code, plan_name, plan_billing_cycle_days, plan_max_licensed_servers, plan_max_active_tickets, plan_max_automations, plan_max_monthly_actions, payer_name, payer_document, payer_document_type, provider_payment_id, provider_qr_code, provider_qr_base64, provider_ticket_url, provider_status, provider_status_detail, paid_at, expires_at, created_at, updated_at, ${PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS}`;
 
 function normalizeGuildId(value: unknown) {
   if (typeof value !== "string") return null;
@@ -178,6 +186,15 @@ function normalizeDeviceSessionId(value: unknown) {
   if (!sessionId) return null;
   if (!/^[a-zA-Z0-9:_-]{8,200}$/.test(sessionId)) return null;
   return sessionId;
+}
+
+function parseForceNewFlag(value: unknown) {
+  if (value === true) return true;
+  if (value === false || value === null || value === undefined) return false;
+  if (typeof value === "number") return value === 1;
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
 function normalizePayerEmail(value: unknown) {
@@ -363,7 +380,10 @@ async function resolveCheckoutPlanForGuild(input: {
   };
 }
 
-function toApiOrder(record: PaymentOrderRecord) {
+function toApiOrder(
+  record: PaymentOrderRecord,
+  checkoutAccessToken: string | null = null,
+) {
   const qrDataUri = toQrDataUri(record.provider_qr_base64);
 
   return {
@@ -389,9 +409,25 @@ function toApiOrder(record: PaymentOrderRecord) {
     ticketUrl: record.provider_ticket_url,
     paidAt: record.paid_at,
     expiresAt: record.expires_at,
+    checkoutAccessToken,
+    checkoutAccessTokenExpiresAt: record.checkout_link_expires_at,
     createdAt: record.created_at,
     updatedAt: record.updated_at,
   };
+}
+
+function secureOrderForResponse(
+  order: PaymentOrderRecord,
+  options?: {
+    rotate?: boolean;
+    invalidate?: boolean;
+  },
+) {
+  return ensureCheckoutAccessTokenForOrder({
+    order,
+    forceRotate: Boolean(options?.rotate),
+    invalidateOtherOrders: Boolean(options?.invalidate),
+  });
 }
 
 function isProviderDocumentErrorMessage(message: string) {
@@ -870,6 +906,7 @@ export async function POST(request: Request) {
     const installments = normalizeInstallments(body.installments);
     const issuerId = normalizeIssuerId(body.issuerId);
     const deviceSessionId = normalizeDeviceSessionId(body.deviceSessionId);
+    const forceNew = parseForceNewFlag(body.forceNew);
 
     if (!guildId) {
       return respond(
@@ -978,12 +1015,16 @@ export async function POST(request: Request) {
 
     const activeLicenseOrder = await getActiveLicenseOrderForGuild(guildId);
     if (activeLicenseOrder) {
+      const securedActiveLicenseOrder = await secureOrderForResponse(activeLicenseOrder);
       return respond({
         ok: true,
         blockedByActiveLicense: true,
         licenseActive: true,
         licenseExpiresAt: resolveLicenseExpiresAt(activeLicenseOrder),
-        order: toApiOrder(activeLicenseOrder),
+        order: toApiOrder(
+          securedActiveLicenseOrder.order,
+          securedActiveLicenseOrder.checkoutAccessToken,
+        ),
       });
     }
 
@@ -1068,11 +1109,15 @@ export async function POST(request: Request) {
         // nao bloquear resposta principal por falha de log
       }
 
+      const securedLatestCardOrder = await secureOrderForResponse(latestCardOrder);
       return respond({
         ok: true,
         reused: true,
         alreadyProcessing: true,
-        order: toApiOrder(latestCardOrder),
+        order: toApiOrder(
+          securedLatestCardOrder.order,
+          securedLatestCardOrder.checkoutAccessToken,
+        ),
       });
     }
 
@@ -1099,12 +1144,16 @@ export async function POST(request: Request) {
         // nao bloquear o fluxo em caso de falha ao gravar evento
       }
 
+      const securedLatestCardOrder = await secureOrderForResponse(latestCardOrder);
       const response = respond(
         {
           ok: false,
           message: `Para reduzir bloqueio antifraude, aguarde ${retryCooldownSeconds}s antes de tentar novamente com cartao.`,
           retryAfterSeconds: retryCooldownSeconds,
-          order: toApiOrder(latestCardOrder),
+          order: toApiOrder(
+            securedLatestCardOrder.order,
+            securedLatestCardOrder.checkoutAccessToken,
+          ),
         },
         { status: 429 },
       );
@@ -1138,7 +1187,7 @@ export async function POST(request: Request) {
 
     let createdOrder: PaymentOrderRecord;
     const draftOrderToReuse =
-      latestOrder && canReuseDraftCardOrder(latestOrder)
+      !forceNew && latestOrder && canReuseDraftCardOrder(latestOrder)
         ? latestOrder
         : null;
 
@@ -1415,7 +1464,14 @@ export async function POST(request: Request) {
         await syncUserPlanStateFromOrder(updatedOrderResult.data);
       }
 
-      const apiOrder = toApiOrder(updatedOrderResult.data);
+      const securedOrder = await secureOrderForResponse(updatedOrderResult.data, {
+        rotate: true,
+        invalidate: true,
+      });
+      const apiOrder = toApiOrder(
+        securedOrder.order,
+        securedOrder.checkoutAccessToken,
+      );
       const retryAfterSeconds =
         updatedOrderResult.data.status === "rejected" &&
         updatedOrderResult.data.provider_status_detail &&
@@ -1554,11 +1610,19 @@ export async function POST(request: Request) {
             await syncUserPlanStateFromOrder(recoveredOrder);
           }
 
+          const securedRecoveredOrder = await secureOrderForResponse(
+            recoveredOrder,
+            { rotate: true, invalidate: true },
+          );
+
           return respond({
             ok: true,
             reused: false,
             recovered: true,
-            order: toApiOrder(recoveredOrder),
+            order: toApiOrder(
+              securedRecoveredOrder.order,
+              securedRecoveredOrder.checkoutAccessToken,
+            ),
           });
         }
       }

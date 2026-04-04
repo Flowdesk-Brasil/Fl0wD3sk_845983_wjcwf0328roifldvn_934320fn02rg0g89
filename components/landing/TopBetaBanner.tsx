@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { LandingReveal } from "@/components/landing/LandingReveal";
 
-const DEFAULT_BETA_BANNER_URL = "/config";
+const DEFAULT_BETA_BANNER_URL = "/config?fresh=1";
 
 function ArrowIcon() {
   return (
