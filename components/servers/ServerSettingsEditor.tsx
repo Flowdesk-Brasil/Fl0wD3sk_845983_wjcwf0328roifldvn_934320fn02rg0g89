@@ -42,6 +42,7 @@ import {
   CARD_PAYMENTS_DISABLED_MESSAGE,
   CARD_RECURRING_DISABLED_MESSAGE,
 } from "@/lib/payments/cardAvailability";
+import { useBodyScrollLock } from "@/lib/ui/useBodyScrollLock";
 
 type ManagedServerStatus = "paid" | "expired" | "off";
 type EditorTab = "settings" | "payments" | "methods" | "plans";
@@ -1341,6 +1342,12 @@ export function ServerSettingsEditor({
   >(null);
   const [shouldEnableRecurringAfterMethodAdd, setShouldEnableRecurringAfterMethodAdd] =
     useState(false);
+
+  useBodyScrollLock(
+    isRecurringMethodModalOpen ||
+      isAddMethodModalOpen ||
+      isWelcomeActivationModalOpen,
+  );
 
   const locked = status === "expired" || status === "off";
   const renewalWindowOpen = status === "paid" && daysUntilExpire <= 3;
@@ -4372,8 +4379,14 @@ export function ServerSettingsEditor({
         : null}
 
       {isRecurringMethodModalOpen ? (
-        <div className="fixed inset-0 z-[125] flex items-center justify-center bg-black/75 px-4 py-6">
-          <div className="relative w-full max-w-[560px] rounded-[3px] border border-[#2E2E2E] bg-[#0A0A0A] p-6">
+        <div className="fixed inset-0 z-[125] overflow-y-auto overscroll-contain bg-black/75 px-4 py-6">
+          <div className="flex min-h-full items-center justify-center">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Escolha o cartao da renovacao"
+            className="relative w-full max-w-[560px] rounded-[3px] border border-[#2E2E2E] bg-[#0A0A0A] p-6"
+          >
             <button
               type="button"
               onClick={() => {
@@ -4470,13 +4483,15 @@ export function ServerSettingsEditor({
               </button>
             </div>
           </div>
+          </div>
         </div>
       ) : null}
 
       {isAddMethodModalOpen ? (
         <ClientErrorBoundary
           fallback={
-            <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/75 px-4 py-6">
+            <div className="fixed inset-0 z-[130] overflow-y-auto overscroll-contain bg-black/75 px-4 py-6">
+              <div className="flex min-h-full items-center justify-center">
               <div className="w-full max-w-[520px] rounded-[3px] border border-[#2E2E2E] bg-[#0A0A0A] p-6 text-center">
                 <p className="text-[16px] text-[#D8D8D8]">
                   Nao foi possivel abrir o modal de cartao.
@@ -4492,11 +4507,18 @@ export function ServerSettingsEditor({
                   Fechar
                 </button>
               </div>
+              </div>
             </div>
           }
         >
-          <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/75 px-4 py-6">
-            <div className="relative w-full max-w-[760px] rounded-[3px] border border-[#2E2E2E] bg-[#0A0A0A] p-6">
+          <div className="fixed inset-0 z-[130] overflow-y-auto overscroll-contain bg-black/75 px-4 py-6">
+            <div className="flex min-h-full items-center justify-center">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="Adicionar um cartao"
+              className="relative w-full max-w-[760px] rounded-[3px] border border-[#2E2E2E] bg-[#0A0A0A] p-6"
+            >
             <button
               type="button"
               onClick={closeAddMethodModal}
@@ -4770,6 +4792,7 @@ export function ServerSettingsEditor({
                 {addMethodError}
               </p>
             ) : null}
+            </div>
             </div>
           </div>
         </ClientErrorBoundary>

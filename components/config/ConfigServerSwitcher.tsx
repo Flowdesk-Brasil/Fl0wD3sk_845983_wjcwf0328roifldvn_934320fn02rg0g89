@@ -156,7 +156,7 @@ export function ConfigServerSwitcher({
           />
 
           <div
-            className={`${scrollClass} relative z-10 max-h-[320px] overflow-y-auto p-[8px]`}
+            className={`${scrollClass} relative z-10 max-h-[320px] overflow-y-auto overscroll-contain p-[8px] [touch-action:pan-y]`}
             role="listbox"
             aria-label="Servidores"
           >

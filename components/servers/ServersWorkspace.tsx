@@ -50,6 +50,7 @@ import {
   storeCachedTeamsSnapshot,
 } from "@/lib/servers/serversWorkspaceClientCache";
 import type { PendingTeamInvite, UserTeam } from "@/lib/teams/userTeams";
+import { useBodyScrollLock } from "@/lib/ui/useBodyScrollLock";
 
 type ServersWorkspaceProps = {
   displayName: string;
@@ -1494,15 +1495,6 @@ export function ServersWorkspace({
     };
   }, [focusSidebarSearchInput]);
 
-  useEffect(() => {
-    if (!isCreateTeamModalOpen) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [isCreateTeamModalOpen]);
-
   const normalizedQuery = useMemo(() => normalizeSearchText(searchText), [searchText]);
   const normalizedSidebarQuery = useMemo(
     () => normalizeSearchText(sidebarSearchText),
@@ -1521,6 +1513,7 @@ export function ServersWorkspace({
     () => teams.find((team) => team.id === selectedTeamId) || null,
     [selectedTeamId, teams],
   );
+  useBodyScrollLock(isCreateTeamModalOpen);
   const linkedGuildIdsInTeams = useMemo(
     () => new Set(teams.flatMap((team) => team.linkedGuildIds)),
     [teams],
@@ -2851,7 +2844,7 @@ export function ServersWorkspace({
         </div>
       </main>
       {isCreateTeamModalOpen ? (
-        <div className="fixed inset-0 z-[5000] isolate flex items-center justify-center px-[18px] py-[28px]">
+        <div className="fixed inset-0 z-[5000] isolate overflow-y-auto overscroll-contain px-[18px] py-[28px]">
           <button
             type="button"
             aria-label="Fechar modal de equipe"
@@ -2862,8 +2855,13 @@ export function ServersWorkspace({
               setTeamActionError(null);
             }}
           />
-          <div className="relative z-[10] w-full max-w-[760px]">
-            <div className="relative overflow-hidden rounded-[32px] bg-transparent px-[22px] py-[22px] shadow-[0_34px_110px_rgba(0,0,0,0.52)] sm:px-[28px] sm:py-[28px]">
+          <div className="relative z-[10] flex min-h-full items-center justify-center">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="Criar equipe"
+              className="relative w-full max-w-[760px] overflow-hidden rounded-[32px] bg-transparent px-[22px] py-[22px] shadow-[0_34px_110px_rgba(0,0,0,0.52)] sm:px-[28px] sm:py-[28px]"
+            >
               <span
                 aria-hidden="true"
                 className="pointer-events-none absolute inset-0 rounded-[32px] border border-[#0E0E0E]"
@@ -3188,7 +3186,7 @@ export function ServersWorkspace({
           </div>
 
           {isMemberSubmodalOpen ? (
-            <div className="absolute inset-0 z-[30] flex items-center justify-center p-[16px]">
+            <div className="absolute inset-0 z-[30] overflow-y-auto overscroll-contain p-[16px]">
               <button
                 type="button"
                 aria-label="Fechar submodal de membros"
@@ -3198,7 +3196,8 @@ export function ServersWorkspace({
                   setTeamActionError(null);
                 }}
               />
-              <div className="relative z-[40] w-full max-w-[520px] overflow-hidden rounded-[26px] border border-[#151515] bg-[#070707] p-[18px] shadow-[0_24px_70px_rgba(0,0,0,0.5)]">
+              <div className="relative z-[40] mx-auto flex min-h-full items-center justify-center">
+                <div className="w-full max-w-[520px] overflow-hidden rounded-[26px] border border-[#151515] bg-[#070707] p-[18px] shadow-[0_24px_70px_rgba(0,0,0,0.5)]">
                 <div className="flex items-start justify-between gap-[14px]">
                   <div>
                     <p className="text-[12px] uppercase tracking-[0.16em] text-[#666666]">
@@ -3283,6 +3282,7 @@ export function ServersWorkspace({
                       Confirmar IDs
                     </span>
                   </button>
+                </div>
                 </div>
               </div>
             </div>

@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { LandingGlowTag } from "@/components/landing/LandingGlowTag";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
+import { useBodyScrollLock } from "@/lib/ui/useBodyScrollLock";
 
 type BotMissingModalProps = {
   isOpen: boolean;
@@ -21,6 +22,8 @@ export function BotMissingModal({
   title,
   description,
 }: BotMissingModalProps) {
+  useBodyScrollLock(isOpen);
+
   useEffect(() => {
     if (!isOpen) return;
 
@@ -42,7 +45,7 @@ export function BotMissingModal({
   const eyebrow = isPermissionIssue ? "Permissoes do bot" : "Integracao do bot";
 
   return (
-    <div className="fixed inset-0 z-[80] isolate flex items-center justify-center px-[18px] py-[28px]">
+    <div className="fixed inset-0 z-[80] isolate overflow-y-auto overscroll-contain px-[18px] py-[28px]">
       <button
         type="button"
         aria-label="Fechar modal do bot"
@@ -50,8 +53,13 @@ export function BotMissingModal({
         onClick={onClose}
       />
 
-      <div className="relative z-[10] w-full max-w-[720px] flowdesk-stage-fade">
-        <div className="relative overflow-hidden rounded-[32px] bg-transparent px-[22px] py-[22px] shadow-[0_34px_110px_rgba(0,0,0,0.52)] sm:px-[28px] sm:py-[28px]">
+      <div className="relative z-[10] flex min-h-full items-center justify-center">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={title}
+          className="flowdesk-stage-fade relative w-full max-w-[720px] overflow-hidden rounded-[32px] bg-transparent px-[22px] py-[22px] shadow-[0_34px_110px_rgba(0,0,0,0.52)] sm:px-[28px] sm:py-[28px]"
+        >
           <span
             aria-hidden="true"
             className="pointer-events-none absolute inset-0 rounded-[32px] border border-[#0E0E0E]"

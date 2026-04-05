@@ -114,8 +114,8 @@ export function ConfigStepSelect({
   const triggerPaddingRight = isImmersive ? 14 : 12;
   const triggerRadius = isImmersive ? 18 : 16;
   const dropdownClassName = isImmersive
-    ? "flowdesk-selectmenu-scrollbar flowdesk-scale-in-soft fixed z-[420] overflow-y-auto overscroll-contain border border-[#1A1A1A] bg-[#070707] shadow-[0_28px_80px_rgba(0,0,0,0.56)] backdrop-blur-[16px] transition-all duration-200 ease-out"
-    : "flowdesk-selectmenu-scrollbar flowdesk-scale-in-soft fixed z-[420] overflow-y-auto overscroll-contain border bg-[#080808] shadow-[0_24px_64px_rgba(0,0,0,0.5)] backdrop-blur-[12px] transition-all duration-200 ease-out";
+    ? "flowdesk-selectmenu-scrollbar flowdesk-scale-in-soft fixed z-[420] overflow-y-auto overscroll-contain border border-[#1A1A1A] bg-[#070707] shadow-[0_28px_80px_rgba(0,0,0,0.56)] backdrop-blur-[16px] transition-all duration-200 ease-out [touch-action:pan-y]"
+    : "flowdesk-selectmenu-scrollbar flowdesk-scale-in-soft fixed z-[420] overflow-y-auto overscroll-contain border bg-[#080808] shadow-[0_24px_64px_rgba(0,0,0,0.5)] backdrop-blur-[12px] transition-all duration-200 ease-out [touch-action:pan-y]";
   const optionClassName = (selected: boolean) =>
     isImmersive
       ? `mx-[6px] my-[4px] flex w-[calc(100%-12px)] items-center rounded-[14px] border px-[14px] text-left transition-colors ${
