@@ -41,6 +41,10 @@ import {
   resolveEffectivePlanSelection,
   syncUserPlanStateFromOrder,
 } from "@/lib/plans/state";
+import {
+  extractAuditErrorMessage,
+  sanitizeErrorMessage,
+} from "@/lib/security/errors";
 import { ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -1080,10 +1084,7 @@ export async function GET(request: Request) {
     return NextResponse.json(
       {
         ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Erro ao carregar pagamento PIX.",
+        message: sanitizeErrorMessage(error, "Erro ao carregar pagamento PIX."),
       },
       { status: 500 },
     );
@@ -1700,16 +1701,13 @@ export async function POST(request: Request) {
       action: "payment_pix_post",
       outcome: "failed",
       metadata: {
-        message: error instanceof Error ? error.message : "unknown_error",
+        message: extractAuditErrorMessage(error),
       },
     });
     return respond(
       {
         ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Erro ao criar pagamento PIX.",
+        message: sanitizeErrorMessage(error, "Erro ao criar pagamento PIX."),
       },
       { status: 500 },
     );

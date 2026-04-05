@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { createSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 async function getCount(status: "open" | "closed", guildId?: string) {
@@ -45,10 +46,10 @@ export async function GET() {
     return NextResponse.json(
       {
         ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Erro ao consultar resumo de tickets.",
+        message: sanitizeErrorMessage(
+          error,
+          "Erro ao consultar resumo de tickets.",
+        ),
       },
       { status: 500 },
     );

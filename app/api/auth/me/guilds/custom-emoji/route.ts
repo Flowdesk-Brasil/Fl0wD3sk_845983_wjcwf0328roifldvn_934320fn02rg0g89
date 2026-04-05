@@ -5,6 +5,7 @@ import {
   isGuildId,
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
+import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 
 type DiscordGuildEmoji = {
@@ -283,10 +284,10 @@ export async function GET(request: Request) {
       NextResponse.json(
         {
           ok: false,
-          message:
-            error instanceof Error
-              ? error.message
-              : "Erro ao validar emoji do Discord.",
+          message: sanitizeErrorMessage(
+            error,
+            "Erro ao validar emoji do Discord.",
+          ),
         },
         { status: 500 },
       ),

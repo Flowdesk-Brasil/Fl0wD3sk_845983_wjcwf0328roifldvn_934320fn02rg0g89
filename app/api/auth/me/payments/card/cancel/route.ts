@@ -6,6 +6,10 @@ import {
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
 import { cancelMercadoPagoCardPayment } from "@/lib/payments/mercadoPago";
+import {
+  extractAuditErrorMessage,
+  sanitizeErrorMessage,
+} from "@/lib/security/errors";
 import { applyNoStoreHeaders, ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -343,17 +347,17 @@ export async function POST(request: Request) {
           metadata: {
             orderNumber: order.order_number,
             providerPaymentId: order.provider_payment_id,
-            message: error instanceof Error ? error.message : "provider_cancel_failed",
+            message: extractAuditErrorMessage(error, "provider_cancel_failed"),
           },
         });
 
         return respond(
           {
             ok: false,
-            message:
-              error instanceof Error
-                ? error.message
-                : "Nao foi possivel cancelar o pagamento com cartao agora.",
+            message: sanitizeErrorMessage(
+              error,
+              "Nao foi possivel cancelar o pagamento com cartao agora.",
+            ),
           },
           { status: 502 },
         );
@@ -405,17 +409,17 @@ export async function POST(request: Request) {
       action: "payment_card_cancel_post",
       outcome: "failed",
       metadata: {
-        message: error instanceof Error ? error.message : "unexpected_error",
+        message: extractAuditErrorMessage(error, "unexpected_error"),
       },
     });
 
     return respond(
       {
         ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Falha ao cancelar o pagamento com cartao.",
+        message: sanitizeErrorMessage(
+          error,
+          "Falha ao cancelar o pagamento com cartao.",
+        ),
       },
       { status: 500 },
     );

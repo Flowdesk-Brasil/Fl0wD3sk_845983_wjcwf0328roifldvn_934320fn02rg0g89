@@ -4,6 +4,7 @@ import {
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
 import { getLockedGuildLicenseMap } from "@/lib/payments/licenseStatus";
+import { sanitizeErrorMessage } from "@/lib/security/errors";
 
 function buildGuildIconUrl(guildId: string, icon: string | null) {
   if (!icon) return null;
@@ -64,8 +65,10 @@ export async function GET(request: Request) {
     return NextResponse.json(
       {
         ok: false,
-        message:
-          error instanceof Error ? error.message : "Erro ao listar servidores do usuario.",
+        message: sanitizeErrorMessage(
+          error,
+          "Erro ao listar servidores do usuario.",
+        ),
       },
       { status: 500 },
     );

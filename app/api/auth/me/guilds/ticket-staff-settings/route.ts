@@ -16,6 +16,10 @@ import {
   resolveServerSaveAccessMode,
 } from "@/lib/servers/serverSaveDiagnostics";
 import {
+  extractAuditErrorMessage,
+  sanitizeErrorMessage,
+} from "@/lib/security/errors";
+import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
 } from "@/lib/security/http";
@@ -232,10 +236,10 @@ export async function GET(request: Request) {
       NextResponse.json(
       {
         ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Erro ao carregar configuracoes de staff.",
+        message: sanitizeErrorMessage(
+          error,
+          "Erro ao carregar configuracoes de staff.",
+        ),
       },
       { status: 500 },
       ),
@@ -521,19 +525,19 @@ export async function POST(request: Request) {
       context: diagnostic,
       outcome: "failed",
       httpStatus: 500,
-      detail:
-        error instanceof Error
-          ? error.message
-          : "Erro ao salvar configuracoes de staff.",
+      detail: extractAuditErrorMessage(
+        error,
+        "Erro ao salvar configuracoes de staff.",
+      ),
     });
     return applyNoStoreHeaders(
       NextResponse.json(
       {
         ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Erro ao salvar configuracoes de staff.",
+        message: sanitizeErrorMessage(
+          error,
+          "Erro ao salvar configuracoes de staff.",
+        ),
       },
       { status: 500 },
       ),

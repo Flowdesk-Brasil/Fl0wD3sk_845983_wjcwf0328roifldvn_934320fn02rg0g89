@@ -6,6 +6,7 @@ import {
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
 import { resolveDiscountPricing } from "@/lib/payments/discountPricing";
+import { sanitizeErrorMessage } from "@/lib/security/errors";
 import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
@@ -151,10 +152,10 @@ export async function POST(request: Request) {
       NextResponse.json(
         {
           ok: false,
-          message:
-            error instanceof Error
-              ? error.message
-              : "Erro ao validar cupom e gift card.",
+          message: sanitizeErrorMessage(
+            error,
+            "Erro ao validar cupom e gift card.",
+          ),
         },
         { status: 500 },
       ),

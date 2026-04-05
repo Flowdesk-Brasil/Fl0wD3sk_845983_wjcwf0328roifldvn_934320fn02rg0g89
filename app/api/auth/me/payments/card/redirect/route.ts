@@ -32,6 +32,10 @@ import {
   syncUserPlanStateFromOrder,
 } from "@/lib/plans/state";
 import { resolvePlanCycleExpirationIso } from "@/lib/plans/cycle";
+import {
+  extractAuditErrorMessage,
+  sanitizeErrorMessage,
+} from "@/lib/security/errors";
 import { ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -979,17 +983,17 @@ export async function POST(request: Request) {
       action: "payment_card_redirect_post",
       outcome: "failed",
       metadata: {
-        message: error instanceof Error ? error.message : "unexpected_error",
+        message: extractAuditErrorMessage(error),
       },
     });
 
     return respond(
       {
         ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Falha ao preparar checkout com cartao.",
+        message: sanitizeErrorMessage(
+          error,
+          "Falha ao preparar checkout com cartao.",
+        ),
       },
       { status: 500 },
     );

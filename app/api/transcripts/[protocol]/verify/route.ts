@@ -13,6 +13,7 @@ import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
 } from "@/lib/security/http";
+import { sanitizeErrorMessage } from "@/lib/security/errors";
 
 type TranscriptRouteParams = {
   params: Promise<{
@@ -90,10 +91,10 @@ export async function POST(request: NextRequest, { params }: TranscriptRoutePara
       NextResponse.json(
         {
           ok: false,
-          message:
-            error instanceof Error
-              ? error.message
-              : "Erro ao validar o codigo do transcript.",
+          message: sanitizeErrorMessage(
+            error,
+            "Erro ao validar o codigo do transcript.",
+          ),
         },
         { status: 500 },
       ),

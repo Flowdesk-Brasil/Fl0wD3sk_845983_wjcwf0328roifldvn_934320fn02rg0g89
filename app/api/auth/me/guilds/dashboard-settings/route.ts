@@ -8,6 +8,7 @@ import {
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
 import { cleanupExpiredUnpaidServerSetups } from "@/lib/payments/setupCleanup";
+import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import { normalizeTicketPanelLayout } from "@/lib/servers/ticketPanelBuilder";
 import {
@@ -342,10 +343,10 @@ export async function GET(request: Request) {
       NextResponse.json(
         {
           ok: false,
-          message:
-            error instanceof Error
-              ? error.message
-              : "Erro ao carregar configuracoes do servidor.",
+          message: sanitizeErrorMessage(
+            error,
+            "Erro ao carregar configuracoes do servidor.",
+          ),
         },
         { status: 500 },
       ),

@@ -8,6 +8,7 @@ import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
 } from "@/lib/security/http";
+import { sanitizeErrorMessage } from "@/lib/security/errors";
 
 type TeamRouteParams = {
   params: Promise<{
@@ -74,10 +75,10 @@ export async function POST(request: Request, { params }: TeamRouteParams) {
       NextResponse.json(
         {
           ok: false,
-          message:
-            error instanceof Error
-              ? error.message
-              : "Erro ao aceitar convite da equipe.",
+          message: sanitizeErrorMessage(
+            error,
+            "Erro ao aceitar convite da equipe.",
+          ),
         },
         { status: 500 },
       ),

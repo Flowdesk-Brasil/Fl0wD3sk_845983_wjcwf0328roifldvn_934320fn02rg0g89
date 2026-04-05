@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   getManagedServersForCurrentSession,
 } from "@/lib/servers/managedServers";
+import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 
 export async function GET() {
@@ -19,10 +20,10 @@ export async function GET() {
       NextResponse.json(
       {
         ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Erro ao carregar servidores gerenciados.",
+        message: sanitizeErrorMessage(
+          error,
+          "Erro ao carregar servidores gerenciados.",
+        ),
       },
       { status: 500 },
       ),

@@ -40,6 +40,10 @@ import {
   syncUserPlanStateFromOrder,
 } from "@/lib/plans/state";
 import { resolvePlanCycleExpirationIso } from "@/lib/plans/cycle";
+import {
+  extractAuditErrorMessage,
+  sanitizeErrorMessage,
+} from "@/lib/security/errors";
 import { ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -1704,16 +1708,16 @@ export async function POST(request: Request) {
       action: "payment_card_post",
       outcome: "failed",
       metadata: {
-        message: error instanceof Error ? error.message : "unknown_error",
+        message: extractAuditErrorMessage(error),
       },
     });
     return respond(
       {
         ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Erro ao criar pagamento com cartao.",
+        message: sanitizeErrorMessage(
+          error,
+          "Erro ao criar pagamento com cartao.",
+        ),
       },
       { status: 500 },
     );

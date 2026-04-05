@@ -22,7 +22,18 @@ import {
   resolveLatestLicenseCoverageFromApprovedOrders,
 } from "@/lib/payments/licenseStatus";
 import { cleanupExpiredUnpaidServerSetups } from "@/lib/payments/setupCleanup";
+import {
+  extractAuditErrorMessage,
+  sanitizeErrorMessage,
+} from "@/lib/security/errors";
 import { applyNoStoreHeaders } from "@/lib/security/http";
+import {
+  attachRequestId,
+  createSecurityRequestContext,
+  enforceRequestRateLimit,
+  extendSecurityRequestContext,
+  logSecurityAuditEventSafe,
+} from "@/lib/security/requestSecurity";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 type PaymentOrderStateRecord = {
@@ -320,25 +331,65 @@ async function getLatestUserOrderForGuild(userId: number, guildId: string) {
 }
 
 export async function GET(request: Request) {
+  const requestContext = createSecurityRequestContext(request);
+  const respond = (body: unknown, init?: ResponseInit) =>
+    attachRequestId(
+      applyNoStoreHeaders(NextResponse.json(body, init)),
+      requestContext.requestId,
+    );
+
   try {
     const url = new URL(request.url);
     const guildId = normalizeGuildId(url.searchParams.get("guildId"));
 
     if (!guildId) {
-      return applyNoStoreHeaders(
-        NextResponse.json(
+      return respond(
         { ok: false, message: "Guild ID invalido." },
         { status: 400 },
-        ),
       );
     }
 
     const access = await ensureGuildAccess(guildId);
     if (!access.ok) {
-      return access.response;
+      return attachRequestId(access.response, requestContext.requestId);
     }
 
     const user = access.context.sessionData.authSession.user;
+    const auditContext = extendSecurityRequestContext(requestContext, {
+      sessionId: access.context.sessionData.authSession.id,
+      userId: user.id,
+      guildId,
+    });
+    const rateLimit = await enforceRequestRateLimit({
+      action: "payment_state_read",
+      windowMs: 10 * 60 * 1000,
+      maxAttempts: 120,
+      context: auditContext,
+    });
+
+    if (!rateLimit.ok) {
+      await logSecurityAuditEventSafe(auditContext, {
+        action: "payment_state_read",
+        outcome: "blocked",
+        metadata: {
+          reason: "rate_limit",
+          retryAfterSeconds: rateLimit.retryAfterSeconds,
+        },
+      });
+
+      const response = respond(
+        { ok: false, message: "Muitas consultas. Tente novamente em instantes." },
+        { status: 429 },
+      );
+      response.headers.set("Retry-After", String(rateLimit.retryAfterSeconds));
+      return response;
+    }
+
+    await logSecurityAuditEventSafe(auditContext, {
+      action: "payment_state_read",
+      outcome: "started",
+    });
+
     await cleanupExpiredUnpaidServerSetups({
       userId: user.id,
       guildId,
@@ -443,8 +494,16 @@ export async function GET(request: Request) {
           })
         : null;
 
-    return applyNoStoreHeaders(
-      NextResponse.json({
+    await logSecurityAuditEventSafe(auditContext, {
+      action: "payment_state_read",
+      outcome: "succeeded",
+      metadata: {
+        hasActiveLicense: Boolean(activeLicenseOrder),
+        hasLatestOrder: Boolean(latestUserOrder),
+      },
+    });
+
+    return respond({
       ok: true,
       guildId,
       activeLicense: activeLicenseOrder
@@ -462,20 +521,25 @@ export async function GET(request: Request) {
             securedLatestOrder?.checkoutAccessToken || null,
           )
         : null,
-      }),
-    );
+    });
   } catch (error) {
-    return applyNoStoreHeaders(
-      NextResponse.json(
+    await logSecurityAuditEventSafe(requestContext, {
+      action: "payment_state_read",
+      outcome: "failed",
+      metadata: {
+        message: extractAuditErrorMessage(error),
+      },
+    });
+
+    return respond(
       {
         ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Erro ao consultar estado de pagamento do servidor.",
+        message: sanitizeErrorMessage(
+          error,
+          "Erro ao consultar estado de pagamento do servidor.",
+        ),
       },
       { status: 500 },
-      ),
     );
   }
 }

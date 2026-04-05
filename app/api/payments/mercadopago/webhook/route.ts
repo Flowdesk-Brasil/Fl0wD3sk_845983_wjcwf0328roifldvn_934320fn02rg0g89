@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 import {
   fetchMercadoPagoPaymentById,
@@ -18,6 +19,12 @@ import {
   UNPAID_SETUP_TIMEOUT_REFUND_STATUS_DETAIL,
 } from "@/lib/payments/setupCleanup";
 import { syncUserPlanStateFromOrder } from "@/lib/plans/state";
+import { sanitizeErrorMessage } from "@/lib/security/errors";
+import { applyNoStoreHeaders } from "@/lib/security/http";
+import {
+  attachRequestId,
+  createSecurityRequestContext,
+} from "@/lib/security/requestSecurity";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 type PaymentOrderRecord = {
@@ -393,8 +400,10 @@ async function updateOrderFromProviderPayment(
 }
 
 function validateWebhookToken(request: Request, url: URL) {
-  const expectedToken = process.env.MERCADO_PAGO_WEBHOOK_TOKEN?.trim();
-  if (!expectedToken) return true;
+  const expectedToken = process.env.MERCADO_PAGO_WEBHOOK_TOKEN?.trim() || "";
+  if (!expectedToken) {
+    return process.env.NODE_ENV !== "production";
+  }
 
   const tokenFromQuery = url.searchParams.get("token")?.trim() || "";
   const tokenFromHeader =
@@ -402,14 +411,46 @@ function validateWebhookToken(request: Request, url: URL) {
     request.headers.get("x-mercadopago-signature")?.trim() ||
     "";
 
-  return tokenFromQuery === expectedToken || tokenFromHeader === expectedToken;
+  const candidates = [tokenFromQuery, tokenFromHeader].filter(Boolean);
+  return candidates.some((candidate) => secureTokenEquals(expectedToken, candidate));
+}
+
+function secureTokenEquals(expected: string, received: string) {
+  const expectedBuffer = Buffer.from(expected);
+  const receivedBuffer = Buffer.from(received);
+  if (expectedBuffer.length !== receivedBuffer.length) return false;
+  return crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
 }
 
 export async function POST(request: Request) {
+  const requestContext = createSecurityRequestContext(request);
+  const respond = (body: unknown, init?: ResponseInit) =>
+    attachRequestId(
+      applyNoStoreHeaders(NextResponse.json(body, init)),
+      requestContext.requestId,
+    );
+
   try {
     const url = new URL(request.url);
+    if (
+      process.env.NODE_ENV === "production" &&
+      !process.env.MERCADO_PAGO_WEBHOOK_TOKEN?.trim()
+    ) {
+      return respond(
+        {
+          ok: false,
+          message:
+            "Webhook do Mercado Pago desabilitado: token de seguranca nao configurado.",
+        },
+        { status: 503 },
+      );
+    }
+
     if (!validateWebhookToken(request, url)) {
-      return NextResponse.json({ ok: false, message: "Webhook nao autorizado." }, { status: 401 });
+      return respond(
+        { ok: false, message: "Webhook nao autorizado." },
+        { status: 401 },
+      );
     }
 
     let body: unknown = null;
@@ -421,13 +462,13 @@ export async function POST(request: Request) {
 
     const paymentId = extractWebhookPaymentId({ url, body });
     if (!paymentId) {
-      return NextResponse.json({ ok: true, ignored: true });
+      return respond({ ok: true, ignored: true });
     }
 
     const providerPayment = await fetchMercadoPagoPaymentById(paymentId);
     const providerPaymentId = parsePaymentId(providerPayment.id);
     if (!providerPaymentId) {
-      return NextResponse.json({ ok: true, ignored: true });
+      return respond({ ok: true, ignored: true });
     }
 
     const resolvedStatus = resolvePaymentStatus(providerPayment.status);
@@ -452,7 +493,7 @@ export async function POST(request: Request) {
         });
       }
 
-      return NextResponse.json({
+      return respond({
         ok: true,
         ignored: true,
         orphanPayment: true,
@@ -462,20 +503,21 @@ export async function POST(request: Request) {
 
     order = await updateOrderFromProviderPayment(order, providerPayment);
 
-    return NextResponse.json({
+    return respond({
       ok: true,
       paymentId: providerPaymentId,
       orderNumber: order.order_number,
       status: order.status,
     });
   } catch (error) {
-    return NextResponse.json(
+    return respond(
       {
         ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Erro no webhook do Mercado Pago.",
+        message: sanitizeErrorMessage(
+          error,
+          "Erro no webhook do Mercado Pago.",
+        ),
+        requestId: requestContext.requestId,
       },
       { status: 500 },
     );

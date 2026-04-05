@@ -40,6 +40,10 @@ import {
   type GuildPlanSettingsRecord,
   type UserPlanStateRecord,
 } from "@/lib/plans/state";
+import {
+  extractAuditErrorMessage,
+  sanitizeErrorMessage,
+} from "@/lib/security/errors";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 type HiddenMethodRecord = {
@@ -422,10 +426,10 @@ export async function GET(request: Request) {
     return attachRequestId(NextResponse.json(
       {
         ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Erro ao carregar plano do servidor.",
+        message: sanitizeErrorMessage(
+          error,
+          "Erro ao carregar plano do servidor.",
+        ),
       },
       { status: 500 },
     ), requestContext.requestId);
@@ -659,17 +663,17 @@ export async function POST(request: Request) {
       action: "server_plan_post",
       outcome: "failed",
       metadata: {
-        message: error instanceof Error ? error.message : "unknown_error",
+        message: extractAuditErrorMessage(error),
       },
     });
 
     return attachRequestId(NextResponse.json(
       {
         ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Erro ao salvar plano do servidor.",
+        message: sanitizeErrorMessage(
+          error,
+          "Erro ao salvar plano do servidor.",
+        ),
       },
       { status: 500 },
     ), baseRequestContext.requestId);

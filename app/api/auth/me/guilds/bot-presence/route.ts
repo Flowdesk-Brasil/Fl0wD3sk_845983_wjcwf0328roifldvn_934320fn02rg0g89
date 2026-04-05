@@ -1,4 +1,4 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { authConfig } from "@/lib/auth/config";
 import {
   assertUserAdminInGuildOrNull,
@@ -9,6 +9,18 @@ import {
 } from "@/lib/auth/discordGuildAccess";
 import { updateSessionActiveGuild } from "@/lib/auth/session";
 import { getLockedGuildLicenseByGuildId } from "@/lib/payments/licenseStatus";
+import { sanitizeErrorMessage } from "@/lib/security/errors";
+import {
+  applyNoStoreHeaders,
+  ensureSameOriginJsonMutationRequest,
+} from "@/lib/security/http";
+import {
+  attachRequestId,
+  createSecurityRequestContext,
+  enforceRequestRateLimit,
+  extendSecurityRequestContext,
+  logSecurityAuditEventSafe,
+} from "@/lib/security/requestSecurity";
 
 type ValidateGuildBody = {
   guildId?: unknown;
@@ -111,27 +123,72 @@ async function getBotGuildStatus(guildId: string): Promise<BotGuildStatus> {
 }
 
 export async function POST(request: Request) {
+  const baseRequestContext = createSecurityRequestContext(request);
+  const respond = (body: unknown, init?: ResponseInit) =>
+    attachRequestId(
+      applyNoStoreHeaders(NextResponse.json(body, init)),
+      baseRequestContext.requestId,
+    );
+
   try {
+    const originGuard = ensureSameOriginJsonMutationRequest(request);
+    if (originGuard) {
+      return attachRequestId(
+        applyNoStoreHeaders(originGuard),
+        baseRequestContext.requestId,
+      );
+    }
+
     const sessionData = await resolveSessionAccessToken();
     if (!sessionData?.authSession) {
-      return NextResponse.json(
+      return respond(
         { ok: false, message: "Nao autenticado." },
         { status: 401 },
       );
     }
 
+    const auditContext = extendSecurityRequestContext(baseRequestContext, {
+      sessionId: sessionData.authSession.id,
+      userId: sessionData.authSession.user.id,
+    });
+
     if (!sessionData.accessToken) {
-      return NextResponse.json(
+      return respond(
         { ok: false, message: "Token OAuth ausente na sessao." },
         { status: 401 },
       );
+    }
+
+    const rateLimit = await enforceRequestRateLimit({
+      action: "auth_bot_presence_validate",
+      windowMs: 10 * 60 * 1000,
+      maxAttempts: 20,
+      context: auditContext,
+    });
+
+    if (!rateLimit.ok) {
+      await logSecurityAuditEventSafe(auditContext, {
+        action: "auth_bot_presence_validate",
+        outcome: "blocked",
+        metadata: {
+          reason: "rate_limit",
+          retryAfterSeconds: rateLimit.retryAfterSeconds,
+        },
+      });
+
+      const response = respond(
+        { ok: false, message: "Muitas tentativas. Tente novamente em instantes." },
+        { status: 429 },
+      );
+      response.headers.set("Retry-After", String(rateLimit.retryAfterSeconds));
+      return response;
     }
 
     let body: ValidateGuildBody = {};
     try {
       body = (await request.json()) as ValidateGuildBody;
     } catch {
-      return NextResponse.json(
+      return respond(
         { ok: false, message: "Payload JSON invalido." },
         { status: 400 },
       );
@@ -139,11 +196,23 @@ export async function POST(request: Request) {
 
     const guildId = typeof body.guildId === "string" ? body.guildId.trim() : "";
     if (!isGuildId(guildId)) {
-      return NextResponse.json(
+      return respond(
         { ok: false, message: "Guild ID invalido." },
         { status: 400 },
       );
     }
+
+    const guildAuditContext = extendSecurityRequestContext(auditContext, {
+      guildId,
+    });
+
+    await logSecurityAuditEventSafe(guildAuditContext, {
+      action: "auth_bot_presence_validate",
+      outcome: "started",
+      metadata: {
+        guildId,
+      },
+    });
 
     const accessibleGuild = await assertUserAdminInGuildOrNull(
       {
@@ -165,7 +234,15 @@ export async function POST(request: Request) {
 
     const isActiveGuild = sessionData.authSession.activeGuildId === guildId;
     if (!accessibleGuild && !hasTeamAccess && !isActiveGuild) {
-      return NextResponse.json(
+      await logSecurityAuditEventSafe(guildAuditContext, {
+        action: "auth_bot_presence_validate",
+        outcome: "blocked",
+        metadata: {
+          reason: "guild_access_denied",
+        },
+      });
+
+      return respond(
         { ok: false, message: "Servidor nao encontrado para este usuario." },
         { status: 403 },
       );
@@ -176,7 +253,16 @@ export async function POST(request: Request) {
       lockedLicense &&
       lockedLicense.userId !== sessionData.authSession.user.id
     ) {
-      return NextResponse.json(
+      await logSecurityAuditEventSafe(guildAuditContext, {
+        action: "auth_bot_presence_validate",
+        outcome: "blocked",
+        metadata: {
+          reason: "locked_license_conflict",
+          licenseOwnerUserId: lockedLicense.userId,
+        },
+      });
+
+      return respond(
         {
           ok: false,
           message:
@@ -191,27 +277,39 @@ export async function POST(request: Request) {
     }
 
     const botStatus = await getBotGuildStatus(guildId);
-    if (botStatus.inGuild && botStatus.hasAdministrator) {
-      return NextResponse.json({ ok: true, canProceed: true });
+    const canProceed = botStatus.inGuild && botStatus.hasAdministrator;
+
+    await logSecurityAuditEventSafe(guildAuditContext, {
+      action: "auth_bot_presence_validate",
+      outcome: "succeeded",
+      metadata: {
+        guildId,
+        canProceed,
+        inGuild: botStatus.inGuild,
+        hasAdministrator: botStatus.hasAdministrator,
+      },
+    });
+
+    if (canProceed) {
+      return respond({ ok: true, canProceed: true });
     }
 
-    return NextResponse.json({
+    return respond({
       ok: true,
       canProceed: false,
       reason: botStatus.inGuild ? "missing_admin_permission" : "bot_not_found",
       inviteUrl: buildBotInviteUrl(guildId),
     });
   } catch (error) {
-    return NextResponse.json(
+    return respond(
       {
         ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Erro ao validar presenca do bot no servidor.",
+        message: sanitizeErrorMessage(
+          error,
+          "Erro ao validar presenca do bot no servidor.",
+        ),
       },
       { status: 500 },
     );
   }
 }
-

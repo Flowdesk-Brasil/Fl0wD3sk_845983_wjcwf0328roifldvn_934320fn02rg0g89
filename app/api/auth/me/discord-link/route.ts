@@ -15,6 +15,10 @@ import {
   getDiscordLinkRecordForUser,
   syncOfficialDiscordLink,
 } from "@/lib/discordLink/service";
+import {
+  extractAuditErrorMessage,
+  sanitizeErrorMessage,
+} from "@/lib/security/errors";
 import { ensureSameOriginJsonMutationRequest, applyNoStoreHeaders } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -79,7 +83,7 @@ export async function GET(request: NextRequest) {
       action: "discord_link_status",
       outcome: "failed",
       metadata: {
-        reason: error instanceof Error ? error.message : "unknown",
+        reason: extractAuditErrorMessage(error, "unknown"),
       },
     });
 
@@ -89,10 +93,10 @@ export async function GET(request: NextRequest) {
           {
             ok: false,
             authenticated: true,
-            message:
-              error instanceof Error
-                ? error.message
-                : "Erro ao consultar a vinculacao Discord.",
+            message: sanitizeErrorMessage(
+              error,
+              "Erro ao consultar a vinculacao Discord.",
+            ),
           },
           { status: 500 },
         ),
@@ -347,16 +351,19 @@ export async function POST(request: NextRequest) {
       authenticatedContext.requestId,
     );
   } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Erro inesperado ao vincular a conta Discord.";
+    const message = sanitizeErrorMessage(
+      error,
+      "Erro inesperado ao vincular a conta Discord.",
+    );
 
     await logSecurityAuditEventSafe(authenticatedContext, {
       action: "discord_link_sync",
       outcome: "failed",
       metadata: {
-        reason: message,
+        reason: extractAuditErrorMessage(
+          error,
+          "Erro inesperado ao vincular a conta Discord.",
+        ),
       },
     });
 

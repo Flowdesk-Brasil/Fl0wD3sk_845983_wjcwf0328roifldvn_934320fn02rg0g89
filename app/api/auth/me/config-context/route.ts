@@ -13,6 +13,10 @@ import {
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
 import {
+  extractAuditErrorMessage,
+  sanitizeErrorMessage,
+} from "@/lib/security/errors";
+import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
 } from "@/lib/security/http";
@@ -72,10 +76,10 @@ export async function GET(request: Request) {
     return attachRequestId(applyNoStoreHeaders(NextResponse.json(
       {
         ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Erro ao carregar contexto de configuracao.",
+        message: sanitizeErrorMessage(
+          error,
+          "Erro ao carregar contexto de configuracao.",
+        ),
       },
       { status: 500 },
     )), requestContext.requestId);
@@ -282,17 +286,17 @@ export async function PUT(request: Request) {
       action: "config_context_put",
       outcome: "failed",
       metadata: {
-        message: error instanceof Error ? error.message : "unknown_error",
+        message: extractAuditErrorMessage(error),
       },
     });
 
     return attachRequestId(applyNoStoreHeaders(NextResponse.json(
       {
         ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Erro ao salvar contexto de configuracao.",
+        message: sanitizeErrorMessage(
+          error,
+          "Erro ao salvar contexto de configuracao.",
+        ),
       },
       { status: 500 },
     )), baseRequestContext.requestId);

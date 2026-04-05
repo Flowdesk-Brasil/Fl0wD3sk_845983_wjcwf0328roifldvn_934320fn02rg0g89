@@ -14,6 +14,10 @@ import {
   resolveServerSaveAccessMode,
 } from "@/lib/servers/serverSaveDiagnostics";
 import {
+  extractAuditErrorMessage,
+  sanitizeErrorMessage,
+} from "@/lib/security/errors";
+import {
   createDefaultWelcomeEntryLayout,
   createDefaultWelcomeExitLayout,
   normalizeWelcomeLayout,
@@ -261,10 +265,10 @@ export async function GET(request: Request) {
       NextResponse.json(
         {
           ok: false,
-          message:
-            error instanceof Error
-              ? error.message
-              : "Erro ao carregar configuracoes do servidor.",
+          message: sanitizeErrorMessage(
+            error,
+            "Erro ao carregar configuracoes do servidor.",
+          ),
         },
         { status: 500 },
       ),
@@ -662,19 +666,19 @@ export async function POST(request: Request) {
       context: diagnostic,
       outcome: "failed",
       httpStatus: 500,
-      detail:
-        error instanceof Error
-          ? error.message
-          : "Erro ao salvar configuracoes do servidor.",
+      detail: extractAuditErrorMessage(
+        error,
+        "Erro ao salvar configuracoes do servidor.",
+      ),
     });
     return applyNoStoreHeaders(
       NextResponse.json(
         {
           ok: false,
-          message:
-            error instanceof Error
-              ? error.message
-              : "Erro ao salvar configuracoes do servidor.",
+          message: sanitizeErrorMessage(
+            error,
+            "Erro ao salvar configuracoes do servidor.",
+          ),
         },
         { status: 500 },
       ),

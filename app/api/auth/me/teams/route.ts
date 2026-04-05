@@ -4,6 +4,7 @@ import {
   createUserTeamForUser,
   getUserTeamsSnapshotForUser,
 } from "@/lib/teams/userTeams";
+import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { applyNoStoreHeaders, ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import { getManagedServersForCurrentSession } from "@/lib/servers/managedServers";
 
@@ -48,8 +49,7 @@ export async function GET() {
       NextResponse.json(
         {
           ok: false,
-          message:
-            error instanceof Error ? error.message : "Erro ao carregar equipes.",
+          message: sanitizeErrorMessage(error, "Erro ao carregar equipes."),
         },
         { status: 500 },
       ),
@@ -122,8 +122,7 @@ export async function POST(request: Request) {
       NextResponse.json(
         {
           ok: false,
-          message:
-            error instanceof Error ? error.message : "Erro ao criar equipe.",
+          message: sanitizeErrorMessage(error, "Erro ao criar equipe."),
         },
         { status: 500 },
       ),

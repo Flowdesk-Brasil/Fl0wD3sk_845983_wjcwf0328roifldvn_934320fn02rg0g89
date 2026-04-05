@@ -6,6 +6,7 @@ import {
   isGuildId,
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
+import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 
 type RoleOption = {
@@ -118,10 +119,10 @@ export async function GET(request: Request) {
       NextResponse.json(
       {
         ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Erro ao listar cargos do servidor.",
+        message: sanitizeErrorMessage(
+          error,
+          "Erro ao listar cargos do servidor.",
+        ),
       },
       { status: 500 },
       ),

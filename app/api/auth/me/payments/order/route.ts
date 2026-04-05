@@ -27,10 +27,17 @@ import {
   resolveCoverageForApprovedOrder,
 } from "@/lib/payments/licenseStatus";
 import { cleanupExpiredUnpaidServerSetups } from "@/lib/payments/setupCleanup";
+import {
+  extractAuditErrorMessage,
+  sanitizeErrorMessage,
+} from "@/lib/security/errors";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import {
   attachRequestId,
   createSecurityRequestContext,
+  enforceRequestRateLimit,
+  extendSecurityRequestContext,
+  logSecurityAuditEventSafe,
 } from "@/lib/security/requestSecurity";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
@@ -487,6 +494,45 @@ export async function GET(request: Request) {
     }
 
     const user = access.context.sessionData.authSession.user;
+    const auditContext = extendSecurityRequestContext(requestContext, {
+      sessionId: access.context.sessionData.authSession.id,
+      userId: user.id,
+      guildId,
+    });
+    const rateLimit = await enforceRequestRateLimit({
+      action: "payment_order_read",
+      windowMs: 10 * 60 * 1000,
+      maxAttempts: 90,
+      context: auditContext,
+    });
+
+    if (!rateLimit.ok) {
+      await logSecurityAuditEventSafe(auditContext, {
+        action: "payment_order_read",
+        outcome: "blocked",
+        metadata: {
+          reason: "rate_limit",
+          retryAfterSeconds: rateLimit.retryAfterSeconds,
+        },
+      });
+
+      const response = respond(
+        { ok: false, message: "Muitas consultas. Tente novamente em instantes." },
+        { status: 429 },
+      );
+      response.headers.set("Retry-After", String(rateLimit.retryAfterSeconds));
+      return response;
+    }
+
+    await logSecurityAuditEventSafe(auditContext, {
+      action: "payment_order_read",
+      outcome: "started",
+      metadata: {
+        fromOrderCode: Boolean(orderCode),
+        hasPaymentIdHint: Boolean(paymentId),
+      },
+    });
+
     await cleanupExpiredUnpaidServerSetups({
       userId: user.id,
       guildId,
@@ -509,14 +555,21 @@ export async function GET(request: Request) {
     }
 
     if (!order) {
+      await logSecurityAuditEventSafe(auditContext, {
+        action: "payment_order_read",
+        outcome: foreignOwner ? "blocked" : "failed",
+        metadata: {
+          reason: foreignOwner ? "foreign_owner_order_lookup" : "order_not_found",
+          fromOrderCode: Boolean(orderCode),
+        },
+      });
+
       return respond(
         {
           ok: false,
-          message: foreignOwner
-            ? "Este link de pagamento pertence a outra conta autenticada."
-            : "Pedido nao encontrado para este servidor.",
+          message: "Pedido nao encontrado para este servidor.",
         },
-        { status: foreignOwner ? 403 : 404 },
+        { status: 404 },
       );
     }
 
@@ -628,13 +681,21 @@ export async function GET(request: Request) {
       fromOrderCode: Boolean(orderCode),
     });
   } catch (error) {
+    await logSecurityAuditEventSafe(requestContext, {
+      action: "payment_order_read",
+      outcome: "failed",
+      metadata: {
+        message: extractAuditErrorMessage(error),
+      },
+    });
+
     return respond(
       {
         ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Erro ao carregar pedido de pagamento.",
+        message: sanitizeErrorMessage(
+          error,
+          "Erro ao carregar pedido de pagamento.",
+        ),
       },
       { status: 500 },
     );

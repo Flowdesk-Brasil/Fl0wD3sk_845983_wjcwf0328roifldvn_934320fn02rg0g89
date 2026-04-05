@@ -22,6 +22,7 @@ import {
   syncUserPlanStateFromOrder,
 } from "@/lib/plans/state";
 import { resolvePlanCycleExpirationIso } from "@/lib/plans/cycle";
+import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
@@ -454,10 +455,10 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Falha ao ativar o plano gratuito.",
+        message: sanitizeErrorMessage(
+          error,
+          "Falha ao ativar o plano gratuito.",
+        ),
       },
       { status: 500 },
     );

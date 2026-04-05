@@ -23,6 +23,10 @@ import {
   resolveServerSaveAccessMode,
 } from "@/lib/servers/serverSaveDiagnostics";
 import {
+  extractAuditErrorMessage,
+  sanitizeErrorMessage,
+} from "@/lib/security/errors";
+import {
   normalizeTicketPanelLayout,
   ticketPanelLayoutHasAtMostOneFunctionButton,
   ticketPanelLayoutHasRequiredParts,
@@ -578,19 +582,19 @@ export async function POST(request: Request) {
       context: diagnostic,
       outcome: "failed",
       httpStatus: 500,
-      detail:
-        error instanceof Error
-          ? error.message
-          : "Erro ao enviar o embed do ticket.",
+      detail: extractAuditErrorMessage(
+        error,
+        "Erro ao enviar o embed do ticket.",
+      ),
     });
     return applyNoStoreHeaders(
       NextResponse.json(
         {
           ok: false,
-          message:
-            error instanceof Error
-              ? error.message
-              : "Erro ao enviar o embed do ticket.",
+          message: sanitizeErrorMessage(
+            error,
+            "Erro ao enviar o embed do ticket.",
+          ),
         },
         { status: 500 },
       ),

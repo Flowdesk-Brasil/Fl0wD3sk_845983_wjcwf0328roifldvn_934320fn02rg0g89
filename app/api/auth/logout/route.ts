@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { authConfig } from "@/lib/auth/config";
 import {
+  extractAuditErrorMessage,
+  sanitizeErrorMessage,
+} from "@/lib/security/errors";
+import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
 } from "@/lib/security/http";
@@ -36,15 +40,14 @@ export async function POST(request: Request) {
       action: "auth_logout",
       outcome: "failed",
       metadata: {
-        message: error instanceof Error ? error.message : "unknown_error",
+        message: extractAuditErrorMessage(error),
       },
     });
     return attachRequestId(applyNoStoreHeaders(
       NextResponse.json(
       {
         ok: false,
-        message:
-          error instanceof Error ? error.message : "Erro ao encerrar sessao.",
+        message: sanitizeErrorMessage(error, "Erro ao encerrar sessao."),
       },
       { status: 500 },
       ),

@@ -30,6 +30,10 @@ import {
   CARD_PAYMENTS_DISABLED_MESSAGE,
 } from "@/lib/payments/cardAvailability";
 import { getLockedGuildLicenseByGuildId } from "@/lib/payments/licenseStatus";
+import {
+  extractAuditErrorMessage,
+  sanitizeErrorMessage,
+} from "@/lib/security/errors";
 import { ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -762,10 +766,10 @@ export async function POST(request: Request) {
                   methodId,
                   stage: "vault_customer_retry",
                   nextAttempt: attempt + 1,
-                  message:
-                    error instanceof Error
-                      ? error.message
-                      : "unknown_customer_retry_error",
+                  message: extractAuditErrorMessage(
+                    error,
+                    "unknown_customer_retry_error",
+                  ),
                 },
               });
             },
@@ -810,10 +814,10 @@ export async function POST(request: Request) {
               issuerId,
               cardEnvironment,
               deviceSessionIdPresent: Boolean(deviceSessionId),
-              message:
-                error instanceof Error
-                  ? error.message
-                  : "unknown_card_retry_error",
+              message: extractAuditErrorMessage(
+                error,
+                "unknown_card_retry_error",
+              ),
             },
           });
         },
@@ -981,17 +985,17 @@ export async function POST(request: Request) {
       action: "payment_method_post",
       outcome: "failed",
       metadata: {
-        message: error instanceof Error ? error.message : "unknown_error",
+        message: extractAuditErrorMessage(error),
       },
     });
 
     return attachRequestId(NextResponse.json(
       {
         ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Erro ao adicionar metodo de pagamento.",
+        message: sanitizeErrorMessage(
+          error,
+          "Erro ao adicionar metodo de pagamento.",
+        ),
       },
       { status: 500 },
     ), baseRequestContext.requestId);
@@ -1154,17 +1158,17 @@ export async function PATCH(request: Request) {
       action: "payment_method_patch",
       outcome: "failed",
       metadata: {
-        message: error instanceof Error ? error.message : "unknown_error",
+        message: extractAuditErrorMessage(error),
       },
     });
 
     return attachRequestId(NextResponse.json(
       {
         ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Erro ao atualizar apelido do metodo.",
+        message: sanitizeErrorMessage(
+          error,
+          "Erro ao atualizar apelido do metodo.",
+        ),
       },
       { status: 500 },
     ), baseRequestContext.requestId);
@@ -1333,10 +1337,10 @@ export async function DELETE(request: Request) {
           metadata: {
             methodId,
             stage: "provider_card_delete",
-            message:
-              providerDeleteError instanceof Error
-                ? providerDeleteError.message
-                : "unknown_provider_delete_error",
+            message: extractAuditErrorMessage(
+              providerDeleteError,
+              "unknown_provider_delete_error",
+            ),
           },
         });
       }
@@ -1360,17 +1364,17 @@ export async function DELETE(request: Request) {
       action: "payment_method_delete",
       outcome: "failed",
       metadata: {
-        message: error instanceof Error ? error.message : "unknown_error",
+        message: extractAuditErrorMessage(error),
       },
     });
 
     return attachRequestId(NextResponse.json(
       {
         ok: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Erro ao remover metodo de pagamento.",
+        message: sanitizeErrorMessage(
+          error,
+          "Erro ao remover metodo de pagamento.",
+        ),
       },
       { status: 500 },
     ), baseRequestContext.requestId);
