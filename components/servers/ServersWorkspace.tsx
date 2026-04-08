@@ -38,6 +38,7 @@ import { LandingReveal } from "@/components/landing/LandingReveal";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { ServerSettingsEditor } from "@/components/servers/ServerSettingsEditor";
 import { ServerSettingsEditorSkeleton } from "@/components/servers/ServerSettingsEditorSkeleton";
+import { resolveAddServerTargetHref } from "@/lib/plans/addServerFlow";
 import { buildDiscordAuthStartHref } from "@/lib/auth/paths";
 import type { ManagedServer, ManagedServerStatus } from "@/lib/servers/managedServers";
 import {
@@ -887,6 +888,7 @@ export function ServersWorkspace({
   const [isLoading, setIsLoading] = useState(initialServersSnapshot === null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [isResolvingAddServer, setIsResolvingAddServer] = useState(false);
   const [searchText, setSearchText] = useState("");
   const [sidebarSearchText, setSidebarSearchText] = useState("");
   const [statusFilter, setStatusFilter] = useState<FilterOption>("all");
@@ -1723,6 +1725,19 @@ export function ServersWorkspace({
     setIsProfileMenuOpen(false);
     window.open("https://discord.gg/ddXtHhvvrx", "_blank", "noopener,noreferrer");
   }, []);
+
+  const handleStartAddServer = useCallback(async () => {
+    if (isResolvingAddServer) return;
+    setErrorMessage(null);
+    setIsResolvingAddServer(true);
+
+    try {
+      const targetHref = await resolveAddServerTargetHref();
+      window.location.assign(targetHref);
+    } finally {
+      setIsResolvingAddServer(false);
+    }
+  }, [isResolvingAddServer]);
 
   const handleCopyGuildId = useCallback(async (guildId: string) => {
     try {
@@ -2620,7 +2635,23 @@ export function ServersWorkspace({
                     )}
                   </div>
                   {!isEditingServer ? (
-                    <LandingActionButton href="/config/#/step/1" variant="light" className="h-[44px] rounded-[14px] px-[18px] text-[15px]"><span className="inline-flex items-center gap-[10px]"><PlusIcon />Add New</span></LandingActionButton>
+                    <LandingActionButton
+                      variant="light"
+                      className="h-[44px] rounded-[14px] px-[18px] text-[15px]"
+                      disabled={isResolvingAddServer}
+                      onClick={() => {
+                        void handleStartAddServer();
+                      }}
+                    >
+                      <span className="inline-flex items-center gap-[10px]">
+                        {isResolvingAddServer ? (
+                          <ButtonLoader size={16} colorClassName="text-[#2B2B2B]" />
+                        ) : (
+                          <PlusIcon />
+                        )}
+                        Add New
+                      </span>
+                    </LandingActionButton>
                   ) : null}
                 </div>
                 {!isEditingServer ? (

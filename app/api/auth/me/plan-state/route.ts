@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { resolveSessionAccessToken } from "@/lib/auth/discordGuildAccess";
+import { buildAccountPlanUsageSnapshot } from "@/lib/plans/accountPlanUsage";
+import { countPlanGuildsForUser } from "@/lib/plans/planGuilds";
 import { getUserPlanState } from "@/lib/plans/state";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { applyNoStoreHeaders } from "@/lib/security/http";
@@ -56,7 +58,14 @@ export async function GET(request: Request) {
       return response;
     }
 
-    const userPlanState = await getUserPlanState(sessionData.authSession.user.id);
+    const [userPlanState, licensedServersCount] = await Promise.all([
+      getUserPlanState(sessionData.authSession.user.id),
+      countPlanGuildsForUser(sessionData.authSession.user.id),
+    ]);
+    const usage = buildAccountPlanUsageSnapshot(
+      userPlanState,
+      licensedServersCount,
+    );
 
     await logSecurityAuditEventSafe(auditContext, {
       action: "plan_state_get",
@@ -65,6 +74,9 @@ export async function GET(request: Request) {
         hasPlanState: Boolean(userPlanState),
         planCode: userPlanState?.plan_code || null,
         status: userPlanState?.status || null,
+        licensedServersCount: usage.licensedServersCount,
+        maxLicensedServers: usage.maxLicensedServers,
+        limitReached: usage.hasReachedLicensedServersLimit,
       },
     });
 
@@ -83,6 +95,7 @@ export async function GET(request: Request) {
             expiresAt: userPlanState.expires_at,
           }
         : null,
+      usage,
     });
   } catch (error) {
     return respond(
@@ -94,4 +107,3 @@ export async function GET(request: Request) {
     );
   }
 }
-

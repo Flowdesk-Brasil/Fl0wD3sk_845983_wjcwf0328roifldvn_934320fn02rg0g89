@@ -7,6 +7,7 @@ import { ConfigLogoutButton } from "@/components/config/ConfigLogoutButton";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { ServerSettingsEditor } from "@/components/servers/ServerSettingsEditor";
 import { ServerSettingsEditorSkeleton } from "@/components/servers/ServerSettingsEditorSkeleton";
+import { resolveAddServerTargetHref } from "@/lib/plans/addServerFlow";
 import { serversScale } from "@/components/servers/serversScale";
 import { buildServerStatusDescription } from "@/lib/servers/licensePresentation";
 
@@ -283,6 +284,7 @@ export function ServersDashboard({
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [isResolvingAddServer, setIsResolvingAddServer] = useState(false);
   const [searchText, setSearchText] = useState("");
   const [statusFilter, setStatusFilter] = useState<FilterOption>("all");
   const [isStatusOpen, setIsStatusOpen] = useState(false);
@@ -459,6 +461,19 @@ export function ServersDashboard({
     setErrorMessage("Opcao de desativacao sera liberada em breve.");
   }, []);
 
+  const handleStartAddServer = useCallback(async () => {
+    if (isResolvingAddServer) return;
+    setErrorMessage(null);
+    setIsResolvingAddServer(true);
+
+    try {
+      const targetHref = await resolveAddServerTargetHref();
+      window.location.assign(targetHref);
+    } finally {
+      setIsResolvingAddServer(false);
+    }
+  }, [isResolvingAddServer]);
+
   const handleOpenServerConfig = useCallback(
     (guildId: string, tab: ServerEditorTab = "settings") => {
       setSelectedGuildIdForConfig(guildId);
@@ -625,8 +640,9 @@ export function ServersDashboard({
             <button
               type="button"
               onClick={() => {
-                window.location.assign("/config/#/step/1");
+                void handleStartAddServer();
               }}
+              disabled={isResolvingAddServer}
               className="flex w-full items-center justify-center gap-2 border border-[#2E2E2E] bg-[#D8D8D8] font-medium text-black transition-opacity hover:opacity-90 min-[1120px]:ml-[44px] min-[1120px]:w-auto"
               style={{
                 height: `${serversScale.controlHeight}px`,
@@ -635,8 +651,12 @@ export function ServersDashboard({
                 minWidth: `${serversScale.desktopButtonWidth}px`,
               }}
             >
-              <NewBotIcon />
-              <span>Novo bot</span>
+              {isResolvingAddServer ? (
+                <ButtonLoader size={16} colorClassName="text-black" />
+              ) : (
+                <NewBotIcon />
+              )}
+              <span>{isResolvingAddServer ? "Verificando..." : "Novo bot"}</span>
             </button>
               </div>
             </>
