@@ -21,6 +21,7 @@ import {
   getApprovedOrdersForGuild,
   resolveLatestLicenseCoverageFromApprovedOrders,
 } from "@/lib/payments/licenseStatus";
+import { areCardPaymentsEnabled } from "@/lib/payments/cardAvailability";
 import { cleanupExpiredUnpaidServerSetups } from "@/lib/payments/setupCleanup";
 import {
   extractAuditErrorMessage,
@@ -332,6 +333,7 @@ async function getLatestUserOrderForGuild(userId: number, guildId: string) {
 
 export async function GET(request: Request) {
   const requestContext = createSecurityRequestContext(request);
+  const cardPaymentsEnabled = areCardPaymentsEnabled();
   const respond = (body: unknown, init?: ResponseInit) =>
     attachRequestId(
       applyNoStoreHeaders(NextResponse.json(body, init)),
@@ -411,10 +413,11 @@ export async function GET(request: Request) {
       }
     }
 
-    const shouldResolveHostedCardByExternalReference =
-      !!latestUserOrder &&
-      latestUserOrder.payment_method === "card" &&
-      latestUserOrder.status === "pending" &&
+      const shouldResolveHostedCardByExternalReference =
+        cardPaymentsEnabled &&
+        !!latestUserOrder &&
+        latestUserOrder.payment_method === "card" &&
+        latestUserOrder.status === "pending" &&
       !latestUserOrder.provider_payment_id;
 
     if (shouldResolveHostedCardByExternalReference && latestUserOrder) {
@@ -450,12 +453,13 @@ export async function GET(request: Request) {
       }
     }
 
-    const shouldReconcileLatestOrder =
-      !!latestUserOrder &&
-      !!latestUserOrder.provider_payment_id &&
-      (latestUserOrder.status === "pending" ||
-        latestUserOrder.status === "failed" ||
-        latestUserOrder.status === "expired" ||
+      const shouldReconcileLatestOrder =
+        !!latestUserOrder &&
+        !!latestUserOrder.provider_payment_id &&
+        (latestUserOrder.payment_method !== "card" || cardPaymentsEnabled) &&
+        (latestUserOrder.status === "pending" ||
+          latestUserOrder.status === "failed" ||
+          latestUserOrder.status === "expired" ||
         latestUserOrder.status === "rejected");
 
     if (shouldReconcileLatestOrder && latestUserOrder) {

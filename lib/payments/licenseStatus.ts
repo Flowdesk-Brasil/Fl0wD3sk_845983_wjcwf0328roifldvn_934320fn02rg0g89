@@ -1,12 +1,10 @@
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
-import { resolvePlanCycleExpirationMs } from "@/lib/plans/cycle";
+import { resolvePlanLicenseExpiresAtIso } from "@/lib/plans/cycle";
 
 export type GuildLicenseStatus = "paid" | "expired" | "off" | "not_paid";
 
-export const LICENSE_VALIDITY_DAYS = 30;
 export const EXPIRED_GRACE_DAYS = 3;
 export const LICENSE_RENEWAL_WINDOW_DAYS = 3;
-export const LICENSE_VALIDITY_MS = LICENSE_VALIDITY_DAYS * 24 * 60 * 60 * 1000;
 export const EXPIRED_GRACE_MS = EXPIRED_GRACE_DAYS * 24 * 60 * 60 * 1000;
 export const LICENSE_RENEWAL_WINDOW_MS =
   LICENSE_RENEWAL_WINDOW_DAYS * 24 * 60 * 60 * 1000;
@@ -37,6 +35,7 @@ export type LicenseApprovedOrderRecord = ApprovedOrderRecord & {
   order_number?: number;
   guild_id?: string;
   user_id?: number;
+  plan_code?: string | null;
   plan_billing_cycle_days?: number | null;
 };
 
@@ -135,14 +134,13 @@ function resolveLicenseExpiresAtMs(
   order: LicenseApprovedOrderRecord,
   licenseStartsAtMs: number,
 ) {
-  return (
-    resolvePlanCycleExpirationMs({
-      baseTimestamp: licenseStartsAtMs,
-      billingCycleDays: order.plan_billing_cycle_days,
-      fallbackBillingCycleDays: LICENSE_VALIDITY_DAYS,
-    }) ||
-    licenseStartsAtMs + LICENSE_VALIDITY_MS
-  );
+  const expiresAtIso = resolvePlanLicenseExpiresAtIso({
+    baseTimestamp: licenseStartsAtMs,
+    billingCycleDays: order.plan_billing_cycle_days,
+    planCode: order.plan_code,
+  });
+  const expiresAtMs = expiresAtIso ? Date.parse(expiresAtIso) : Number.NaN;
+  return Number.isFinite(expiresAtMs) ? expiresAtMs : licenseStartsAtMs;
 }
 
 export function resolveLicenseCoverageForApprovedOrders<

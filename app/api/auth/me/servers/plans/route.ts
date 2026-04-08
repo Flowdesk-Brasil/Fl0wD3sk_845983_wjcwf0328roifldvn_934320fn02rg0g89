@@ -36,6 +36,7 @@ import {
 } from "@/lib/plans/catalog";
 import { resolvePlanUpgradeProration } from "@/lib/plans/proration";
 import {
+  applyUserPlanStatePricingAdjustments,
   getGuildPlanSettingsRecord,
   getUserPlanState,
   type GuildPlanSettingsRecord,
@@ -183,6 +184,10 @@ async function ensureGuildAccess(guildId: string) {
 }
 
 async function getAvailableSavedMethodsForUser(userId: number) {
+  if (!areCardPaymentsEnabled()) {
+    return [];
+  }
+
   const supabase = getSupabaseAdminClientOrThrow();
 
   const [ordersResult, hiddenMethodsResult, storedMethodsResult] = await Promise.all([
@@ -251,12 +256,19 @@ function toPlanResponse(input: {
 }) {
   const settings = input.settings;
   const userPlanState = input.userPlanState;
-  const resolvedPlan = resolvePlanPricing(
-    input.requestedPlanCode ||
-      userPlanState?.plan_code ||
-      DEFAULT_PLAN_CODE,
-    input.requestedBillingPeriodCode || DEFAULT_PLAN_BILLING_PERIOD_CODE,
+  const cardPaymentsEnabled = areCardPaymentsEnabled();
+  const resolvedPlan = applyUserPlanStatePricingAdjustments(
+    resolvePlanPricing(
+      input.requestedPlanCode ||
+        userPlanState?.plan_code ||
+        DEFAULT_PLAN_CODE,
+      input.requestedBillingPeriodCode || DEFAULT_PLAN_BILLING_PERIOD_CODE,
+    ),
+    userPlanState,
   );
+  const availablePlans = getAllPlanPricingDefinitions(
+    input.requestedBillingPeriodCode || DEFAULT_PLAN_BILLING_PERIOD_CODE,
+  ).map((plan) => applyUserPlanStatePricingAdjustments(plan, userPlanState));
   const shouldReuseStoredPlanSettings = Boolean(
     settings && settings.plan_code === resolvedPlan.code,
   );
@@ -334,11 +346,18 @@ function toPlanResponse(input: {
     },
     description: resolvedPlan.description,
     features: resolvedPlan.features,
-    recurringEnabled: shouldReuseStoredPlanSettings
-      ? settings?.recurring_enabled || false
-      : false,
-    recurringMethodId: shouldReuseStoredPlanSettings ? input.recurringMethodId : null,
-    recurringMethod: shouldReuseStoredPlanSettings && input.recurringMethod
+    recurringEnabled:
+      cardPaymentsEnabled && shouldReuseStoredPlanSettings
+        ? settings?.recurring_enabled || false
+        : false,
+    recurringMethodId:
+      cardPaymentsEnabled && shouldReuseStoredPlanSettings
+        ? input.recurringMethodId
+        : null,
+    recurringMethod:
+      cardPaymentsEnabled &&
+      shouldReuseStoredPlanSettings &&
+      input.recurringMethod
       ? {
           id: input.recurringMethod.id,
           brand: input.recurringMethod.brand,
@@ -349,7 +368,7 @@ function toPlanResponse(input: {
           lastUsedAt: input.recurringMethod.lastUsedAt,
         }
       : null,
-    availableMethods: input.availableMethods.map((method) => ({
+    availableMethods: (cardPaymentsEnabled ? input.availableMethods : []).map((method) => ({
       id: method.id,
       brand: method.brand,
       firstSix: method.firstSix,
@@ -359,10 +378,8 @@ function toPlanResponse(input: {
       lastUsedAt: method.lastUsedAt,
       nickname: method.nickname || null,
     })),
-    availableMethodsCount: input.availableMethodsCount,
-    availablePlans: getAllPlanPricingDefinitions(
-      input.requestedBillingPeriodCode || DEFAULT_PLAN_BILLING_PERIOD_CODE,
-    ).map((plan) => ({
+    availableMethodsCount: cardPaymentsEnabled ? input.availableMethodsCount : 0,
+    availablePlans: availablePlans.map((plan) => ({
       code: plan.code,
       name: plan.name,
       badge: plan.badge,

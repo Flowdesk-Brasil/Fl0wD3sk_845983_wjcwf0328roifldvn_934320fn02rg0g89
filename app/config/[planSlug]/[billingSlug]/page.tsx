@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { ConfigFlow } from "@/components/config/ConfigFlow";
+import { buildLoginHref } from "@/lib/auth/paths";
 import { getCurrentUserFromSessionCookie } from "@/lib/auth/session";
 import {
   buildConfigCheckoutPath,
@@ -18,12 +19,6 @@ type ConfigPlanBillingPageProps = {
 export default async function ConfigPlanBillingPage({
   params,
 }: ConfigPlanBillingPageProps) {
-  const user = await getCurrentUserFromSessionCookie();
-
-  if (!user) {
-    redirect("/login");
-  }
-
   const routeParams = await params;
   const initialPlanCode = normalizePlanCodeFromSlug(routeParams.planSlug, "pro");
   const initialBillingPeriodCode = normalizePlanBillingPeriodCodeFromSlug(
@@ -38,6 +33,11 @@ export default async function ConfigPlanBillingPage({
     planCode: resolvedPricing.code,
     billingPeriodCode: resolvedPricing.billingPeriodCode,
   });
+  const user = await getCurrentUserFromSessionCookie();
+
+  if (!user) {
+    redirect(buildLoginHref(canonicalPath));
+  }
 
   if (
     `/config/${routeParams.planSlug}/${routeParams.billingSlug}`.toLowerCase() !==

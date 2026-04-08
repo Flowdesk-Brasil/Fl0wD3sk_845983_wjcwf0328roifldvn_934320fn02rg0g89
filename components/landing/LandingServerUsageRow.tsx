@@ -264,6 +264,11 @@ export function LandingServerUsageRow() {
                           alt={entry.name}
                           fill
                           sizes="(max-width: 639px) 68px, 76px"
+                          loading={
+                            copyIndex === 0 && index < Math.min(layout.count, 6)
+                              ? "eager"
+                              : "lazy"
+                          }
                           unoptimized={isAnimatedIcon}
                           className={`pointer-events-none absolute inset-0 h-full w-full select-none object-cover transition-[opacity,filter] duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${
                             showImage

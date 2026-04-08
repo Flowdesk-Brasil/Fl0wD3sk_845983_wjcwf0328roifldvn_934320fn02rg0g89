@@ -34,6 +34,8 @@ type ApprovedOrderRecord = {
   guild_id: string;
   paid_at: string | null;
   created_at: string;
+  plan_code?: string | null;
+  plan_billing_cycle_days?: number | null;
 };
 
 function buildGuildIconUrl(guildId: string, icon: string | null) {
@@ -101,7 +103,7 @@ export async function getManagedServersForCurrentSession(): Promise<ManagedServe
 
   const approvedOrdersResult = await supabase
     .from("payment_orders")
-    .select("guild_id, paid_at, created_at")
+    .select("guild_id, paid_at, created_at, plan_code, plan_billing_cycle_days")
     .eq("user_id", sessionData.authSession.user.id)
     .eq("status", "approved")
     .order("paid_at", { ascending: false, nullsFirst: false })

@@ -1,4 +1,8 @@
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
+import {
+  BETA_COUPON_CODE,
+  canApplyBetaProgramToSelection,
+} from "@/lib/payments/betaProgram";
 
 type PaymentCouponRecord = {
   id: number;
@@ -10,6 +14,7 @@ type PaymentCouponRecord = {
   max_redemptions: number | null;
   starts_at: string | null;
   expires_at: string | null;
+  metadata: Record<string, unknown> | null;
 };
 
 type PaymentGiftCardRecord = {
@@ -76,11 +81,25 @@ function normalizeCode(value: string | null | undefined) {
   return String(value || "").trim().toUpperCase().slice(0, 64);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseBoolean(value: unknown) {
+  if (value === true || value === false) return value;
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
 export async function resolveDiscountPricing(input: {
   baseAmount: number;
   currency: string;
   couponCode?: string | null;
   giftCardCode?: string | null;
+  userId?: number | null;
+  planCode?: string | null;
+  billingPeriodCode?: string | null;
 }) {
   const supabase = getSupabaseAdminClientOrThrow();
   const baseAmount = Math.max(0, Math.round(input.baseAmount * 100) / 100);
@@ -99,7 +118,7 @@ export async function resolveDiscountPricing(input: {
     const couponResult = await supabase
       .from("payment_coupons")
       .select(
-        "id, code, label, status, discount_type, discount_value, max_redemptions, starts_at, expires_at",
+        "id, code, label, status, discount_type, discount_value, max_redemptions, starts_at, expires_at, metadata",
       )
       .eq("code", couponCode)
       .maybeSingle<PaymentCouponRecord>();
@@ -183,6 +202,17 @@ export async function resolveDiscountPricing(input: {
       };
       message = coupon.message;
     } else {
+      const couponMetadata = isRecord(couponRecord.metadata)
+        ? couponRecord.metadata
+        : {};
+      const isBetaProgramCoupon =
+        parseBoolean(couponMetadata.betaProgram) ||
+        couponRecord.code === BETA_COUPON_CODE;
+      const requiresSingleUsePerUser =
+        isBetaProgramCoupon ||
+        parseBoolean(couponMetadata.onePerUser) ||
+        parseBoolean(couponMetadata.singleUsePerUser);
+
       if (couponRecord.max_redemptions) {
         const redemptionCountResult = await supabase
           .from("payment_coupon_redemptions")
@@ -206,9 +236,68 @@ export async function resolveDiscountPricing(input: {
         }
       }
 
+      if (!coupon && requiresSingleUsePerUser) {
+        if (!input.userId) {
+          coupon = {
+            code: couponRecord.code,
+            label: couponRecord.label,
+            amount: 0,
+            valid: false,
+            message: "Faca login para validar este cupom na conta.",
+          };
+          message = coupon.message;
+        } else {
+          const userRedemptionResult = await supabase
+            .from("payment_coupon_redemptions")
+            .select("id")
+            .eq("coupon_id", couponRecord.id)
+            .eq("user_id", input.userId)
+            .limit(1)
+            .maybeSingle<{ id: number }>();
+
+          if (userRedemptionResult.error) {
+            throw new Error(userRedemptionResult.error.message);
+          }
+
+          if (userRedemptionResult.data) {
+            coupon = {
+              code: couponRecord.code,
+              label: couponRecord.label,
+              amount: 0,
+              valid: false,
+              message: isBetaProgramCoupon
+                ? "O cupom BETA ja foi ativado nesta conta."
+                : "Este cupom ja foi utilizado nesta conta.",
+            };
+            message = coupon.message;
+          }
+        }
+      }
+
       if (!coupon) {
-        couponAmount =
-          couponRecord.discount_type === "percent"
+        if (
+          isBetaProgramCoupon &&
+          !canApplyBetaProgramToSelection(
+            input.planCode || null,
+            input.billingPeriodCode || null,
+          )
+        ) {
+          coupon = {
+            code: couponRecord.code,
+            label: couponRecord.label,
+            amount: 0,
+            valid: false,
+            message:
+              "O cupom BETA so pode ser usado no Flow PRO mensal.",
+          };
+          message = coupon.message;
+        }
+      }
+
+      if (!coupon) {
+        couponAmount = isBetaProgramCoupon
+          ? 0
+          : couponRecord.discount_type === "percent"
             ? Math.min(
                 baseAmount,
                 Math.round(baseAmount * parseNumeric(couponRecord.discount_value)) /
@@ -222,7 +311,9 @@ export async function resolveDiscountPricing(input: {
           label: couponRecord.label,
           amount: couponAmount,
           valid: true,
-          message: "Cupom validado no carrinho.",
+          message: isBetaProgramCoupon
+            ? "Cupom BETA validado. A conta sera marcada como beta apos a aprovacao."
+            : "Cupom validado no carrinho.",
         };
         message = coupon.message;
       }

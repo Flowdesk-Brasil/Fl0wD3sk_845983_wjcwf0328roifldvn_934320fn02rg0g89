@@ -19,6 +19,7 @@ import {
   UNPAID_SETUP_TIMEOUT_REFUND_STATUS_DETAIL,
 } from "@/lib/payments/setupCleanup";
 import { syncUserPlanStateFromOrder } from "@/lib/plans/state";
+import { resolvePlanLicenseExpiresAtIso } from "@/lib/plans/cycle";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import {
@@ -48,13 +49,29 @@ type PaymentOrderRecord = {
   provider_qr_code: string | null;
   provider_qr_base64: string | null;
   provider_ticket_url: string | null;
+  provider_payload: unknown;
   paid_at: string | null;
   expires_at: string | null;
   created_at: string;
 };
 
 const PAYMENT_ORDER_SELECT_COLUMNS =
-  "id, order_number, user_id, guild_id, payment_method, status, plan_code, plan_name, plan_billing_cycle_days, plan_max_licensed_servers, plan_max_active_tickets, plan_max_automations, plan_max_monthly_actions, provider_payment_id, provider_external_reference, provider_status, provider_status_detail, provider_qr_code, provider_qr_base64, provider_ticket_url, paid_at, expires_at, created_at";
+  "id, order_number, user_id, guild_id, payment_method, status, plan_code, plan_name, plan_billing_cycle_days, plan_max_licensed_servers, plan_max_active_tickets, plan_max_automations, plan_max_monthly_actions, provider_payment_id, provider_external_reference, provider_status, provider_status_detail, provider_qr_code, provider_qr_base64, provider_ticket_url, provider_payload, paid_at, expires_at, created_at";
+
+function mergeProviderPayload(
+  currentPayload: unknown,
+  patch: Record<string, unknown>,
+) {
+  const basePayload =
+    currentPayload && typeof currentPayload === "object" && !Array.isArray(currentPayload)
+      ? currentPayload
+      : {};
+
+  return {
+    ...basePayload,
+    ...patch,
+  };
+}
 
 function parsePaymentId(value: unknown) {
   if (typeof value === "number") return Number.isFinite(value) ? String(value) : null;
@@ -225,7 +242,14 @@ async function updateOrderFromProviderPayment(
     resolvedStatus === "approved"
       ? providerPayment.date_approved || new Date().toISOString()
       : null;
-  const expiresAt = providerPayment.date_of_expiration || null;
+  const expiresAt =
+    resolvedStatus === "approved"
+      ? resolvePlanLicenseExpiresAtIso({
+          baseTimestamp: paidAt || order.created_at,
+          billingCycleDays: order.plan_billing_cycle_days,
+          planCode: order.plan_code,
+        })
+      : providerPayment.date_of_expiration || null;
   const diagnostic = resolvePaymentDiagnostic({
     paymentMethod: order.payment_method,
     status: resolvedStatus,
@@ -255,10 +279,12 @@ async function updateOrderFromProviderPayment(
           provider_ticket_url:
             transactionData?.ticket_url || order.provider_ticket_url,
           provider_payload: {
-            source: "mercado_pago_webhook",
-            auto_refunded_after_setup_timeout: true,
-            flowdesk_diagnostic: diagnostic,
-            mercado_pago: providerPayment,
+            ...mergeProviderPayload(order.provider_payload, {
+              source: "mercado_pago_webhook",
+              auto_refunded_after_setup_timeout: true,
+              flowdesk_diagnostic: diagnostic,
+              mercado_pago: providerPayment,
+            }),
           },
           expires_at: expiresAt,
         })
@@ -317,10 +343,12 @@ async function updateOrderFromProviderPayment(
           provider_ticket_url:
             transactionData?.ticket_url || order.provider_ticket_url,
           provider_payload: {
-            source: "mercado_pago_webhook",
-            auto_refunded_duplicate: true,
-            flowdesk_diagnostic: diagnostic,
-            mercado_pago: providerPayment,
+            ...mergeProviderPayload(order.provider_payload, {
+              source: "mercado_pago_webhook",
+              auto_refunded_duplicate: true,
+              flowdesk_diagnostic: diagnostic,
+              mercado_pago: providerPayment,
+            }),
           },
           expires_at: expiresAt,
         })
@@ -364,9 +392,11 @@ async function updateOrderFromProviderPayment(
       provider_status: providerStatus,
       provider_status_detail: providerStatusDetail,
       provider_payload: {
-        source: "mercado_pago_webhook",
-        flowdesk_diagnostic: diagnostic,
-        mercado_pago: providerPayment,
+        ...mergeProviderPayload(order.provider_payload, {
+          source: "mercado_pago_webhook",
+          flowdesk_diagnostic: diagnostic,
+          mercado_pago: providerPayment,
+        }),
       },
       paid_at: paidAt,
       expires_at: expiresAt,

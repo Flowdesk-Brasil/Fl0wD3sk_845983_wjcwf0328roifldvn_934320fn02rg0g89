@@ -251,22 +251,17 @@ async function mapGuildsToIcons(botToken: string, guilds: DiscordBotGuild[]) {
     const chunkResults: Array<QualifiedGuildIcon | null> = await Promise.all(
       chunk.map(async (guildId): Promise<QualifiedGuildIcon | null> => {
         const botGuild = guildMap.get(guildId) || null;
+        const metadata = await fetchGuildApproximateMemberCount(botToken, guildId);
+        const botResolvedIcon = buildGuildIconUrl(
+          guildId,
+          metadata.icon ?? botGuild?.icon ?? null,
+        );
 
-        if (botGuild) {
-          const metadata = await fetchGuildApproximateMemberCount(botToken, guildId);
-          const iconUrl = buildGuildIconUrl(
-            guildId,
-            metadata.icon ?? botGuild.icon,
-          );
-
-          if (!iconUrl) {
-            return null;
-          }
-
+        if (botResolvedIcon) {
           return {
             id: guildId,
-            name: metadata.name ?? botGuild.name,
-            iconUrl,
+            name: metadata.name ?? botGuild?.name ?? guildId,
+            iconUrl: botResolvedIcon,
           };
         }
 

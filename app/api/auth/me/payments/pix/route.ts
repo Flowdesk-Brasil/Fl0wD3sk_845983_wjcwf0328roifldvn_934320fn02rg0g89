@@ -41,6 +41,7 @@ import {
   resolveEffectivePlanSelection,
   syncUserPlanStateFromOrder,
 } from "@/lib/plans/state";
+import { resolvePlanLicenseExpiresAtIso } from "@/lib/plans/cycle";
 import {
   extractAuditErrorMessage,
   sanitizeErrorMessage,
@@ -89,6 +90,7 @@ type PaymentOrderRecord = {
   provider_qr_code: string | null;
   provider_qr_base64: string | null;
   provider_ticket_url: string | null;
+  provider_payload: unknown;
   provider_status: string | null;
   provider_status_detail: string | null;
   paid_at: string | null;
@@ -107,7 +109,22 @@ const DEFAULT_PIX_CURRENCY = "BRL";
 const PENDING_REUSE_WINDOW_MS = 25 * 60 * 1000;
 const ORDER_EXPIRATION_SAFETY_BUFFER_MS = 45 * 1000;
 const PAYMENT_ORDER_SELECT_COLUMNS =
-  `id, order_number, guild_id, payment_method, status, amount, currency, plan_code, plan_name, plan_billing_cycle_days, plan_max_licensed_servers, plan_max_active_tickets, plan_max_automations, plan_max_monthly_actions, payer_name, payer_document, payer_document_type, provider_payment_id, provider_external_reference, provider_qr_code, provider_qr_base64, provider_ticket_url, provider_status, provider_status_detail, paid_at, expires_at, user_id, created_at, updated_at, ${PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS}`;
+  `id, order_number, guild_id, payment_method, status, amount, currency, plan_code, plan_name, plan_billing_cycle_days, plan_max_licensed_servers, plan_max_active_tickets, plan_max_automations, plan_max_monthly_actions, payer_name, payer_document, payer_document_type, provider_payment_id, provider_external_reference, provider_qr_code, provider_qr_base64, provider_ticket_url, provider_payload, provider_status, provider_status_detail, paid_at, expires_at, user_id, created_at, updated_at, ${PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS}`;
+
+function mergeProviderPayload(
+  currentPayload: unknown,
+  patch: Record<string, unknown>,
+) {
+  const basePayload =
+    currentPayload && typeof currentPayload === "object" && !Array.isArray(currentPayload)
+      ? currentPayload
+      : {};
+
+  return {
+    ...basePayload,
+    ...patch,
+  };
+}
 
 function isProviderDocumentErrorMessage(message: string) {
   const normalizedMessage = message.toLowerCase();
@@ -214,6 +231,20 @@ function parseTimestampMs(value: string | null | undefined) {
   if (!value) return null;
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function resolveApprovedOrderExpiresAt(
+  order: Pick<
+    PaymentOrderRecord,
+    "created_at" | "paid_at" | "plan_billing_cycle_days" | "plan_code"
+  >,
+  paidAtOverride?: string | null,
+) {
+  return resolvePlanLicenseExpiresAtIso({
+    baseTimestamp: paidAtOverride || order.paid_at || order.created_at,
+    billingCycleDays: order.plan_billing_cycle_days,
+    planCode: order.plan_code,
+  });
 }
 
 function isExpirationRelatedProviderErrorMessage(message: string) {
@@ -624,10 +655,13 @@ async function reconcilePixOrderFromProvider(
     resolvedStatus === "approved"
       ? providerPayment.date_approved || new Date().toISOString()
       : null;
-  const expiresAt = resolveUnpaidSetupEffectiveExpiresAt({
-    createdAt: order.created_at,
-    providerExpiresAt: providerPayment.date_of_expiration || null,
-  });
+  const expiresAt =
+    resolvedStatus === "approved"
+      ? resolveApprovedOrderExpiresAt(order, paidAt)
+      : resolveUnpaidSetupEffectiveExpiresAt({
+          createdAt: order.created_at,
+          providerExpiresAt: providerPayment.date_of_expiration || null,
+        });
   const externalReference =
     providerPayment.external_reference || order.provider_external_reference || null;
 
@@ -660,11 +694,13 @@ async function reconcilePixOrderFromProvider(
           provider_ticket_url:
             transactionData?.ticket_url || order.provider_ticket_url,
           provider_payload: {
-            source: "flowdesk_checkout",
-            step: 4,
-            reconciled_by: source,
-            auto_refunded_duplicate: true,
-            mercado_pago: providerPayment,
+            ...mergeProviderPayload(order.provider_payload, {
+              source: "flowdesk_checkout",
+              step: 4,
+              reconciled_by: source,
+              auto_refunded_duplicate: true,
+              mercado_pago: providerPayment,
+            }),
           },
           expires_at: expiresAt,
         })
@@ -716,10 +752,12 @@ async function reconcilePixOrderFromProvider(
       provider_status: providerStatus,
       provider_status_detail: providerStatusDetail,
       provider_payload: {
-        source: "flowdesk_checkout",
-        step: 4,
-        reconciled_by: source,
-        mercado_pago: providerPayment,
+        ...mergeProviderPayload(order.provider_payload, {
+          source: "flowdesk_checkout",
+          step: 4,
+          reconciled_by: source,
+          mercado_pago: providerPayment,
+        }),
       },
       paid_at: paidAt,
       expires_at: expiresAt,
@@ -1266,6 +1304,9 @@ export async function POST(request: Request) {
       currency: checkoutPlan.currency,
       couponCode: typeof body.couponCode === "string" ? body.couponCode : null,
       giftCardCode: typeof body.giftCardCode === "string" ? body.giftCardCode : null,
+      userId: user.id,
+      planCode: checkoutPlan.plan.code,
+      billingPeriodCode: checkoutPlan.plan.billingPeriodCode,
     });
 
     if (
@@ -1479,10 +1520,13 @@ export async function POST(request: Request) {
         resolvedStatus === "approved"
           ? mercadoPagoPayment.date_approved || new Date().toISOString()
           : null;
-      const expiresAt = resolveUnpaidSetupEffectiveExpiresAt({
-        createdAt: createdOrder.created_at,
-        providerExpiresAt: mercadoPagoPayment.date_of_expiration || null,
-      });
+      const expiresAt =
+        resolvedStatus === "approved"
+          ? resolveApprovedOrderExpiresAt(createdOrder, paidAt)
+          : resolveUnpaidSetupEffectiveExpiresAt({
+              createdAt: createdOrder.created_at,
+              providerExpiresAt: mercadoPagoPayment.date_of_expiration || null,
+            });
 
       const updatedOrderResult = await supabase
         .from("payment_orders")
@@ -1575,11 +1619,14 @@ export async function POST(request: Request) {
             resolvedStatus === "approved"
               ? createdProviderPayment?.date_approved || new Date().toISOString()
               : null;
-          const expiresAt = resolveUnpaidSetupEffectiveExpiresAt({
-            createdAt: createdOrder.created_at,
-            providerExpiresAt:
-              createdProviderPayment?.date_of_expiration || null,
-          });
+          const expiresAt =
+            resolvedStatus === "approved"
+              ? resolveApprovedOrderExpiresAt(createdOrder, paidAt)
+              : resolveUnpaidSetupEffectiveExpiresAt({
+                  createdAt: createdOrder.created_at,
+                  providerExpiresAt:
+                    createdProviderPayment?.date_of_expiration || null,
+                });
 
           const recoveredOrderResult = await supabase
             .from("payment_orders")

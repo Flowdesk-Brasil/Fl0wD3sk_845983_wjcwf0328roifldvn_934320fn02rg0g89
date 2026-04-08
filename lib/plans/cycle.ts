@@ -1,3 +1,9 @@
+import {
+  DEFAULT_PLAN_CODE,
+  resolvePlanDefinition,
+  type PlanCode,
+} from "@/lib/plans/catalog";
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const BILLING_PERIOD_MONTHS_BY_CYCLE_DAYS = new Map<number, number>([
@@ -62,6 +68,21 @@ export function resolveBillingPeriodMonthsFromCycleDays(cycleDays: unknown) {
   return BILLING_PERIOD_MONTHS_BY_CYCLE_DAYS.get(normalizedCycleDays) || null;
 }
 
+export function resolveEffectivePlanBillingCycleDays(input: {
+  billingCycleDays?: unknown;
+  planCode?: unknown;
+  fallbackPlanCode?: PlanCode;
+}) {
+  const normalizedCycleDays = normalizePositiveInteger(input.billingCycleDays);
+  if (normalizedCycleDays) {
+    return normalizedCycleDays;
+  }
+
+  const fallbackPlanCode = input.fallbackPlanCode || DEFAULT_PLAN_CODE;
+  const plan = resolvePlanDefinition(input.planCode, fallbackPlanCode);
+  return Math.max(plan.billingCycleDays, 1);
+}
+
 export function resolvePlanCycleExpirationMs(input: {
   baseTimestamp: string | number | Date;
   billingCycleDays?: unknown;
@@ -102,4 +123,28 @@ export function resolvePlanCycleExpirationIso(input: {
     return null;
   }
   return new Date(expirationMs).toISOString();
+}
+
+export function resolvePlanLicenseExpiresAtIso(input: {
+  baseTimestamp: string | number | Date;
+  billingCycleDays?: unknown;
+  billingPeriodMonths?: unknown;
+  planCode?: unknown;
+  fallbackPlanCode?: PlanCode;
+}) {
+  const resolvedBillingCycleDays = resolveEffectivePlanBillingCycleDays({
+    billingCycleDays: input.billingCycleDays,
+    planCode: input.planCode,
+    fallbackPlanCode: input.fallbackPlanCode,
+  });
+  const resolvedBillingPeriodMonths =
+    normalizePositiveInteger(input.billingPeriodMonths) ||
+    resolveBillingPeriodMonthsFromCycleDays(resolvedBillingCycleDays);
+
+  return resolvePlanCycleExpirationIso({
+    baseTimestamp: input.baseTimestamp,
+    billingCycleDays: resolvedBillingCycleDays,
+    billingPeriodMonths: resolvedBillingPeriodMonths,
+    fallbackBillingCycleDays: resolvedBillingCycleDays,
+  });
 }

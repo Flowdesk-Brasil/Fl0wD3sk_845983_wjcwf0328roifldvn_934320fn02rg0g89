@@ -8,6 +8,7 @@ import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { ServerSettingsEditor } from "@/components/servers/ServerSettingsEditor";
 import { ServerSettingsEditorSkeleton } from "@/components/servers/ServerSettingsEditorSkeleton";
 import { serversScale } from "@/components/servers/serversScale";
+import { buildServerStatusDescription } from "@/lib/servers/licensePresentation";
 
 type ServersDashboardProps = {
   displayName: string;
@@ -195,15 +196,7 @@ function statusStyle(status: ManagedServerStatus) {
 }
 
 function statusDescription(server: ManagedServer) {
-  if (server.status === "paid") {
-    return `Expira em: ${server.daysUntilExpire} dias`;
-  }
-
-  if (server.status === "expired") {
-    return `Expirado resta: ${server.daysUntilOff} dias`;
-  }
-
-  return "Retorna imediatamente apos pagamento";
+  return buildServerStatusDescription(server, "dashboard");
 }
 
 function ServerCardSkeleton({ index }: { index: number }) {

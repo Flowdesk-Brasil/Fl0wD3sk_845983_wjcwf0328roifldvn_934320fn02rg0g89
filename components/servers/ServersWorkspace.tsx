@@ -40,6 +40,11 @@ import { ServerSettingsEditor } from "@/components/servers/ServerSettingsEditor"
 import { ServerSettingsEditorSkeleton } from "@/components/servers/ServerSettingsEditorSkeleton";
 import { buildDiscordAuthStartHref } from "@/lib/auth/paths";
 import type { ManagedServer, ManagedServerStatus } from "@/lib/servers/managedServers";
+import {
+  buildServerMetaLabel,
+  buildServerStatusDescription,
+  formatServerDateLabel,
+} from "@/lib/servers/licensePresentation";
 import { prefetchServerDashboardSettings } from "@/lib/servers/serverDashboardSettingsClient";
 import {
   readCachedManagedServers,
@@ -285,16 +290,6 @@ function getSearchScore(guildName: string, query: string) {
   return 0;
 }
 
-function formatDateLabel(rawDate: string) {
-  const timestamp = Date.parse(rawDate);
-  if (!Number.isFinite(timestamp)) return "--";
-  return new Intl.DateTimeFormat("pt-BR", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  }).format(timestamp);
-}
-
 function parseWorkspaceRoute(pathname: string | null): {
   guildId: string | null;
   tab: ServerEditorTab;
@@ -382,17 +377,11 @@ function statusStyle(status: ManagedServerStatus) {
 }
 
 function statusDescription(server: ManagedServer) {
-  if (server.status === "paid") return `Renovacao ativa expira em ${server.daysUntilExpire} dias`;
-  if (server.status === "expired") return `Licenca expirada   restam ${server.daysUntilOff} dias`;
-  return "Bot desligado   retorna imediatamente apos pagamento";
+  return buildServerStatusDescription(server, "workspace");
 }
 
 function serverMetaLabel(server: ManagedServer) {
-  return server.accessMode === "owner"
-    ? `Dono da licenca   renovado em ${formatDateLabel(server.licensePaidAt)}`
-    : server.canManage
-      ? `Gestao por equipe   valido ate ${formatDateLabel(server.licenseExpiresAt)}`
-      : `Acesso de visualizacao   valido ate ${formatDateLabel(server.licenseExpiresAt)}`;
+  return buildServerMetaLabel(server);
 }
 
 function serverAccessBadgeLabel(server: ManagedServer) {
@@ -864,7 +853,7 @@ function ServerGridCard({
             {statusDescription(server)}
           </p>
           <p className="mt-[10px] text-[14px] leading-[1.45] text-[#8C8C8C]">
-            {formatDateLabel(server.licensePaidAt)}   {serverLicenseScopeLabel(server)}
+            {formatServerDateLabel(server.licensePaidAt)}   {serverLicenseScopeLabel(server)}
           </p>
         </div>
       </article>

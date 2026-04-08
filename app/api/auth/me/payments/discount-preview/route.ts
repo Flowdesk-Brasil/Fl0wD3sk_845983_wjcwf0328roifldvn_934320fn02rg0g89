@@ -6,6 +6,10 @@ import {
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
 import { resolveDiscountPricing } from "@/lib/payments/discountPricing";
+import {
+  isPlanBillingPeriodCode,
+  isPlanCode,
+} from "@/lib/plans/catalog";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
 import {
   applyNoStoreHeaders,
@@ -18,6 +22,8 @@ type DiscountPreviewBody = {
   giftCardCode?: unknown;
   baseAmount?: unknown;
   currency?: unknown;
+  planCode?: unknown;
+  billingPeriodCode?: unknown;
 };
 
 function normalizeGuildId(value: unknown) {
@@ -44,6 +50,18 @@ function normalizeAmount(value: unknown) {
 function normalizeCurrency(value: unknown) {
   if (typeof value !== "string") return "BRL";
   return value.trim().toUpperCase() || "BRL";
+}
+
+function normalizePlanCode(value: unknown) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return isPlanCode(normalized) ? normalized : null;
+}
+
+function normalizeBillingPeriodCode(value: unknown) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return isPlanBillingPeriodCode(normalized) ? normalized : null;
 }
 
 async function ensureGuildAccess(guildId: string) {
@@ -96,7 +114,12 @@ async function ensureGuildAccess(guildId: string) {
     };
   }
 
-  return { ok: true as const };
+  return {
+    ok: true as const,
+    sessionData: sessionData as NonNullable<
+      Awaited<ReturnType<typeof resolveSessionAccessToken>>
+    >,
+  };
 }
 
 export async function POST(request: Request) {
@@ -138,6 +161,9 @@ export async function POST(request: Request) {
       currency: normalizeCurrency(body.currency),
       couponCode: typeof body.couponCode === "string" ? body.couponCode : null,
       giftCardCode: typeof body.giftCardCode === "string" ? body.giftCardCode : null,
+      userId: access.sessionData.authSession.user.id,
+      planCode: normalizePlanCode(body.planCode),
+      billingPeriodCode: normalizeBillingPeriodCode(body.billingPeriodCode),
     });
 
     return applyNoStoreHeaders(

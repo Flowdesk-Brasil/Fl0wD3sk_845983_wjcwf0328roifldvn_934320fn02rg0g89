@@ -11,6 +11,7 @@ import {
   searchMercadoPagoPaymentsByExternalReference,
   toQrDataUri,
 } from "@/lib/payments/mercadoPago";
+import { areCardPaymentsEnabled } from "@/lib/payments/cardAvailability";
 import { resolvePaymentDiagnostic } from "@/lib/payments/paymentDiagnostics";
 import {
   ensureCheckoutAccessTokenForOrder,
@@ -460,6 +461,7 @@ async function reconcileHostedCardOrderByExternalReference(
 
 export async function GET(request: Request) {
   const requestContext = createSecurityRequestContext(request);
+  const cardPaymentsEnabled = areCardPaymentsEnabled();
   const respond = (body: unknown, init?: ResponseInit) =>
     attachRequestId(
       applyNoStoreHeaders(NextResponse.json(body, init)),
@@ -589,7 +591,7 @@ export async function GET(request: Request) {
       }
     }
 
-    if (paymentId) {
+    if (paymentId && (order.payment_method !== "card" || cardPaymentsEnabled)) {
       try {
         const providerPayment = await fetchMercadoPagoPaymentById(paymentId, {
           useCardToken: order.payment_method === "card",
@@ -604,6 +606,7 @@ export async function GET(request: Request) {
     }
 
     const shouldResolveApprovedHostedCardReturn =
+      cardPaymentsEnabled &&
       returnStatus === "approved" &&
       order.payment_method === "card" &&
       order.status === "pending";
@@ -620,6 +623,7 @@ export async function GET(request: Request) {
     }
 
     if (
+      cardPaymentsEnabled &&
       returnStatus &&
       order.payment_method === "card" &&
       order.status === "pending" &&
@@ -650,7 +654,10 @@ export async function GET(request: Request) {
       } catch {
         // melhor esforco; ainda retornamos o estado persistido
       }
-    } else if (order.provider_payment_id) {
+    } else if (
+      order.provider_payment_id &&
+      (order.payment_method !== "card" || cardPaymentsEnabled)
+    ) {
       try {
         const reconciled = await reconcilePaymentOrderRecord(order, {
           source: "auth_payment_order_query",

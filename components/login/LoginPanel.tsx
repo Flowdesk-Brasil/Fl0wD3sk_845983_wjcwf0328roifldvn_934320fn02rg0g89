@@ -5,10 +5,14 @@ import Link from "next/link";
 import type { CSSProperties } from "react";
 import { DiscordLoginButton } from "@/components/login/DiscordLoginButton";
 import { LandingReveal } from "@/components/landing/LandingReveal";
-import { DISCORD_AUTH_START_PATH } from "@/lib/auth/paths";
+import { buildDiscordAuthStartHref } from "@/lib/auth/paths";
 import { PRIVACY_PATH, TERMS_PATH } from "@/lib/legal/content";
 
-export function LoginPanel() {
+type LoginPanelProps = {
+  nextPath?: string | null;
+};
+
+export function LoginPanel({ nextPath = null }: LoginPanelProps) {
   const termsUrl = process.env.NEXT_PUBLIC_TERMS_URL || TERMS_PATH;
   const privacyUrl = process.env.NEXT_PUBLIC_PRIVACY_URL || PRIVACY_PATH;
 
@@ -64,7 +68,7 @@ export function LoginPanel() {
 
             <LandingReveal delay={450}>
               <div className="mt-[22px]">
-                <DiscordLoginButton href={DISCORD_AUTH_START_PATH} />
+                <DiscordLoginButton href={buildDiscordAuthStartHref(nextPath)} />
               </div>
             </LandingReveal>
           </div>

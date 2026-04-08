@@ -9,6 +9,9 @@ export type ConfigGuildItem = {
   id: string;
   name: string;
   icon_url: string | null;
+  hasSavedSetup?: boolean;
+  lastConfiguredAt?: string | null;
+  managedStatus?: "paid" | "expired" | "off" | null;
 };
 
 type ConfigServerSwitcherProps = {
@@ -22,6 +25,51 @@ type ConfigServerSwitcherProps = {
 function buildGuildInitial(guild: ConfigGuildItem | null) {
   const name = String(guild?.name || "").trim();
   return name ? name.slice(0, 1).toUpperCase() : "S";
+}
+
+function resolveGuildStatusMeta(guild: ConfigGuildItem | null) {
+  if (!guild) return null;
+
+  if (guild.managedStatus === "paid") {
+    return {
+      label: "Ativo",
+      detail: "Servidor com licenca ativa.",
+      pillClassName:
+        "border-[rgba(132,190,255,0.24)] bg-[rgba(20,34,52,0.9)] text-[#E4F0FF]",
+    };
+  }
+
+  if (guild.managedStatus === "expired") {
+    return {
+      label: "Expirado",
+      detail: "Servidor configurado, aguardando renovacao.",
+      pillClassName:
+        "border-[rgba(255,198,110,0.2)] bg-[rgba(42,29,10,0.88)] text-[#FFE3B0]",
+    };
+  }
+
+  if (guild.hasSavedSetup) {
+    return {
+      label: "Configurado",
+      detail:
+        guild.managedStatus === "off"
+          ? "Servidor salvo, aguardando licenca."
+          : "Servidor ja configurado nesta conta.",
+      pillClassName:
+        "border-[rgba(255,255,255,0.11)] bg-[rgba(18,18,18,0.92)] text-[#EAEAEA]",
+    };
+  }
+
+  if (guild.managedStatus === "off") {
+    return {
+      label: "Sem licenca",
+      detail: "Servidor acessivel, ainda sem ativacao.",
+      pillClassName:
+        "border-[rgba(255,255,255,0.08)] bg-[rgba(10,10,10,0.92)] text-[#B6B6B6]",
+    };
+  }
+
+  return null;
 }
 
 function GuildAvatar({
@@ -65,6 +113,10 @@ export function ConfigServerSwitcher({
   const selectedGuild = useMemo(
     () => guilds.find((guild) => guild.id === selectedGuildId) || null,
     [guilds, selectedGuildId],
+  );
+  const selectedGuildStatus = useMemo(
+    () => resolveGuildStatusMeta(selectedGuild),
+    [selectedGuild],
   );
 
   useEffect(() => {
@@ -129,6 +181,9 @@ export function ConfigServerSwitcher({
             <p className="mt-[6px] truncate text-[18px] leading-[1.08] font-medium tracking-[-0.04em] text-[#ECECEC]">
               {selectedGuild ? selectedGuild.name : "Selecione um servidor"}
             </p>
+            <p className="mt-[5px] truncate text-[12px] text-[#7B7B7B]">
+              {selectedGuildStatus?.detail || "Troque de servidor sem perder o contexto atual."}
+            </p>
           </div>
 
           <span className="inline-flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-[14px] border border-[#171717] bg-[#0D0D0D] text-[#8A8A8A]">
@@ -162,6 +217,7 @@ export function ConfigServerSwitcher({
           >
             {guilds.map((guild) => {
               const isActive = guild.id === selectedGuildId;
+              const statusMeta = resolveGuildStatusMeta(guild);
               return (
                 <button
                   key={guild.id}
@@ -184,15 +240,29 @@ export function ConfigServerSwitcher({
                       {guild.name}
                     </p>
                     <p className="mt-[4px] truncate text-[12px] text-[#757575]">
-                      {isActive ? "Servidor atual" : `ID ${guild.id}`}
+                      {isActive
+                        ? statusMeta
+                          ? `Servidor atual · ${statusMeta.detail}`
+                          : "Servidor atual"
+                        : statusMeta?.detail || `ID ${guild.id}`}
                     </p>
                   </div>
 
-                  {isActive ? (
-                    <span className="inline-flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full border border-[rgba(128,184,255,0.2)] bg-[rgba(128,184,255,0.12)] text-[#DDEEFF]">
-                      <Check className="h-[14px] w-[14px]" strokeWidth={2.5} />
-                    </span>
-                  ) : null}
+                  <div className="flex shrink-0 items-center gap-[10px]">
+                    {statusMeta ? (
+                      <span
+                        className={`inline-flex items-center rounded-full border px-[10px] py-[6px] text-[11px] leading-none font-medium tracking-[0.02em] ${statusMeta.pillClassName}`.trim()}
+                      >
+                        {statusMeta.label}
+                      </span>
+                    ) : null}
+
+                    {isActive ? (
+                      <span className="inline-flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full border border-[rgba(128,184,255,0.2)] bg-[rgba(128,184,255,0.12)] text-[#DDEEFF]">
+                        <Check className="h-[14px] w-[14px]" strokeWidth={2.5} />
+                      </span>
+                    ) : null}
+                  </div>
                 </button>
               );
             })}

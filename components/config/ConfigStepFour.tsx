@@ -1201,11 +1201,55 @@ function parseMercadoPagoCardTokenError(payload: MercadoPagoCardTokenPayload) {
   return null;
 }
 
+function isAbortLikeErrorMessage(message: string | null | undefined) {
+  if (!message) return false;
+
+  const normalized = message.trim().toLowerCase();
+  if (!normalized) return false;
+
+  return (
+    normalized === "signal is aborted without reason" ||
+    normalized === "the operation was aborted" ||
+    normalized === "this operation was aborted" ||
+    normalized === "aborted" ||
+    normalized.includes("aborterror")
+  );
+}
+
+function isAbortLikeError(error: unknown) {
+  if (error instanceof DOMException) {
+    return error.name === "AbortError";
+  }
+
+  if (error instanceof Error) {
+    return error.name === "AbortError" || isAbortLikeErrorMessage(error.message);
+  }
+
+  if (typeof error === "string") {
+    return isAbortLikeErrorMessage(error);
+  }
+
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const data = error as UnknownErrorObject;
+  return (
+    isAbortLikeErrorMessage(
+      typeof data.message === "string" ? data.message : null,
+    ) ||
+    isAbortLikeErrorMessage(
+      typeof data.errorMessage === "string" ? data.errorMessage : null,
+    )
+  );
+}
+
 function normalizePaymentUiMessage(message: string | null | undefined) {
   if (!message) return null;
 
   const normalized = message.trim().replace(/^Mercado Pago:\s*/i, "");
   if (!normalized) return null;
+  if (isAbortLikeErrorMessage(normalized)) return null;
 
   const lowercaseMessage = normalized.toLowerCase();
   if (
@@ -3026,6 +3070,7 @@ export function ConfigStepFour({
         );
       } catch (error) {
         if (!isMounted) return;
+        if (isAbortLikeError(error)) return;
         setAvailablePlans([]);
         setResolvedPlan(
           resolvePlanSummary(selectedPlanCode, selectedBillingPeriodCode, []),
@@ -3071,9 +3116,12 @@ export function ConfigStepFour({
     }
 
     const controller = new AbortController();
+    let abortedByTimeout = false;
     const timeoutId = window.setTimeout(() => {
+      abortedByTimeout = true;
       controller.abort();
     }, 8000);
+    let isActive = true;
 
     setIsDiscountLoading(true);
 
@@ -3090,6 +3138,8 @@ export function ConfigStepFour({
             giftCardCode: trimmedGiftCardCode,
             baseAmount: baseCheckoutAmount,
             currency: checkoutCurrency,
+            planCode: selectedPlanCode,
+            billingPeriodCode: selectedBillingPeriodCode,
           }),
           signal: controller.signal,
         });
@@ -3101,7 +3151,14 @@ export function ConfigStepFour({
         setDiscountPreview(payload.preview);
         setDiscountMessage(payload.message || null);
       } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") {
+        if (!isActive) {
+          return;
+        }
+
+        if (isAbortLikeError(error)) {
+          if (!abortedByTimeout) {
+            return;
+          }
           setDiscountMessage("Tempo esgotado ao validar o codigo.");
         } else {
           setDiscountMessage(
@@ -3118,12 +3175,16 @@ export function ConfigStepFour({
           }),
         );
       } finally {
+        if (!isActive) {
+          return;
+        }
         window.clearTimeout(timeoutId);
         setIsDiscountLoading(false);
       }
     })();
 
     return () => {
+      isActive = false;
       controller.abort();
       window.clearTimeout(timeoutId);
     };
@@ -3327,7 +3388,9 @@ export function ConfigStepFour({
 
     let isMounted = true;
     const controller = new AbortController();
+    let abortedByTimeout = false;
     const timeoutId = window.setTimeout(() => {
+      abortedByTimeout = true;
       controller.abort();
     }, 9000);
     setIsLoadingOrder(true);
@@ -3497,8 +3560,11 @@ export function ConfigStepFour({
         } else {
           setView(restoredView);
         }
-      } catch {
+      } catch (error) {
         if (!isMounted) return;
+        if (isAbortLikeError(error) && !abortedByTimeout) {
+          return;
+        }
 
         const fallbackCheckoutOrder = resolveHostedCardReturnFallbackOrder({
           order: cachedPendingOrder,
@@ -3666,7 +3732,9 @@ export function ConfigStepFour({
     setIsPreparingBaseOrder(true);
 
     const controller = new AbortController();
+    let abortedByTimeout = false;
     const timeoutId = window.setTimeout(() => {
+      abortedByTimeout = true;
       controller.abort();
     }, 7000);
 
@@ -3704,6 +3772,10 @@ export function ConfigStepFour({
           forceNewCheckoutRef.current = false;
         }
       } catch (error) {
+        if (isAbortLikeError(error) && !abortedByTimeout) {
+          return;
+        }
+
         const message =
           parseUnknownErrorMessage(error) ||
           "Nao foi possivel preparar o pedido inicial de pagamento.";

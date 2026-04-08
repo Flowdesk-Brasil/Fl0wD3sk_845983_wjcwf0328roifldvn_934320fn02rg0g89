@@ -4,6 +4,7 @@ import {
   buildPlanSnapshot,
   normalizePlanBillingPeriodCode,
   isPlanCode,
+  type PlanPricingDefinition,
   resolvePlanDefinition,
   resolvePlanPricing,
   type PlanBillingPeriodCode,
@@ -11,8 +12,17 @@ import {
 } from "@/lib/plans/catalog";
 import {
   resolveBillingPeriodMonthsFromCycleDays,
-  resolvePlanCycleExpirationIso,
+  resolveEffectivePlanBillingCycleDays,
+  resolvePlanLicenseExpiresAtIso,
 } from "@/lib/plans/cycle";
+import {
+  applyBetaProgramPricing,
+  BETA_COUPON_CODE,
+  BETA_PINNED_BILLING_PERIOD_CODE,
+  BETA_PINNED_MONTHLY_AMOUNT,
+  BETA_PINNED_PLAN_CODE,
+  canApplyBetaProgramToSelection,
+} from "@/lib/payments/betaProgram";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 export type GuildPlanSettingsRecord = {
@@ -71,6 +81,51 @@ type PaymentOrderPlanRecord = {
   created_at: string;
 };
 
+type UserPlanStateMetadataRecord = {
+  metadata: Record<string, unknown> | null;
+};
+
+type PaymentOrderProviderPayloadRecord = {
+  provider_payload: unknown;
+};
+
+type PaymentCouponBenefitRecord = {
+  id: number;
+  code: string;
+  metadata: Record<string, unknown> | null;
+};
+
+type PaymentGiftCardBenefitRecord = {
+  id: number;
+  code: string;
+  remaining_amount: string | number;
+};
+
+type ApprovedOrderPricingSnapshot = {
+  couponCode: string | null;
+  couponAmount: number;
+  giftCardCode: string | null;
+  giftCardAmount: number;
+};
+
+type ApprovedOrderBenefits = {
+  betaMetadata: Record<string, unknown> | null;
+  couponRedemption:
+    | {
+        couponId: number;
+        code: string;
+        discountAmount: number;
+      }
+    | null;
+  giftCardRedemption:
+    | {
+        giftCardId: number;
+        code: string;
+        redeemedAmount: number;
+      }
+    | null;
+};
+
 function parseNumeric(value: string | number | null | undefined, fallback = 0) {
   if (typeof value === "number") {
     return Number.isFinite(value) ? value : fallback;
@@ -78,6 +133,282 @@ function parseNumeric(value: string | number | null | undefined, fallback = 0) {
 
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function roundMoney(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value * 100) / 100;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeCouponCode(value: unknown) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toUpperCase();
+  return normalized ? normalized.slice(0, 64) : null;
+}
+
+function parseUnknownNumeric(value: unknown, fallback = 0) {
+  if (typeof value === "number" || typeof value === "string") {
+    return parseNumeric(value, fallback);
+  }
+
+  return fallback;
+}
+
+function parsePricingSnapshot(providerPayload: unknown): ApprovedOrderPricingSnapshot {
+  if (!isRecord(providerPayload)) {
+    return {
+      couponCode: null,
+      couponAmount: 0,
+      giftCardCode: null,
+      giftCardAmount: 0,
+    };
+  }
+
+  const pricing = isRecord(providerPayload.pricing) ? providerPayload.pricing : null;
+  const coupon = pricing && isRecord(pricing.coupon) ? pricing.coupon : null;
+  const giftCard = pricing && isRecord(pricing.giftCard) ? pricing.giftCard : null;
+
+  return {
+    couponCode: normalizeCouponCode(coupon?.code),
+    couponAmount: roundMoney(parseUnknownNumeric(coupon?.amount, 0)),
+    giftCardCode: normalizeCouponCode(giftCard?.code),
+    giftCardAmount: roundMoney(parseUnknownNumeric(giftCard?.amount, 0)),
+  };
+}
+
+function buildPlanMetadata(input: {
+  planCode: PlanCode;
+  billingCycleDays: number;
+  billingPeriodMonths: number;
+}) {
+  return {
+    ...buildPlanSnapshot(input.planCode),
+    billingCycleDays: input.billingCycleDays,
+    billingPeriodMonths: input.billingPeriodMonths,
+  };
+}
+
+export function applyUserPlanStatePricingAdjustments(
+  plan: PlanPricingDefinition,
+  userPlanState: UserPlanStateRecord | null,
+) {
+  return applyBetaProgramPricing(plan, userPlanState?.metadata || null);
+}
+
+async function resolveApprovedOrderBenefits(input: {
+  orderId: number;
+  resolvedPlanCode: PlanCode;
+  billingPeriodCode: PlanBillingPeriodCode;
+  activatedAt: string;
+}) {
+  const supabase = getSupabaseAdminClientOrThrow();
+  const providerPayloadResult = await supabase
+    .from("payment_orders")
+    .select("provider_payload")
+    .eq("id", input.orderId)
+    .maybeSingle<PaymentOrderProviderPayloadRecord>();
+
+  if (providerPayloadResult.error) {
+    throw new Error(
+      `Erro ao carregar beneficios do pedido aprovado: ${providerPayloadResult.error.message}`,
+    );
+  }
+
+  const pricingSnapshot = parsePricingSnapshot(
+    providerPayloadResult.data?.provider_payload,
+  );
+  const [couponResult, giftCardResult] = await Promise.all([
+    pricingSnapshot.couponCode
+      ? supabase
+          .from("payment_coupons")
+          .select("id, code, metadata")
+          .eq("code", pricingSnapshot.couponCode)
+          .maybeSingle<PaymentCouponBenefitRecord>()
+      : Promise.resolve({ data: null, error: null }),
+    pricingSnapshot.giftCardCode
+      ? supabase
+          .from("payment_gift_cards")
+          .select("id, code, remaining_amount")
+          .eq("code", pricingSnapshot.giftCardCode)
+          .maybeSingle<PaymentGiftCardBenefitRecord>()
+      : Promise.resolve({ data: null, error: null }),
+  ]);
+
+  if (couponResult.error) {
+    throw new Error(
+      `Erro ao carregar cupom do pedido aprovado: ${couponResult.error.message}`,
+    );
+  }
+
+  if (giftCardResult.error) {
+    throw new Error(
+      `Erro ao carregar gift card do pedido aprovado: ${giftCardResult.error.message}`,
+    );
+  }
+
+  const couponRecord = couponResult.data;
+  const giftCardRecord = giftCardResult.data;
+  const couponCode = couponRecord?.code || pricingSnapshot.couponCode;
+  const couponMetadata = isRecord(couponRecord?.metadata) ? couponRecord.metadata : null;
+  const isBetaCoupon =
+    couponCode === BETA_COUPON_CODE ||
+    (couponMetadata?.betaProgram === true &&
+      canApplyBetaProgramToSelection(
+        input.resolvedPlanCode,
+        input.billingPeriodCode,
+      ));
+
+  return {
+    betaMetadata:
+      isBetaCoupon &&
+      canApplyBetaProgramToSelection(
+        input.resolvedPlanCode,
+        input.billingPeriodCode,
+      )
+        ? {
+            active: true,
+            couponCode: couponCode || BETA_COUPON_CODE,
+            pinnedPlanCode: BETA_PINNED_PLAN_CODE,
+            pinnedBillingPeriodCode: BETA_PINNED_BILLING_PERIOD_CODE,
+            pinnedMonthlyAmount: roundMoney(
+              parseUnknownNumeric(
+                couponMetadata?.pinnedMonthlyAmount,
+                BETA_PINNED_MONTHLY_AMOUNT,
+              ),
+            ),
+            activatedAt: input.activatedAt,
+          }
+        : null,
+    couponRedemption: couponRecord
+      ? {
+          couponId: couponRecord.id,
+          code: couponRecord.code,
+          discountAmount: pricingSnapshot.couponAmount,
+        }
+      : null,
+    giftCardRedemption: giftCardRecord
+      ? {
+          giftCardId: giftCardRecord.id,
+          code: giftCardRecord.code,
+          redeemedAmount: pricingSnapshot.giftCardAmount,
+        }
+      : null,
+  } satisfies ApprovedOrderBenefits;
+}
+
+async function persistApprovedOrderBenefits(input: {
+  orderId: number;
+  userId: number;
+  guildId: string;
+  benefits: ApprovedOrderBenefits;
+}) {
+  const supabase = getSupabaseAdminClientOrThrow();
+
+  if (input.benefits.couponRedemption) {
+    const existingCouponRedemptionResult = await supabase
+      .from("payment_coupon_redemptions")
+      .select("id")
+      .eq("coupon_id", input.benefits.couponRedemption.couponId)
+      .eq("payment_order_id", input.orderId)
+      .limit(1)
+      .maybeSingle<{ id: number }>();
+
+    if (existingCouponRedemptionResult.error) {
+      throw new Error(existingCouponRedemptionResult.error.message);
+    }
+
+    if (!existingCouponRedemptionResult.data) {
+      const insertCouponRedemptionResult = await supabase
+        .from("payment_coupon_redemptions")
+        .insert({
+          coupon_id: input.benefits.couponRedemption.couponId,
+          payment_order_id: input.orderId,
+          guild_id: input.guildId,
+          user_id: input.userId,
+          discount_amount: input.benefits.couponRedemption.discountAmount,
+        });
+
+      if (insertCouponRedemptionResult.error) {
+        throw new Error(insertCouponRedemptionResult.error.message);
+      }
+    }
+  }
+
+  if (
+    input.benefits.giftCardRedemption &&
+    input.benefits.giftCardRedemption.redeemedAmount > 0
+  ) {
+    const existingGiftCardRedemptionResult = await supabase
+      .from("payment_gift_card_redemptions")
+      .select("id")
+      .eq("gift_card_id", input.benefits.giftCardRedemption.giftCardId)
+      .eq("payment_order_id", input.orderId)
+      .limit(1)
+      .maybeSingle<{ id: number }>();
+
+    if (existingGiftCardRedemptionResult.error) {
+      throw new Error(existingGiftCardRedemptionResult.error.message);
+    }
+
+    if (!existingGiftCardRedemptionResult.data) {
+      const giftCardResult = await supabase
+        .from("payment_gift_cards")
+        .select("remaining_amount")
+        .eq("id", input.benefits.giftCardRedemption.giftCardId)
+        .single<Pick<PaymentGiftCardBenefitRecord, "remaining_amount">>();
+
+      if (giftCardResult.error || !giftCardResult.data) {
+        throw new Error(
+          giftCardResult.error?.message ||
+            "Nao foi possivel carregar o saldo atual do gift card.",
+        );
+      }
+
+      const nextRemainingAmount = Math.max(
+        0,
+        roundMoney(
+          parseNumeric(giftCardResult.data.remaining_amount, 0) -
+            input.benefits.giftCardRedemption.redeemedAmount,
+        ),
+      );
+
+      const insertGiftCardRedemptionResult = await supabase
+        .from("payment_gift_card_redemptions")
+        .insert({
+          gift_card_id: input.benefits.giftCardRedemption.giftCardId,
+          payment_order_id: input.orderId,
+          guild_id: input.guildId,
+          user_id: input.userId,
+          redeemed_amount: input.benefits.giftCardRedemption.redeemedAmount,
+        });
+
+      if (insertGiftCardRedemptionResult.error) {
+        throw new Error(insertGiftCardRedemptionResult.error.message);
+      }
+
+      const updateGiftCardResult = await supabase
+        .from("payment_gift_cards")
+        .update(
+          nextRemainingAmount <= 0
+            ? {
+                remaining_amount: nextRemainingAmount,
+                status: "exhausted",
+              }
+            : {
+                remaining_amount: nextRemainingAmount,
+              },
+        )
+        .eq("id", input.benefits.giftCardRedemption.giftCardId);
+
+      if (updateGiftCardResult.error) {
+        throw new Error(updateGiftCardResult.error.message);
+      }
+    }
+  }
 }
 
 function resolveActivePlanStateStatus(planCode: PlanCode, expiresAt: string | null) {
@@ -161,22 +492,21 @@ export async function getUserPlanState(userId: number) {
   const resolvedPlanCode = isPlanCode(latestApprovedOrder.plan_code)
     ? latestApprovedOrder.plan_code
     : DEFAULT_PLAN_CODE;
-  const resolvedPlan = resolvePlanDefinition(resolvedPlanCode);
-  const resolvedBillingCycleDays = Math.max(
-    latestApprovedOrder.plan_billing_cycle_days || resolvedPlan.billingCycleDays,
-    1,
-  );
+  const resolvedBillingCycleDays = resolveEffectivePlanBillingCycleDays({
+    billingCycleDays: latestApprovedOrder.plan_billing_cycle_days,
+    planCode: latestApprovedOrder.plan_code,
+    fallbackPlanCode: resolvedPlanCode,
+  });
   const expectedActivatedAt =
     latestApprovedOrder.paid_at || latestApprovedOrder.created_at;
   const expectedExpiresAt =
     normalizeValidIso(latestApprovedOrder.expires_at) ||
-    resolvePlanCycleExpirationIso({
+    resolvePlanLicenseExpiresAtIso({
       baseTimestamp: expectedActivatedAt,
       billingCycleDays: resolvedBillingCycleDays,
-      billingPeriodMonths: resolveBillingPeriodMonthsFromCycleDays(
-        resolvedBillingCycleDays,
-      ),
-      fallbackBillingCycleDays: resolvedPlan.billingCycleDays,
+      billingPeriodMonths: resolveBillingPeriodMonthsFromCycleDays(resolvedBillingCycleDays),
+      planCode: resolvedPlanCode,
+      fallbackPlanCode: resolvedPlanCode,
     });
 
   const shouldResyncPlanState =
@@ -226,7 +556,10 @@ export async function resolveEffectivePlanSelection(input: {
     input.preferredBillingPeriodCode,
     DEFAULT_PLAN_BILLING_PERIOD_CODE,
   ) as PlanBillingPeriodCode;
-  const plan = resolvePlanPricing(selectedPlanCode, selectedBillingPeriodCode);
+  const plan = applyUserPlanStatePricingAdjustments(
+    resolvePlanPricing(selectedPlanCode, selectedBillingPeriodCode),
+    userPlanState,
+  );
 
   return {
     plan,
@@ -240,20 +573,66 @@ export async function syncUserPlanStateFromOrder(order: PaymentOrderPlanRecord) 
   const resolvedPlanCode = isPlanCode(order.plan_code) ? order.plan_code : DEFAULT_PLAN_CODE;
   const plan = resolvePlanDefinition(resolvedPlanCode);
   const activatedAt = order.paid_at || order.created_at;
-  const resolvedBillingCycleDays = Math.max(
-    order.plan_billing_cycle_days || plan.billingCycleDays,
-    1,
-  );
+  const resolvedBillingCycleDays = resolveEffectivePlanBillingCycleDays({
+    billingCycleDays: order.plan_billing_cycle_days,
+    planCode: order.plan_code,
+    fallbackPlanCode: resolvedPlanCode,
+  });
   const resolvedBillingPeriodMonths =
-    resolveBillingPeriodMonthsFromCycleDays(resolvedBillingCycleDays);
+    resolveBillingPeriodMonthsFromCycleDays(resolvedBillingCycleDays) || 1;
+  const resolvedBillingPeriodCode =
+    resolvedBillingPeriodMonths >= 12
+      ? ("annual" as const)
+      : resolvedBillingPeriodMonths >= 6
+        ? ("semiannual" as const)
+        : resolvedBillingPeriodMonths >= 3
+          ? ("quarterly" as const)
+          : ("monthly" as const);
   const expiresAt =
     normalizeValidIso(order.expires_at) ||
-    resolvePlanCycleExpirationIso({
+    resolvePlanLicenseExpiresAtIso({
       baseTimestamp: activatedAt,
       billingCycleDays: resolvedBillingCycleDays,
       billingPeriodMonths: resolvedBillingPeriodMonths,
-      fallbackBillingCycleDays: plan.billingCycleDays,
+      planCode: resolvedPlanCode,
+      fallbackPlanCode: resolvedPlanCode,
     });
+  const [currentPlanStateResult, approvedOrderBenefits] = await Promise.all([
+    supabase
+      .from("auth_user_plan_state")
+      .select("metadata")
+      .eq("user_id", order.user_id)
+      .maybeSingle<UserPlanStateMetadataRecord>(),
+    resolveApprovedOrderBenefits({
+      orderId: order.id,
+      resolvedPlanCode,
+      billingPeriodCode: resolvedBillingPeriodCode,
+      activatedAt,
+    }),
+  ]);
+
+  if (currentPlanStateResult.error) {
+    throw new Error(
+      currentPlanStateResult.error.message ||
+        "Falha ao carregar metadados atuais do plano da conta.",
+    );
+  }
+
+  const existingMetadata = isRecord(currentPlanStateResult.data?.metadata)
+    ? currentPlanStateResult.data.metadata
+    : {};
+  const nextMetadata: Record<string, unknown> = {
+    ...existingMetadata,
+    plan: buildPlanMetadata({
+      planCode: resolvedPlanCode,
+      billingCycleDays: resolvedBillingCycleDays,
+      billingPeriodMonths: resolvedBillingPeriodMonths,
+    }),
+  };
+
+  if (approvedOrderBenefits.betaMetadata) {
+    nextMetadata.beta = approvedOrderBenefits.betaMetadata;
+  }
 
   const payload = {
     user_id: order.user_id,
@@ -284,13 +663,7 @@ export async function syncUserPlanStateFromOrder(order: PaymentOrderPlanRecord) 
     last_payment_guild_id: order.guild_id,
     activated_at: activatedAt,
     expires_at: expiresAt,
-    metadata: {
-      plan: {
-        ...buildPlanSnapshot(resolvedPlanCode),
-        billingCycleDays: resolvedBillingCycleDays,
-        billingPeriodMonths: resolvedBillingPeriodMonths,
-      },
-    },
+    metadata: nextMetadata,
   };
 
   const result = await supabase
@@ -304,6 +677,13 @@ export async function syncUserPlanStateFromOrder(order: PaymentOrderPlanRecord) 
   if (result.error || !result.data) {
     throw new Error(result.error?.message || "Falha ao sincronizar plano da conta.");
   }
+
+  await persistApprovedOrderBenefits({
+    orderId: order.id,
+    userId: order.user_id,
+    guildId: order.guild_id,
+    benefits: approvedOrderBenefits,
+  });
 
   return result.data;
 }

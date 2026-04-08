@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getCurrentUserFromSessionCookie } from "@/lib/auth/session";
 import { ConfigFlow } from "@/components/config/ConfigFlow";
+import { buildLoginHref } from "@/lib/auth/paths";
 import {
   buildConfigCheckoutPath,
   normalizePlanBillingPeriodCode,
@@ -20,23 +21,24 @@ function takeFirstQueryValue(value: string | string[] | undefined) {
 }
 
 export default async function ConfigPage({ searchParams }: ConfigPageProps) {
-  const user = await getCurrentUserFromSessionCookie();
-
-  if (!user) {
-    redirect("/login");
-  }
-
   const query = searchParams ? await searchParams : {};
   const requestedPlan = takeFirstQueryValue(query.plan);
   const requestedBilling = takeFirstQueryValue(query.billing);
-  if (requestedPlan) {
-    redirect(
-      buildConfigCheckoutPath({
+  const requestedNextPath = requestedPlan
+    ? buildConfigCheckoutPath({
         planCode: requestedPlan,
         billingPeriodCode: requestedBilling,
         fallbackPlanCode: "pro",
-      }),
-    );
+      })
+    : "/config";
+  const user = await getCurrentUserFromSessionCookie();
+
+  if (!user) {
+    redirect(buildLoginHref(requestedNextPath));
+  }
+
+  if (requestedPlan) {
+    redirect(requestedNextPath);
   }
 
   return (

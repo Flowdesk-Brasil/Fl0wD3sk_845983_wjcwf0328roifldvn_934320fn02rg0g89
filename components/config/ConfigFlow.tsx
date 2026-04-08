@@ -53,7 +53,12 @@ type ConfigContextApiResponse = {
 
 type GuildsApiResponse = {
   ok: boolean;
-  guilds?: ConfigGuildItem[];
+  guilds?: Array<
+    ConfigGuildItem & {
+      hasSavedSetup?: boolean;
+      lastConfiguredAt?: string | null;
+    }
+  >;
 };
 
 type ManagedServerStatus = "paid" | "expired" | "off";
@@ -62,6 +67,8 @@ type ServersApiResponse = {
   ok: boolean;
   servers?: Array<{
     guildId: string;
+    guildName: string;
+    iconUrl: string | null;
     status: ManagedServerStatus;
   }>;
 };
@@ -416,6 +423,14 @@ export function ConfigFlow({
   const [availableGuilds, setAvailableGuilds] = useState<ConfigGuildItem[]>([]);
   const [isGuildListLoading, setIsGuildListLoading] = useState(true);
   const [isSwitchingGuild, setIsSwitchingGuild] = useState(false);
+  const [managedServers, setManagedServers] = useState<
+    Array<{
+      guildId: string;
+      guildName: string;
+      iconUrl: string | null;
+      status: ManagedServerStatus;
+    }>
+  >([]);
   const [managedServerStatusByGuild, setManagedServerStatusByGuild] = useState<
     Record<string, ManagedServerStatus>
   >({});
@@ -755,6 +770,7 @@ export function ConfigFlow({
           nextStatusMap[server.guildId] = server.status;
         }
 
+        setManagedServers(payload.servers);
         setManagedServerStatusByGuild(nextStatusMap);
       } catch {
         // Mantem fallback local em caso de falha de rede.
@@ -1058,6 +1074,55 @@ export function ConfigFlow({
     if (!selectedGuildId) return "not_paid" as const;
     return managedServerStatusByGuild[selectedGuildId] || "not_paid";
   }, [managedServerStatusByGuild, selectedGuildId]);
+  const switcherGuilds = useMemo(() => {
+    const mergedGuilds = new Map<string, ConfigGuildItem>();
+
+    for (const guild of availableGuilds) {
+      mergedGuilds.set(guild.id, {
+        ...guild,
+        managedStatus: managedServerStatusByGuild[guild.id] || null,
+      });
+    }
+
+    for (const server of managedServers) {
+      const current = mergedGuilds.get(server.guildId);
+      mergedGuilds.set(server.guildId, {
+        id: server.guildId,
+        name: current?.name || server.guildName,
+        icon_url: current?.icon_url || server.iconUrl,
+        hasSavedSetup: current?.hasSavedSetup || server.status !== "paid",
+        lastConfiguredAt: current?.lastConfiguredAt || null,
+        managedStatus: server.status,
+      });
+    }
+
+    const priorityByStatus: Record<ManagedServerStatus, number> = {
+      paid: 0,
+      expired: 1,
+      off: 2,
+    };
+
+    return Array.from(mergedGuilds.values()).sort((left, right) => {
+      const leftPriority =
+        left.managedStatus !== null && left.managedStatus !== undefined
+          ? priorityByStatus[left.managedStatus]
+          : left.hasSavedSetup
+            ? 3
+            : 4;
+      const rightPriority =
+        right.managedStatus !== null && right.managedStatus !== undefined
+          ? priorityByStatus[right.managedStatus]
+          : right.hasSavedSetup
+            ? 3
+            : 4;
+
+      if (leftPriority !== rightPriority) {
+        return leftPriority - rightPriority;
+      }
+
+      return left.name.localeCompare(right.name, "pt-BR");
+    });
+  }, [availableGuilds, managedServerStatusByGuild, managedServers]);
   const stepContent = useMemo(() => {
     if (isConfigContextLoading && currentStep !== 1) {
       return (
@@ -1144,7 +1209,7 @@ export function ConfigFlow({
     <>
       {currentStep !== 1 && currentStep !== 4 ? (
         <ConfigServerSwitcher
-          guilds={availableGuilds}
+          guilds={switcherGuilds}
           selectedGuildId={selectedGuildId}
           isLoading={isGuildListLoading}
           isSwitching={isSwitchingGuild}

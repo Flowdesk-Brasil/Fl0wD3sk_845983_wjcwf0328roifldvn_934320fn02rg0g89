@@ -1,4 +1,5 @@
 import { PLAN_ORDER, type PlanCode, type PlanPricingDefinition } from "@/lib/plans/catalog";
+import { resolveEffectivePlanBillingCycleDays } from "@/lib/plans/cycle";
 import type { UserPlanStateRecord } from "@/lib/plans/state";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -56,8 +57,16 @@ export function resolvePlanUpgradeProration(input: {
     return null;
   }
 
-  const currentBillingCycleDays = Math.max(1, input.userPlanState.billing_cycle_days || 30);
-  const targetBillingCycleDays = Math.max(1, input.targetPlan.billingCycleDays || 30);
+  const currentBillingCycleDays = resolveEffectivePlanBillingCycleDays({
+    billingCycleDays: input.userPlanState.billing_cycle_days,
+    planCode: input.userPlanState.plan_code,
+    fallbackPlanCode: input.userPlanState.plan_code,
+  });
+  const targetBillingCycleDays = resolveEffectivePlanBillingCycleDays({
+    billingCycleDays: input.targetPlan.billingCycleDays,
+    planCode: input.targetPlan.code,
+    fallbackPlanCode: input.targetPlan.code,
+  });
 
   // Para manter a regra simples e previsivel: prorata apenas dentro do mesmo ciclo.
   // Ex: mensal->mensal, trimestral->trimestral.
@@ -91,4 +100,3 @@ export function resolvePlanUpgradeProration(input: {
     dueAmount,
   } satisfies PlanUpgradeProration;
 }
-
