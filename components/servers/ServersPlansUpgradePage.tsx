@@ -1,38 +1,28 @@
 "use client";
 
 import Image from "next/image";
-import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Check, Minus } from "lucide-react";
 import { animate } from "motion";
 import { LandingActionButton } from "@/components/landing/LandingActionButton";
-import { LandingGlowTag } from "@/components/landing/LandingGlowTag";
 import { LandingReveal } from "@/components/landing/LandingReveal";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
-import type { AccountPlanUsageSnapshot } from "@/lib/plans/accountPlanUsage";
 import {
   buildConfigCheckoutPath,
-  formatPlanUsageLimit,
   getAllPlanPricingDefinitions,
   getAvailableBillingPeriodsForPlan,
+  isPlanCode,
   type PlanBillingPeriodCode,
+  type PlanCode,
   type PlanPricingDefinition,
 } from "@/lib/plans/catalog";
 
 type CurrentPlanSnapshot = {
   planCode: string;
-  planName: string;
   status: "inactive" | "trial" | "active" | "expired";
-  billingCycleDays: number;
-  maxLicensedServers: number;
-  expiresAt: string | null;
 };
 
 type Props = {
-  displayName: string;
   currentPlan: CurrentPlanSnapshot | null;
-  usage: AccountPlanUsageSnapshot;
-  reason?: string | null;
 };
 
 const PLAN_FEATURE_ICON_SOURCES = [
@@ -51,60 +41,37 @@ function formatMoney(amount: number, currency = "BRL") {
   }).format(Math.round(amount * 100) / 100);
 }
 
-function formatDateLabel(value: string | null) {
-  if (!value) return "Sem data definida";
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) return "Sem data definida";
-  return new Intl.DateTimeFormat("pt-BR", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  }).format(new Date(parsed));
-}
-
 function resolveInitialBillingPeriodCode(
   currentPlan: CurrentPlanSnapshot | null,
 ): PlanBillingPeriodCode {
   if (!currentPlan || currentPlan.planCode === "basic") return "monthly";
-  if (currentPlan.billingCycleDays === 90) return "quarterly";
-  if (currentPlan.billingCycleDays === 180) return "semiannual";
-  if (currentPlan.billingCycleDays === 365) return "annual";
   return "monthly";
 }
 
-function resolveCycleLabel(currentPlan: CurrentPlanSnapshot | null) {
-  if (!currentPlan) return "Escolha um plano";
-  if (currentPlan.planCode === "basic") return "Teste de 7 dias";
-  if (currentPlan.billingCycleDays === 90) return "Trimestral";
-  if (currentPlan.billingCycleDays === 180) return "Semestral";
-  if (currentPlan.billingCycleDays === 365) return "Anual";
-  return "Mensal";
-}
-
-function resolveStatusLabel(status: CurrentPlanSnapshot["status"] | null) {
-  if (status === "active") return "Ativo";
-  if (status === "trial") return "Teste ativo";
-  if (status === "expired") return "Expirado";
-  return "Sem assinatura";
-}
-
-function resolveStatusClass(status: CurrentPlanSnapshot["status"] | null) {
-  if (status === "active") return "border-[rgba(0,98,255,0.32)] bg-[rgba(0,98,255,0.12)] text-[#8CB7FF]";
-  if (status === "trial") return "border-[rgba(70,166,110,0.28)] bg-[rgba(70,166,110,0.12)] text-[#98D7AF]";
-  if (status === "expired") return "border-[rgba(242,200,35,0.28)] bg-[rgba(242,200,35,0.12)] text-[#E9D06B]";
-  return "border-[#1A1A1A] bg-[#101010] text-[#8B8B8B]";
-}
-
-function matchesCurrentPlan(currentPlan: CurrentPlanSnapshot | null, plan: PlanPricingDefinition) {
-  return Boolean(currentPlan && currentPlan.planCode === plan.code);
-}
-
-function isActiveCurrentPlan(currentPlan: CurrentPlanSnapshot | null, plan: PlanPricingDefinition) {
+function isCurrentPlan(
+  currentPlan: CurrentPlanSnapshot | null,
+  plan: PlanPricingDefinition,
+) {
   return Boolean(
     currentPlan &&
       currentPlan.planCode === plan.code &&
       (currentPlan.status === "active" || currentPlan.status === "trial"),
   );
+}
+
+const PLAN_RECOMMENDATION_ORDER: PlanCode[] = ["basic", "pro", "ultra", "master"];
+
+function resolveRecommendedPlanCode(currentPlan: CurrentPlanSnapshot | null): PlanCode {
+  if (!currentPlan) return "pro";
+  const normalizedPlanCode = currentPlan.planCode.trim().toLowerCase();
+  if (!isPlanCode(normalizedPlanCode)) return "pro";
+
+  const currentIndex = PLAN_RECOMMENDATION_ORDER.indexOf(normalizedPlanCode);
+  if (currentIndex < 0) return "pro";
+
+  return PLAN_RECOMMENDATION_ORDER[
+    Math.min(currentIndex + 1, PLAN_RECOMMENDATION_ORDER.length - 1)
+  ];
 }
 
 function AnimatedMoneyAmount({
@@ -122,6 +89,7 @@ function AnimatedMoneyAmount({
   useEffect(() => {
     const node = spanRef.current;
     if (!node) return;
+
     const controls = animate(currentValueRef.current, value, {
       type: "spring",
       stiffness: 240,
@@ -131,15 +99,29 @@ function AnimatedMoneyAmount({
         node.textContent = formatMoney(latest, currency);
       },
     });
+
     currentValueRef.current = value;
-    return () => controls.stop();
+    return () => {
+      controls.stop();
+    };
   }, [currency, value]);
 
-  return <span ref={spanRef} className={className}>{formatMoney(value, currency)}</span>;
+  return (
+    <span ref={spanRef} className={className}>
+      {formatMoney(value, currency)}
+    </span>
+  );
 }
 
-function BillingPeriodSwitcher({ value, onChange }: { value: PlanBillingPeriodCode; onChange: (value: PlanBillingPeriodCode) => void; }) {
+function BillingPeriodSwitcher({
+  value,
+  onChange,
+}: {
+  value: PlanBillingPeriodCode;
+  onChange: (value: PlanBillingPeriodCode) => void;
+}) {
   const periods = getAvailableBillingPeriodsForPlan("pro");
+
   return (
     <div className="mx-auto inline-flex flex-wrap justify-center gap-[8px] rounded-full border border-[rgba(255,255,255,0.08)] bg-[rgba(10,10,10,0.92)] p-[6px] shadow-[0_20px_60px_rgba(0,0,0,0.26)]">
       {periods.map((period) => {
@@ -174,205 +156,527 @@ function PlanCta({
   pendingKey: string | null;
   onStartNavigation: (key: string) => void;
 }) {
-  const isCurrent = isActiveCurrentPlan(currentPlan, plan);
+  const current = isCurrentPlan(currentPlan, plan);
   const key = `${plan.code}:${plan.billingPeriodCode}`;
-  const href = `${buildConfigCheckoutPath({ planCode: plan.code, billingPeriodCode: plan.billingPeriodCode })}?fresh=1&source=servers-plans`;
+  const href = `${buildConfigCheckoutPath({
+    planCode: plan.code,
+    billingPeriodCode: plan.billingPeriodCode,
+  })}?fresh=1&source=servers-plans`;
+
   return (
     <LandingActionButton
-      href={isCurrent ? undefined : href}
+      href={current ? undefined : href}
       variant="light"
       className="mt-[20px] h-[50px] w-full rounded-[12px] px-6 text-[16px]"
-      disabled={isCurrent}
+      disabled={current}
       onClick={() => {
-        if (!isCurrent) onStartNavigation(key);
+        if (current) return;
+        onStartNavigation(key);
       }}
     >
-      {isCurrent ? "Plano atual" : pendingKey === key ? <ButtonLoader size={18} colorClassName="text-[#2B2B2B]" /> : "Escolher plano"}
+      {current ? (
+        "Plano atual"
+      ) : pendingKey === key ? (
+        <ButtonLoader size={18} colorClassName="text-[#2B2B2B]" />
+      ) : (
+        "Escolher plano"
+      )}
     </LandingActionButton>
   );
 }
 
-function PlanCard({
+function OfferPlanCard({
   plan,
+  delay,
+  recommendedPlanCode,
   currentPlan,
   pendingKey,
   onStartNavigation,
   compact = false,
+  reveal = false,
 }: {
   plan: PlanPricingDefinition;
+  delay?: number;
+  recommendedPlanCode: PlanCode;
   currentPlan: CurrentPlanSnapshot | null;
   pendingKey: string | null;
   onStartNavigation: (key: string) => void;
   compact?: boolean;
+  reveal?: boolean;
 }) {
-  const currentBadge = matchesCurrentPlan(currentPlan, plan)
-    ? currentPlan?.status === "expired"
-      ? "ULTIMO PLANO"
-      : "PLANO ATUAL"
-    : null;
+  const isRecommended = plan.code === recommendedPlanCode;
+  const cardBodyClass =
+    "relative z-20 flex h-full flex-col items-start overflow-hidden rounded-[24px] bg-[#0A0A0A] px-[20px] pb-[18px] pt-[20px] text-left";
 
-  return (
-    <article className={`relative overflow-hidden rounded-[24px] border ${matchesCurrentPlan(currentPlan, plan) ? "border-[rgba(0,98,255,0.26)] bg-[#090D14]" : "border-[#101010] bg-[#0A0A0A]"} px-[20px] pb-[18px] pt-[20px]`}>
-      <div className="absolute right-[20px] top-[20px] flex items-center gap-[8px]">
-        {currentBadge ? <span className="rounded-[8px] border border-[rgba(255,255,255,0.08)] bg-[#111111] px-[10px] py-[6px] text-[10px] font-semibold tracking-[0.08em] text-[#CFCFCF]">{currentBadge}</span> : null}
-        <span className="rounded-[8px] bg-[#0062FF] px-[14px] py-[6px] text-[13px] font-medium text-white">{plan.badge}</span>
-      </div>
-
-      <div className="mt-[28px]">
-        <h3 className="max-w-[220px] text-[22px] leading-none font-normal text-[rgba(218,218,218,0.92)]">{plan.name}</h3>
-        <p className="mt-[14px] text-[16px] leading-none text-[rgba(255,255,255,0.2)] line-through">{formatMoney(plan.compareMonthlyAmount, plan.currency)}</p>
-        <div className="mt-[10px] flex items-baseline gap-[4px] pb-[4px]">
-          <AnimatedMoneyAmount value={plan.monthlyAmount} currency={plan.currency} className={`${compact ? "text-[30px]" : "text-[35px]"} leading-[1.02] font-semibold tracking-[-0.04em] text-[rgba(255,255,255,0.5)]`} />
-          <span className={`${compact ? "text-[15px]" : "text-[17px]"} leading-[1.02] font-semibold text-[rgba(255,255,255,0.5)]`}>{plan.billingLabel}</span>
-        </div>
-      </div>
-
-      <div className="mt-[14px] flex min-h-[24px] items-center justify-center rounded-[8px] bg-[#111111] px-[12px] text-center text-[12px] font-medium text-[#0062FF]">
-        {plan.cycleBadge || plan.limitedOffer}
-      </div>
-
-      <PlanCta plan={plan} currentPlan={currentPlan} pendingKey={pendingKey} onStartNavigation={onStartNavigation} />
-
-      {!compact ? (
+  const content = (
+    <div className="relative w-full max-w-[372px] justify-self-center min-[1580px]:max-w-none">
+      {isRecommended ? (
         <>
-          <p className="mt-[16px] min-h-[48px] text-[13px] leading-[1.22] text-[rgba(218,218,218,0.3)]">{plan.description}</p>
-          <div className="mt-[18px] h-px w-full bg-[rgba(255,255,255,0.04)]" />
-          <div className="mt-[18px] flex flex-col gap-[14px]">
-            {plan.features.map((feature, featureIndex) => (
-              <div key={`${plan.name}-${featureIndex}`} className="flex items-center gap-[10px]">
-                <Image src={PLAN_FEATURE_ICON_SOURCES[featureIndex] ?? PLAN_FEATURE_ICON_SOURCES[0]} alt="" width={16} height={16} className="h-[16px] w-[16px] object-contain" draggable={false} />
-                <span className="text-[14px] leading-none font-medium text-[rgba(218,218,218,0.34)]">{feature}</span>
-              </div>
-            ))}
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-10 hidden h-[304px] rounded-[25px] bg-[#0062FF] min-[1580px]:block min-[1580px]:top-[-43px]" />
+          <div className="absolute inset-x-0 top-0 z-30 hidden h-[45px] items-center justify-center px-[20px] text-center text-[13px] leading-none font-medium tracking-[0.02em] text-white min-[1580px]:flex min-[1580px]:top-[-43px]">
+            RECOMENDADO
           </div>
+          <div className="pointer-events-none absolute left-0 z-[25] hidden h-[26px] w-[26px] rounded-tl-[24px] border-l-[2px] border-t-[2px] border-[#0062FF] min-[1580px]:block min-[1580px]:-top-[4px]" />
+          <div className="pointer-events-none absolute right-0 z-[25] hidden h-[26px] w-[26px] rounded-tr-[24px] border-r-[2px] border-t-[2px] border-[#0062FF] min-[1580px]:block min-[1580px]:-top-[4px]" />
         </>
       ) : null}
-    </article>
+
+      <article
+        className={`${cardBodyClass} ${
+          isRecommended
+            ? "shadow-[inset_0_0_0_2px_#0062FF] min-[1580px]:shadow-[inset_2px_0_0_#0062FF,inset_-2px_0_0_#0062FF,inset_0_-2px_0_#0062FF]"
+            : ""
+        }`}
+      >
+        <div className="absolute right-[20px] top-[20px] rounded-[8px] bg-[#0062FF] px-[14px] py-[6px] text-[13px] leading-none font-medium text-white">
+          {plan.badge}
+        </div>
+
+        <div className="mt-[28px] flex w-full flex-col items-start text-left">
+          <h3 className="w-full max-w-[220px] text-[22px] leading-none font-normal text-[rgba(218,218,218,0.92)]">
+            {plan.name}
+          </h3>
+
+          <p className="mt-[14px] w-full text-[16px] leading-none font-normal text-[rgba(255,255,255,0.2)] line-through">
+            <AnimatedMoneyAmount
+              value={plan.compareMonthlyAmount}
+              currency={plan.currency}
+            />
+          </p>
+
+          <div className="mt-[10px] flex w-full items-baseline justify-start gap-[4px] overflow-visible pb-[4px] text-left">
+            <AnimatedMoneyAmount
+              value={plan.monthlyAmount}
+              currency={plan.currency}
+              className={`whitespace-nowrap leading-[1.02] font-semibold tracking-[-0.04em] text-[rgba(255,255,255,0.5)] ${
+                compact ? "text-[30px]" : "text-[35px]"
+              }`}
+            />
+            <span
+              className={`whitespace-nowrap leading-[1.02] font-semibold text-[rgba(255,255,255,0.5)] ${
+                compact ? "text-[15px]" : "text-[17px]"
+              }`}
+            >
+              {plan.billingLabel}
+            </span>
+          </div>
+        </div>
+
+        <div className="mt-[14px] flex min-h-[24px] w-full items-center justify-center rounded-[8px] bg-[#111111] px-[12px] text-center text-[12px] leading-none font-medium text-[#0062FF]">
+          {plan.cycleBadge || plan.limitedOffer}
+        </div>
+
+        <PlanCta
+          plan={plan}
+          currentPlan={currentPlan}
+          pendingKey={pendingKey}
+          onStartNavigation={onStartNavigation}
+        />
+
+        {!compact ? (
+          <>
+            <p className="mt-[16px] min-h-[48px] text-[13px] leading-[1.22] font-normal text-[rgba(218,218,218,0.3)]">
+              {plan.description}
+            </p>
+
+            <div className="mt-[18px] h-px w-full bg-[rgba(255,255,255,0.04)]" />
+
+            <div className="mt-[18px] flex flex-col gap-[14px]">
+              {plan.features.map((feature, featureIndex) => (
+                <div
+                  key={`${plan.name}-feature-${featureIndex}`}
+                  className="flex items-center gap-[10px]"
+                >
+                  <Image
+                    src={
+                      PLAN_FEATURE_ICON_SOURCES[featureIndex] ??
+                      PLAN_FEATURE_ICON_SOURCES[0]
+                    }
+                    alt=""
+                    width={16}
+                    height={16}
+                    className="h-[16px] w-[16px] select-none object-contain"
+                    draggable={false}
+                  />
+                  <span className="text-[14px] leading-none font-medium text-[rgba(218,218,218,0.34)]">
+                    {feature}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : null}
+      </article>
+    </div>
+  );
+
+  if (!reveal) {
+    return content;
+  }
+
+  return <LandingReveal delay={delay || 0}>{content}</LandingReveal>;
+}
+
+type ComparisonPlanCode = "basic" | "pro" | "ultra" | "master";
+type ComparisonCell = { type: "text"; value: string } | { type: "check" } | { type: "cross" };
+type ComparisonRow = {
+  label: string;
+  tooltip: string;
+  values: Record<ComparisonPlanCode, ComparisonCell>;
+};
+
+const COMPARISON_PLAN_ORDER: ComparisonPlanCode[] = [
+  "basic",
+  "pro",
+  "ultra",
+  "master",
+];
+
+const UNLIMITED_LIMIT = 999999;
+
+function formatInt(value: number) {
+  return new Intl.NumberFormat("pt-BR").format(Math.max(0, Math.trunc(value)));
+}
+
+function formatEntitlement(value: number, suffix = "") {
+  if (value >= UNLIMITED_LIMIT) {
+    return "Ilimitado";
+  }
+
+  const amount = formatInt(value);
+  if (!suffix) return amount;
+  return `${amount} ${suffix}`;
+}
+
+function buildComparisonSections(plans: PlanPricingDefinition[]) {
+  const plansByCode = new Map<ComparisonPlanCode, PlanPricingDefinition>();
+  for (const plan of plans) {
+    if (
+      plan.code === "basic" ||
+      plan.code === "pro" ||
+      plan.code === "ultra" ||
+      plan.code === "master"
+    ) {
+      plansByCode.set(plan.code, plan);
+    }
+  }
+
+  const valuesByPlan = (
+    resolver: (plan: PlanPricingDefinition) => ComparisonCell,
+  ): Record<ComparisonPlanCode, ComparisonCell> => {
+    return {
+      basic: plansByCode.get("basic")
+        ? resolver(plansByCode.get("basic") as PlanPricingDefinition)
+        : { type: "text", value: "-" },
+      pro: plansByCode.get("pro")
+        ? resolver(plansByCode.get("pro") as PlanPricingDefinition)
+        : { type: "text", value: "-" },
+      ultra: plansByCode.get("ultra")
+        ? resolver(plansByCode.get("ultra") as PlanPricingDefinition)
+        : { type: "text", value: "-" },
+      master: plansByCode.get("master")
+        ? resolver(plansByCode.get("master") as PlanPricingDefinition)
+        : { type: "text", value: "-" },
+    };
+  };
+
+  const sections: Array<{ title: string; rows: ComparisonRow[] }> = [
+    {
+      title: "Limites reais da conta",
+      rows: [
+        {
+          label: "Servidores licenciados",
+          tooltip: "Quantidade maxima de servidores que sua conta pode manter ativos ao mesmo tempo.",
+          values: valuesByPlan((plan) => ({
+            type: "text",
+            value: formatEntitlement(plan.entitlements.maxLicensedServers, "servidor(es)"),
+          })),
+        },
+        {
+          label: "Tickets ativos simultaneos",
+          tooltip: "Numero de tickets que podem ficar abertos ao mesmo tempo em todos os servidores da conta.",
+          values: valuesByPlan((plan) => ({
+            type: "text",
+            value: formatEntitlement(plan.entitlements.maxActiveTickets, "ticket(s)"),
+          })),
+        },
+        {
+          label: "Automacoes liberadas",
+          tooltip: "Limite de automacoes que voce pode habilitar por conta com esse plano.",
+          values: valuesByPlan((plan) => ({
+            type: "text",
+            value: formatEntitlement(plan.entitlements.maxAutomations, "automacao(oes)"),
+          })),
+        },
+        {
+          label: "Acoes por mes",
+          tooltip: "Volume mensal de acoes processadas pelo sistema de automacao e operacao da conta.",
+          values: valuesByPlan((plan) => ({
+            type: "text",
+            value: formatEntitlement(plan.entitlements.maxMonthlyActions, "acoes"),
+          })),
+        },
+      ],
+    },
+    {
+      title: "Cobranca e vigencia",
+      rows: [
+        {
+          label: "Valor mensal no periodo",
+          tooltip: "Preco medio por mes considerando o periodo atualmente selecionado.",
+          values: valuesByPlan((plan) => ({
+            type: "text",
+            value: formatMoney(plan.monthlyAmount, plan.currency),
+          })),
+        },
+        {
+          label: "Valor total no checkout",
+          tooltip: "Valor total cobrado no checkout para fechar esse ciclo de pagamento.",
+          values: valuesByPlan((plan) => ({
+            type: "text",
+            value: formatMoney(plan.totalAmount, plan.currency),
+          })),
+        },
+        {
+          label: "Ciclo atual do checkout",
+          tooltip: "Duracao contratada no checkout (mensal, trimestral, semestral ou anual).",
+          values: valuesByPlan((plan) => ({
+            type: "text",
+            value: plan.checkoutPeriodLabel,
+          })),
+        },
+        {
+          label: "Plano de teste gratuito",
+          tooltip: "Indica se o plano pode ser ativado gratuitamente em modo de teste.",
+          values: valuesByPlan((plan) =>
+            plan.isTrial ? { type: "check" } : { type: "cross" },
+          ),
+        },
+      ],
+    },
+  ];
+
+  return sections;
+}
+
+function CheckIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      className="h-[18px] w-[18px] text-[rgba(218,218,218,0.74)]"
+      fill="none"
+    >
+      <circle cx="8" cy="8" r="6.4" stroke="currentColor" strokeWidth="1.4" />
+      <path
+        d="M4.7 8.25L7.1 10.6L11.35 6.2"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 
-function ComparisonCell({ value, highlighted }: { value: string | boolean; highlighted: boolean; }) {
-  if (typeof value === "boolean") {
-    return <div className="flex min-h-[72px] items-center justify-center px-[14px] py-[18px]">{value ? <Check className={`h-[18px] w-[18px] ${highlighted ? "text-[#8CB7FF]" : "text-[#6DA9FF]"}`} strokeWidth={2.35} /> : <Minus className="h-[18px] w-[18px] text-[#555555]" strokeWidth={2.2} />}</div>;
-  }
-  return <div className="flex min-h-[72px] items-center justify-center px-[14px] py-[18px] text-center"><span className={`text-[14px] leading-[1.5] ${highlighted ? "font-semibold text-[#E8F1FF]" : "text-[#AEB4BF]"}`}>{value}</span></div>;
+function CrossIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      className="h-[18px] w-[18px] text-[rgba(218,218,218,0.56)]"
+      fill="none"
+    >
+      <circle cx="8" cy="8" r="6.4" stroke="currentColor" strokeWidth="1.4" />
+      <path
+        d="M5.4 5.4L10.6 10.6M10.6 5.4L5.4 10.6"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
 }
 
-export function ServersPlansUpgradePage({ displayName, currentPlan, usage, reason }: Props) {
-  const [selectedBillingPeriodCode, setSelectedBillingPeriodCode] = useState<PlanBillingPeriodCode>(() => resolveInitialBillingPeriodCode(currentPlan));
-  const [pendingKey, setPendingKey] = useState<string | null>(null);
-  const plans = useMemo(() => getAllPlanPricingDefinitions(selectedBillingPeriodCode), [selectedBillingPeriodCode]);
-  const limitReached = usage.hasReachedLicensedServersLimit;
-  const heroTitle = currentPlan ? (limitReached || reason === "server-limit" ? "Seu plano atual chegou ao limite de servidores" : "Atualize os limites da sua conta quando precisar escalar") : "Escolha o plano ideal para ativar sua conta";
+function InfoIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      className="h-[14px] w-[14px] text-[rgba(218,218,218,0.38)]"
+      fill="none"
+    >
+      <circle cx="8" cy="8" r="6.6" stroke="currentColor" strokeWidth="1.2" />
+      <path
+        d="M8 7.2V11"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+      <circle cx="8" cy="4.8" r="1" fill="currentColor" />
+    </svg>
+  );
+}
 
-  const comparisonRows = [
-    { label: "Servidores licenciados", helper: "Quantidade de servidores ativos por conta.", values: plans.map((plan) => formatPlanUsageLimit(plan.entitlements.maxLicensedServers)) },
-    { label: "Tickets ativos", helper: "Capacidade simultanea de tickets.", values: plans.map((plan) => formatPlanUsageLimit(plan.entitlements.maxActiveTickets)) },
-    { label: "Automacoes liberadas", helper: "Automacoes disponiveis no plano.", values: plans.map((plan) => formatPlanUsageLimit(plan.entitlements.maxAutomations)) },
-    { label: "Acoes mensais", helper: "Volume mensal agregado da conta.", values: plans.map((plan) => formatPlanUsageLimit(plan.entitlements.maxMonthlyActions)) },
-    { label: "Multi-servidor", helper: "Se o plano cresce bem para mais de um servidor.", values: plans.map((plan) => plan.entitlements.maxLicensedServers > 1) },
-    { label: "Periodo do ciclo", helper: "Duracao da cobranca no checkout atual.", values: plans.map((plan) => plan.isTrial ? "Teste de 7 dias" : plan.billingPeriodLabel) },
-    { label: "Valor do ciclo", helper: "Valor total desse checkout.", values: plans.map((plan) => formatMoney(plan.totalAmount, plan.currency)) },
-    { label: "Melhor para", helper: "Perfil mais indicado para cada camada.", values: plans.map((plan) => plan.code === "basic" ? "Testes iniciais" : plan.code === "pro" ? "Operacao enxuta" : plan.code === "ultra" ? "Times multi-servidor" : "Escala maxima") },
-  ];
+function renderComparisonCell(cell: ComparisonCell) {
+  if (cell.type === "check") return <CheckIcon />;
+  if (cell.type === "cross") return <CrossIcon />;
+  return (
+    <span className="text-[14px] leading-none font-medium text-[rgba(218,218,218,0.68)]">
+      {cell.value}
+    </span>
+  );
+}
+
+function PlanComparisonTable({ plans }: { plans: PlanPricingDefinition[] }) {
+  const [openTooltipKey, setOpenTooltipKey] = useState<string | null>(null);
+  const sections = useMemo(() => buildComparisonSections(plans), [plans]);
+  const planMap = useMemo(() => {
+    const map = new Map<string, PlanPricingDefinition>();
+    for (const plan of plans) map.set(plan.code, plan);
+    return map;
+  }, [plans]);
+
+  const columns = COMPARISON_PLAN_ORDER.map((code) => {
+    const plan = planMap.get(code);
+    return {
+      code,
+      label: plan?.name || code,
+    };
+  });
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[#050505] text-white">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(0,98,255,0.16)_0%,transparent_34%),radial-gradient(circle_at_top_right,rgba(255,255,255,0.06)_0%,transparent_30%)]" />
-      <div className="relative z-10 mx-auto w-full max-w-[1582px] px-[18px] pb-[120px] pt-[28px] md:px-[28px] md:pt-[38px]">
-        <LandingReveal delay={70}>
-          <Link href="/servers" className="inline-flex items-center gap-[10px] rounded-full border border-[#151515] bg-[#0A0A0A] px-[16px] py-[12px] text-[13px] font-medium text-[#C8C8C8] transition-colors hover:border-[#232323] hover:bg-[#101010] hover:text-[#F1F1F1]">
-            <ArrowLeft className="h-[16px] w-[16px]" strokeWidth={2.1} />
-            Voltar para servidores
-          </Link>
-        </LandingReveal>
-
-        <div className="mt-[24px] grid gap-[18px] xl:grid-cols-[minmax(0,1.2fr)_420px]">
-          <LandingReveal delay={120}>
-            <div className="rounded-[30px] border border-[#101010] bg-[rgba(10,10,10,0.92)] px-[24px] py-[28px] shadow-[0_28px_90px_rgba(0,0,0,0.42)]">
-              <LandingGlowTag className="px-[20px]">{limitReached || reason === "server-limit" ? "Limite da conta atingido" : "Planos da conta"}</LandingGlowTag>
-              <h1 className="mt-[18px] max-w-[860px] bg-[linear-gradient(90deg,#F2F2F2_0%,#BFC9D6_100%)] bg-clip-text text-[34px] leading-[1.04] font-normal tracking-[-0.05em] text-transparent md:text-[48px]">{heroTitle}</h1>
-              <p className="mt-[16px] max-w-[820px] text-[15px] leading-[1.7] text-[#7E7E7E]">
-                {currentPlan
-                  ? limitReached || reason === "server-limit"
-                    ? `Sua conta de ${displayName} ja usa ${usage.licensedServersCount} de ${usage.maxLicensedServers} servidor(es) liberados no ${currentPlan.planName}. Para adicionar outro servidor, primeiro atualize o plano da conta.`
-                    : "O crescimento agora acontece na conta. Quando voce precisar de mais capacidade, escolha um plano acima e continue expandindo sem voltar para o onboarding inicial."
-                  : "Escolha um plano para ativar a conta e centralizar os limites de todos os servidores no mesmo fluxo."}
-              </p>
-            </div>
-          </LandingReveal>
-
-          <LandingReveal delay={180}>
-            <div className="rounded-[30px] border border-[#101010] bg-[rgba(10,10,10,0.92)] p-[22px] shadow-[0_28px_90px_rgba(0,0,0,0.42)]">
-              <div className="flex items-start justify-between gap-[12px]">
-                <div>
-                  <p className="text-[11px] uppercase tracking-[0.16em] text-[#666666]">Seu plano atual</p>
-                  <h2 className="mt-[10px] text-[28px] leading-none font-medium tracking-[-0.05em] text-[#EFEFEF]">{currentPlan?.planName || "Nenhum plano ativo"}</h2>
-                </div>
-                <span className={`inline-flex items-center justify-center rounded-full border px-[12px] py-[8px] text-[11px] font-semibold tracking-[0.08em] ${resolveStatusClass(currentPlan?.status || null)}`}>{resolveStatusLabel(currentPlan?.status || null)}</span>
+    <div className="mx-auto mt-[72px] w-full max-w-[1582px] px-[20px] min-[1580px]:px-0">
+      <div className="overflow-x-auto pb-[8px]">
+        <div className="min-w-[940px]">
+          <div className="grid grid-cols-[minmax(240px,1.25fr)_repeat(4,minmax(160px,1fr))] border-b border-[rgba(255,255,255,0.06)] pb-[14px]">
+            <div />
+            {columns.map((column) => (
+              <div
+                key={column.code}
+                className="text-center text-[13px] leading-none font-semibold text-[rgba(218,218,218,0.84)]"
+              >
+                {column.label}
               </div>
-              <div className="mt-[18px] grid gap-[10px] sm:grid-cols-2">
-                <div className="rounded-[18px] border border-[#131313] bg-[#080808] px-[16px] py-[16px]"><p className="text-[11px] uppercase tracking-[0.16em] text-[#666666]">Servidores em uso</p><p className="mt-[10px] text-[18px] leading-none font-medium tracking-[-0.04em] text-[#E6E6E6]">{usage.licensedServersCount}/{Math.max(usage.maxLicensedServers, 1)}</p></div>
-                <div className="rounded-[18px] border border-[#131313] bg-[#080808] px-[16px] py-[16px]"><p className="text-[11px] uppercase tracking-[0.16em] text-[#666666]">Ciclo atual</p><p className="mt-[10px] text-[18px] leading-none font-medium tracking-[-0.04em] text-[#E6E6E6]">{resolveCycleLabel(currentPlan)}</p></div>
-                <div className="rounded-[18px] border border-[#131313] bg-[#080808] px-[16px] py-[16px]"><p className="text-[11px] uppercase tracking-[0.16em] text-[#666666]">Expira em</p><p className="mt-[10px] text-[18px] leading-none font-medium tracking-[-0.04em] text-[#E6E6E6]">{formatDateLabel(currentPlan?.expiresAt || null)}</p></div>
-                <div className="rounded-[18px] border border-[#131313] bg-[#080808] px-[16px] py-[16px]"><p className="text-[11px] uppercase tracking-[0.16em] text-[#666666]">Espaco restante</p><p className="mt-[10px] text-[18px] leading-none font-medium tracking-[-0.04em] text-[#E6E6E6]">{usage.remainingLicensedServers}</p></div>
-              </div>
-            </div>
-          </LandingReveal>
-        </div>
-
-        <section className="mt-[62px]">
-          <LandingReveal delay={220}>
-            <h2 className="mx-auto max-w-[1124px] bg-[linear-gradient(90deg,#DADADA_0%,#C1C1C1_100%)] bg-clip-text text-center text-[34px] leading-[1.08] font-normal tracking-[-0.04em] text-transparent sm:text-[40px] md:text-[46px] lg:text-[50px]">Aproveite nossas maiores ofertas</h2>
-          </LandingReveal>
-          <LandingReveal delay={300}>
-            <div className="relative z-40 mt-[28px] flex w-full justify-center">
-              <BillingPeriodSwitcher value={selectedBillingPeriodCode} onChange={setSelectedBillingPeriodCode} />
-            </div>
-          </LandingReveal>
-          <div className="mx-auto mt-[32px] grid w-full max-w-[372px] grid-cols-1 gap-x-[12px] gap-y-[26px] min-[900px]:max-w-[756px] min-[900px]:grid-cols-2 min-[1580px]:max-w-none min-[1580px]:grid-cols-4">
-            {plans.map((plan) => <PlanCard key={`${plan.code}-${plan.billingPeriodCode}`} plan={plan} currentPlan={currentPlan} pendingKey={pendingKey} onStartNavigation={setPendingKey} />)}
+            ))}
           </div>
-        </section>
 
-        <section className="mt-[84px]">
-          <LandingReveal delay={430}>
-            <div className="max-w-[920px]">
-              <LandingGlowTag className="px-[20px]">Compare os limites da conta</LandingGlowTag>
-              <h2 className="mt-[18px] text-[30px] leading-[1.08] font-normal tracking-[-0.05em] text-[#EFEFEF] md:text-[40px]">Veja exatamente o que muda quando voce sobe de plano</h2>
-              <p className="mt-[14px] text-[15px] leading-[1.7] text-[#7E7E7E]">Nesta tela os cards continuam no mesmo visual, e ao descer voce continua vendo a parte principal de cada plano enquanto compara os limites da conta.</p>
-            </div>
-          </LandingReveal>
+          {sections.map((section) => (
+            <div key={section.title} className="mt-[44px]">
+              <h2 className="text-[26px] leading-none font-semibold tracking-[-0.02em] text-[rgba(218,218,218,0.92)]">
+                {section.title}
+              </h2>
+              <div className="mt-[18px] h-px w-full bg-[rgba(255,255,255,0.06)]" />
 
-          <div className="mt-[28px] overflow-x-auto pb-[8px]">
-            <div className="min-w-[1220px]">
-              <div className="sticky top-[18px] z-[40] grid grid-cols-[290px_repeat(4,minmax(0,1fr))] gap-[12px] bg-[linear-gradient(180deg,rgba(5,5,5,0.98)_0%,rgba(5,5,5,0.88)_100%)] pb-[16px] pt-[8px] backdrop-blur-[16px]">
-                <div className="rounded-[24px] border border-[#101010] bg-[#090909] px-[18px] py-[18px]">
-                  <p className="text-[11px] uppercase tracking-[0.16em] text-[#666666]">Resumo da conta</p>
-                  <h3 className="mt-[10px] text-[24px] leading-none font-medium tracking-[-0.05em] text-[#ECECEC]">{usage.licensedServersCount}/{Math.max(usage.maxLicensedServers, 1)}</h3>
-                  <p className="mt-[12px] text-[13px] leading-[1.6] text-[#7C7C7C]">Servidores licenciados em uso no plano atual. Quando o numero encosta no limite, o proximo servidor exige upgrade.</p>
-                </div>
-                {plans.map((plan) => <PlanCard key={`compact-${plan.code}-${plan.billingPeriodCode}`} plan={plan} currentPlan={currentPlan} pendingKey={pendingKey} onStartNavigation={setPendingKey} compact />)}
-              </div>
-
-              <div className="mt-[8px] overflow-hidden rounded-[28px] border border-[#111111] bg-[#090909]">
-                {comparisonRows.map((row, rowIndex) => (
-                  <div key={row.label} className={`grid grid-cols-[290px_repeat(4,minmax(0,1fr))] ${rowIndex === comparisonRows.length - 1 ? "" : "border-b border-[#111111]"}`}>
-                    <div className="border-r border-[#111111] px-[24px] py-[18px]">
-                      <p className="text-[15px] font-medium text-[#E7E7E7]">{row.label}</p>
-                      <p className="mt-[8px] text-[12px] leading-[1.6] text-[#6F6F6F]">{row.helper}</p>
+              <div className="mt-[2px]">
+                {section.rows.map((row) => (
+                  <div
+                    key={row.label}
+                    className="grid grid-cols-[minmax(240px,1.25fr)_repeat(4,minmax(160px,1fr))] border-b border-[rgba(255,255,255,0.06)] py-[16px]"
+                  >
+                    <div className="flex items-center gap-[10px] pr-[14px] text-[15px] leading-none font-semibold text-[rgba(218,218,218,0.88)]">
+                      <span>{row.label}</span>
+                      <div className="relative">
+                        <button
+                          type="button"
+                          aria-label={`Informacoes sobre ${row.label}`}
+                          onMouseEnter={() => setOpenTooltipKey(row.label)}
+                          onMouseLeave={() => setOpenTooltipKey((current) => (current === row.label ? null : current))}
+                          onFocus={() => setOpenTooltipKey(row.label)}
+                          onBlur={() => setOpenTooltipKey((current) => (current === row.label ? null : current))}
+                          className="inline-flex h-[18px] w-[18px] items-center justify-center rounded-full transition-colors duration-150 hover:bg-[rgba(255,255,255,0.05)] focus-visible:bg-[rgba(255,255,255,0.05)] focus-visible:outline-none"
+                        >
+                          <InfoIcon />
+                        </button>
+                        <div
+                          className={`pointer-events-none absolute left-full top-1/2 z-30 ml-[10px] w-[280px] -translate-y-1/2 rounded-[12px] border border-[rgba(255,255,255,0.1)] bg-[rgba(10,10,10,0.95)] p-[12px] text-[12px] leading-[1.45] font-medium text-[rgba(218,218,218,0.84)] shadow-[0_18px_40px_rgba(0,0,0,0.45)] transition-all duration-150 ${
+                            openTooltipKey === row.label
+                              ? "translate-x-0 opacity-100"
+                              : "pointer-events-none translate-x-[-4px] opacity-0"
+                          }`}
+                        >
+                          <span
+                            aria-hidden="true"
+                            className="absolute left-0 top-1/2 h-[10px] w-[10px] -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-l border-[rgba(255,255,255,0.1)] bg-[rgba(10,10,10,0.95)]"
+                          />
+                          {row.tooltip}
+                        </div>
+                      </div>
                     </div>
-                    {row.values.map((value, index) => (
-                      <div key={`${row.label}-${plans[index]?.code}`} className={`border-r border-[#111111] last:border-r-0 ${matchesCurrentPlan(currentPlan, plans[index]) ? "bg-[rgba(0,98,255,0.06)]" : ""}`}>
-                        <ComparisonCell value={value} highlighted={matchesCurrentPlan(currentPlan, plans[index])} />
+
+                    {columns.map((column) => (
+                      <div
+                        key={`${row.label}-${column.code}`}
+                        className="flex items-center justify-center"
+                      >
+                        {renderComparisonCell(row.values[column.code])}
                       </div>
                     ))}
                   </div>
                 ))}
               </div>
             </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function ServersPlansUpgradePage({ currentPlan }: Props) {
+  const [selectedBillingPeriodCode, setSelectedBillingPeriodCode] =
+    useState<PlanBillingPeriodCode>(() =>
+      resolveInitialBillingPeriodCode(currentPlan),
+    );
+  const [pendingKey, setPendingKey] = useState<string | null>(null);
+
+  const plans = useMemo(
+    () => getAllPlanPricingDefinitions(selectedBillingPeriodCode),
+    [selectedBillingPeriodCode],
+  );
+  const recommendedPlanCode = useMemo(
+    () => resolveRecommendedPlanCode(currentPlan),
+    [currentPlan],
+  );
+
+  return (
+    <div className="relative min-h-screen bg-[#050505] text-white">
+      <div className="relative z-10 mx-auto w-full max-w-[1582px] px-0 pb-[120px] pt-[46px] min-[1580px]:pt-[54px]">
+        <LandingReveal delay={120}>
+          <h1 className="mx-auto mt-[18px] max-w-[1124px] bg-[linear-gradient(90deg,#DADADA_0%,#C1C1C1_100%)] bg-clip-text px-[20px] text-center text-[34px] leading-[1.08] font-normal tracking-[-0.04em] text-transparent sm:text-[40px] md:text-[46px] lg:text-[50px] min-[1580px]:px-0">
+            Aproveite nossas maiores ofertas
+          </h1>
+        </LandingReveal>
+
+        <LandingReveal delay={180}>
+          <div className="relative z-40 mt-[26px] flex w-full justify-center px-[20px] min-[1580px]:mt-[30px] min-[1580px]:px-0">
+            <BillingPeriodSwitcher
+              value={selectedBillingPeriodCode}
+              onChange={setSelectedBillingPeriodCode}
+            />
           </div>
-        </section>
+        </LandingReveal>
+
+        <div className="mx-auto mt-[46px] grid w-full max-w-[372px] grid-cols-1 justify-items-center items-start gap-x-[12px] gap-y-[26px] px-[20px] min-[900px]:max-w-[756px] min-[900px]:grid-cols-2 min-[900px]:gap-y-[20px] min-[1580px]:mt-[65px] min-[1580px]:max-w-none min-[1580px]:grid-cols-4 min-[1580px]:justify-items-stretch min-[1580px]:gap-y-[12px] min-[1580px]:px-0">
+          {plans.map((plan, index) => (
+            <OfferPlanCard
+              key={plan.code}
+              plan={plan}
+              delay={240 + index * 90}
+              recommendedPlanCode={recommendedPlanCode}
+              currentPlan={currentPlan}
+              pendingKey={pendingKey}
+              onStartNavigation={setPendingKey}
+              reveal
+            />
+          ))}
+        </div>
+
+        <LandingReveal delay={430}>
+          <div>
+            <PlanComparisonTable plans={plans} />
+          </div>
+        </LandingReveal>
       </div>
     </div>
   );

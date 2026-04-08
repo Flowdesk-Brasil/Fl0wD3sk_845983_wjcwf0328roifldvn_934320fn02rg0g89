@@ -1,7 +1,11 @@
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import type { PlanCode } from "@/lib/plans/catalog";
 import type { UserPlanStateRecord } from "@/lib/plans/state";
-import { EXPIRED_GRACE_MS } from "@/lib/payments/licenseStatus";
+import {
+  EXPIRED_GRACE_MS,
+  getLockedGuildLicenseByGuildId,
+  resolveLatestLicenseCoverageFromApprovedOrders,
+} from "@/lib/payments/licenseStatus";
 
 export type PlanGuildRecord = {
   user_id: number;
@@ -16,6 +20,15 @@ type PlanCoverage = {
   status: PlanGuildLicenseStatus;
   expiresAt: string | null;
   graceExpiresAt: string | null;
+};
+
+type LegacyApprovedGuildOrderRecord = {
+  guild_id: string;
+  user_id: number;
+  paid_at: string | null;
+  created_at: string;
+  plan_code: string | null;
+  plan_billing_cycle_days: number | null;
 };
 
 function parseIsoToMs(value: string | null | undefined) {
@@ -65,34 +78,83 @@ export function isPlanCoverageUsable(status: PlanGuildLicenseStatus) {
   return status === "paid" || status === "expired";
 }
 
-export async function getPlanGuildsForUser(userId: number) {
+async function getLegacyLicensedGuildsForUser(userId: number) {
   const supabase = getSupabaseAdminClientOrThrow();
   const result = await supabase
-    .from("auth_user_plan_guilds")
-    .select("user_id, guild_id, activated_at, created_at")
+    .from("payment_orders")
+    .select(
+      "guild_id, user_id, paid_at, created_at, plan_code, plan_billing_cycle_days",
+    )
     .eq("user_id", userId)
-    .order("activated_at", { ascending: false })
-    .returns<PlanGuildRecord[]>();
+    .eq("status", "approved")
+    .not("guild_id", "is", null)
+    .returns<LegacyApprovedGuildOrderRecord[]>();
+
+  if (result.error) {
+    throw new Error(`Erro ao carregar licencas antigas do usuario: ${result.error.message}`);
+  }
+
+  const ordersByGuild = new Map<string, LegacyApprovedGuildOrderRecord[]>();
+  for (const order of result.data || []) {
+    const guildId = order.guild_id?.trim();
+    if (!guildId) continue;
+    const currentOrders = ordersByGuild.get(guildId) || [];
+    currentOrders.push(order);
+    ordersByGuild.set(guildId, currentOrders);
+  }
+
+  const legacyGuilds = new Map<string, PlanGuildRecord>();
+  for (const [guildId, orders] of ordersByGuild.entries()) {
+    const latestCoverage = resolveLatestLicenseCoverageFromApprovedOrders(orders);
+    if (!latestCoverage || !isPlanCoverageUsable(latestCoverage.status)) {
+      continue;
+    }
+
+    legacyGuilds.set(guildId, {
+      user_id: userId,
+      guild_id: guildId,
+      activated_at: latestCoverage.licenseStartsAt,
+      created_at: latestCoverage.order.created_at,
+    });
+  }
+
+  return legacyGuilds;
+}
+
+export async function getPlanGuildsForUser(userId: number) {
+  const supabase = getSupabaseAdminClientOrThrow();
+  const [result, legacyGuilds] = await Promise.all([
+    supabase
+      .from("auth_user_plan_guilds")
+      .select("user_id, guild_id, activated_at, created_at")
+      .eq("user_id", userId)
+      .order("activated_at", { ascending: false })
+      .returns<PlanGuildRecord[]>(),
+    getLegacyLicensedGuildsForUser(userId),
+  ]);
 
   if (result.error) {
     throw new Error(`Erro ao carregar servidores licenciados: ${result.error.message}`);
   }
 
-  return result.data || [];
+  const mergedGuilds = new Map<string, PlanGuildRecord>();
+  for (const record of result.data || []) {
+    mergedGuilds.set(record.guild_id, record);
+  }
+  for (const [guildId, record] of legacyGuilds.entries()) {
+    if (!mergedGuilds.has(guildId)) {
+      mergedGuilds.set(guildId, record);
+    }
+  }
+
+  return [...mergedGuilds.values()].sort((left, right) => {
+    return parseIsoToMs(right.activated_at) - parseIsoToMs(left.activated_at);
+  });
 }
 
 export async function countPlanGuildsForUser(userId: number) {
-  const supabase = getSupabaseAdminClientOrThrow();
-  const result = await supabase
-    .from("auth_user_plan_guilds")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", userId);
-
-  if (result.error) {
-    throw new Error(`Erro ao contar servidores licenciados: ${result.error.message}`);
-  }
-
-  return result.count || 0;
+  const guilds = await getPlanGuildsForUser(userId);
+  return guilds.length;
 }
 
 export async function getPlanGuildOwnerUserId(guildId: string) {
@@ -107,11 +169,20 @@ export async function getPlanGuildOwnerUserId(guildId: string) {
     throw new Error(`Erro ao consultar licenca do servidor: ${result.error.message}`);
   }
 
-  return result.data
-    ? {
+  if (result.data) {
+    return {
         userId: result.data.user_id,
         activatedAt: result.data.activated_at,
         createdAt: result.data.created_at,
+      };
+  }
+
+  const lockedLicense = await getLockedGuildLicenseByGuildId(guildId);
+  return lockedLicense
+    ? {
+        userId: lockedLicense.userId,
+        activatedAt: lockedLicense.licenseStartsAt,
+        createdAt: lockedLicense.createdAt,
       }
     : null;
 }
@@ -130,7 +201,12 @@ export async function isGuildLicensedForUser(userId: number, guildId: string) {
     throw new Error(`Erro ao validar licenca do servidor: ${result.error.message}`);
   }
 
-  return Boolean(result.data?.id);
+  if (result.data?.id) {
+    return true;
+  }
+
+  const lockedLicense = await getLockedGuildLicenseByGuildId(guildId);
+  return lockedLicense?.userId === userId;
 }
 
 export async function licenseGuildForUser(input: {
@@ -235,4 +311,3 @@ export async function resolveGuildLicenseFromUserPlanState(input: {
 
   return resolveCoverageFromPlanState(input.userPlanState);
 }
-

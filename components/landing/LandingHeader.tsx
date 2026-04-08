@@ -14,6 +14,16 @@ type NavigationItem = {
   hideFirstOnTightDesktop?: boolean;
 };
 
+type LandingHeaderAuthenticatedUser = {
+  username: string;
+  avatarUrl: string | null;
+  href?: string;
+};
+
+type LandingHeaderProps = {
+  authenticatedUser?: LandingHeaderAuthenticatedUser | null;
+};
+
 type DesktopMenuIconName =
   | "ticket"
   | "layers"
@@ -428,7 +438,62 @@ function NavLink({
   );
 }
 
-export function LandingHeader() {
+function truncateHeaderUsername(username: string) {
+  const normalized = username.trim();
+  if (!normalized) return "Conta";
+  const glyphs = Array.from(normalized);
+  if (glyphs.length <= 7) return normalized;
+  return `${glyphs.slice(0, 7).join("")}...`;
+}
+
+function HeaderAccountButton({
+  user,
+  variant,
+  className = "",
+}: {
+  user: LandingHeaderAuthenticatedUser;
+  variant: "dark" | "light";
+  className?: string;
+}) {
+  const trimmedUsername = user.username.trim();
+  const fallbackInitial = trimmedUsername
+    ? Array.from(trimmedUsername)[0]?.toUpperCase() || "F"
+    : "F";
+
+  return (
+    <LandingActionButton
+      href={user.href || "/servers"}
+      variant={variant}
+      className={className}
+    >
+      <span className="inline-flex items-center gap-[10px]">
+        {user.avatarUrl ? (
+          <Image
+            src={user.avatarUrl}
+            alt={trimmedUsername || "Conta"}
+            width={26}
+            height={26}
+            className="h-[26px] w-[26px] rounded-full object-cover"
+            unoptimized
+          />
+        ) : (
+          <span
+            className={`inline-flex h-[26px] w-[26px] items-center justify-center rounded-full text-[12px] font-semibold ${
+              variant === "light"
+                ? "bg-[rgba(17,17,17,0.1)] text-[#111111]"
+                : "bg-[#1A1A1A] text-[#EAEAEA]"
+            }`}
+          >
+            {fallbackInitial}
+          </span>
+        )}
+        <span>{truncateHeaderUsername(trimmedUsername)}</span>
+      </span>
+    </LandingActionButton>
+  );
+}
+
+export function LandingHeader({ authenticatedUser = null }: LandingHeaderProps = {}) {
   const documentationHref =
     process.env.NEXT_PUBLIC_DOCUMENTATION_URL || "/terms";
   const headerShellRef = useRef<HTMLDivElement | null>(null);
@@ -1250,9 +1315,16 @@ export function LandingHeader() {
 
                 <div className="ml-[30px] flex items-center gap-6">
                   <LandingReveal delay={570}>
-                    <LandingActionButton href="/login" variant="dark">
-                      Login
-                    </LandingActionButton>
+                    {authenticatedUser ? (
+                      <HeaderAccountButton
+                        user={authenticatedUser}
+                        variant="dark"
+                      />
+                    ) : (
+                      <LandingActionButton href="/login" variant="dark">
+                        Login
+                      </LandingActionButton>
+                    )}
                   </LandingReveal>
                   <LandingReveal delay={640}>
                     <LandingActionButton href="/login" variant="light">
@@ -1272,13 +1344,21 @@ export function LandingHeader() {
                 }`}
               >
                 <LandingReveal delay={500}>
-                  <LandingActionButton
-                    href="/login"
-                    variant="light"
-                    className="h-[40px] px-4 text-[14px] sm:h-[46px] sm:px-6 sm:text-[16px]"
-                  >
-                    Sign Up
-                  </LandingActionButton>
+                  {authenticatedUser ? (
+                    <HeaderAccountButton
+                      user={authenticatedUser}
+                      variant="light"
+                      className="h-[40px] px-4 text-[14px] sm:h-[46px] sm:px-6 sm:text-[16px]"
+                    />
+                  ) : (
+                    <LandingActionButton
+                      href="/login"
+                      variant="light"
+                      className="h-[40px] px-4 text-[14px] sm:h-[46px] sm:px-6 sm:text-[16px]"
+                    >
+                      Sign Up
+                    </LandingActionButton>
+                  )}
                 </LandingReveal>
 
                 <LandingReveal delay={570}>
