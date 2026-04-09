@@ -21,7 +21,7 @@ export const OFFICIAL_DISCORD_INVITE_URL =
   "https://discord.gg/ddXtHhvvrx";
 
 export const FLOWDESK_APP_URL =
-  process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://flowdeskbot.vercel.app";
+  process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://www.flwdesk.com";
 
 export function buildOfficialDiscordLinkUrl(origin?: string | null) {
   const baseOrigin = (origin || FLOWDESK_APP_URL).replace(/\/+$/, "");

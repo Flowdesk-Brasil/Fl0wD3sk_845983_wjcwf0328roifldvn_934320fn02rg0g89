@@ -1,7 +1,7 @@
 export const TERMS_PATH = "/terms";
 export const PRIVACY_PATH = "/privacy";
 
-const APP_URL = "https://flowdeskbot.vercel.app";
+const APP_URL = "https://www.flwdesk.com";
 const SUPABASE_PUBLIC_URL =
   process.env.SUPABASE_URL?.trim() ||
   "https://sqkhmyhnoyfotifengxv.supabase.co";

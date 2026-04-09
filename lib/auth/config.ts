@@ -1,5 +1,9 @@
 import type { NextRequest } from "next/server";
 
+const DEFAULT_PRODUCTION_APP_URL = "https://www.flwdesk.com";
+const DEFAULT_PRODUCTION_REDIRECT_URI = `${DEFAULT_PRODUCTION_APP_URL}/api/auth/discord/callback`;
+const LEGACY_PRODUCTION_HOSTS = new Set(["flowdeskbot.vercel.app", "flwdesk.com"]);
+
 function requireEnv(name: string) {
   const value = process.env[name];
 
@@ -15,15 +19,49 @@ function parseSessionHours() {
   return Number.isFinite(value) && value > 0 ? value : 168;
 }
 
+function resolveDefaultProdRedirectUri() {
+  const explicitAppUrl =
+    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
+    process.env.APP_URL?.trim() ||
+    process.env.SITE_URL?.trim() ||
+    "";
+
+  if (explicitAppUrl) {
+    try {
+      return new URL("/api/auth/discord/callback", explicitAppUrl).toString();
+    } catch {
+      // Ignore invalid configured URLs and fall through to safe default.
+    }
+  }
+
+  return DEFAULT_PRODUCTION_REDIRECT_URI;
+}
+
+function normalizeProdRedirectUri(value: string) {
+  try {
+    const parsed = new URL(value);
+    const normalizedHostname = parsed.hostname.toLowerCase();
+
+    if (LEGACY_PRODUCTION_HOSTS.has(normalizedHostname)) {
+      parsed.hostname = "www.flwdesk.com";
+      parsed.protocol = "https:";
+    }
+
+    return parsed.toString();
+  } catch {
+    return DEFAULT_PRODUCTION_REDIRECT_URI;
+  }
+}
+
 export const authConfig = {
   discordClientId: requireEnv("DISCORD_CLIENT_ID"),
   discordClientSecret: requireEnv("DISCORD_CLIENT_SECRET"),
   discordRedirectUriLocal:
     process.env.DISCORD_REDIRECT_URI_LOCAL ||
     "http://localhost:3000/api/auth/discord/callback",
-  discordRedirectUriProd:
-    process.env.DISCORD_REDIRECT_URI_PROD ||
-    "https://flowdeskbot.vercel.app/api/auth/discord/callback",
+  discordRedirectUriProd: normalizeProdRedirectUri(
+    process.env.DISCORD_REDIRECT_URI_PROD || resolveDefaultProdRedirectUri(),
+  ),
   loginSuccessBasePath: process.env.LOGIN_SUCCESS_BASE_PATH || "/config",
   loginSuccessHashPath: process.env.LOGIN_SUCCESS_HASH_PATH || "/step/1",
   oauthStateCookieName: "flowdesk_oauth_state",
