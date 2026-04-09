@@ -3131,24 +3131,25 @@ export function ServersWorkspace({
         </div>
       </main>
       {isCreateTeamModalOpen ? (
-        <div className="fixed inset-0 z-[5000] isolate overflow-y-auto overscroll-contain px-[18px] py-[28px]">
+        <div className="fixed inset-y-0 left-0 right-0 z-[5000] isolate overflow-y-auto overscroll-contain xl:left-[318px]">
           <button
             type="button"
             aria-label="Fechar modal de equipe"
-            className="absolute inset-0 bg-[rgba(0,0,0,0.84)] backdrop-blur-[5px]"
+            className="absolute inset-0 bg-[rgba(0,0,0,0.84)] backdrop-blur-[7px]"
             onClick={() => {
               setIsCreateTeamModalOpen(false);
               setIsMemberSubmodalOpen(false);
               setTeamActionError(null);
             }}
           />
-          <div className="relative z-[10] flex min-h-full items-center justify-center">
-            <div
+          <div className="relative z-[10] min-h-full px-[20px] py-[32px] md:px-6 lg:px-8 xl:pl-[40px] xl:pr-[42px]">
+            <div className="mx-auto flex min-h-[calc(100vh-64px)] w-full max-w-[1220px] items-center justify-center">
+              <div
               role="dialog"
               aria-modal="true"
               aria-label="Criar equipe"
               className="relative w-full max-w-[760px] overflow-hidden rounded-[32px] bg-transparent px-[22px] py-[22px] shadow-[0_34px_110px_rgba(0,0,0,0.52)] sm:px-[28px] sm:py-[28px]"
-            >
+              >
               <span
                 aria-hidden="true"
                 className="pointer-events-none absolute inset-0 rounded-[32px] border border-[#0E0E0E]"
@@ -3468,6 +3469,7 @@ export function ServersWorkspace({
                     </span>
                   </button>
                 </div>
+              </div>
               </div>
             </div>
           </div>

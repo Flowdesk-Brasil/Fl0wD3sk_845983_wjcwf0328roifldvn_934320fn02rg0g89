@@ -24,6 +24,12 @@ type CurrentPlanSnapshot = {
 type Props = {
   currentPlan: CurrentPlanSnapshot | null;
   preferredGuildId: string | null;
+  showServerLimitBanner?: boolean;
+  basicPlanAvailable?: boolean;
+};
+
+type DisplayPlanDefinition = PlanPricingDefinition & {
+  isAvailable: boolean;
 };
 
 const PLAN_FEATURE_ICON_SOURCES = [
@@ -146,6 +152,31 @@ function BillingPeriodSwitcher({
   );
 }
 
+function DiamondIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-[16px] w-[16px] shrink-0 text-white"
+      fill="none"
+    >
+      <path
+        d="M7 4.75H17L21 10L12 20L3 10L7 4.75Z"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M7 4.75L12 20L17 4.75M3 10H21M9.55 10L12 4.75L14.45 10"
+        stroke="currentColor"
+        strokeOpacity="0.92"
+        strokeWidth="1.35"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function PlanCta({
   plan,
   currentPlan,
@@ -153,7 +184,7 @@ function PlanCta({
   pendingKey,
   onStartNavigation,
 }: {
-  plan: PlanPricingDefinition;
+  plan: DisplayPlanDefinition;
   currentPlan: CurrentPlanSnapshot | null;
   preferredGuildId: string | null;
   pendingKey: string | null;
@@ -175,17 +206,19 @@ function PlanCta({
 
   return (
     <LandingActionButton
-      href={current ? undefined : href}
+      href={current || !plan.isAvailable ? undefined : href}
       variant="light"
       className="mt-[20px] h-[50px] w-full rounded-[12px] px-6 text-[16px]"
-      disabled={current}
+      disabled={current || !plan.isAvailable}
       onClick={() => {
-        if (current) return;
+        if (current || !plan.isAvailable) return;
         onStartNavigation(key);
       }}
     >
       {current ? (
         "Plano atual"
+      ) : !plan.isAvailable ? (
+        "Indisponivel"
       ) : pendingKey === key ? (
         <ButtonLoader size={18} colorClassName="text-[#2B2B2B]" />
       ) : (
@@ -206,7 +239,7 @@ function OfferPlanCard({
   compact = false,
   reveal = false,
 }: {
-  plan: PlanPricingDefinition;
+  plan: DisplayPlanDefinition;
   delay?: number;
   recommendedPlanCode: PlanCode;
   currentPlan: CurrentPlanSnapshot | null;
@@ -636,7 +669,12 @@ function PlanComparisonTable({ plans }: { plans: PlanPricingDefinition[] }) {
   );
 }
 
-export function ServersPlansUpgradePage({ currentPlan, preferredGuildId }: Props) {
+export function ServersPlansUpgradePage({
+  currentPlan,
+  preferredGuildId,
+  showServerLimitBanner = false,
+  basicPlanAvailable = true,
+}: Props) {
   const [selectedBillingPeriodCode, setSelectedBillingPeriodCode] =
     useState<PlanBillingPeriodCode>(() =>
       resolveInitialBillingPeriodCode(currentPlan),
@@ -644,8 +682,12 @@ export function ServersPlansUpgradePage({ currentPlan, preferredGuildId }: Props
   const [pendingKey, setPendingKey] = useState<string | null>(null);
 
   const plans = useMemo(
-    () => getAllPlanPricingDefinitions(selectedBillingPeriodCode),
-    [selectedBillingPeriodCode],
+    () =>
+      getAllPlanPricingDefinitions(selectedBillingPeriodCode).map((plan) => ({
+        ...plan,
+        isAvailable: plan.code === "basic" ? basicPlanAvailable : true,
+      })),
+    [basicPlanAvailable, selectedBillingPeriodCode],
   );
   const recommendedPlanCode = useMemo(
     () => resolveRecommendedPlanCode(currentPlan),
@@ -653,8 +695,26 @@ export function ServersPlansUpgradePage({ currentPlan, preferredGuildId }: Props
   );
 
   return (
-    <div className="relative min-h-screen bg-[#050505] text-white">
-      <div className="relative z-10 mx-auto w-full max-w-[1582px] px-0 pb-[120px] pt-[46px] min-[1580px]:pt-[54px]">
+      <div className="relative min-h-screen bg-[#050505] text-white">
+      {showServerLimitBanner ? (
+        <div className="relative z-[20] w-full border-b border-[rgba(255,255,255,0.14)] bg-[#0062FF]">
+          <div className="mx-auto flex min-h-[44px] w-full max-w-[1582px] items-center justify-center px-[16px] sm:min-h-[46px] sm:px-[24px]">
+            <div className="flex items-center justify-center gap-[8px] text-center text-[13px] font-semibold tracking-[-0.01em] text-white sm:text-[14px]">
+                <DiamondIcon />
+                <span>Atualize seu plano para adicionar mais servidores</span>
+              </div>
+            </div>
+          </div>
+      ) : null}
+
+      <div
+        className={`relative z-10 mx-auto w-full max-w-[1582px] px-0 pb-[120px] ${
+          showServerLimitBanner
+            ? "pt-[22px] min-[1580px]:pt-[28px]"
+            : "pt-[46px] min-[1580px]:pt-[54px]"
+        }`}
+      >
+
         <LandingReveal delay={120}>
           <h1 className="mx-auto mt-[18px] max-w-[1124px] bg-[linear-gradient(90deg,#DADADA_0%,#C1C1C1_100%)] bg-clip-text px-[20px] text-center text-[34px] leading-[1.08] font-normal tracking-[-0.04em] text-transparent sm:text-[40px] md:text-[46px] lg:text-[50px] min-[1580px]:px-0">
             Aproveite nossas maiores ofertas

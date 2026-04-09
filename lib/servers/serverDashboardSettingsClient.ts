@@ -20,6 +20,7 @@ type ServerDashboardSettingsPayload = {
   };
   roles: Array<{ id: string; name: string; color: number; position: number }>;
   ticketSettings: {
+    enabled: boolean;
     menuChannelId: string | null;
     ticketsCategoryId: string | null;
     logsCreatedChannelId: string | null;
@@ -61,6 +62,9 @@ type ServerDashboardSettingsPayload = {
     updatedAt: string | null;
   } | null;
   securityLogsSettings: {
+    enabled: boolean;
+    useDefaultChannel: boolean;
+    defaultChannelId: string | null;
     events: {
       nicknameChange: { enabled: boolean; channelId: string | null };
       avatarChange: { enabled: boolean; channelId: string | null };

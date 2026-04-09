@@ -18,6 +18,7 @@ import {
   cleanupExpiredUnpaidServerSetups,
 } from "@/lib/payments/setupCleanup";
 import {
+  getBasicPlanAvailability,
   resolveEffectivePlanSelection,
   syncUserPlanStateFromOrder,
 } from "@/lib/plans/state";
@@ -247,6 +248,19 @@ export async function POST(request: Request) {
       guildId,
       source: "payment_trial_post",
     });
+
+    const basicPlanAvailability = await getBasicPlanAvailability(user.id);
+    if (!basicPlanAvailability.isAvailable) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message:
+            basicPlanAvailability.unavailableMessage ||
+            "O plano gratuito ja nao esta disponivel nesta conta.",
+        },
+        { status: 403 },
+      );
+    }
 
     const checkoutPlan = await resolveEffectivePlanSelection({
       userId: user.id,

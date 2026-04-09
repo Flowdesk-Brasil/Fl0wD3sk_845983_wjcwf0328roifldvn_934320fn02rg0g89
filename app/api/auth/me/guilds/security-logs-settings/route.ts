@@ -48,7 +48,17 @@ type SecurityLogsSettings = Record<SecurityLogEventKey, SecurityLogEventConfig>;
 
 type SecurityLogsSettingsBody = {
   guildId?: unknown;
+  enabled?: unknown;
+  useDefaultChannel?: unknown;
+  defaultChannelId?: unknown;
   events?: unknown;
+};
+
+type SecurityLogsSettingsPayload = {
+  enabled: boolean;
+  useDefaultChannel: boolean;
+  defaultChannelId: string | null;
+  events: SecurityLogsSettings;
 };
 
 type GuildAccessContext = {
@@ -172,6 +182,17 @@ function createDefaultSecurityLogsSettings(): SecurityLogsSettings {
   };
 }
 
+function normalizeSecurityLogsBodyInput(
+  body: SecurityLogsSettingsBody,
+): SecurityLogsSettingsPayload {
+  return {
+    enabled: body.enabled === true,
+    useDefaultChannel: body.useDefaultChannel === true,
+    defaultChannelId: resolveOptionalId(body.defaultChannelId),
+    events: normalizeSecurityLogEventsInput(body.events),
+  };
+}
+
 function normalizeSecurityLogEventsInput(value: unknown): SecurityLogsSettings {
   const defaults = createDefaultSecurityLogsSettings();
   const record =
@@ -196,7 +217,7 @@ function normalizeSecurityLogEventsInput(value: unknown): SecurityLogsSettings {
 
 function mapSecurityLogsRecordToPayload(
   data: Record<string, unknown>,
-): SecurityLogsSettings {
+): SecurityLogsSettingsPayload {
   const output = createDefaultSecurityLogsSettings();
 
   for (const descriptor of SECURITY_LOG_EVENT_DESCRIPTORS) {
@@ -210,41 +231,55 @@ function mapSecurityLogsRecordToPayload(
     };
   }
 
-  return output;
+  return {
+    enabled: data.enabled === true,
+    useDefaultChannel: data.use_default_channel === true,
+    defaultChannelId:
+      typeof data.default_channel_id === "string" &&
+      data.default_channel_id.trim().length > 0
+        ? data.default_channel_id.trim()
+        : null,
+    events: output,
+  };
 }
 
 function buildUpsertPayload(input: {
   guildId: string;
-  events: SecurityLogsSettings;
+  settings: SecurityLogsSettingsPayload;
   configuredByUserId: number;
 }) {
   const payload: Record<string, unknown> = {
     guild_id: input.guildId,
     configured_by_user_id: input.configuredByUserId,
+    enabled: input.settings.enabled,
+    use_default_channel: input.settings.useDefaultChannel,
+    default_channel_id: input.settings.defaultChannelId,
   };
 
   for (const descriptor of SECURITY_LOG_EVENT_DESCRIPTORS) {
-    payload[descriptor.enabledColumn] = input.events[descriptor.key].enabled;
-    payload[descriptor.channelColumn] = input.events[descriptor.key].channelId;
+    payload[descriptor.enabledColumn] = input.settings.events[descriptor.key].enabled;
+    payload[descriptor.channelColumn] = input.settings.events[descriptor.key].channelId;
   }
 
   return payload;
 }
 
 function buildSelectColumns() {
-  const columns: string[] = SECURITY_LOG_EVENT_DESCRIPTORS.flatMap(
+  const columns: string[] = ["enabled", "use_default_channel", "default_channel_id"];
+  columns.push(
+    ...SECURITY_LOG_EVENT_DESCRIPTORS.flatMap(
     (descriptor) => [
     descriptor.enabledColumn,
     descriptor.channelColumn,
     ],
-  );
+  ));
   columns.push("updated_at");
   return columns.join(", ");
 }
 
 async function upsertSecurityLogsSettingsWithRetry(input: {
   guildId: string;
-  events: SecurityLogsSettings;
+  settings: SecurityLogsSettingsPayload;
   configuredByUserId: number;
 }) {
   const supabase = getSupabaseAdminClientOrThrow();
@@ -399,7 +434,7 @@ export async function GET(request: Request) {
       NextResponse.json({
         ok: true,
         settings: {
-          events: mapSecurityLogsRecordToPayload(settingsRecord),
+          ...mapSecurityLogsRecordToPayload(settingsRecord),
           updatedAt: settingsRecord.updated_at || null,
         },
       }),
@@ -448,7 +483,7 @@ export async function POST(request: Request) {
     }
 
     const guildId = getTrimmedId(body.guildId);
-    const events = normalizeSecurityLogEventsInput(body.events);
+    const settings = normalizeSecurityLogsBodyInput(body);
 
     diagnostic = createServerSaveDiagnosticContext(
       "security_logs_settings",
@@ -470,24 +505,54 @@ export async function POST(request: Request) {
       );
     }
 
-    for (const descriptor of SECURITY_LOG_EVENT_DESCRIPTORS) {
-      const config = events[descriptor.key];
-      if (config.enabled && !config.channelId) {
-        recordServerSaveDiagnostic({
-          context: diagnostic,
-          outcome: "payload_invalid",
-          httpStatus: 400,
-          detail: `Canal obrigatorio para ${descriptor.label}.`,
-        });
-        return applyNoStoreHeaders(
-          NextResponse.json(
-            {
-              ok: false,
-              message: `Escolha o canal da log de ${descriptor.label} antes de ativar esta opcao.`,
-            },
-            { status: 400 },
-          ),
-        );
+    const hasAnyEnabledEvent = SECURITY_LOG_EVENT_DESCRIPTORS.some(
+      (descriptor) => settings.events[descriptor.key].enabled,
+    );
+
+    if (
+      settings.enabled &&
+      settings.useDefaultChannel &&
+      hasAnyEnabledEvent &&
+      !settings.defaultChannelId
+    ) {
+      recordServerSaveDiagnostic({
+        context: diagnostic,
+        outcome: "payload_invalid",
+        httpStatus: 400,
+        detail: "Canal padrao obrigatorio para logs ativos.",
+      });
+      return applyNoStoreHeaders(
+        NextResponse.json(
+          {
+            ok: false,
+            message:
+              "Escolha o canal padrao antes de ativar essa forma de roteamento dos logs.",
+          },
+          { status: 400 },
+        ),
+      );
+    }
+
+    if (settings.enabled && !settings.useDefaultChannel) {
+      for (const descriptor of SECURITY_LOG_EVENT_DESCRIPTORS) {
+        const config = settings.events[descriptor.key];
+        if (config.enabled && !config.channelId) {
+          recordServerSaveDiagnostic({
+            context: diagnostic,
+            outcome: "payload_invalid",
+            httpStatus: 400,
+            detail: `Canal obrigatorio para ${descriptor.label}.`,
+          });
+          return applyNoStoreHeaders(
+            NextResponse.json(
+              {
+                ok: false,
+                message: `Escolha o canal da log de ${descriptor.label} antes de ativar esta opcao.`,
+              },
+              { status: 400 },
+            ),
+          );
+        }
       }
     }
 
@@ -574,8 +639,33 @@ export async function POST(request: Request) {
 
     const channelsById = new Map(rawChannels.map((channel) => [channel.id, channel]));
 
+    if (settings.defaultChannelId) {
+      const channel = channelsById.get(settings.defaultChannelId);
+      if (!channel || !isValidTextChannelType(channel.type)) {
+        recordServerSaveDiagnostic({
+          context: diagnostic,
+          authUserId,
+          accessMode,
+          licenseStatus,
+          outcome: "validation_failed",
+          httpStatus: 400,
+          detail: "Canal padrao invalido para logs de seguranca.",
+        });
+        return applyNoStoreHeaders(
+          NextResponse.json(
+            {
+              ok: false,
+              message:
+                "O canal padrao configurado para os logs nao existe mais ou nao e um canal de texto.",
+            },
+            { status: 400 },
+          ),
+        );
+      }
+    }
+
     for (const descriptor of SECURITY_LOG_EVENT_DESCRIPTORS) {
-      const config = events[descriptor.key];
+      const config = settings.events[descriptor.key];
       if (!config.channelId) continue;
       const channel = channelsById.get(config.channelId);
       if (!channel || !isValidTextChannelType(channel.type)) {
@@ -610,7 +700,7 @@ export async function POST(request: Request) {
     try {
       savedSettings = await upsertSecurityLogsSettingsWithRetry({
         guildId,
-        events,
+        settings,
         configuredByUserId: authUserId,
       });
     } catch (error) {
@@ -640,7 +730,7 @@ export async function POST(request: Request) {
       NextResponse.json({
         ok: true,
         settings: {
-          events: mapSecurityLogsRecordToPayload(savedSettings),
+          ...mapSecurityLogsRecordToPayload(savedSettings),
           updatedAt: savedSettings.updated_at || null,
         },
       }),

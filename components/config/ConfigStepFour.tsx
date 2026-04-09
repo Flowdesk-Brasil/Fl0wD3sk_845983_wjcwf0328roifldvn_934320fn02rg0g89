@@ -252,7 +252,10 @@ type DiscountPreviewApiResponse = {
   };
 };
 
-type PlanSummary = PlanPricingDefinition;
+type PlanSummary = PlanPricingDefinition & {
+  isAvailable: boolean;
+  unavailableReason?: string | null;
+};
 type BillingPeriodOption = PlanBillingPeriodDefinition;
 
 type PlanApiResponse = {
@@ -278,6 +281,8 @@ type PlanApiResponse = {
     cycleDiscountPercent: number;
     cycleBadge: string | null;
     isTrial: boolean;
+    isAvailable: boolean;
+    unavailableReason?: string | null;
     entitlements: PlanSummary["entitlements"];
     description: string;
     features: string[];
@@ -312,8 +317,55 @@ function resolvePlanSummary(
     availablePlans.find(
       (plan) =>
         plan.code === planCode && plan.billingPeriodCode === billingPeriodCode,
-    ) || resolvePlanPricing(planCode, billingPeriodCode)
+    ) || {
+      ...resolvePlanPricing(planCode, billingPeriodCode),
+      isAvailable: true,
+      unavailableReason: null,
+    }
   );
+}
+
+function decoratePlanSummaries(plans: PlanPricingDefinition[]): PlanSummary[] {
+  return plans.map((plan) => ({
+    ...plan,
+    isAvailable: true,
+    unavailableReason: null,
+  }));
+}
+
+function toPlanSummaryFromApi(
+  plan: NonNullable<PlanApiResponse["plan"]>,
+): PlanSummary {
+  const basePlan = resolvePlanPricing(plan.planCode, plan.billingPeriodCode);
+  return {
+    ...basePlan,
+    code: plan.planCode,
+    name: plan.planName,
+    description: plan.description,
+    billingPeriodCode: plan.billingPeriodCode,
+    billingPeriodLabel: plan.billingPeriodLabel,
+    billingPeriodMonths: plan.billingPeriodMonths,
+    monthlyAmount: plan.monthlyAmount,
+    compareMonthlyAmount: plan.compareMonthlyAmount,
+    baseTotalAmount: plan.baseTotalAmount,
+    totalAmount: plan.totalAmount,
+    compareTotalAmount: plan.compareTotalAmount,
+    currency: plan.currency,
+    billingCycleDays: plan.billingCycleDays,
+    billingLabel: plan.billingLabel,
+    totalLabel: plan.totalLabel,
+    checkoutPeriodLabel: plan.checkoutPeriodLabel,
+    renewalLabel: plan.renewalLabel,
+    cycleDiscountPercent: plan.cycleDiscountPercent,
+    cycleBadge: plan.cycleBadge,
+    isTrial: plan.isTrial,
+    isAvailable: plan.isAvailable,
+    unavailableReason: plan.unavailableReason ?? null,
+    entitlements: {
+      ...plan.entitlements,
+    },
+    features: [...plan.features],
+  };
 }
 
 function CompactPlanSelect({
@@ -2838,7 +2890,11 @@ export function ConfigStepFour({
     ? initialBillingPeriodCode
     : initialStepFourDraft.selectedBillingPeriodCode;
   const initialResolvedPlan = useMemo(
-    () => resolvePlanPricing(initialSelectedPlanCode, initialSelectedBillingPeriodCode),
+    () => ({
+      ...resolvePlanPricing(initialSelectedPlanCode, initialSelectedBillingPeriodCode),
+      isAvailable: true,
+      unavailableReason: null,
+    }),
     [initialSelectedBillingPeriodCode, initialSelectedPlanCode],
   );
   const [selectedPlanCode, setSelectedPlanCode] = useState<PlanCode>(
@@ -2950,9 +3006,11 @@ export function ConfigStepFour({
     pixOrder?.status === "pending" ? pixOrder.orderNumber : null;
   const availablePlanOptions = useMemo(
     () =>
-      availablePlans.length
-        ? availablePlans
-        : getAllPlanPricingDefinitions(selectedBillingPeriodCode),
+      (
+        availablePlans.length
+          ? availablePlans
+          : decoratePlanSummaries(getAllPlanPricingDefinitions(selectedBillingPeriodCode))
+      ).filter((plan) => plan.isAvailable),
     [availablePlans, selectedBillingPeriodCode],
   );
   const availableBillingPeriodOptions = useMemo(
@@ -3054,6 +3112,9 @@ export function ConfigStepFour({
           payload.plan.billingPeriodCode,
           selectedBillingPeriodCode,
         );
+        const nextResolvedPlan = toPlanSummaryFromApi(payload.plan);
+        const requestedBasicBecameUnavailable =
+          selectedPlanCode === "basic" && nextPlanCode !== "basic";
         planFinancialStateRef.current = {
           recurringEnabled: payload.plan.recurringEnabled,
           recurringMethodId: payload.plan.recurringMethodId,
@@ -3061,13 +3122,10 @@ export function ConfigStepFour({
         setAvailablePlans(nextAvailablePlans);
         setSelectedPlanCode(nextPlanCode);
         setSelectedBillingPeriodCode(nextBillingPeriodCode);
-        setResolvedPlan(
-          resolvePlanSummary(
-            nextPlanCode,
-            nextBillingPeriodCode,
-            nextAvailablePlans,
-          ),
-        );
+        setResolvedPlan(nextResolvedPlan);
+        if (requestedBasicBecameUnavailable) {
+          setMethodMessage(null);
+        }
       } catch (error) {
         if (!isMounted) return;
         if (isAbortLikeError(error)) return;
@@ -3469,8 +3527,36 @@ export function ConfigStepFour({
         }
 
         if (remoteOrder && remoteOrder.status === "approved") {
+          const hasTrackedApprovalContext =
+            shouldLoadOrderByCode ||
+            (cachedPendingOrder
+              ? cachedPendingOrder.orderNumber === remoteOrder.orderNumber
+              : false) ||
+            (guildDraft.lastKnownOrderNumber
+              ? guildDraft.lastKnownOrderNumber === remoteOrder.orderNumber
+              : false) ||
+            (lastKnownOrderNumber
+              ? lastKnownOrderNumber === remoteOrder.orderNumber
+              : false);
+
+          if (!hasTrackedApprovalContext) {
+            removeCachedOrderByGuild(activeGuildId);
+            setPixOrder(null);
+            setLastKnownOrderNumber(null);
+            setPhase("cart");
+            setView("methods");
+            setMethodMessage(
+              payload.licenseActive
+                ? buildActiveLicenseMessage(payload.licenseExpiresAt)
+                : "Ja existe um pagamento confirmado neste servidor. Revise o checkout antes de continuar.",
+            );
+            clearCheckoutStatusQuery();
+            return;
+          }
+
           setPixOrder(remoteOrder);
           setLastKnownOrderNumber(remoteOrder.orderNumber);
+          setPhase("checkout");
           setView("methods");
           setMethodMessage(
             payload.licenseActive
@@ -3478,7 +3564,7 @@ export function ConfigStepFour({
               : "Pagamento aprovado para este servidor.",
           );
           setCheckoutStatusQuery({ order: remoteOrder, guildId: activeGuildId });
-          writeCachedOrderByGuild(activeGuildId, remoteOrder);
+          removeCachedOrderByGuild(activeGuildId);
           return;
         }
 
@@ -3654,6 +3740,7 @@ export function ConfigStepFour({
     initialBillingPeriodCode,
     initialPlanCode,
     isPlanLoading,
+    lastKnownOrderNumber,
     selectedBillingPeriodCode,
     selectedPlanCode,
   ]);
@@ -3722,6 +3809,7 @@ export function ConfigStepFour({
     if (!guildId) return;
     if (isLoadingOrder || isPreparingBaseOrder || isPlanLoading) return;
     if (resolvedPlan.isTrial) return;
+    if (!resolvedPlan.isAvailable) return;
     if (pixOrder?.orderNumber || lastKnownOrderNumber) return;
     if (pixOrder) return;
     if (view !== "methods" && view !== "pix_form") return;
@@ -3810,6 +3898,7 @@ export function ConfigStepFour({
     lastKnownOrderNumber,
     pixOrder,
     pixOrder?.orderNumber,
+    resolvedPlan.isAvailable,
     resolvedPlan.isTrial,
     selectedBillingPeriodCode,
     selectedPlanCode,
@@ -4273,6 +4362,73 @@ export function ConfigStepFour({
     setCardFormErrorAnimationTick((current) => current + 1);
   }, []);
 
+  const handleActiveLicenseCheckoutBlock = useCallback(
+    (blockedGuildId: string, licenseExpiresAt?: string | null) => {
+      clearPendingCardRedirectState(blockedGuildId);
+      removeCachedOrderByGuild(blockedGuildId);
+      clearCheckoutStatusQuery();
+      paymentPollingInFlightRef.current = false;
+      orderBootstrapInFlightRef.current = false;
+      forceNewCheckoutRef.current = false;
+      setPixOrder(null);
+      setLastKnownOrderNumber(null);
+      setPhase("cart");
+      setSelectedRail(null);
+      setView("methods");
+      setCopied(false);
+      setMethodMessage(buildActiveLicenseMessage(licenseExpiresAt));
+    },
+    [],
+  );
+
+  const handleCheckoutBack = useCallback(() => {
+    if (phase !== "cart") {
+      setPhase("cart");
+      setSelectedRail(null);
+      setView("methods");
+      setMethodMessage(null);
+      setPixFormHasInputError(false);
+      setPixFormError(null);
+      setCardFormHasInputError(false);
+      setCardFormError(null);
+      setCopied(false);
+      clearCheckoutStatusQuery();
+      return;
+    }
+
+    if (typeof window === "undefined") return;
+
+    if (window.history.length > 1) {
+      window.history.back();
+      return;
+    }
+
+    const fallbackUrl = (() => {
+      try {
+        const currentUrl = new URL(window.location.href);
+        if (document.referrer) {
+          const referrerUrl = new URL(document.referrer);
+          if (
+            referrerUrl.origin === currentUrl.origin &&
+            referrerUrl.href !== currentUrl.href
+          ) {
+            return buildConfigUrlWithHashRoute(
+              referrerUrl.pathname,
+              referrerUrl.search,
+              referrerUrl.hash,
+            );
+          }
+        }
+      } catch {
+        // seguir para fallback padrao
+      }
+
+      return resolveApprovedRedirectConfig(guildId).targetUrl || "/servers/plans";
+    })();
+
+    window.location.assign(fallbackUrl);
+  }, [guildId, phase]);
+
   const handleSelectPlan = useCallback(
     (nextPlanCode: PlanCode) => {
       if (nextPlanCode === selectedPlanCode) return;
@@ -4293,7 +4449,7 @@ export function ConfigStepFour({
       const nextPlan = resolvePlanSummary(
         nextPlanCode,
         nextBillingPeriodCode,
-        getAllPlanPricingDefinitions(nextBillingPeriodCode),
+        decoratePlanSummaries(getAllPlanPricingDefinitions(nextBillingPeriodCode)),
       );
 
       if (guildId) {
@@ -4319,7 +4475,7 @@ export function ConfigStepFour({
       setPixOrder(null);
       setLastKnownOrderNumber(null);
       setCopied(false);
-      setMethodMessage(`Checkout atualizado para ${nextPlan.name}.`);
+      setMethodMessage(null);
       setPixFormError(null);
       setPixFormHasInputError(false);
       setCardFormError(null);
@@ -4360,7 +4516,7 @@ export function ConfigStepFour({
       const nextPlan = resolvePlanSummary(
         selectedPlanCode,
         nextBillingPeriodCode,
-        getAllPlanPricingDefinitions(nextBillingPeriodCode),
+        decoratePlanSummaries(getAllPlanPricingDefinitions(nextBillingPeriodCode)),
       );
 
       if (guildId) {
@@ -4385,9 +4541,7 @@ export function ConfigStepFour({
       setPixOrder(null);
       setLastKnownOrderNumber(null);
       setCopied(false);
-      setMethodMessage(
-        `Checkout atualizado para ${nextPlan.billingPeriodLabel.toLowerCase()}.`,
-      );
+      setMethodMessage(null);
       setPixFormError(null);
       setPixFormHasInputError(false);
       setCardFormError(null);
@@ -4506,12 +4660,7 @@ export function ConfigStepFour({
       const payload = (await response.json()) as CardRedirectApiResponse;
 
       if (payload.blockedByActiveLicense) {
-        setView("methods");
-        setMethodMessage(
-          payload.licenseActive
-            ? buildActiveLicenseMessage(payload.licenseExpiresAt)
-            : "Pagamento bloqueado por licenca ativa neste servidor.",
-        );
+        handleActiveLicenseCheckoutBlock(guildId, payload.licenseExpiresAt);
         return;
       }
 
@@ -4572,6 +4721,7 @@ export function ConfigStepFour({
     couponCode,
     giftCardCode,
     guildId,
+    handleActiveLicenseCheckoutBlock,
     isSubmittingCard,
     pixOrder?.method,
     pixOrder?.status,
@@ -4695,6 +4845,11 @@ export function ConfigStepFour({
       const requestId = resolveResponseRequestId(response);
       const payload = (await response.json()) as PixPaymentApiResponse;
 
+      if (payload.blockedByActiveLicense) {
+        handleActiveLicenseCheckoutBlock(guildId, payload.licenseExpiresAt);
+        return;
+      }
+
       if (!response.ok || !payload.ok || !payload.order) {
         throw new Error(
           withSupportRequestId(
@@ -4711,7 +4866,7 @@ export function ConfigStepFour({
       setPhase("checkout");
       setSelectedRail("pix");
 
-      if (payload.order.status === "approved" || payload.blockedByActiveLicense) {
+      if (payload.order.status === "approved") {
         setView("methods");
         setMethodMessage(
           payload.licenseActive
@@ -4747,6 +4902,7 @@ export function ConfigStepFour({
     couponCode,
     giftCardCode,
     guildId,
+    handleActiveLicenseCheckoutBlock,
     payerDocument,
     payerName,
     selectedBillingPeriodCode,
@@ -4848,6 +5004,14 @@ export function ConfigStepFour({
   ]);
 
   const handleContinueToCheckout = useCallback(() => {
+    if (!resolvedPlan.isAvailable) {
+      setMethodMessage(
+        resolvedPlan.unavailableReason ||
+          "Esse plano nao esta disponivel nesta conta.",
+      );
+      return;
+    }
+
     if (resolvedPlan.isTrial) {
       void handleActivateTrialPlan();
       return;
@@ -4857,7 +5021,13 @@ export function ConfigStepFour({
     if (view === "methods") {
       setMethodMessage(null);
     }
-  }, [handleActivateTrialPlan, resolvedPlan.isTrial, view]);
+  }, [
+    handleActivateTrialPlan,
+    resolvedPlan.isAvailable,
+    resolvedPlan.isTrial,
+    resolvedPlan.unavailableReason,
+    view,
+  ]);
 
   const handleHostedRailSelection = useCallback(
     (rail: Exclude<CheckoutRail, "pix">) => {
@@ -4923,6 +5093,11 @@ export function ConfigStepFour({
 
       const payload = (await response.json()) as PixPaymentApiResponse;
 
+      if (payload.blockedByActiveLicense) {
+        handleActiveLicenseCheckoutBlock(guildId, payload.licenseExpiresAt);
+        return;
+      }
+
       if (!response.ok || !payload.ok || !payload.order) {
         throw new Error(
           withSupportRequestId(
@@ -4937,8 +5112,9 @@ export function ConfigStepFour({
       writeCachedOrderByGuild(guildId, payload.order);
       forceNewCheckoutRef.current = false;
 
-      if (payload.order.status === "approved" || payload.blockedByActiveLicense) {
+      if (payload.order.status === "approved") {
         setView("methods");
+        setPhase("checkout");
         setMethodMessage(
           payload.licenseActive
             ? buildActiveLicenseMessage(payload.licenseExpiresAt)
@@ -4982,6 +5158,7 @@ export function ConfigStepFour({
     documentDigits,
     giftCardCode,
     guildId,
+    handleActiveLicenseCheckoutBlock,
     isLoadingOrder,
     isPreparingBaseOrder,
     isSubmittingPix,
@@ -5147,6 +5324,11 @@ export function ConfigStepFour({
       const payload = (await response.json()) as PixPaymentApiResponse;
       const retryAfterSeconds = resolveRetryAfterSeconds(response, payload);
 
+      if (payload.blockedByActiveLicense) {
+        handleActiveLicenseCheckoutBlock(guildId, payload.licenseExpiresAt);
+        return;
+      }
+
       if (!response.ok || !payload.ok || !payload.order) {
         if (retryAfterSeconds) {
           setCardClientCooldownUntil(
@@ -5177,7 +5359,7 @@ export function ConfigStepFour({
         setCardClientCooldownUntil(Date.now() + retryAfterSeconds * 1000);
       }
 
-      if (payload.order.status === "approved" || payload.blockedByActiveLicense) {
+      if (payload.order.status === "approved") {
         setMethodMessage(
           payload.licenseActive
             ? buildActiveLicenseMessage(payload.licenseExpiresAt)
@@ -5243,6 +5425,7 @@ export function ConfigStepFour({
     cardNumberDigits,
     cardClientCooldownUntil,
     guildId,
+    handleActiveLicenseCheckoutBlock,
     isSubmittingCard,
     pixOrder?.method,
     pixOrder?.status,
@@ -5631,6 +5814,19 @@ export function ConfigStepFour({
       : view === "pix_form"
         ? "Preencha nome completo e CPF abaixo para gerar o PIX sem sair deste card."
         : "Escolha como deseja pagar sem sair da tela do carrinho.";
+  const isContinueButtonAwaitingPayment = phase !== "cart";
+  const isContinueButtonDisabled = Boolean(
+    isPlanSelectionLocked ||
+      isContinueButtonAwaitingPayment ||
+      !resolvedPlan.isAvailable,
+  );
+  const continueButtonLabel = !resolvedPlan.isAvailable
+    ? "Indisponivel"
+    : resolvedPlan.isTrial
+      ? "Ativar gratuitamente"
+      : isContinueButtonAwaitingPayment
+        ? "Aguardando pagamento"
+        : "Continuar";
 
   return (
     <main
@@ -5692,6 +5888,25 @@ export function ConfigStepFour({
               <p className="text-[18px] font-semibold text-[#F4F4F4] sm:text-[21px]">
                 Seu carrinho
               </p>
+              <button
+                type="button"
+                onClick={handleCheckoutBack}
+                className="mt-[12px] inline-flex h-[42px] items-center justify-center gap-[10px] rounded-[14px] border border-[#1D1D1D] bg-[#0D0D0D] px-[16px] text-[14px] font-medium text-[#D5D5D5] transition-colors hover:border-[#2A2A2A] hover:bg-[#121212] hover:text-[#FFFFFF]"
+              >
+                <svg
+                  aria-hidden="true"
+                  viewBox="0 0 20 20"
+                  className="h-[14px] w-[14px]"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M11.75 4.75 6.5 10l5.25 5.25" />
+                </svg>
+                <span>Voltar</span>
+              </button>
 
               <div className="mt-[22px] rounded-[30px] bg-[linear-gradient(180deg,rgba(13,13,13,0.98)_0%,rgba(8,8,8,0.98)_100%)] px-[20px] py-[22px] shadow-[0_28px_90px_rgba(0,0,0,0.32)] sm:px-[34px] sm:py-[34px]">
                 <div className="flex flex-col gap-[22px]">
@@ -6123,28 +6338,32 @@ export function ConfigStepFour({
                   <button
                     type="button"
                     onClick={handleContinueToCheckout}
-                    disabled={isPlanSelectionLocked || phase !== "cart"}
+                    disabled={isContinueButtonDisabled}
                     className="group relative mt-[24px] inline-flex h-[55px] w-full shrink-0 items-center justify-center overflow-visible whitespace-nowrap rounded-[12px] px-6 text-[18px] leading-none font-semibold transition-transform duration-150 ease-out hover:scale-[1.00] active:scale-[0.995] disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <span
                       aria-hidden="true"
-                      className="absolute inset-0 rounded-[12px] bg-[linear-gradient(180deg,#0062FF_0%,#0153D5_100%)] transition-transform duration-150 ease-out group-hover:scale-[1.02] group-active:scale-[0.985]"
+                      className={`absolute inset-0 rounded-[12px] transition-transform duration-150 ease-out group-hover:scale-[1.02] group-active:scale-[0.985] ${
+                        isContinueButtonDisabled
+                          ? "bg-[#0E0E0E]"
+                          : "bg-[linear-gradient(180deg,#0062FF_0%,#0153D5_100%)]"
+                      }`}
                     />
                     <span className="relative z-10 inline-flex items-center justify-center gap-[10px] whitespace-nowrap leading-none">
                       {isSubmittingTrial ? (
                         <ButtonLoader size={18} colorClassName="text-white" />
                       ) : null}
-                      <span className="bg-[linear-gradient(180deg,#FFFFFF_0%,#D1D1D1_100%)] bg-clip-text text-transparent">
-                        {resolvedPlan.isTrial ? "Ativar gratuitamente" : "Continuar"}
+                      <span
+                        className={
+                          isContinueButtonDisabled
+                            ? "text-[#D6D6D6]"
+                            : "bg-[linear-gradient(180deg,#FFFFFF_0%,#D1D1D1_100%)] bg-clip-text text-transparent"
+                        }
+                      >
+                        {continueButtonLabel}
                       </span>
                     </span>
                   </button>
-
-                  {methodMessage ? (
-                    <p className="mt-[14px] text-center text-[12px] leading-[1.6] text-[#BEBEBE]">
-                      {methodMessage}
-                    </p>
-                  ) : null}
                 </div>
               </div>
             )}

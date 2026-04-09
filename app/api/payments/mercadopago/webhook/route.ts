@@ -18,8 +18,10 @@ import {
   isLockedByUnpaidSetupTimeout,
   UNPAID_SETUP_TIMEOUT_REFUND_STATUS_DETAIL,
 } from "@/lib/payments/setupCleanup";
-import { syncUserPlanStateFromOrder } from "@/lib/plans/state";
-import { resolvePlanLicenseExpiresAtIso } from "@/lib/plans/cycle";
+import {
+  resolveApprovedOrderLicenseExpiresAt,
+  syncUserPlanStateFromOrder,
+} from "@/lib/plans/state";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import {
@@ -244,11 +246,12 @@ async function updateOrderFromProviderPayment(
       : null;
   const expiresAt =
     resolvedStatus === "approved"
-      ? resolvePlanLicenseExpiresAtIso({
-          baseTimestamp: paidAt || order.created_at,
-          billingCycleDays: order.plan_billing_cycle_days,
-          planCode: order.plan_code,
-        })
+      ? (
+          await resolveApprovedOrderLicenseExpiresAt({
+            order,
+            paidAtOverride: paidAt,
+          })
+        ).expiresAt
       : providerPayment.date_of_expiration || null;
   const diagnostic = resolvePaymentDiagnostic({
     paymentMethod: order.payment_method,

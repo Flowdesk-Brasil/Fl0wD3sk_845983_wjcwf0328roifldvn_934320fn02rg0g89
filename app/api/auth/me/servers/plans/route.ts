@@ -37,8 +37,10 @@ import {
 import { resolvePlanUpgradeProration } from "@/lib/plans/proration";
 import {
   applyUserPlanStatePricingAdjustments,
+  getBasicPlanAvailability,
   getGuildPlanSettingsRecord,
   getUserPlanState,
+  type BasicPlanAvailability,
   type GuildPlanSettingsRecord,
   type UserPlanStateRecord,
 } from "@/lib/plans/state";
@@ -247,6 +249,7 @@ async function getAvailableSavedMethodsForUser(userId: number) {
 function toPlanResponse(input: {
   settings: GuildPlanSettingsRecord | null;
   userPlanState: UserPlanStateRecord | null;
+  basicPlanAvailability: BasicPlanAvailability;
   requestedPlanCode?: string | null;
   requestedBillingPeriodCode?: string | null;
   recurringMethodId: string | null;
@@ -257,11 +260,29 @@ function toPlanResponse(input: {
   const settings = input.settings;
   const userPlanState = input.userPlanState;
   const cardPaymentsEnabled = areCardPaymentsEnabled();
+  const currentPlanExpiresAtMs =
+    userPlanState?.expires_at ? Date.parse(userPlanState.expires_at) : Number.NaN;
+  const hasActiveAccountPlan =
+    !!userPlanState &&
+    (userPlanState.status === "active" || userPlanState.status === "trial") &&
+    (!Number.isFinite(currentPlanExpiresAtMs) || Date.now() <= currentPlanExpiresAtMs);
+  const canKeepCurrentBasicPlan =
+    hasActiveAccountPlan && userPlanState?.plan_code === "basic";
+  const selectedPlanCode =
+    [
+      input.requestedPlanCode || null,
+      userPlanState?.plan_code || null,
+      DEFAULT_PLAN_CODE,
+    ].find(
+      (planCode) =>
+        planCode &&
+        planCode !== "basic"
+          ? true
+          : input.basicPlanAvailability.isAvailable || canKeepCurrentBasicPlan,
+    ) || DEFAULT_PLAN_CODE;
   const resolvedPlan = applyUserPlanStatePricingAdjustments(
     resolvePlanPricing(
-      input.requestedPlanCode ||
-        userPlanState?.plan_code ||
-        DEFAULT_PLAN_CODE,
+      selectedPlanCode,
       input.requestedBillingPeriodCode || DEFAULT_PLAN_BILLING_PERIOD_CODE,
     ),
     userPlanState,
@@ -273,13 +294,6 @@ function toPlanResponse(input: {
     settings && settings.plan_code === resolvedPlan.code,
   );
 
-  const currentPlanExpiresAtMs =
-    userPlanState?.expires_at ? Date.parse(userPlanState.expires_at) : Number.NaN;
-  const hasActiveAccountPlan =
-    !!userPlanState &&
-    (userPlanState.status === "active" || userPlanState.status === "trial") &&
-    (!Number.isFinite(currentPlanExpiresAtMs) || Date.now() <= currentPlanExpiresAtMs);
-
   const proration =
     hasActiveAccountPlan && userPlanState
       ? resolvePlanUpgradeProration({
@@ -287,12 +301,28 @@ function toPlanResponse(input: {
           targetPlan: resolvedPlan,
         })
       : null;
-
+  const isActiveBasicPlan =
+    resolvedPlan.code === "basic" &&
+    !!userPlanState &&
+    userPlanState.plan_code === "basic" &&
+    hasActiveAccountPlan;
   const isCurrentPlanSelection =
     hasActiveAccountPlan &&
     !!userPlanState &&
     userPlanState.plan_code === resolvedPlan.code &&
     userPlanState.billing_cycle_days === resolvedPlan.billingCycleDays;
+  const isCurrentPlanRepurchaseBlocked =
+    isCurrentPlanSelection && !resolvedPlan.isTrial;
+  const isResolvedPlanAvailable =
+    !isCurrentPlanRepurchaseBlocked &&
+    (resolvedPlan.code !== "basic" ||
+      input.basicPlanAvailability.isAvailable ||
+      isActiveBasicPlan);
+  const resolvedPlanUnavailableReason = isCurrentPlanRepurchaseBlocked
+    ? "Seu plano atual ja esta ativo nesta conta. Escolha outro plano para mudar agora."
+    : isResolvedPlanAvailable
+      ? null
+      : input.basicPlanAvailability.unavailableMessage;
 
   const checkoutAmount = Math.max(
     0,
@@ -341,6 +371,8 @@ function toPlanResponse(input: {
     cycleDiscountPercent: resolvedPlan.cycleDiscountPercent,
     cycleBadge: resolvedPlan.cycleBadge,
     isTrial: resolvedPlan.isTrial,
+    isAvailable: isResolvedPlanAvailable,
+    unavailableReason: resolvedPlanUnavailableReason,
     entitlements: {
       ...resolvedPlan.entitlements,
     },
@@ -401,6 +433,18 @@ function toPlanResponse(input: {
       cycleDiscountPercent: plan.cycleDiscountPercent,
       cycleBadge: plan.cycleBadge,
       isTrial: plan.isTrial,
+      isAvailable:
+        plan.code !== "basic" ||
+        input.basicPlanAvailability.isAvailable ||
+        (hasActiveAccountPlan &&
+          userPlanState?.plan_code === "basic" &&
+          plan.code === "basic"),
+      unavailableReason:
+        plan.code === "basic" &&
+        !input.basicPlanAvailability.isAvailable &&
+        !(hasActiveAccountPlan && userPlanState?.plan_code === "basic")
+          ? input.basicPlanAvailability.unavailableMessage
+          : null,
       entitlements: {
         ...plan.entitlements,
       },
@@ -459,10 +503,11 @@ export async function GET(request: Request) {
     const requestedBillingPeriodCode = normalizeRequestedBillingPeriodCode(
       url.searchParams.get("billingPeriodCode"),
     );
-    const [settings, savedMethods, userPlanState] = await Promise.all([
+    const [settings, savedMethods, userPlanState, basicPlanAvailability] = await Promise.all([
       getGuildPlanSettingsRecord(userId, guildId),
       getAvailableSavedMethodsForUser(userId),
       getUserPlanState(userId),
+      getBasicPlanAvailability(userId),
     ]);
 
     const recurringMethodId = settings?.recurring_method_id || null;
@@ -477,6 +522,7 @@ export async function GET(request: Request) {
       plan: toPlanResponse({
         settings,
         userPlanState,
+        basicPlanAvailability,
         requestedPlanCode,
         requestedBillingPeriodCode,
         recurringMethodId,
@@ -622,19 +668,24 @@ export async function POST(request: Request) {
 
     const userId = access.context.sessionData.authSession.user.id;
     const supabase = getSupabaseAdminClientOrThrow();
-    const [existingSettings, savedMethods, userPlanState] = await Promise.all([
+    const [existingSettings, savedMethods, userPlanState, basicPlanAvailability] = await Promise.all([
       getGuildPlanSettingsRecord(userId, guildId),
       getAvailableSavedMethodsForUser(userId),
       getUserPlanState(userId),
+      getBasicPlanAvailability(userId),
     ]);
 
     const savedMethodMap = new Map(savedMethods.map((method) => [method.id, method]));
 
-    const resolvedPlan = resolvePlanDefinition(
+    const requestedOrStoredPlanCode =
       requestedPlanCode ||
-        existingSettings?.plan_code ||
-        userPlanState?.plan_code ||
-        DEFAULT_PLAN_CODE,
+      existingSettings?.plan_code ||
+      userPlanState?.plan_code ||
+      DEFAULT_PLAN_CODE;
+    const resolvedPlan = resolvePlanDefinition(
+      requestedOrStoredPlanCode === "basic" && !basicPlanAvailability.isAvailable
+        ? DEFAULT_PLAN_CODE
+        : requestedOrStoredPlanCode,
     );
 
     let resolvedRecurringMethodId: string | null =
@@ -715,6 +766,8 @@ export async function POST(request: Request) {
       plan: toPlanResponse({
         settings: upsertResult.data,
         userPlanState,
+        basicPlanAvailability,
+        requestedPlanCode: upsertResult.data.plan_code,
         recurringMethodId: resolvedRecurringMethodId,
         recurringMethod,
         availableMethods: savedMethods,

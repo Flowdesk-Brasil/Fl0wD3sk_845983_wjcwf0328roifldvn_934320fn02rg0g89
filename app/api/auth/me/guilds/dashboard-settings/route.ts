@@ -93,6 +93,13 @@ function resolveSecurityLogEvent(data: Record<string, unknown>, input: {
   };
 }
 
+function resolveOptionalTextChannelId(
+  value: unknown,
+  textSet: Set<string>,
+) {
+  return typeof value === "string" && textSet.has(value) ? value : null;
+}
+
 async function ensureGuildAccess(guildId: string) {
   const sessionData = await resolveSessionAccessToken();
   if (!sessionData?.authSession) {
@@ -183,10 +190,10 @@ export async function GET(request: Request) {
     const [rawChannels, rawRoles, ticketResult, staffResult, welcomeResult, antiLinkResult, securityLogsResult] = await Promise.all([
       fetchGuildChannelsByBot(guildId),
       fetchGuildRolesByBot(guildId),
-        supabase
-          .from("guild_ticket_settings")
-          .select(
-            "menu_channel_id, tickets_category_id, logs_created_channel_id, logs_closed_channel_id, panel_layout, panel_title, panel_description, panel_button_label, updated_at",
+      supabase
+        .from("guild_ticket_settings")
+        .select(
+            "enabled, menu_channel_id, tickets_category_id, logs_created_channel_id, logs_closed_channel_id, panel_layout, panel_title, panel_description, panel_button_label, updated_at",
           )
         .eq("guild_id", guildId)
         .maybeSingle(),
@@ -214,7 +221,7 @@ export async function GET(request: Request) {
       supabase
         .from("guild_security_logs_settings")
         .select(
-          "nickname_change_enabled, nickname_change_channel_id, avatar_change_enabled, avatar_change_channel_id, voice_join_enabled, voice_join_channel_id, voice_leave_enabled, voice_leave_channel_id, message_delete_enabled, message_delete_channel_id, message_edit_enabled, message_edit_channel_id, member_ban_enabled, member_ban_channel_id, member_unban_enabled, member_unban_channel_id, member_kick_enabled, member_kick_channel_id, member_timeout_enabled, member_timeout_channel_id, voice_move_enabled, voice_move_channel_id, updated_at",
+          "enabled, use_default_channel, default_channel_id, nickname_change_enabled, nickname_change_channel_id, avatar_change_enabled, avatar_change_channel_id, voice_join_enabled, voice_join_channel_id, voice_leave_enabled, voice_leave_channel_id, message_delete_enabled, message_delete_channel_id, message_edit_enabled, message_edit_channel_id, member_ban_enabled, member_ban_channel_id, member_unban_enabled, member_unban_channel_id, member_kick_enabled, member_kick_channel_id, member_timeout_enabled, member_timeout_channel_id, voice_move_enabled, voice_move_channel_id, updated_at",
         )
         .eq("guild_id", guildId)
         .maybeSingle(),
@@ -319,6 +326,7 @@ export async function GET(request: Request) {
         roles,
         ticketSettings: ticketResult.data
           ? {
+              enabled: Boolean(ticketResult.data.enabled),
               menuChannelId: ticketResult.data.menu_channel_id,
               ticketsCategoryId: ticketResult.data.tickets_category_id,
               logsCreatedChannelId: ticketResult.data.logs_created_channel_id,
@@ -426,6 +434,17 @@ export async function GET(request: Request) {
           : null,
         securityLogsSettings: securityLogsResult.data
           ? {
+              enabled: Boolean(
+                (securityLogsResult.data as Record<string, unknown>).enabled,
+              ),
+              useDefaultChannel:
+                (securityLogsResult.data as Record<string, unknown>)
+                  .use_default_channel === true,
+              defaultChannelId: resolveOptionalTextChannelId(
+                (securityLogsResult.data as Record<string, unknown>)
+                  .default_channel_id,
+                textSet,
+              ),
               events: {
                 nicknameChange: resolveSecurityLogEvent(
                   securityLogsResult.data as Record<string, unknown>,

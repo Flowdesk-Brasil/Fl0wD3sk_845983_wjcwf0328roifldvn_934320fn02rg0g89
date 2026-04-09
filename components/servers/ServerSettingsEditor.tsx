@@ -3,7 +3,21 @@
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CircleHelp, Settings2 } from "lucide-react";
+import {
+  ArrowRightLeft,
+  CircleHelp,
+  ImageUp,
+  LogIn,
+  LogOut,
+  PencilLine,
+  Settings2,
+  ShieldCheck,
+  ShieldX,
+  Signature,
+  TimerOff,
+  Trash2,
+  UserRoundX,
+} from "lucide-react";
 import { ClientErrorBoundary } from "@/components/common/ClientErrorBoundary";
 import { BotMissingModal } from "@/components/config/BotMissingModal";
 import { ConfigStepMultiSelect } from "@/components/config/ConfigStepMultiSelect";
@@ -77,6 +91,7 @@ type SelectOption = {
 };
 
 type ServerSettingsDraft = {
+  enabled: boolean;
   menuChannelId: string | null;
   ticketsCategoryId: string | null;
   logsCreatedChannelId: string | null;
@@ -131,7 +146,14 @@ type SecurityLogEventDraft = {
   channelId: string | null;
 };
 
-type SecurityLogsSettingsDraft = Record<SecurityLogEventKey, SecurityLogEventDraft>;
+type SecurityLogEventsDraft = Record<SecurityLogEventKey, SecurityLogEventDraft>;
+
+type SecurityLogsSettingsDraft = {
+  enabled: boolean;
+  useDefaultChannel: boolean;
+  defaultChannelId: string | null;
+  events: SecurityLogEventsDraft;
+};
 
 type PaymentOrder = {
   id: number;
@@ -286,6 +308,7 @@ const SECURITY_LOG_EVENT_OPTIONS: Array<{
   title: string;
   description: string;
   tooltip: string;
+  icon: React.ComponentType<{ size?: number; strokeWidth?: number; className?: string }>;
 }> = [
   {
     key: "nicknameChange",
@@ -293,6 +316,7 @@ const SECURITY_LOG_EVENT_OPTIONS: Array<{
     description: "Mostra nickname antigo e novo quando um membro altera.",
     tooltip:
       "Registra o nome antigo e o novo nickname do membro quando a alteracao acontece no servidor.",
+    icon: Signature,
   },
   {
     key: "avatarChange",
@@ -300,18 +324,21 @@ const SECURITY_LOG_EVENT_OPTIONS: Array<{
     description: "Gera comparativo visual (metade antiga / metade nova).",
     tooltip:
       "Envia embed com imagem comparativa feita em canvas para facilitar auditoria de troca de avatar.",
+    icon: ImageUp,
   },
   {
     key: "voiceJoin",
     title: "Entrou em canal de voz",
     description: "Dispara quando alguem conecta em call.",
     tooltip: "Registra usuario, canal e horario da entrada em voz.",
+    icon: LogIn,
   },
   {
     key: "voiceLeave",
     title: "Saiu de canal de voz",
     description: "Dispara quando alguem sai de uma call.",
     tooltip: "Registra usuario, canal anterior e horario da saida.",
+    icon: LogOut,
   },
   {
     key: "messageDelete",
@@ -319,6 +346,7 @@ const SECURITY_LOG_EVENT_OPTIONS: Array<{
     description: "Registra mensagem removida em canais de texto.",
     tooltip:
       "Mostra autor, canal e conteudo capturado da mensagem que foi deletada.",
+    icon: Trash2,
   },
   {
     key: "messageEdit",
@@ -326,6 +354,7 @@ const SECURITY_LOG_EVENT_OPTIONS: Array<{
     description: "Mostra texto antigo e novo da mensagem.",
     tooltip:
       "Compara conteudo anterior e novo quando uma mensagem e editada.",
+    icon: PencilLine,
   },
   {
     key: "memberBan",
@@ -333,6 +362,7 @@ const SECURITY_LOG_EVENT_OPTIONS: Array<{
     description: "Registra banimentos aplicados no servidor.",
     tooltip:
       "Inclui alvo e, quando possivel, quem executou o banimento via audit log.",
+    icon: ShieldX,
   },
   {
     key: "memberUnban",
@@ -340,6 +370,7 @@ const SECURITY_LOG_EVENT_OPTIONS: Array<{
     description: "Registra remoção de bans.",
     tooltip:
       "Inclui alvo e, quando possivel, quem executou o desbanimento via audit log.",
+    icon: ShieldCheck,
   },
   {
     key: "memberKick",
@@ -347,6 +378,7 @@ const SECURITY_LOG_EVENT_OPTIONS: Array<{
     description: "Registra expulsao (kick) de membros.",
     tooltip:
       "Usa evento de saida + audit log para identificar kick e moderador quando disponivel.",
+    icon: UserRoundX,
   },
   {
     key: "memberTimeout",
@@ -354,6 +386,7 @@ const SECURITY_LOG_EVENT_OPTIONS: Array<{
     description: "Registra aplicacao de timeout/silenciamento.",
     tooltip:
       "Dispara quando timeout e aplicado, com duracao e executor quando disponivel.",
+    icon: TimerOff,
   },
   {
     key: "voiceMove",
@@ -361,6 +394,7 @@ const SECURITY_LOG_EVENT_OPTIONS: Array<{
     description: "Registra troca de call por moderacao.",
     tooltip:
       "Tenta identificar quem moveu o membro usando audit log de movimentacao.",
+    icon: ArrowRightLeft,
   },
 ];
 
@@ -386,6 +420,7 @@ function normalizeServerSettingsDraft(
   draft: ServerSettingsDraft,
 ): ServerSettingsDraft {
   return {
+    enabled: draft.enabled,
     menuChannelId: draft.menuChannelId,
     ticketsCategoryId: draft.ticketsCategoryId,
     logsCreatedChannelId: draft.logsCreatedChannelId,
@@ -476,7 +511,7 @@ function areAntiLinkSettingsDraftsEqual(
   return JSON.stringify(normalizeAntiLinkSettingsDraft(left)) === JSON.stringify(normalizeAntiLinkSettingsDraft(right));
 }
 
-function createDefaultSecurityLogsSettingsDraft(): SecurityLogsSettingsDraft {
+function createDefaultSecurityLogEventsDraft(): SecurityLogEventsDraft {
   return {
     nicknameChange: { enabled: false, channelId: null },
     avatarChange: { enabled: false, channelId: null },
@@ -492,19 +527,31 @@ function createDefaultSecurityLogsSettingsDraft(): SecurityLogsSettingsDraft {
   };
 }
 
+function createDefaultSecurityLogsSettingsDraft(): SecurityLogsSettingsDraft {
+  return {
+    enabled: false,
+    useDefaultChannel: false,
+    defaultChannelId: null,
+    events: createDefaultSecurityLogEventsDraft(),
+  };
+}
+
 function normalizeSecurityLogsSettingsDraft(
   draft: SecurityLogsSettingsDraft,
 ): SecurityLogsSettingsDraft {
   const defaults = createDefaultSecurityLogsSettingsDraft();
 
   for (const option of SECURITY_LOG_EVENT_OPTIONS) {
-    const current = draft[option.key];
-    defaults[option.key] = {
+    const current = draft.events?.[option.key];
+    defaults.events[option.key] = {
       enabled: current?.enabled === true,
       channelId: current?.channelId || null,
     };
   }
 
+  defaults.enabled = draft.enabled === true;
+  defaults.useDefaultChannel = draft.useDefaultChannel === true;
+  defaults.defaultChannelId = draft.defaultChannelId || null;
   return defaults;
 }
 
@@ -515,6 +562,52 @@ function areSecurityLogsSettingsDraftsEqual(
   if (!left || !right) return left === right;
 
   return JSON.stringify(normalizeSecurityLogsSettingsDraft(left)) === JSON.stringify(normalizeSecurityLogsSettingsDraft(right));
+}
+
+type DashboardInlineSwitchProps = {
+  checked: boolean;
+  onChange: () => void;
+  disabled?: boolean;
+  ariaLabel: string;
+};
+
+function DashboardInlineSwitch({
+  checked,
+  onChange,
+  disabled = false,
+  ariaLabel,
+}: DashboardInlineSwitchProps) {
+  return (
+    <button
+      type="button"
+      onClick={onChange}
+      disabled={disabled}
+      aria-pressed={checked}
+      aria-label={ariaLabel}
+      className={`group relative inline-flex h-[30px] w-[54px] shrink-0 items-center rounded-full border p-[3px] transition-all duration-200 ease-out disabled:cursor-not-allowed disabled:opacity-50 ${
+        checked
+          ? "border-[rgba(255,255,255,0.14)] bg-[linear-gradient(180deg,#F3F3F3_0%,#D8D8D8_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.36),0_12px_26px_rgba(0,0,0,0.16)]"
+          : "border-[#1F1F1F] bg-[linear-gradient(180deg,#141414_0%,#0D0D0D_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.035)] hover:border-[#292929]"
+      }`}
+    >
+      <span
+        aria-hidden="true"
+        className={`pointer-events-none absolute inset-[3px] rounded-full transition-opacity duration-200 ${
+          checked
+            ? "bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.24)_0%,rgba(255,255,255,0.05)_58%,transparent_100%)]"
+            : "bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05)_0%,transparent_72%)]"
+        }`}
+      />
+      <span
+        aria-hidden="true"
+        className={`relative z-10 h-[24px] w-[24px] rounded-full border transition-all duration-200 ease-out ${
+          checked
+            ? "translate-x-[24px] border-[#0B0B0B] bg-[linear-gradient(180deg,#111111_0%,#050505_100%)] shadow-[0_8px_18px_rgba(0,0,0,0.34)]"
+            : "translate-x-0 border-[#252525] bg-[linear-gradient(180deg,#7D7D7D_0%,#5A5A5A_100%)] shadow-[0_8px_18px_rgba(0,0,0,0.26)]"
+        }`}
+      />
+    </button>
+  );
 }
 
 function orderStatusBadge(status: PaymentStatus) {
@@ -1487,6 +1580,7 @@ export function ServerSettingsEditor({
   const [panelLayout, setPanelLayout] = useState<TicketPanelLayout>(
     createDefaultTicketPanelLayout(),
   );
+  const [ticketEnabled, setTicketEnabled] = useState(false);
   const [welcomeEnabled, setWelcomeEnabled] = useState(false);
   const [entryPublicChannelId, setEntryPublicChannelId] = useState<string | null>(null);
   const [entryLogChannelId, setEntryLogChannelId] = useState<string | null>(null);
@@ -1540,8 +1634,7 @@ export function ServerSettingsEditor({
   );
   const [isWelcomeActivationModalOpen, setIsWelcomeActivationModalOpen] =
     useState(false);
-  const [hasDismissedWelcomeModal, setHasDismissedWelcomeModal] =
-    useState(false);
+  const [, setHasDismissedWelcomeModal] = useState(false);
   const [isActivatingWelcome, setIsActivatingWelcome] = useState(false);
   const [isAntiLinkActivationModalOpen, setIsAntiLinkActivationModalOpen] =
     useState(false);
@@ -1668,6 +1761,7 @@ export function ServerSettingsEditor({
         textSet.has(payload.ticketSettings.logsClosedChannelId)
           ? payload.ticketSettings.logsClosedChannelId
           : null;
+      const nextTicketEnabled = Boolean(payload.ticketSettings?.enabled);
       const nextPanelLayout = normalizeTicketPanelLayout(
         payload.ticketSettings?.panelLayout,
         payload.ticketSettings || undefined,
@@ -1761,8 +1855,17 @@ export function ServerSettingsEditor({
       const nextAntiLinkBlockObfuscatedLinks =
         ANTILINK_DEFAULT_DETECTION.blockObfuscatedLinks;
       const nextSecurityLogsDraft = normalizeSecurityLogsSettingsDraft(
-        payload.securityLogsSettings?.events
+        payload.securityLogsSettings
           ? {
+              enabled: payload.securityLogsSettings.enabled === true,
+              useDefaultChannel:
+                payload.securityLogsSettings.useDefaultChannel === true,
+              defaultChannelId:
+                payload.securityLogsSettings.defaultChannelId &&
+                textSet.has(payload.securityLogsSettings.defaultChannelId)
+                  ? payload.securityLogsSettings.defaultChannelId
+                  : null,
+              events: {
               nicknameChange: {
                 enabled: payload.securityLogsSettings.events.nicknameChange.enabled,
                 channelId:
@@ -1851,6 +1954,7 @@ export function ServerSettingsEditor({
                     ? payload.securityLogsSettings.events.voiceMove.channelId
                     : null,
               },
+              },
             }
           : createDefaultSecurityLogsSettingsDraft(),
       );
@@ -1860,6 +1964,7 @@ export function ServerSettingsEditor({
       setLogsCreatedChannelId(nextLogsCreatedChannelId);
       setLogsClosedChannelId(nextLogsClosedChannelId);
       setPanelLayout(nextPanelLayout);
+      setTicketEnabled(nextTicketEnabled);
       setWelcomeEnabled(nextWelcomeEnabled);
       setEntryPublicChannelId(nextEntryPublicChannelId);
       setEntryLogChannelId(nextEntryLogChannelId);
@@ -1884,6 +1989,7 @@ export function ServerSettingsEditor({
       setNotifyRoleIds(nextNotifyRoleIds);
       setSavedSettingsDraft(
         normalizeServerSettingsDraft({
+          enabled: nextTicketEnabled,
           menuChannelId: nextMenuChannelId,
           ticketsCategoryId: nextTicketsCategoryId,
           logsCreatedChannelId: nextLogsCreatedChannelId,
@@ -1986,6 +2092,7 @@ export function ServerSettingsEditor({
     setSavedAntiLinkSettingsDraft(null);
     setSavedSecurityLogsDraft(null);
     setPanelLayout(createDefaultTicketPanelLayout());
+    setTicketEnabled(false);
     setWelcomeEnabled(false);
     setEntryPublicChannelId(null);
     setEntryLogChannelId(null);
@@ -2612,28 +2719,29 @@ export function ServerSettingsEditor({
     !settingsReadOnly &&
       !isLoading &&
       !isSaving &&
-      menuChannelId &&
-      ticketsCategoryId &&
-      logsCreatedChannelId &&
-      logsClosedChannelId &&
-      panelLayout.length &&
-      ticketPanelLayoutHasRequiredParts(panelLayout) &&
-      ticketPanelLayoutHasAtMostOneFunctionButton(panelLayout) &&
-      adminRoleId &&
-      claimRoleIds.length &&
-      closeRoleIds.length &&
-      notifyRoleIds.length,
+      (!ticketEnabled ||
+        (menuChannelId &&
+          ticketsCategoryId &&
+          logsCreatedChannelId &&
+          logsClosedChannelId &&
+          panelLayout.length &&
+          ticketPanelLayoutHasRequiredParts(panelLayout) &&
+          ticketPanelLayoutHasAtMostOneFunctionButton(panelLayout) &&
+          adminRoleId &&
+          claimRoleIds.length &&
+          closeRoleIds.length &&
+          notifyRoleIds.length)),
   );
 
   const canSaveWelcome = Boolean(
     !settingsReadOnly &&
       !isLoading &&
       !isSaving &&
-      welcomeEnabled &&
-      entryChannelsProvided &&
-      exitChannelsProvided &&
-      isEntryLayoutValid &&
-      isExitLayoutValid,
+      (!welcomeEnabled ||
+        (entryChannelsProvided &&
+          exitChannelsProvided &&
+          isEntryLayoutValid &&
+          isExitLayoutValid)),
   );
   const antiLinkTimeoutValue = normalizeAntiLinkTimeoutMinutes(
     antiLinkTimeoutMinutes,
@@ -2648,18 +2756,29 @@ export function ServerSettingsEditor({
             antiLinkTimeoutValue >= 1))),
   );
   const hasAnySecurityLogEnabled = SECURITY_LOG_EVENT_OPTIONS.some(
-    (option) => securityLogsDraft[option.key].enabled,
+    (option) => securityLogsDraft.events[option.key].enabled,
   );
   const hasInvalidSecurityLogChannel = SECURITY_LOG_EVENT_OPTIONS.some(
     (option) =>
-      securityLogsDraft[option.key].enabled &&
-      !securityLogsDraft[option.key].channelId,
+      securityLogsDraft.enabled &&
+      !securityLogsDraft.useDefaultChannel &&
+      securityLogsDraft.events[option.key].enabled &&
+      !securityLogsDraft.events[option.key].channelId,
   );
+  const hasInvalidSecurityLogsDefaultChannel =
+    securityLogsDraft.enabled &&
+    securityLogsDraft.useDefaultChannel &&
+    hasAnySecurityLogEnabled &&
+    !securityLogsDraft.defaultChannelId;
   const canSaveSecurityLogs = Boolean(
     !settingsReadOnly &&
       !isLoading &&
       !isSaving &&
-      (!hasAnySecurityLogEnabled || !hasInvalidSecurityLogChannel),
+      (!securityLogsDraft.enabled ||
+        !hasAnySecurityLogEnabled ||
+        (securityLogsDraft.useDefaultChannel
+          ? !hasInvalidSecurityLogsDefaultChannel
+          : !hasInvalidSecurityLogChannel)),
   );
 
   const canSendEmbed = Boolean(
@@ -2667,6 +2786,7 @@ export function ServerSettingsEditor({
       !isLoading &&
       !isSaving &&
       !isSendingEmbed &&
+      ticketEnabled &&
       menuChannelId &&
       panelLayout.length &&
       ticketPanelLayoutHasRequiredParts(panelLayout) &&
@@ -2676,6 +2796,7 @@ export function ServerSettingsEditor({
   const currentSettingsDraft = useMemo(
     () =>
       normalizeServerSettingsDraft({
+        enabled: ticketEnabled,
         menuChannelId,
         ticketsCategoryId,
         logsCreatedChannelId,
@@ -2690,6 +2811,7 @@ export function ServerSettingsEditor({
       adminRoleId,
       claimRoleIds,
       closeRoleIds,
+      ticketEnabled,
       logsClosedChannelId,
       logsCreatedChannelId,
       menuChannelId,
@@ -2849,19 +2971,26 @@ export function ServerSettingsEditor({
   const showInlineMessages = Boolean(
     isViewerOnly || locked || errorMessage,
   );
+  const ticketControlsDisabled = isSaving || settingsReadOnly || !ticketEnabled;
   const welcomeControlsDisabled =
     isSaving || settingsReadOnly || !welcomeEnabled || isActivatingWelcome;
   const antiLinkControlsDisabled =
     isSaving || settingsReadOnly || !antiLinkEnabled || isActivatingAntiLink;
-  const securityLogsControlsDisabled = isSaving || settingsReadOnly;
+  const securityLogsModuleControlsDisabled = isSaving || settingsReadOnly;
+  const securityLogsControlsDisabled =
+    securityLogsModuleControlsDisabled || !securityLogsDraft.enabled;
+  const securityLogsPerEventChannelControlsDisabled =
+    securityLogsControlsDisabled || securityLogsDraft.useDefaultChannel;
   const showInvalidTicketSaveState =
     isTicketMessageSection &&
+    ticketEnabled &&
     hasUnsavedChanges &&
     !isSaving &&
     !showSaveSuccessBar &&
     isTicketMessageLayoutInvalid;
   const showInvalidWelcomeSaveState =
     isWelcomeMessageSection &&
+    welcomeEnabled &&
     hasUnsavedChanges &&
     !isSaving &&
     !showSaveSuccessBar &&
@@ -3745,6 +3874,7 @@ export function ServerSettingsEditor({
       setEntryThumbnailMode(savedWelcomeSettingsDraft.entryThumbnailMode);
       setExitThumbnailMode(savedWelcomeSettingsDraft.exitThumbnailMode);
     } else if (savedSettingsDraft) {
+      setTicketEnabled(savedSettingsDraft.enabled);
       setMenuChannelId(savedSettingsDraft.menuChannelId);
       setTicketsCategoryId(savedSettingsDraft.ticketsCategoryId);
       setLogsCreatedChannelId(savedSettingsDraft.logsCreatedChannelId);
@@ -3773,7 +3903,7 @@ export function ServerSettingsEditor({
 
   const handleSave = useCallback(async () => {
     if (!canPersistSettings) return;
-    if (isTicketSection && !adminRoleId) return;
+    if (isTicketSection && ticketEnabled && !adminRoleId) return;
     setIsSaving(true);
     setErrorMessage(null);
     setSuccessMessage(null);
@@ -3811,7 +3941,10 @@ export function ServerSettingsEditor({
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               guildId,
-              events: currentSecurityLogsDraft,
+              enabled: currentSecurityLogsDraft.enabled,
+              useDefaultChannel: currentSecurityLogsDraft.useDefaultChannel,
+              defaultChannelId: currentSecurityLogsDraft.defaultChannelId,
+              events: currentSecurityLogsDraft.events,
             }),
           },
         );
@@ -3850,20 +3983,42 @@ export function ServerSettingsEditor({
 
         setSavedWelcomeSettingsDraft(currentWelcomeDraft);
       } else {
-        const [ticketRes, staffRes] = await Promise.all([
-          fetch("/api/auth/me/guilds/ticket-settings", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              guildId,
-              menuChannelId,
-              ticketsCategoryId,
-              logsCreatedChannelId,
-              logsClosedChannelId,
-              panelLayout,
-            }),
+        const shouldPersistTicketStaff =
+          ticketEnabled ||
+          Boolean(
+            adminRoleId &&
+              claimRoleIds.length &&
+              closeRoleIds.length &&
+              notifyRoleIds.length,
+          );
+        const ticketRes = await fetch("/api/auth/me/guilds/ticket-settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            guildId,
+            enabled: ticketEnabled,
+            menuChannelId,
+            ticketsCategoryId,
+            logsCreatedChannelId,
+            logsClosedChannelId,
+            panelLayout,
           }),
-          fetch("/api/auth/me/guilds/ticket-staff-settings", {
+        });
+
+        const ticket = await ticketRes.json();
+        if (!ticketRes.ok || !ticket.ok) {
+          throw new Error(ticket.message || "Falha ao salvar canais.");
+        }
+
+        let nextStaffSettings = {
+          adminRoleId: savedSettingsDraft?.adminRoleId ?? null,
+          claimRoleIds: savedSettingsDraft?.claimRoleIds ?? [],
+          closeRoleIds: savedSettingsDraft?.closeRoleIds ?? [],
+          notifyRoleIds: savedSettingsDraft?.notifyRoleIds ?? [],
+        };
+
+        if (shouldPersistTicketStaff) {
+          const staffRes = await fetch("/api/auth/me/guilds/ticket-staff-settings", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -3873,14 +4028,69 @@ export function ServerSettingsEditor({
               closeRoleIds,
               notifyRoleIds,
             }),
-          }),
-        ]);
+          });
 
-        const ticket = await ticketRes.json();
-        const staff = await staffRes.json();
-        if (!ticketRes.ok || !ticket.ok) throw new Error(ticket.message || "Falha ao salvar canais.");
-        if (!staffRes.ok || !staff.ok) throw new Error(staff.message || "Falha ao salvar staff.");
-        setSavedSettingsDraft(currentSettingsDraft);
+          const staff = await staffRes.json();
+          if (!staffRes.ok || !staff.ok) {
+            throw new Error(staff.message || "Falha ao salvar staff.");
+          }
+
+          nextStaffSettings = {
+            adminRoleId:
+              typeof staff.settings?.adminRoleId === "string"
+                ? staff.settings.adminRoleId
+                : null,
+            claimRoleIds: Array.isArray(staff.settings?.claimRoleIds)
+              ? staff.settings.claimRoleIds
+              : [],
+            closeRoleIds: Array.isArray(staff.settings?.closeRoleIds)
+              ? staff.settings.closeRoleIds
+              : [],
+            notifyRoleIds: Array.isArray(staff.settings?.notifyRoleIds)
+              ? staff.settings.notifyRoleIds
+              : [],
+          };
+        }
+
+        const nextSavedTicketDraft = normalizeServerSettingsDraft({
+          enabled: ticket.settings?.enabled === true,
+          menuChannelId:
+            typeof ticket.settings?.menuChannelId === "string"
+              ? ticket.settings.menuChannelId
+              : null,
+          ticketsCategoryId:
+            typeof ticket.settings?.ticketsCategoryId === "string"
+              ? ticket.settings.ticketsCategoryId
+              : null,
+          logsCreatedChannelId:
+            typeof ticket.settings?.logsCreatedChannelId === "string"
+              ? ticket.settings.logsCreatedChannelId
+              : null,
+          logsClosedChannelId:
+            typeof ticket.settings?.logsClosedChannelId === "string"
+              ? ticket.settings.logsClosedChannelId
+              : null,
+          panelLayout: normalizeTicketPanelLayout(
+            ticket.settings?.panelLayout,
+            ticket.settings || undefined,
+          ),
+          adminRoleId: nextStaffSettings.adminRoleId,
+          claimRoleIds: nextStaffSettings.claimRoleIds,
+          closeRoleIds: nextStaffSettings.closeRoleIds,
+          notifyRoleIds: nextStaffSettings.notifyRoleIds,
+        });
+
+        setTicketEnabled(nextSavedTicketDraft.enabled);
+        setMenuChannelId(nextSavedTicketDraft.menuChannelId);
+        setTicketsCategoryId(nextSavedTicketDraft.ticketsCategoryId);
+        setLogsCreatedChannelId(nextSavedTicketDraft.logsCreatedChannelId);
+        setLogsClosedChannelId(nextSavedTicketDraft.logsClosedChannelId);
+        setPanelLayout(nextSavedTicketDraft.panelLayout);
+        setAdminRoleId(nextSavedTicketDraft.adminRoleId);
+        setClaimRoleIds(nextSavedTicketDraft.claimRoleIds);
+        setCloseRoleIds(nextSavedTicketDraft.closeRoleIds);
+        setNotifyRoleIds(nextSavedTicketDraft.notifyRoleIds);
+        setSavedSettingsDraft(nextSavedTicketDraft);
       }
 
       setSuccessMessage("Configuracoes salvas com sucesso.");
@@ -3901,7 +4111,6 @@ export function ServerSettingsEditor({
     claimRoleIds,
     closeRoleIds,
     currentAntiLinkDraft,
-    currentSettingsDraft,
     currentWelcomeDraft,
     entryLayout,
     entryLogChannelId,
@@ -3921,10 +4130,12 @@ export function ServerSettingsEditor({
     menuChannelId,
     notifyRoleIds,
     panelLayout,
+    savedSettingsDraft,
     setSavedAntiLinkSettingsDraft,
     setSavedSecurityLogsDraft,
     setSavedSettingsDraft,
     setSavedWelcomeSettingsDraft,
+    ticketEnabled,
     ticketsCategoryId,
     welcomeEnabled,
     currentSecurityLogsDraft,
@@ -4139,50 +4350,119 @@ export function ServerSettingsEditor({
   const handleToggleSecurityLogEvent = useCallback(
     (eventKey: SecurityLogEventKey) => {
       if (securityLogsControlsDisabled) return;
+
+      const isEnablingEvent = !securityLogsDraft.events[eventKey].enabled;
       setSecurityLogsDraft((current) => ({
         ...current,
-        [eventKey]: {
-          ...current[eventKey],
-          enabled: !current[eventKey].enabled,
+        events: {
+          ...current.events,
+          [eventKey]: {
+            ...current.events[eventKey],
+            enabled: !current.events[eventKey].enabled,
+          },
         },
       }));
+
+      if (isEnablingEvent && !securityLogsDraft.useDefaultChannel) {
+        setActiveSecurityLogModalEvent(eventKey);
+        return;
+      }
+
+      if (!isEnablingEvent && activeSecurityLogModalEvent === eventKey) {
+        setActiveSecurityLogModalEvent(null);
+      }
     },
-    [securityLogsControlsDisabled],
+    [
+      activeSecurityLogModalEvent,
+      securityLogsControlsDisabled,
+      securityLogsDraft.events,
+      securityLogsDraft.useDefaultChannel,
+    ],
   );
 
   const handleSelectSecurityLogChannel = useCallback(
     (eventKey: SecurityLogEventKey, channelId: string | null) => {
+      if (securityLogsPerEventChannelControlsDisabled) return;
+      setSecurityLogsDraft((current) => ({
+        ...current,
+        events: {
+          ...current.events,
+          [eventKey]: {
+            ...current.events[eventKey],
+            channelId,
+          },
+        },
+      }));
+    },
+    [securityLogsPerEventChannelControlsDisabled],
+  );
+
+  const handleToggleSecurityLogsModule = useCallback(() => {
+    if (securityLogsModuleControlsDisabled) return;
+    setSecurityLogsDraft((current) => ({
+      ...current,
+      enabled: !current.enabled,
+    }));
+  }, [securityLogsModuleControlsDisabled]);
+
+  const handleToggleSecurityLogsDefaultChannel = useCallback(() => {
+    if (securityLogsControlsDisabled) return;
+    setSecurityLogsDraft((current) => ({
+      ...current,
+      useDefaultChannel: !current.useDefaultChannel,
+    }));
+  }, [securityLogsControlsDisabled]);
+
+  const handleSelectSecurityLogsDefaultChannel = useCallback(
+    (channelId: string | null) => {
       if (securityLogsControlsDisabled) return;
       setSecurityLogsDraft((current) => ({
         ...current,
-        [eventKey]: {
-          ...current[eventKey],
-          channelId,
-        },
+        defaultChannelId: channelId,
       }));
     },
     [securityLogsControlsDisabled],
   );
 
+  const handleCloseSecurityLogModal = useCallback(() => {
+    if (!activeSecurityLogModalEvent) return;
+
+    setSecurityLogsDraft((current) => {
+      if (!current.enabled || current.useDefaultChannel) {
+        return current;
+      }
+
+      const eventDraft = current.events[activeSecurityLogModalEvent];
+      if (!eventDraft.enabled || eventDraft.channelId) {
+        return current;
+      }
+
+      return {
+        ...current,
+        events: {
+          ...current.events,
+          [activeSecurityLogModalEvent]: {
+            ...eventDraft,
+            enabled: false,
+          },
+        },
+      };
+    });
+
+    setActiveSecurityLogModalEvent(null);
+  }, [activeSecurityLogModalEvent]);
+
   useEffect(() => {
-    if (!isWelcomeSection || isLoading || !hasLoadedDashboardSnapshot) {
-      setIsWelcomeActivationModalOpen(false);
-      return;
-    }
-    if (welcomeEnabled) {
-      setIsWelcomeActivationModalOpen(false);
-      return;
-    }
-    if (savedWelcomeSettingsDraft?.enabled === false && !hasDismissedWelcomeModal) {
-      setIsWelcomeActivationModalOpen(true);
+    if (
+      activeSecurityLogModalEvent &&
+      (!securityLogsDraft.enabled || securityLogsDraft.useDefaultChannel)
+    ) {
+      setActiveSecurityLogModalEvent(null);
     }
   }, [
-    hasDismissedWelcomeModal,
-    hasLoadedDashboardSnapshot,
-    isLoading,
-    isWelcomeSection,
-    savedWelcomeSettingsDraft,
-    welcomeEnabled,
+    activeSecurityLogModalEvent,
+    securityLogsDraft.enabled,
+    securityLogsDraft.useDefaultChannel,
   ]);
 
   useEffect(() => {
@@ -4241,28 +4521,51 @@ export function ServerSettingsEditor({
                 ) : null}
                 <div className={`space-y-[18px] ${showFloatingSaveBar ? "pb-[112px]" : ""} ${isLoading ? "pointer-events-none opacity-[0.78]" : ""}`}>
                   {settingsSection === "overview" ? (
-                    <>
+                    <div className="space-y-[14px]">
+                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
+                          <div>
+                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
+                              Modulo Ticket
+                            </p>
+                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
+                              Mantenha a central de atendimento em operacao
+                            </h3>
+                            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                              O Flowdesk libera painel, abertura de tickets, logs e permissoes quando o modulo estiver ativo.
+                            </p>
+                          </div>
+
+                          <DashboardInlineSwitch
+                            checked={ticketEnabled}
+                            onChange={() => {
+                              if (isSaving || settingsReadOnly) return;
+                              setTicketEnabled((current) => !current);
+                            }}
+                            disabled={isSaving || settingsReadOnly}
+                            ariaLabel="Ativar ou desativar modulo de tickets"
+                          />
+                        </div>
+                      </div>
+
                       <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
                         <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
                           <div>
                             <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Ticket</p>
                             <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Configuracao de canais
+                              Canais e logs
                             </h3>
                             <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
                               Defina o canal principal, a categoria dos tickets e os logs que sustentam a operacao do servidor.
                             </p>
                           </div>
-                          <span className="inline-flex h-[30px] items-center justify-center rounded-full border border-[#151515] bg-[#0B0B0B] px-[12px] text-[11px] uppercase tracking-[0.16em] text-[#686868]">
-                            Canais
-                          </span>
                         </div>
 
                         <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
-                          <ConfigStepSelect label="Canal do menu principal de tickets" placeholder="Escolha o canal" options={textChannelOptions} value={menuChannelId} onChange={setMenuChannelId} disabled={isSaving || settingsReadOnly} controlHeightPx={serverSettingsControlHeight} />
-                          <ConfigStepSelect label="Categoria onde os tickets serao abertos" placeholder="Escolha uma categoria" options={categoryOptions} value={ticketsCategoryId} onChange={setTicketsCategoryId} disabled={isSaving || settingsReadOnly} controlHeightPx={serverSettingsControlHeight} />
-                          <ConfigStepSelect label="Canal de logs de criacao" placeholder="Escolha o canal de logs" options={textChannelOptions} value={logsCreatedChannelId} onChange={setLogsCreatedChannelId} disabled={isSaving || settingsReadOnly} controlHeightPx={serverSettingsControlHeight} />
-                          <ConfigStepSelect label="Canal de logs de fechamento" placeholder="Escolha o canal de logs" options={textChannelOptions} value={logsClosedChannelId} onChange={setLogsClosedChannelId} disabled={isSaving || settingsReadOnly} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepSelect label="Canal do menu principal de tickets" placeholder="Escolha o canal" options={textChannelOptions} value={menuChannelId} onChange={setMenuChannelId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepSelect label="Categoria onde os tickets serao abertos" placeholder="Escolha uma categoria" options={categoryOptions} value={ticketsCategoryId} onChange={setTicketsCategoryId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepSelect label="Canal de logs de criacao" placeholder="Escolha o canal de logs" options={textChannelOptions} value={logsCreatedChannelId} onChange={setLogsCreatedChannelId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepSelect label="Canal de logs de fechamento" placeholder="Escolha o canal de logs" options={textChannelOptions} value={logsClosedChannelId} onChange={setLogsClosedChannelId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
                         </div>
                       </div>
 
@@ -4308,51 +4611,64 @@ export function ServerSettingsEditor({
                             className="mt-[18px] flowdesk-fade-up-soft"
                           >
                             <div className="grid grid-cols-1 gap-[16px] xl:grid-cols-2">
-                              <ConfigStepSelect label="Cargo administrador do ticket" placeholder="Escolha o cargo" options={roleOptions} value={adminRoleId} onChange={setAdminRoleId} disabled={isSaving || settingsReadOnly} controlHeightPx={serverSettingsControlHeight} />
-                              <ConfigStepMultiSelect label="Cargos que podem assumir tickets" placeholder="Escolha os cargos" options={roleOptions} values={claimRoleIds} onChange={setClaimRoleIds} disabled={isSaving || settingsReadOnly} controlHeightPx={serverSettingsControlHeight} />
-                              <ConfigStepMultiSelect label="Cargos que podem fechar tickets" placeholder="Escolha os cargos" options={roleOptions} values={closeRoleIds} onChange={setCloseRoleIds} disabled={isSaving || settingsReadOnly} controlHeightPx={serverSettingsControlHeight} />
-                              <ConfigStepMultiSelect label="Cargos que podem enviar notificacao" placeholder="Escolha os cargos" options={roleOptions} values={notifyRoleIds} onChange={setNotifyRoleIds} disabled={isSaving || settingsReadOnly} controlHeightPx={serverSettingsControlHeight} />
+                              <ConfigStepSelect label="Cargo administrador do ticket" placeholder="Escolha o cargo" options={roleOptions} value={adminRoleId} onChange={setAdminRoleId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                              <ConfigStepMultiSelect label="Cargos que podem assumir tickets" placeholder="Escolha os cargos" options={roleOptions} values={claimRoleIds} onChange={setClaimRoleIds} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                              <ConfigStepMultiSelect label="Cargos que podem fechar tickets" placeholder="Escolha os cargos" options={roleOptions} values={closeRoleIds} onChange={setCloseRoleIds} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                              <ConfigStepMultiSelect label="Cargos que podem enviar notificacao" placeholder="Escolha os cargos" options={roleOptions} values={notifyRoleIds} onChange={setNotifyRoleIds} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
                             </div>
                           </div>
                         ) : null}
                       </div>
-                    </>
+                    </div>
                   ) : settingsSection === "message" ? (
                     <TicketMessageBuilder
                       guildId={guildId}
                       value={panelLayout}
                       onChange={setPanelLayout}
-                      disabled={isSaving || isSendingEmbed || settingsReadOnly}
+                      disabled={
+                        isSaving ||
+                        isSendingEmbed ||
+                        settingsReadOnly ||
+                        !ticketEnabled
+                      }
                       canSendEmbed={canSendEmbed}
                       isSendingEmbed={isSendingEmbed}
                       onSendEmbed={handleSendEmbed}
                     />
                   ) : settingsSection === "entry_exit_overview" ? (
-                    <>
-                      {!welcomeEnabled ? (
-                        <div className="rounded-[24px] border border-[#241616] bg-[linear-gradient(180deg,rgba(25,12,12,0.9)_0%,rgba(12,6,6,0.92)_100%)] px-[18px] py-[18px] text-[13px] leading-[1.6] text-[#D8A0A0] sm:px-[22px]">
-                          O modulo de mensagem de entrada/saida ainda nao esta ativado. Clique em ativar para liberar a configuracao.
-                          <div className="mt-[14px]">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setHasDismissedWelcomeModal(false);
-                                setIsWelcomeActivationModalOpen(true);
-                              }}
-                              className="inline-flex h-[40px] items-center justify-center rounded-[12px] border border-[#2A1D1D] bg-[#120C0C] px-[16px] text-[13px] font-medium text-[#F2C3C3] transition-colors hover:border-[#3A2A2A] hover:bg-[#1B1212]"
-                            >
-                              Ativar modulo
-                            </button>
+                    <div className="space-y-[14px]">
+                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
+                          <div>
+                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
+                              Mensagem Entrada/Saida
+                            </p>
+                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
+                              Automatize recepcao e despedida do servidor
+                            </h3>
+                            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                              O Flowdesk envia a mensagem publica, registra logs privados e libera o builder quando o modulo estiver ativo.
+                            </p>
                           </div>
+
+                          <DashboardInlineSwitch
+                            checked={welcomeEnabled}
+                            onChange={() => {
+                              if (isSaving || settingsReadOnly) return;
+                              setWelcomeEnabled((current) => !current);
+                            }}
+                            disabled={isSaving || settingsReadOnly}
+                            ariaLabel="Ativar ou desativar modulo de entrada e saida"
+                          />
                         </div>
-                      ) : null}
+                      </div>
 
                       <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
                         <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
                           <div>
                             <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Mensagem Entrada/Saida</p>
                             <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Canais de entrada
+                              Canais e logs de entrada
                             </h3>
                             <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
                               Escolha onde a mensagem publica aparece e qual canal privado recebe o log de entrada.
@@ -4374,7 +4690,7 @@ export function ServerSettingsEditor({
                           <div>
                             <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Mensagem Entrada/Saida</p>
                             <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Canais de saida
+                              Canais e logs de saida
                             </h3>
                             <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
                               Defina o canal publico de saida e o log privado para eventos de desligamento.
@@ -4390,63 +4706,48 @@ export function ServerSettingsEditor({
                           <ConfigStepSelect label="Log privado de saida" placeholder="Escolha o canal de log" options={textChannelOptions} value={exitLogChannelId} onChange={setExitLogChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
                         </div>
                       </div>
-                    </>
+                    </div>
                   ) : settingsSection === "security_antilink" ? (
-                    <>
+                    <div className="space-y-[14px]">
+                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
+                          <div>
+                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
+                              Modulo AntiLink
+                            </p>
+                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
+                              Proteja o servidor automaticamente
+                            </h3>
+                            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                              O Flowdesk bloqueia links externos, convites do Discord e tentativas de ofuscacao sempre que o evento acontecer.
+                            </p>
+                          </div>
+
+                          <DashboardInlineSwitch
+                            checked={antiLinkEnabled}
+                            onChange={() => {
+                              if (isSaving || settingsReadOnly) return;
+                              setHasDismissedAntiLinkModal(true);
+                              setAntiLinkEnabled((current) => !current);
+                            }}
+                            disabled={isSaving || settingsReadOnly}
+                            ariaLabel="Ativar ou desativar modulo AntiLink"
+                          />
+                        </div>
+                      </div>
+
                       <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
                         <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
                           <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Seguranca</p>
+                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Configuracao AntiLink</p>
                             <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Modulo AntiLink
+                              Canal, acao e excecoes
                             </h3>
                             <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              Bloqueio padrao sempre ativo para links externos, convites e ofuscacao. Configure acao, log e excecoes de cargo.
+                              Escolha onde os bloqueios serao registrados, qual acao adicional entra depois da remocao da mensagem e quais cargos ficam fora da regra.
                             </p>
                           </div>
-                          <div className="flex shrink-0 items-center gap-[10px]">
-                            <span className="text-[11px] uppercase tracking-[0.12em] text-[#7A7A7A]">
-                              {antiLinkEnabled ? "Ligado" : "Desligado"}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (isSaving || settingsReadOnly) return;
-                                setHasDismissedAntiLinkModal(true);
-                                setAntiLinkEnabled((current) => !current);
-                              }}
-                              disabled={isSaving || settingsReadOnly}
-                              className={`relative inline-flex h-[34px] w-[66px] items-center rounded-full border px-[4px] transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                                antiLinkEnabled
-                                  ? "border-[rgba(106,226,90,0.42)] bg-[rgba(106,226,90,0.25)]"
-                                  : "border-[#2A2A2A] bg-[#111111]"
-                              }`}
-                              aria-pressed={antiLinkEnabled}
-                              aria-label="Ativar ou desativar modulo AntiLink"
-                            >
-                              <span
-                                className={`absolute text-[10px] font-medium uppercase tracking-[0.1em] transition-all ${
-                                  antiLinkEnabled
-                                    ? "left-[10px] text-[#183018]"
-                                    : "right-[8px] text-[#6F6F6F]"
-                                }`}
-                              >
-                                {antiLinkEnabled ? "On" : "Off"}
-                              </span>
-                              <span
-                                className={`h-[24px] w-[24px] rounded-full bg-[#D8D8D8] shadow-[0_4px_14px_rgba(0,0,0,0.4)] transition-transform ${
-                                  antiLinkEnabled ? "translate-x-[31px]" : "translate-x-0"
-                                }`}
-                              />
-                            </button>
-                          </div>
                         </div>
-
-                        {!antiLinkEnabled ? (
-                          <p className="mt-[14px] text-[12px] leading-[1.6] text-[#C89A9A]">
-                            Modulo desativado. Ligue o AntiLink para liberar as configuracoes abaixo.
-                          </p>
-                        ) : null}
 
                         <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
                           <ConfigStepSelect
@@ -4512,30 +4813,97 @@ export function ServerSettingsEditor({
                           />
                         </div>
                       </div>
-                    </>
+                    </div>
                   ) : settingsSection === "security_logs" ? (
                     <>
-                      <div className="px-[2px]">
-                        <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
-                          Seguranca
-                        </p>
-                        <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                          Logs de Seguranca
-                        </h3>
-                        <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                          Organize apelidos, mensagens, voz e moderacao com cards individuais. Cada evento pode ser ligado de forma separada e configurado em um canal proprio.
-                        </p>
+                      <div className="space-y-[14px]">
+                        <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                          <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
+                            <div>
+                              <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
+                                Seguranca
+                              </p>
+                              <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
+                                Logs de Seguranca
+                              </h3>
+                              <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                                Organize apelidos, mensagens, voz e moderacao com cards individuais. Cada evento pode ser ligado de forma separada e configurado em um canal proprio.
+                              </p>
+                            </div>
+
+                            <DashboardInlineSwitch
+                              checked={securityLogsDraft.enabled}
+                              onChange={handleToggleSecurityLogsModule}
+                              disabled={securityLogsModuleControlsDisabled}
+                              ariaLabel="Ativar ou desativar modulo de logs de seguranca"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                          <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
+                            <div>
+                              <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
+                                Logs de Seguranca
+                              </p>
+                              <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
+                                Canal padrao
+                              </h3>
+                              <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                                Quando ativado, todos os eventos usam um unico canal. Os canais isolados de cada card ficam pausados ate voce desligar essa opcao.
+                              </p>
+                            </div>
+
+                            <DashboardInlineSwitch
+                              checked={securityLogsDraft.useDefaultChannel}
+                              onChange={handleToggleSecurityLogsDefaultChannel}
+                              disabled={securityLogsControlsDisabled}
+                              ariaLabel="Ativar ou desativar canal padrao dos logs de seguranca"
+                            />
+                          </div>
+
+                          <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-[minmax(0,1fr)_auto] xl:items-end">
+                            <ConfigStepSelect
+                              label="Canal padrao dos logs"
+                              placeholder="Escolha um canal para todos os eventos"
+                              options={textChannelOptions}
+                              value={securityLogsDraft.defaultChannelId}
+                              onChange={handleSelectSecurityLogsDefaultChannel}
+                              disabled={securityLogsControlsDisabled || !securityLogsDraft.useDefaultChannel}
+                              controlHeightPx={serverSettingsControlHeight}
+                            />
+
+                            <span className="inline-flex h-[32px] items-center justify-center rounded-full border border-[#151515] bg-[#0B0B0B] px-[12px] text-[11px] uppercase tracking-[0.16em] text-[#686868]">
+                              {securityLogsDraft.useDefaultChannel
+                                ? "Canal unico"
+                                : "Canais isolados"}
+                            </span>
+                          </div>
+                        </div>
                       </div>
 
                       <div className="space-y-[14px]">
-                        {SECURITY_LOG_EVENT_OPTIONS.map((option, index) => {
-                          const eventDraft = securityLogsDraft[option.key];
-                          const hasChannel = Boolean(eventDraft.channelId);
-                          const channelLabel =
+                        {SECURITY_LOG_EVENT_OPTIONS.map((option) => {
+                          const eventDraft = securityLogsDraft.events[option.key];
+                          const isolatedChannelLabel =
                             textChannelOptions.find(
                               (channel) => channel.id === eventDraft.channelId,
                             )?.name || null;
-                          const showChannelWarning = eventDraft.enabled && !hasChannel;
+                          const defaultChannelLabel =
+                            textChannelOptions.find(
+                              (channel) =>
+                                channel.id === securityLogsDraft.defaultChannelId,
+                            )?.name || null;
+                          const resolvedChannelLabel = securityLogsDraft.useDefaultChannel
+                            ? defaultChannelLabel
+                            : isolatedChannelLabel;
+                          const showChannelWarning =
+                            securityLogsDraft.enabled &&
+                            eventDraft.enabled &&
+                            (securityLogsDraft.useDefaultChannel
+                              ? !securityLogsDraft.defaultChannelId
+                              : !eventDraft.channelId);
+                          const EventIcon = option.icon;
 
                           return (
                             <div
@@ -4556,7 +4924,7 @@ export function ServerSettingsEditor({
                                           : "bg-[#101010] text-[#6E6E6E]"
                                       }`}
                                     >
-                                      {String(index + 1).padStart(2, "0")}
+                                      <EventIcon size={16} strokeWidth={2.1} />
                                     </span>
 
                                     <div className="min-w-0 flex-1">
@@ -4606,8 +4974,13 @@ export function ServerSettingsEditor({
 
                                       <div className="mt-[12px] flex flex-wrap items-center gap-[8px]">
                                         <span className="inline-flex items-center rounded-full bg-[#0A0A0A] px-[10px] py-[6px] text-[11px] uppercase tracking-[0.12em] text-[#696969]">
-                                          Canal: {channelLabel || "nao definido"}
+                                          Canal: {resolvedChannelLabel || "nao definido"}
                                         </span>
+                                        {securityLogsDraft.useDefaultChannel ? (
+                                          <span className="inline-flex items-center rounded-full bg-[rgba(0,98,255,0.12)] px-[10px] py-[6px] text-[11px] uppercase tracking-[0.12em] text-[#8DB9FF]">
+                                            Canal padrao
+                                          </span>
+                                        ) : null}
                                         {showChannelWarning ? (
                                           <span className="inline-flex items-center rounded-full bg-[rgba(73,24,24,0.42)] px-[10px] py-[6px] text-[11px] uppercase tracking-[0.12em] text-[#D09B9B]">
                                             Canal pendente
@@ -4622,31 +4995,19 @@ export function ServerSettingsEditor({
                                   <button
                                     type="button"
                                     onClick={() => setActiveSecurityLogModalEvent(option.key)}
-                                    disabled={securityLogsControlsDisabled}
+                                    disabled={securityLogsPerEventChannelControlsDisabled}
                                     className="inline-flex h-[42px] w-[42px] items-center justify-center rounded-[14px] bg-[#101010] text-[#8C8C8C] transition-colors hover:bg-[#171717] hover:text-[#F0F0F0] disabled:cursor-not-allowed disabled:opacity-55"
                                     aria-label={`Configurar canal para ${option.title}`}
                                   >
                                     <Settings2 size={16} strokeWidth={2.1} />
                                   </button>
 
-                                  <button
-                                    type="button"
-                                    onClick={() => handleToggleSecurityLogEvent(option.key)}
+                                  <DashboardInlineSwitch
+                                    checked={eventDraft.enabled}
+                                    onChange={() => handleToggleSecurityLogEvent(option.key)}
                                     disabled={securityLogsControlsDisabled}
-                                    className={`relative inline-flex h-[40px] w-[72px] items-center rounded-full p-[4px] transition-colors disabled:cursor-not-allowed disabled:opacity-55 ${
-                                      eventDraft.enabled ? "bg-[#F2F2F2]" : "bg-[#141414]"
-                                    }`}
-                                    aria-pressed={eventDraft.enabled}
-                                    aria-label={`Ativar ou desativar ${option.title}`}
-                                  >
-                                    <span
-                                      className={`h-[32px] w-[32px] rounded-full shadow-[0_4px_14px_rgba(0,0,0,0.22)] transition-all duration-200 ${
-                                        eventDraft.enabled
-                                          ? "translate-x-[32px] bg-[#050505]"
-                                          : "translate-x-0 bg-[#696969]"
-                                      }`}
-                                    />
-                                  </button>
+                                    ariaLabel={`Ativar ou desativar ${option.title}`}
+                                  />
                                 </div>
                               </div>
                             </div>
@@ -4654,7 +5015,11 @@ export function ServerSettingsEditor({
                         })}
                       </div>
 
-                      {hasInvalidSecurityLogChannel ? (
+                      {hasInvalidSecurityLogsDefaultChannel ? (
+                        <p className="text-[12px] leading-[1.55] text-[#D7A0A0]">
+                          Defina o canal padrao antes de salvar os logs com canal unico.
+                        </p>
+                      ) : hasInvalidSecurityLogChannel ? (
                         <p className="text-[12px] leading-[1.55] text-[#D7A0A0]">
                           Um ou mais eventos ligados ainda nao possuem canal configurado.
                         </p>
@@ -4662,23 +5027,6 @@ export function ServerSettingsEditor({
                     </>
                   ) : (
                     <>
-                      {!welcomeEnabled ? (
-                        <div className="rounded-[24px] border border-[#241616] bg-[linear-gradient(180deg,rgba(25,12,12,0.9)_0%,rgba(12,6,6,0.92)_100%)] px-[18px] py-[18px] text-[13px] leading-[1.6] text-[#D8A0A0] sm:px-[22px]">
-                          O modulo de mensagem de entrada/saida ainda nao esta ativado. Clique em ativar para liberar a configuracao.
-                          <div className="mt-[14px]">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setHasDismissedWelcomeModal(false);
-                                setIsWelcomeActivationModalOpen(true);
-                              }}
-                              className="inline-flex h-[40px] items-center justify-center rounded-[12px] border border-[#2A1D1D] bg-[#120C0C] px-[16px] text-[13px] font-medium text-[#F2C3C3] transition-colors hover:border-[#3A2A2A] hover:bg-[#1B1212]"
-                            >
-                              Ativar modulo
-                            </button>
-                          </div>
-                        </div>
-                      ) : null}
                       <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
                         <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
                           <div>
@@ -5472,8 +5820,9 @@ export function ServerSettingsEditor({
           )
         : null}
 
-      {isRecurringMethodModalOpen ? (
-        <div className="fixed inset-0 z-[125] overflow-y-auto overscroll-contain bg-black/75 px-4 py-6">
+      {isPortalMounted && isRecurringMethodModalOpen
+        ? createPortal(
+        <div className="fixed inset-y-0 left-0 right-0 z-[2600] overflow-y-auto overscroll-contain bg-black/75 px-4 py-6 xl:left-[318px]">
           <div className="flex min-h-full items-center justify-center">
           <div
             role="dialog"
@@ -5578,13 +5927,15 @@ export function ServerSettingsEditor({
             </div>
           </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       ) : null}
 
-      {isAddMethodModalOpen ? (
+      {isPortalMounted && isAddMethodModalOpen
+        ? createPortal(
         <ClientErrorBoundary
           fallback={
-            <div className="fixed inset-0 z-[130] overflow-y-auto overscroll-contain bg-black/75 px-4 py-6">
+            <div className="fixed inset-y-0 left-0 right-0 z-[2600] overflow-y-auto overscroll-contain bg-black/75 px-4 py-6 xl:left-[318px]">
               <div className="flex min-h-full items-center justify-center">
               <div className="w-full max-w-[520px] rounded-[3px] border border-[#2E2E2E] bg-[#0A0A0A] p-6 text-center">
                 <p className="text-[16px] text-[#D8D8D8]">
@@ -5605,7 +5956,7 @@ export function ServerSettingsEditor({
             </div>
           }
         >
-          <div className="fixed inset-0 z-[130] overflow-y-auto overscroll-contain bg-black/75 px-4 py-6">
+          <div className="fixed inset-y-0 left-0 right-0 z-[2600] overflow-y-auto overscroll-contain bg-black/75 px-4 py-6 xl:left-[318px]">
             <div className="flex min-h-full items-center justify-center">
             <div
               role="dialog"
@@ -5889,25 +6240,30 @@ export function ServerSettingsEditor({
             </div>
             </div>
           </div>
-        </ClientErrorBoundary>
+        </ClientErrorBoundary>,
+        document.body,
       ) : null}
 
-      {activeSecurityLogModalEvent && activeSecurityLogModalOption ? (
-        <div className="fixed inset-y-0 right-0 left-0 z-[140] isolate overflow-y-auto overscroll-contain px-[18px] py-[28px] xl:left-[358px]">
+      {isPortalMounted &&
+      activeSecurityLogModalEvent &&
+      activeSecurityLogModalOption
+        ? createPortal(
+        <div className="fixed inset-y-0 left-0 right-0 z-[2600] isolate overflow-y-auto overscroll-contain xl:left-[318px]">
           <button
             type="button"
             aria-label="Fechar modal de canal"
-            className="absolute inset-0 bg-[rgba(0,0,0,0.84)] backdrop-blur-[5px]"
-            onClick={() => setActiveSecurityLogModalEvent(null)}
+            className="absolute inset-0 bg-[rgba(0,0,0,0.84)] backdrop-blur-[7px]"
+            onClick={handleCloseSecurityLogModal}
           />
 
-          <div className="relative z-[10] flex min-h-full items-center justify-center">
-            <div
+          <div className="relative z-[10] min-h-full px-[20px] py-[32px] md:px-6 lg:px-8 xl:pl-[40px] xl:pr-[42px]">
+            <div className="mx-auto flex min-h-[calc(100vh-64px)] w-full max-w-[1220px] items-center justify-center">
+              <div
               role="dialog"
               aria-modal="true"
               aria-label={`Configurar canal de ${activeSecurityLogModalOption.title}`}
               className="flowdesk-stage-fade relative w-full max-w-[720px] overflow-hidden rounded-[32px] bg-transparent px-[22px] py-[22px] shadow-[0_34px_110px_rgba(0,0,0,0.52)] sm:px-[28px] sm:py-[28px]"
-            >
+              >
               <span
                 aria-hidden="true"
                 className="pointer-events-none absolute inset-0 rounded-[32px] border border-[#0E0E0E]"
@@ -5944,7 +6300,7 @@ export function ServerSettingsEditor({
 
                   <button
                     type="button"
-                    onClick={() => setActiveSecurityLogModalEvent(null)}
+                    onClick={handleCloseSecurityLogModal}
                     className="inline-flex h-[40px] w-[40px] items-center justify-center rounded-[14px] border border-[#171717] bg-[#0D0D0D] text-[#9C9C9C] transition-colors hover:border-[#242424] hover:text-[#E4E4E4]"
                     aria-label="Fechar modal"
                   >
@@ -5966,7 +6322,7 @@ export function ServerSettingsEditor({
                       placeholder="Escolha o canal de log"
                       options={textChannelOptions}
                       value={
-                        securityLogsDraft[activeSecurityLogModalEvent].channelId
+                        securityLogsDraft.events[activeSecurityLogModalEvent].channelId
                       }
                       onChange={(value) =>
                         handleSelectSecurityLogChannel(
@@ -5974,7 +6330,7 @@ export function ServerSettingsEditor({
                           value,
                         )
                       }
-                      disabled={securityLogsControlsDisabled}
+                      disabled={securityLogsPerEventChannelControlsDisabled}
                       controlHeightPx={serverSettingsControlHeight}
                       variant="immersive"
                     />
@@ -5984,7 +6340,7 @@ export function ServerSettingsEditor({
                 <div className="mt-[24px] flex flex-col-reverse gap-[10px] sm:flex-row sm:justify-end">
                   <button
                     type="button"
-                    onClick={() => setActiveSecurityLogModalEvent(null)}
+                    onClick={handleCloseSecurityLogModal}
                     className="inline-flex h-[46px] items-center justify-center rounded-[14px] border border-[#171717] bg-[#0D0D0D] px-[18px] text-[14px] font-medium text-[#CACACA] transition-colors hover:border-[#232323] hover:bg-[#111111] hover:text-[#F1F1F1]"
                   >
                     Cancelar
@@ -5992,7 +6348,7 @@ export function ServerSettingsEditor({
 
                   <button
                     type="button"
-                    onClick={() => setActiveSecurityLogModalEvent(null)}
+                    onClick={handleCloseSecurityLogModal}
                     className="group relative inline-flex h-[46px] shrink-0 items-center justify-center overflow-visible whitespace-nowrap rounded-[12px] px-6 text-[14px] leading-none font-semibold"
                   >
                     <span
@@ -6005,9 +6361,11 @@ export function ServerSettingsEditor({
                   </button>
                 </div>
               </div>
+              </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       ) : null}
 
       <BotMissingModal

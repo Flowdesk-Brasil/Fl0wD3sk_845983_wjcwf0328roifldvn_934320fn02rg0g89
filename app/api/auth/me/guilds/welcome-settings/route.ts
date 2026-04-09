@@ -362,7 +362,7 @@ export async function POST(request: Request) {
       );
     }
 
-    if (entryChannelsProvided && !welcomeLayoutHasContent(entryLayout)) {
+    if (enabled && entryChannelsProvided && !welcomeLayoutHasContent(entryLayout)) {
       recordServerSaveDiagnostic({
         context: diagnostic,
         outcome: "payload_invalid",
@@ -381,7 +381,7 @@ export async function POST(request: Request) {
       );
     }
 
-    if (exitChannelsProvided && !welcomeLayoutHasContent(exitLayout)) {
+    if (enabled && exitChannelsProvided && !welcomeLayoutHasContent(exitLayout)) {
       recordServerSaveDiagnostic({
         context: diagnostic,
         outcome: "payload_invalid",

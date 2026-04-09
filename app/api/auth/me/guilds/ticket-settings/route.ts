@@ -41,6 +41,7 @@ const PANEL_BUTTON_LABEL_MAX_LENGTH = 40;
 
 type TicketSettingsBody = {
   guildId?: unknown;
+  enabled?: unknown;
   menuChannelId?: unknown;
   ticketsCategoryId?: unknown;
   logsCreatedChannelId?: unknown;
@@ -65,6 +66,34 @@ function getTrimmedText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function isValidTicketPanelDraft(input: {
+  panelLayout: TicketPanelLayout;
+  panelTitle: string;
+  panelDescription: string;
+  panelButtonLabel: string;
+}) {
+  return Boolean(
+    input.panelLayout.length &&
+      ticketPanelLayoutHasRequiredParts(input.panelLayout) &&
+      ticketPanelLayoutHasAtMostOneFunctionButton(input.panelLayout) &&
+      input.panelTitle &&
+      input.panelDescription &&
+      input.panelButtonLabel,
+  );
+}
+
+function exceedsTicketPanelTextLimit(input: {
+  panelTitle: string;
+  panelDescription: string;
+  panelButtonLabel: string;
+}) {
+  return (
+    input.panelTitle.length > PANEL_TITLE_MAX_LENGTH ||
+    input.panelDescription.length > PANEL_DESCRIPTION_MAX_LENGTH ||
+    input.panelButtonLabel.length > PANEL_BUTTON_LABEL_MAX_LENGTH
+  );
+}
+
 function wait(ms: number) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -73,6 +102,7 @@ function wait(ms: number) {
 
 async function upsertTicketSettingsWithRetry(input: {
   guildId: string;
+  enabled: boolean;
   menuChannelId: string;
   ticketsCategoryId: string;
   logsCreatedChannelId: string;
@@ -93,6 +123,7 @@ async function upsertTicketSettingsWithRetry(input: {
       .upsert(
         {
           guild_id: input.guildId,
+          enabled: input.enabled,
           menu_channel_id: input.menuChannelId,
           tickets_category_id: input.ticketsCategoryId,
           logs_created_channel_id: input.logsCreatedChannelId,
@@ -106,7 +137,7 @@ async function upsertTicketSettingsWithRetry(input: {
         { onConflict: "guild_id" },
       )
       .select(
-        "guild_id, menu_channel_id, tickets_category_id, logs_created_channel_id, logs_closed_channel_id, panel_layout, panel_title, panel_description, panel_button_label, updated_at",
+        "guild_id, enabled, menu_channel_id, tickets_category_id, logs_created_channel_id, logs_closed_channel_id, panel_layout, panel_title, panel_description, panel_button_label, updated_at",
       )
       .single();
 
@@ -217,7 +248,7 @@ export async function GET(request: Request) {
     const result = await supabase
       .from("guild_ticket_settings")
       .select(
-        "menu_channel_id, tickets_category_id, logs_created_channel_id, logs_closed_channel_id, panel_layout, panel_title, panel_description, panel_button_label, updated_at",
+        "enabled, menu_channel_id, tickets_category_id, logs_created_channel_id, logs_closed_channel_id, panel_layout, panel_title, panel_description, panel_button_label, updated_at",
       )
       .eq("guild_id", guildId)
       .maybeSingle();
@@ -239,6 +270,7 @@ export async function GET(request: Request) {
       NextResponse.json({
       ok: true,
       settings: {
+        enabled: Boolean(result.data.enabled),
         menuChannelId: result.data.menu_channel_id,
         ticketsCategoryId: result.data.tickets_category_id,
         logsCreatedChannelId: result.data.logs_created_channel_id,
@@ -299,6 +331,7 @@ export async function POST(request: Request) {
     }
 
     const guildId = getTrimmedId(body.guildId);
+    const enabled = typeof body.enabled === "boolean" ? body.enabled : true;
     const menuChannelId = getTrimmedId(body.menuChannelId);
     const ticketsCategoryId = getTrimmedId(body.ticketsCategoryId);
     const logsCreatedChannelId = getTrimmedId(body.logsCreatedChannelId);
@@ -310,15 +343,40 @@ export async function POST(request: Request) {
     });
     const { panelTitle, panelDescription, panelButtonLabel } =
       deriveLegacyTicketPanelFields(panelLayout);
+    const hasValidIncomingChannelIds =
+      isGuildId(menuChannelId) &&
+      isGuildId(ticketsCategoryId) &&
+      isGuildId(logsCreatedChannelId) &&
+      isGuildId(logsClosedChannelId);
+    const hasValidIncomingPanelDraft = isValidTicketPanelDraft({
+      panelLayout,
+      panelTitle,
+      panelDescription,
+      panelButtonLabel,
+    });
+    const incomingPanelTextExceedsLimit = exceedsTicketPanelTextLimit({
+      panelTitle,
+      panelDescription,
+      panelButtonLabel,
+    });
     diagnostic = createServerSaveDiagnosticContext("ticket_settings", guildId);
 
-    if (
-      !isGuildId(guildId) ||
-      !isGuildId(menuChannelId) ||
-      !isGuildId(ticketsCategoryId) ||
-      !isGuildId(logsCreatedChannelId) ||
-      !isGuildId(logsClosedChannelId)
-    ) {
+    if (!isGuildId(guildId)) {
+      recordServerSaveDiagnostic({
+        context: diagnostic,
+        outcome: "payload_invalid",
+        httpStatus: 400,
+        detail: "Guild ID invalido.",
+      });
+      return applyNoStoreHeaders(
+        NextResponse.json(
+          { ok: false, message: "Guild ID invalido." },
+          { status: 400 },
+        ),
+      );
+    }
+
+    if (enabled && !hasValidIncomingChannelIds) {
       recordServerSaveDiagnostic({
         context: diagnostic,
         outcome: "payload_invalid",
@@ -327,20 +385,13 @@ export async function POST(request: Request) {
       });
       return applyNoStoreHeaders(
         NextResponse.json(
-        { ok: false, message: "Um ou mais IDs informados sao invalidos." },
-        { status: 400 },
+          { ok: false, message: "Um ou mais IDs informados sao invalidos." },
+          { status: 400 },
         ),
       );
     }
 
-    if (
-      !panelLayout.length ||
-      !ticketPanelLayoutHasRequiredParts(panelLayout) ||
-      !ticketPanelLayoutHasAtMostOneFunctionButton(panelLayout) ||
-      !panelTitle ||
-      !panelDescription ||
-      !panelButtonLabel
-    ) {
+    if (enabled && !hasValidIncomingPanelDraft) {
       recordServerSaveDiagnostic({
         context: diagnostic,
         outcome: "payload_invalid",
@@ -349,21 +400,17 @@ export async function POST(request: Request) {
       });
       return applyNoStoreHeaders(
         NextResponse.json(
-        {
-          ok: false,
-          message:
-            "Adicione pelo menos um conteudo com texto e uma acao valida na mensagem do ticket. O embed tambem aceita apenas um botao funcional.",
-        },
-        { status: 400 },
+          {
+            ok: false,
+            message:
+              "Adicione pelo menos um conteudo com texto e uma acao valida na mensagem do ticket. O embed tambem aceita apenas um botao funcional.",
+          },
+          { status: 400 },
         ),
       );
     }
 
-    if (
-      panelTitle.length > PANEL_TITLE_MAX_LENGTH ||
-      panelDescription.length > PANEL_DESCRIPTION_MAX_LENGTH ||
-      panelButtonLabel.length > PANEL_BUTTON_LABEL_MAX_LENGTH
-    ) {
+    if (enabled && incomingPanelTextExceedsLimit) {
       recordServerSaveDiagnostic({
         context: diagnostic,
         outcome: "payload_invalid",
@@ -372,12 +419,12 @@ export async function POST(request: Request) {
       });
       return applyNoStoreHeaders(
         NextResponse.json(
-        {
-          ok: false,
-          message:
-            "A mensagem principal do ticket excedeu o limite permitido de caracteres.",
-        },
-        { status: 400 },
+          {
+            ok: false,
+            message:
+              "A mensagem principal do ticket excedeu o limite permitido de caracteres.",
+          },
+          { status: 400 },
         ),
       );
     }
@@ -476,113 +523,249 @@ export async function POST(request: Request) {
       }
     }
 
-    const rawChannels = await fetchGuildChannelsByBot(guildId);
-    if (!rawChannels) {
+    const supabase = getSupabaseAdminClientOrThrow();
+    const existingSettingsResult = await supabase
+      .from("guild_ticket_settings")
+      .select(
+        "enabled, menu_channel_id, tickets_category_id, logs_created_channel_id, logs_closed_channel_id, panel_layout, panel_title, panel_description, panel_button_label, updated_at",
+      )
+      .eq("guild_id", guildId)
+      .maybeSingle();
+
+    if (existingSettingsResult.error) {
+      throw new Error(existingSettingsResult.error.message);
+    }
+
+    const existingSettings = existingSettingsResult.data;
+    const fallbackPanelLayout = existingSettings
+      ? normalizeTicketPanelLayout(existingSettings.panel_layout, {
+          panelTitle: existingSettings.panel_title,
+          panelDescription: existingSettings.panel_description,
+          panelButtonLabel: existingSettings.panel_button_label,
+        })
+      : panelLayout;
+    const fallbackPanelTitle =
+      typeof existingSettings?.panel_title === "string"
+        ? existingSettings.panel_title
+        : panelTitle;
+    const fallbackPanelDescription =
+      typeof existingSettings?.panel_description === "string"
+        ? existingSettings.panel_description
+        : panelDescription;
+    const fallbackPanelButtonLabel =
+      typeof existingSettings?.panel_button_label === "string"
+        ? existingSettings.panel_button_label
+        : panelButtonLabel;
+    const resolvedMenuChannelId = isGuildId(menuChannelId)
+      ? menuChannelId
+      : typeof existingSettings?.menu_channel_id === "string"
+        ? existingSettings.menu_channel_id
+        : "";
+    const resolvedTicketsCategoryId = isGuildId(ticketsCategoryId)
+      ? ticketsCategoryId
+      : typeof existingSettings?.tickets_category_id === "string"
+        ? existingSettings.tickets_category_id
+        : "";
+    const resolvedLogsCreatedChannelId = isGuildId(logsCreatedChannelId)
+      ? logsCreatedChannelId
+      : typeof existingSettings?.logs_created_channel_id === "string"
+        ? existingSettings.logs_created_channel_id
+        : "";
+    const resolvedLogsClosedChannelId = isGuildId(logsClosedChannelId)
+      ? logsClosedChannelId
+      : typeof existingSettings?.logs_closed_channel_id === "string"
+        ? existingSettings.logs_closed_channel_id
+        : "";
+    const shouldUseIncomingPanelDraft =
+      hasValidIncomingPanelDraft && !incomingPanelTextExceedsLimit;
+    const resolvedPanelLayout = shouldUseIncomingPanelDraft
+      ? panelLayout
+      : fallbackPanelLayout;
+    const resolvedPanelTitle = shouldUseIncomingPanelDraft
+      ? panelTitle
+      : fallbackPanelTitle;
+    const resolvedPanelDescription = shouldUseIncomingPanelDraft
+      ? panelDescription
+      : fallbackPanelDescription;
+    const resolvedPanelButtonLabel = shouldUseIncomingPanelDraft
+      ? panelButtonLabel
+      : fallbackPanelButtonLabel;
+    const hasPersistableResolvedSettings =
+      isGuildId(resolvedMenuChannelId) &&
+      isGuildId(resolvedTicketsCategoryId) &&
+      isGuildId(resolvedLogsCreatedChannelId) &&
+      isGuildId(resolvedLogsClosedChannelId) &&
+      isValidTicketPanelDraft({
+        panelLayout: resolvedPanelLayout,
+        panelTitle: resolvedPanelTitle,
+        panelDescription: resolvedPanelDescription,
+        panelButtonLabel: resolvedPanelButtonLabel,
+      }) &&
+      !exceedsTicketPanelTextLimit({
+        panelTitle: resolvedPanelTitle,
+        panelDescription: resolvedPanelDescription,
+        panelButtonLabel: resolvedPanelButtonLabel,
+      });
+
+    if (!enabled && !hasPersistableResolvedSettings) {
       recordServerSaveDiagnostic({
         context: diagnostic,
         authUserId,
         accessMode,
         licenseStatus,
-        outcome: "bot_access_missing",
-        httpStatus: 403,
-        detail: "Bot sem acesso aos canais do servidor.",
+        outcome: "saved",
+        httpStatus: 200,
+        detail: "Modulo de ticket desligado sem configuracao persistente anterior.",
       });
+
       return applyNoStoreHeaders(
-        NextResponse.json(
-        { ok: false, message: "Bot nao possui acesso aos canais deste servidor." },
-        { status: 403 },
-        ),
+        NextResponse.json({
+          ok: true,
+          settings: {
+            enabled: false,
+            menuChannelId:
+              typeof existingSettings?.menu_channel_id === "string"
+                ? existingSettings.menu_channel_id
+                : null,
+            ticketsCategoryId:
+              typeof existingSettings?.tickets_category_id === "string"
+                ? existingSettings.tickets_category_id
+                : null,
+            logsCreatedChannelId:
+              typeof existingSettings?.logs_created_channel_id === "string"
+                ? existingSettings.logs_created_channel_id
+                : null,
+            logsClosedChannelId:
+              typeof existingSettings?.logs_closed_channel_id === "string"
+                ? existingSettings.logs_closed_channel_id
+                : null,
+            panelLayout: resolvedPanelLayout,
+            panelTitle: resolvedPanelTitle,
+            panelDescription: resolvedPanelDescription,
+            panelButtonLabel: resolvedPanelButtonLabel,
+            updatedAt:
+              typeof existingSettings?.updated_at === "string"
+                ? existingSettings.updated_at
+                : null,
+          },
+        }),
       );
     }
 
-    const channelsById = new Map(rawChannels.map((channel) => [channel.id, channel]));
-    const menuChannel = channelsById.get(menuChannelId);
-    const ticketsCategory = channelsById.get(ticketsCategoryId);
-    const createdLogChannel = channelsById.get(logsCreatedChannelId);
-    const closedLogChannel = channelsById.get(logsClosedChannelId);
+    let rawChannels:
+      | Awaited<ReturnType<typeof fetchGuildChannelsByBot>>
+      | null = null;
 
-    if (!menuChannel || !isValidTextChannelType(menuChannel.type)) {
-      recordServerSaveDiagnostic({
-        context: diagnostic,
-        authUserId,
-        accessMode,
-        licenseStatus,
-        outcome: "validation_failed",
-        httpStatus: 400,
-        detail: "Canal do menu principal invalido.",
-      });
-      return applyNoStoreHeaders(
-        NextResponse.json(
-        { ok: false, message: "Canal do menu principal invalido." },
-        { status: 400 },
-        ),
-      );
-    }
+    if (enabled) {
+      rawChannels = await fetchGuildChannelsByBot(guildId);
+      if (!rawChannels) {
+        recordServerSaveDiagnostic({
+          context: diagnostic,
+          authUserId,
+          accessMode,
+          licenseStatus,
+          outcome: "bot_access_missing",
+          httpStatus: 403,
+          detail: "Bot sem acesso aos canais do servidor.",
+        });
+        return applyNoStoreHeaders(
+          NextResponse.json(
+            { ok: false, message: "Bot nao possui acesso aos canais deste servidor." },
+            { status: 403 },
+          ),
+        );
+      }
 
-    if (!ticketsCategory || ticketsCategory.type !== GUILD_CATEGORY) {
-      recordServerSaveDiagnostic({
-        context: diagnostic,
-        authUserId,
-        accessMode,
-        licenseStatus,
-        outcome: "validation_failed",
-        httpStatus: 400,
-        detail: "Categoria de tickets invalida.",
-      });
-      return applyNoStoreHeaders(
-        NextResponse.json(
-        { ok: false, message: "Categoria de tickets invalida." },
-        { status: 400 },
-        ),
-      );
-    }
+      const channelsById = new Map(rawChannels.map((channel) => [channel.id, channel]));
+      const menuChannel = channelsById.get(resolvedMenuChannelId);
+      const ticketsCategory = channelsById.get(resolvedTicketsCategoryId);
+      const createdLogChannel = channelsById.get(resolvedLogsCreatedChannelId);
+      const closedLogChannel = channelsById.get(resolvedLogsClosedChannelId);
 
-    if (!createdLogChannel || !isValidTextChannelType(createdLogChannel.type)) {
-      recordServerSaveDiagnostic({
-        context: diagnostic,
-        authUserId,
-        accessMode,
-        licenseStatus,
-        outcome: "validation_failed",
-        httpStatus: 400,
-        detail: "Canal de log de criacao invalido.",
-      });
-      return applyNoStoreHeaders(
-        NextResponse.json(
-        { ok: false, message: "Canal de log de criacao invalido." },
-        { status: 400 },
-        ),
-      );
-    }
+      if (!menuChannel || !isValidTextChannelType(menuChannel.type)) {
+        recordServerSaveDiagnostic({
+          context: diagnostic,
+          authUserId,
+          accessMode,
+          licenseStatus,
+          outcome: "validation_failed",
+          httpStatus: 400,
+          detail: "Canal do menu principal invalido.",
+        });
+        return applyNoStoreHeaders(
+          NextResponse.json(
+            { ok: false, message: "Canal do menu principal invalido." },
+            { status: 400 },
+          ),
+        );
+      }
 
-    if (!closedLogChannel || !isValidTextChannelType(closedLogChannel.type)) {
-      recordServerSaveDiagnostic({
-        context: diagnostic,
-        authUserId,
-        accessMode,
-        licenseStatus,
-        outcome: "validation_failed",
-        httpStatus: 400,
-        detail: "Canal de log de fechamento invalido.",
-      });
-      return applyNoStoreHeaders(
-        NextResponse.json(
-        { ok: false, message: "Canal de log de fechamento invalido." },
-        { status: 400 },
-        ),
-      );
+      if (!ticketsCategory || ticketsCategory.type !== GUILD_CATEGORY) {
+        recordServerSaveDiagnostic({
+          context: diagnostic,
+          authUserId,
+          accessMode,
+          licenseStatus,
+          outcome: "validation_failed",
+          httpStatus: 400,
+          detail: "Categoria de tickets invalida.",
+        });
+        return applyNoStoreHeaders(
+          NextResponse.json(
+            { ok: false, message: "Categoria de tickets invalida." },
+            { status: 400 },
+          ),
+        );
+      }
+
+      if (!createdLogChannel || !isValidTextChannelType(createdLogChannel.type)) {
+        recordServerSaveDiagnostic({
+          context: diagnostic,
+          authUserId,
+          accessMode,
+          licenseStatus,
+          outcome: "validation_failed",
+          httpStatus: 400,
+          detail: "Canal de log de criacao invalido.",
+        });
+        return applyNoStoreHeaders(
+          NextResponse.json(
+            { ok: false, message: "Canal de log de criacao invalido." },
+            { status: 400 },
+          ),
+        );
+      }
+
+      if (!closedLogChannel || !isValidTextChannelType(closedLogChannel.type)) {
+        recordServerSaveDiagnostic({
+          context: diagnostic,
+          authUserId,
+          accessMode,
+          licenseStatus,
+          outcome: "validation_failed",
+          httpStatus: 400,
+          detail: "Canal de log de fechamento invalido.",
+        });
+        return applyNoStoreHeaders(
+          NextResponse.json(
+            { ok: false, message: "Canal de log de fechamento invalido." },
+            { status: 400 },
+          ),
+        );
+      }
     }
 
     const savedSettings = await upsertTicketSettingsWithRetry({
       guildId,
-      menuChannelId,
-      ticketsCategoryId,
-      logsCreatedChannelId,
-      logsClosedChannelId,
-      panelLayout,
-      panelTitle,
-      panelDescription,
-      panelButtonLabel,
+      enabled,
+      menuChannelId: resolvedMenuChannelId,
+      ticketsCategoryId: resolvedTicketsCategoryId,
+      logsCreatedChannelId: resolvedLogsCreatedChannelId,
+      logsClosedChannelId: resolvedLogsClosedChannelId,
+      panelLayout: resolvedPanelLayout,
+      panelTitle: resolvedPanelTitle,
+      panelDescription: resolvedPanelDescription,
+      panelButtonLabel: resolvedPanelButtonLabel,
       configuredByUserId: authUserId,
     });
 
@@ -595,7 +778,7 @@ export async function POST(request: Request) {
       httpStatus: 200,
       detail: "Configuracoes do servidor salvas com sucesso.",
       meta: {
-        channelCount: rawChannels.length,
+        channelCount: rawChannels?.length || 0,
       },
     });
 
@@ -604,6 +787,7 @@ export async function POST(request: Request) {
       ok: true,
       settings: {
         guildId: savedSettings.guild_id,
+        enabled: Boolean(savedSettings.enabled),
         menuChannelId: savedSettings.menu_channel_id,
         ticketsCategoryId: savedSettings.tickets_category_id,
         logsCreatedChannelId: savedSettings.logs_created_channel_id,

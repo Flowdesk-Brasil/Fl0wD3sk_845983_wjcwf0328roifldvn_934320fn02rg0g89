@@ -61,12 +61,18 @@ const USER_PLAN_STATE_SELECT_COLUMNS =
   "user_id, plan_code, plan_name, status, amount, compare_amount, currency, billing_cycle_days, max_licensed_servers, max_active_tickets, max_automations, max_monthly_actions, last_payment_order_id, last_payment_guild_id, activated_at, expires_at, metadata, created_at, updated_at";
 
 const LATEST_APPROVED_ORDER_FOR_PLAN_STATE_SELECT_COLUMNS =
-  "id, user_id, guild_id, plan_code, plan_name, amount, currency, plan_billing_cycle_days, plan_max_licensed_servers, plan_max_active_tickets, plan_max_automations, plan_max_monthly_actions, paid_at, expires_at, created_at";
+  "id, user_id, guild_id, payment_method, plan_code, plan_name, amount, currency, plan_billing_cycle_days, plan_max_licensed_servers, plan_max_active_tickets, plan_max_automations, plan_max_monthly_actions, paid_at, expires_at, created_at";
+
+const BASIC_PLAN_ELIGIBILITY_SELECT_COLUMNS =
+  "id, plan_code, payment_method, paid_at, created_at";
+
+const BASIC_PLAN_FIRST_PURCHASE_BONUS_DAYS = 7;
 
 type PaymentOrderPlanRecord = {
   id: number;
   user_id: number;
   guild_id: string;
+  payment_method?: string | null;
   plan_code?: string | null;
   plan_name?: string | null;
   amount?: string | number | null;
@@ -83,6 +89,22 @@ type PaymentOrderPlanRecord = {
 
 type UserPlanStateMetadataRecord = {
   metadata: Record<string, unknown> | null;
+};
+
+type ApprovedOrderEligibilityRecord = {
+  id: number;
+  plan_code?: string | null;
+  payment_method?: string | null;
+  paid_at?: string | null;
+  created_at: string;
+};
+
+export type BasicPlanAvailability = {
+  isAvailable: boolean;
+  reason: "available" | "already_used" | "consumed_by_paid_purchase";
+  unavailableMessage: string | null;
+  grantedBonusDaysOnFirstPaidPurchase: number;
+  approvedOrdersCount: number;
 };
 
 type PaymentOrderProviderPayloadRecord = {
@@ -197,6 +219,175 @@ export function applyUserPlanStatePricingAdjustments(
   userPlanState: UserPlanStateRecord | null,
 ) {
   return applyBetaProgramPricing(plan, userPlanState?.metadata || null);
+}
+
+function isTrialPaymentMethod(value: unknown) {
+  return value === "trial";
+}
+
+function isCurrentlyActivePlanState(userPlanState: UserPlanStateRecord | null) {
+  if (!userPlanState) return false;
+  if (userPlanState.status !== "active" && userPlanState.status !== "trial") {
+    return false;
+  }
+
+  const expiresAtMs = userPlanState.expires_at
+    ? Date.parse(userPlanState.expires_at)
+    : Number.NaN;
+  return !Number.isFinite(expiresAtMs) || Date.now() <= expiresAtMs;
+}
+
+function readTrialConsumptionMetadata(metadata: Record<string, unknown> | null | undefined) {
+  const trialMetadata = isRecord(metadata?.trial) ? metadata.trial : null;
+
+  return {
+    basicUsedAt:
+      trialMetadata && typeof trialMetadata.basicUsedAt === "string"
+        ? trialMetadata.basicUsedAt
+        : null,
+    firstPaidBonusGrantedAt:
+      trialMetadata && typeof trialMetadata.firstPaidBonusGrantedAt === "string"
+        ? trialMetadata.firstPaidBonusGrantedAt
+        : null,
+  };
+}
+
+async function listApprovedOrdersForBasicPlanRules(
+  userId: number,
+  options?: { excludeOrderId?: number | null },
+) {
+  const supabase = getSupabaseAdminClientOrThrow();
+  let query = supabase
+    .from("payment_orders")
+    .select(BASIC_PLAN_ELIGIBILITY_SELECT_COLUMNS)
+    .eq("user_id", userId)
+    .eq("status", "approved")
+    .order("paid_at", { ascending: true, nullsFirst: false })
+    .order("created_at", { ascending: true });
+
+  if (typeof options?.excludeOrderId === "number" && Number.isFinite(options.excludeOrderId)) {
+    query = query.neq("id", options.excludeOrderId);
+  }
+
+  const result = await query;
+
+  if (result.error) {
+    throw new Error(
+      `Erro ao carregar historico aprovado da conta: ${result.error.message}`,
+    );
+  }
+
+  return (result.data || []) as ApprovedOrderEligibilityRecord[];
+}
+
+export async function getBasicPlanAvailability(
+  userId: number,
+): Promise<BasicPlanAvailability> {
+  const supabase = getSupabaseAdminClientOrThrow();
+  const [approvedOrders, planStateResult] = await Promise.all([
+    listApprovedOrdersForBasicPlanRules(userId),
+    supabase
+      .from("auth_user_plan_state")
+      .select("metadata")
+      .eq("user_id", userId)
+      .maybeSingle<UserPlanStateMetadataRecord>(),
+  ]);
+
+  if (planStateResult.error) {
+    throw new Error(
+      `Erro ao carregar elegibilidade do plano Basic: ${planStateResult.error.message}`,
+    );
+  }
+
+  const trialConsumption = readTrialConsumptionMetadata(planStateResult.data?.metadata || null);
+  const hasApprovedBasic = approvedOrders.some(
+    (order) =>
+      isTrialPaymentMethod(order.payment_method) ||
+      (isPlanCode(order.plan_code) && order.plan_code === "basic"),
+  );
+
+  if (hasApprovedBasic || trialConsumption.basicUsedAt) {
+    return {
+      isAvailable: false,
+      reason: "already_used",
+      unavailableMessage:
+        "O plano Basic ja foi usado nesta conta e nao pode ser resgatado novamente.",
+      grantedBonusDaysOnFirstPaidPurchase: BASIC_PLAN_FIRST_PURCHASE_BONUS_DAYS,
+      approvedOrdersCount: approvedOrders.length,
+    };
+  }
+
+  const hasApprovedPaidOrder = approvedOrders.some(
+    (order) => !isTrialPaymentMethod(order.payment_method),
+  );
+
+  if (hasApprovedPaidOrder || trialConsumption.firstPaidBonusGrantedAt) {
+    return {
+      isAvailable: false,
+      reason: "consumed_by_paid_purchase",
+      unavailableMessage:
+        "O plano Basic ficou indisponivel porque a conta ja iniciou em um plano pago e recebeu os 7 dias de bonus nessa primeira compra.",
+      grantedBonusDaysOnFirstPaidPurchase: BASIC_PLAN_FIRST_PURCHASE_BONUS_DAYS,
+      approvedOrdersCount: approvedOrders.length,
+    };
+  }
+
+  return {
+    isAvailable: true,
+    reason: "available",
+    unavailableMessage: null,
+    grantedBonusDaysOnFirstPaidPurchase: BASIC_PLAN_FIRST_PURCHASE_BONUS_DAYS,
+    approvedOrdersCount: 0,
+  };
+}
+
+export async function resolveApprovedOrderLicenseExpiresAt(input: {
+  order: Pick<
+    PaymentOrderPlanRecord,
+    | "id"
+    | "user_id"
+    | "plan_code"
+    | "payment_method"
+    | "plan_billing_cycle_days"
+    | "paid_at"
+    | "created_at"
+  >;
+  paidAtOverride?: string | null;
+}) {
+  const resolvedPlanCode = isPlanCode(input.order.plan_code)
+    ? input.order.plan_code
+    : DEFAULT_PLAN_CODE;
+  const activatedAt = input.paidAtOverride || input.order.paid_at || input.order.created_at;
+  const resolvedBillingCycleDays = resolveEffectivePlanBillingCycleDays({
+    billingCycleDays: input.order.plan_billing_cycle_days,
+    planCode: input.order.plan_code,
+    fallbackPlanCode: resolvedPlanCode,
+  });
+  const isTrialOrder =
+    resolvedPlanCode === "basic" || isTrialPaymentMethod(input.order.payment_method);
+  const priorApprovedOrders = isTrialOrder
+    ? []
+    : await listApprovedOrdersForBasicPlanRules(input.order.user_id, {
+        excludeOrderId: input.order.id,
+      });
+  const shouldGrantFirstPaidBonus =
+    !isTrialOrder && priorApprovedOrders.length === 0;
+  const effectiveBillingCycleDays = shouldGrantFirstPaidBonus
+    ? resolvedBillingCycleDays + BASIC_PLAN_FIRST_PURCHASE_BONUS_DAYS
+    : resolvedBillingCycleDays;
+
+  return {
+    expiresAt:
+      resolvePlanLicenseExpiresAtIso({
+        baseTimestamp: activatedAt,
+        billingCycleDays: effectiveBillingCycleDays,
+        planCode: resolvedPlanCode,
+        fallbackPlanCode: resolvedPlanCode,
+      }) || null,
+    bonusDaysApplied: shouldGrantFirstPaidBonus
+      ? BASIC_PLAN_FIRST_PURCHASE_BONUS_DAYS
+      : 0,
+  };
 }
 
 async function resolveApprovedOrderBenefits(input: {
@@ -530,9 +721,10 @@ export async function resolveEffectivePlanSelection(input: {
   preferredPlanCode?: unknown;
   preferredBillingPeriodCode?: unknown;
 }) {
-  const [guildSettings, userPlanState] = await Promise.all([
+  const [guildSettings, userPlanState, basicPlanAvailability] = await Promise.all([
     getGuildPlanSettingsRecord(input.userId, input.guildId),
     getUserPlanState(input.userId),
+    getBasicPlanAvailability(input.userId),
   ]);
 
   const preferredPlanCode =
@@ -546,12 +738,22 @@ export async function resolveEffectivePlanSelection(input: {
       userPlanState.status === "expired")
       ? userPlanState.plan_code
       : null;
+  const allowCurrentBasicPlanSelection =
+    userPlanState?.plan_code === "basic" && isCurrentlyActivePlanState(userPlanState);
+  const canSelectBasicPlan =
+    basicPlanAvailability.isAvailable || allowCurrentBasicPlanSelection;
+  const candidatePlanCodes = [
+    preferredPlanCode,
+    guildSettings?.plan_code || null,
+    activeAccountPlanCode,
+    DEFAULT_PLAN_CODE,
+  ];
 
   const selectedPlanCode =
-    preferredPlanCode ||
-    guildSettings?.plan_code ||
-    activeAccountPlanCode ||
-    DEFAULT_PLAN_CODE;
+    candidatePlanCodes.find(
+      (candidate): candidate is PlanCode =>
+        Boolean(candidate) && (candidate !== "basic" || canSelectBasicPlan),
+    ) || DEFAULT_PLAN_CODE;
   const selectedBillingPeriodCode = normalizePlanBillingPeriodCode(
     input.preferredBillingPeriodCode,
     DEFAULT_PLAN_BILLING_PERIOD_CODE,
@@ -565,6 +767,7 @@ export async function resolveEffectivePlanSelection(input: {
     plan,
     guildSettings,
     userPlanState,
+    basicPlanAvailability,
   };
 }
 
@@ -597,7 +800,7 @@ export async function syncUserPlanStateFromOrder(order: PaymentOrderPlanRecord) 
       planCode: resolvedPlanCode,
       fallbackPlanCode: resolvedPlanCode,
     });
-  const [currentPlanStateResult, approvedOrderBenefits] = await Promise.all([
+  const [currentPlanStateResult, approvedOrderBenefits, expirationResolution] = await Promise.all([
     supabase
       .from("auth_user_plan_state")
       .select("metadata")
@@ -608,6 +811,10 @@ export async function syncUserPlanStateFromOrder(order: PaymentOrderPlanRecord) 
       resolvedPlanCode,
       billingPeriodCode: resolvedBillingPeriodCode,
       activatedAt,
+    }),
+    resolveApprovedOrderLicenseExpiresAt({
+      order,
+      paidAtOverride: activatedAt,
     }),
   ]);
 
@@ -632,6 +839,30 @@ export async function syncUserPlanStateFromOrder(order: PaymentOrderPlanRecord) 
 
   if (approvedOrderBenefits.betaMetadata) {
     nextMetadata.beta = approvedOrderBenefits.betaMetadata;
+  }
+
+  const existingTrialMetadata = isRecord(existingMetadata.trial)
+    ? existingMetadata.trial
+    : {};
+  const nextTrialMetadata: Record<string, unknown> = {
+    ...existingTrialMetadata,
+  };
+
+  if (resolvedPlanCode === "basic" || isTrialPaymentMethod(order.payment_method)) {
+    nextTrialMetadata.basicUsedAt =
+      existingTrialMetadata.basicUsedAt || activatedAt;
+  }
+
+  if (expirationResolution.bonusDaysApplied > 0) {
+    nextTrialMetadata.firstPaidBonusGrantedAt =
+      existingTrialMetadata.firstPaidBonusGrantedAt || activatedAt;
+    nextTrialMetadata.firstPaidBonusDays =
+      existingTrialMetadata.firstPaidBonusDays ||
+      expirationResolution.bonusDaysApplied;
+  }
+
+  if (Object.keys(nextTrialMetadata).length > 0) {
+    nextMetadata.trial = nextTrialMetadata;
   }
 
   const payload = {

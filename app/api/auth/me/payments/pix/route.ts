@@ -38,10 +38,10 @@ import {
 } from "@/lib/payments/licenseStatus";
 import type { PlanPricingDefinition } from "@/lib/plans/catalog";
 import {
+  resolveApprovedOrderLicenseExpiresAt,
   resolveEffectivePlanSelection,
   syncUserPlanStateFromOrder,
 } from "@/lib/plans/state";
-import { resolvePlanLicenseExpiresAtIso } from "@/lib/plans/cycle";
 import {
   extractAuditErrorMessage,
   sanitizeErrorMessage,
@@ -233,18 +233,24 @@ function parseTimestampMs(value: string | null | undefined) {
   return Number.isFinite(timestamp) ? timestamp : null;
 }
 
-function resolveApprovedOrderExpiresAt(
+async function resolveApprovedOrderExpiresAt(
   order: Pick<
     PaymentOrderRecord,
-    "created_at" | "paid_at" | "plan_billing_cycle_days" | "plan_code"
+    | "id"
+    | "user_id"
+    | "payment_method"
+    | "created_at"
+    | "paid_at"
+    | "plan_billing_cycle_days"
+    | "plan_code"
   >,
   paidAtOverride?: string | null,
 ) {
-  return resolvePlanLicenseExpiresAtIso({
-    baseTimestamp: paidAtOverride || order.paid_at || order.created_at,
-    billingCycleDays: order.plan_billing_cycle_days,
-    planCode: order.plan_code,
+  const resolution = await resolveApprovedOrderLicenseExpiresAt({
+    order,
+    paidAtOverride,
   });
+  return resolution.expiresAt;
 }
 
 function isExpirationRelatedProviderErrorMessage(message: string) {
@@ -345,18 +351,42 @@ async function resolveCheckoutPlanForGuild(input: {
   requestedPlanCode?: unknown;
   requestedBillingPeriodCode?: unknown;
 }) {
-  const { plan } = await resolveEffectivePlanSelection({
+  const { plan, userPlanState } = await resolveEffectivePlanSelection({
     userId: input.userId,
     guildId: input.guildId,
     preferredPlanCode: input.requestedPlanCode,
     preferredBillingPeriodCode: input.requestedBillingPeriodCode,
   });
+  const currentPlanExpiresAtMs = userPlanState?.expires_at
+    ? Date.parse(userPlanState.expires_at)
+    : Number.NaN;
+  const hasActiveAccountPlan =
+    !!userPlanState &&
+    (userPlanState.status === "active" || userPlanState.status === "trial") &&
+    (!Number.isFinite(currentPlanExpiresAtMs) || Date.now() <= currentPlanExpiresAtMs);
+  const currentPlanRepurchaseBlocked =
+    hasActiveAccountPlan &&
+    userPlanState.plan_code === plan.code &&
+    userPlanState.billing_cycle_days === plan.billingCycleDays;
 
   return {
     plan,
     amount: Math.max(0, Math.round(plan.totalAmount * 100) / 100),
     currency: plan.currency || resolvePixCurrency(),
+    currentPlanRepurchaseBlocked,
   };
+}
+
+async function confirmImmediatePixProviderPayment(
+  providerPaymentId: string,
+  fallbackPayment: MercadoPagoPaymentResponse,
+) {
+  try {
+    const confirmedPayment = await fetchMercadoPagoPaymentById(providerPaymentId);
+    return confirmedPayment || fallbackPayment;
+  } catch {
+    return fallbackPayment;
+  }
 }
 
 function doesOrderMatchCheckoutPlan(
@@ -625,13 +655,13 @@ async function reconcilePixOrderFromProvider(
     resolvedStatus === "approved"
       ? providerPayment.date_approved || new Date().toISOString()
       : null;
-  const expiresAt =
-    resolvedStatus === "approved"
-      ? resolveApprovedOrderExpiresAt(order, paidAt)
-      : resolveUnpaidSetupEffectiveExpiresAt({
-          createdAt: order.created_at,
-          providerExpiresAt: providerPayment.date_of_expiration || null,
-        });
+      const expiresAt =
+        resolvedStatus === "approved"
+          ? await resolveApprovedOrderExpiresAt(order, paidAt)
+          : resolveUnpaidSetupEffectiveExpiresAt({
+              createdAt: order.created_at,
+              providerExpiresAt: providerPayment.date_of_expiration || null,
+            });
   const externalReference =
     providerPayment.external_reference || order.provider_external_reference || null;
 
@@ -982,6 +1012,17 @@ export async function GET(request: Request) {
       requestedBillingPeriodCode,
     });
 
+    if (checkoutPlan.currentPlanRepurchaseBlocked) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message:
+            "Seu plano atual ja esta ativo. Escolha outro plano para mudar agora.",
+        },
+        { status: 409 },
+      );
+    }
+
     if (checkoutPlan.plan.isTrial) {
       return NextResponse.json(
         {
@@ -1183,24 +1224,14 @@ export async function POST(request: Request) {
     const latestCoverage = await getLatestApprovedLicenseCoverageForGuild(guildId);
     const renewalDecision = resolveRenewalPaymentDecision(latestCoverage);
     if (latestCoverage && !renewalDecision.allowed) {
-      const activeLicenseLink =
-        latestCoverage.order.user_id === user.id
-          ? await ensureCheckoutAccessTokenForOrder({
-              order: latestCoverage.order,
-              forceRotate: false,
-              invalidateOtherOrders: false,
-            })
-          : null;
       return respond({
-        ok: true,
+        ok: false,
         blockedByActiveLicense: true,
         licenseActive: true,
         licenseExpiresAt: latestCoverage.licenseExpiresAt,
-        order: toApiOrder(
-          latestCoverage.order,
-          activeLicenseLink?.checkoutAccessToken || null,
-        ),
-      });
+        message:
+          "Ja existe uma licenca ativa neste servidor. Aguarde a janela correta para renovar ou escolha outro plano.",
+      }, { status: 409 });
     }
 
     const supabase = getSupabaseAdminClientOrThrow();
@@ -1246,6 +1277,17 @@ export async function POST(request: Request) {
       requestedPlanCode: body.planCode,
       requestedBillingPeriodCode: body.billingPeriodCode,
     });
+
+    if (checkoutPlan.currentPlanRepurchaseBlocked) {
+      return respond(
+        {
+          ok: false,
+          message:
+            "Seu plano atual ja esta ativo. Escolha outro plano para mudar agora.",
+        },
+        { status: 409 },
+      );
+    }
 
     if (checkoutPlan.plan.isTrial) {
       return respond(
@@ -1471,20 +1513,29 @@ export async function POST(request: Request) {
       });
       createdProviderPayment = mercadoPagoPayment;
 
-      const transactionData = mercadoPagoPayment.point_of_interaction?.transaction_data;
       const providerPaymentId = String(mercadoPagoPayment.id);
-      const providerStatus = mercadoPagoPayment.status || null;
-      const resolvedStatus = resolvePaymentStatus(mercadoPagoPayment.status);
+      const confirmedMercadoPagoPayment =
+        resolvePaymentStatus(mercadoPagoPayment.status) === "approved"
+          ? await confirmImmediatePixProviderPayment(
+              providerPaymentId,
+              mercadoPagoPayment,
+            )
+          : mercadoPagoPayment;
+      const transactionData =
+        confirmedMercadoPagoPayment.point_of_interaction?.transaction_data;
+      const providerStatus = confirmedMercadoPagoPayment.status || null;
+      const resolvedStatus = resolvePaymentStatus(confirmedMercadoPagoPayment.status);
       const paidAt =
         resolvedStatus === "approved"
-          ? mercadoPagoPayment.date_approved || new Date().toISOString()
+          ? confirmedMercadoPagoPayment.date_approved || new Date().toISOString()
           : null;
       const expiresAt =
         resolvedStatus === "approved"
-          ? resolveApprovedOrderExpiresAt(createdOrder, paidAt)
+          ? await resolveApprovedOrderExpiresAt(createdOrder, paidAt)
           : resolveUnpaidSetupEffectiveExpiresAt({
               createdAt: createdOrder.created_at,
-              providerExpiresAt: mercadoPagoPayment.date_of_expiration || null,
+              providerExpiresAt:
+                confirmedMercadoPagoPayment.date_of_expiration || null,
             });
 
       const updatedOrderResult = await supabase
@@ -1497,11 +1548,12 @@ export async function POST(request: Request) {
           provider_qr_base64: transactionData?.qr_code_base64 || null,
           provider_ticket_url: transactionData?.ticket_url || null,
           provider_status: providerStatus,
-          provider_status_detail: mercadoPagoPayment.status_detail || null,
+          provider_status_detail:
+            confirmedMercadoPagoPayment.status_detail || null,
           provider_payload: {
             source: "flowdesk_checkout",
             step: 4,
-            mercado_pago: mercadoPagoPayment,
+            mercado_pago: confirmedMercadoPagoPayment,
             pricing,
             plan: {
               code: checkoutPlan.plan.code,
@@ -1526,7 +1578,8 @@ export async function POST(request: Request) {
       await createPaymentOrderEvent(createdOrder.id, "provider_payment_created", {
         providerPaymentId,
         providerStatus,
-        providerStatusDetail: mercadoPagoPayment.status_detail || null,
+        providerStatusDetail:
+          confirmedMercadoPagoPayment.status_detail || null,
       });
 
       await logSecurityAuditEventSafe(auditContext, {
@@ -1580,7 +1633,7 @@ export async function POST(request: Request) {
               : null;
           const expiresAt =
             resolvedStatus === "approved"
-              ? resolveApprovedOrderExpiresAt(createdOrder, paidAt)
+              ? await resolveApprovedOrderExpiresAt(createdOrder, paidAt)
               : resolveUnpaidSetupEffectiveExpiresAt({
                   createdAt: createdOrder.created_at,
                   providerExpiresAt:
