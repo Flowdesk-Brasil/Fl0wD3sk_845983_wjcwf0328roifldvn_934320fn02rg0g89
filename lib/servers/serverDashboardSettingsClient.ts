@@ -77,6 +77,7 @@ type ServerDashboardSettingsPayload = {
       memberKick: { enabled: boolean; channelId: string | null };
       memberTimeout: { enabled: boolean; channelId: string | null };
       voiceMove: { enabled: boolean; channelId: string | null };
+      voiceMute: { enabled: boolean; channelId: string | null };
     };
     updatedAt: string | null;
   } | null;

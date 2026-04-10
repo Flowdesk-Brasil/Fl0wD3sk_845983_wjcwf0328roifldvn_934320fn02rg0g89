@@ -9,6 +9,7 @@ import {
   ImageUp,
   LogIn,
   LogOut,
+  MicOff,
   PencilLine,
   Settings2,
   ShieldCheck,
@@ -139,7 +140,8 @@ type SecurityLogEventKey =
   | "memberUnban"
   | "memberKick"
   | "memberTimeout"
-  | "voiceMove";
+  | "voiceMove"
+  | "voiceMute";
 
 type SecurityLogEventDraft = {
   enabled: boolean;
@@ -396,6 +398,14 @@ const SECURITY_LOG_EVENT_OPTIONS: Array<{
       "Tenta identificar quem moveu o membro usando audit log de movimentacao.",
     icon: ArrowRightLeft,
   },
+  {
+    key: "voiceMute",
+    title: "Mute e desmute em call",
+    description: "Registra quando alguem e mutado ou desmutado na call.",
+    tooltip:
+      "Detecta server mute e server unmute em voz, com executor e motivo quando o Discord disponibiliza no audit log.",
+    icon: MicOff,
+  },
 ];
 
 function normalizeSearch(value: string) {
@@ -524,6 +534,7 @@ function createDefaultSecurityLogEventsDraft(): SecurityLogEventsDraft {
     memberKick: { enabled: false, channelId: null },
     memberTimeout: { enabled: false, channelId: null },
     voiceMove: { enabled: false, channelId: null },
+    voiceMute: { enabled: false, channelId: null },
   };
 }
 
@@ -1952,6 +1963,14 @@ export function ServerSettingsEditor({
                   payload.securityLogsSettings.events.voiceMove.channelId &&
                   textSet.has(payload.securityLogsSettings.events.voiceMove.channelId)
                     ? payload.securityLogsSettings.events.voiceMove.channelId
+                    : null,
+              },
+              voiceMute: {
+                enabled: payload.securityLogsSettings.events.voiceMute.enabled,
+                channelId:
+                  payload.securityLogsSettings.events.voiceMute.channelId &&
+                  textSet.has(payload.securityLogsSettings.events.voiceMute.channelId)
+                    ? payload.securityLogsSettings.events.voiceMute.channelId
                     : null,
               },
               },
