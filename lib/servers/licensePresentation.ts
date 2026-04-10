@@ -1,5 +1,5 @@
 type ManagedServerLike = {
-  status: "paid" | "expired" | "off";
+  status: "paid" | "expired" | "off" | "pending_payment";
   licensePaidAt: string;
   licenseExpiresAt: string;
   daysUntilExpire: number;
@@ -55,10 +55,9 @@ export function formatServerDateLabel(rawDate: string) {
   }).format(timestamp);
 }
 
-export function resolveServerLicenseCycleLabel(server: Pick<
-  ManagedServerLike,
-  "licensePaidAt" | "licenseExpiresAt"
->) {
+export function resolveServerLicenseCycleLabel(
+  server: Pick<ManagedServerLike, "licensePaidAt" | "licenseExpiresAt">,
+) {
   const paidAtMs = parseTimestamp(server.licensePaidAt);
   const expiresAtMs = parseTimestamp(server.licenseExpiresAt);
   if (paidAtMs === null || expiresAtMs === null || expiresAtMs <= paidAtMs) {
@@ -93,7 +92,7 @@ export function buildServerStatusDescription(
     if (cycleLabel) {
       return variant === "dashboard"
         ? `${cycleLabel} de licenca`
-        : `Licenca ativa por ${cycleLabel} · valida ate ${formatServerDateLabel(server.licenseExpiresAt)}`;
+        : `Licenca ativa por ${cycleLabel} - valida ate ${formatServerDateLabel(server.licenseExpiresAt)}`;
     }
 
     return variant === "dashboard"
@@ -105,15 +104,21 @@ export function buildServerStatusDescription(
     if (cycleLabel) {
       return variant === "dashboard"
         ? `${cycleLabel} expirado`
-        : `Licenca de ${cycleLabel} expirada · ${server.daysUntilOff} dias restantes`;
+        : `Licenca de ${cycleLabel} expirada - ${server.daysUntilOff} dias restantes`;
     }
 
     return variant === "dashboard"
-      ? `Expirado · ${server.daysUntilOff} dias`
-      : `Licenca expirada · restam ${server.daysUntilOff} dias`;
+      ? `Expirado - ${server.daysUntilOff} dias`
+      : `Licenca expirada - restam ${server.daysUntilOff} dias`;
   }
 
-  return "Bot desligado · retorna imediatamente apos pagamento";
+  if (server.status === "pending_payment") {
+    return variant === "dashboard"
+      ? "Pagamento pendente"
+      : "Servidor aguardando regularizacao do downgrade";
+  }
+
+  return "Bot desligado - retorna imediatamente apos pagamento";
 }
 
 export function buildServerMetaLabel(
@@ -123,12 +128,12 @@ export function buildServerMetaLabel(
   >,
 ) {
   if (server.accessMode === "owner") {
-    return `Licenca principal · renovado em ${formatServerDateLabel(server.licensePaidAt)}`;
+    return `Licenca principal - renovado em ${formatServerDateLabel(server.licensePaidAt)}`;
   }
 
   if (server.canManage) {
-    return `Gestao por equipe · valido ate ${formatServerDateLabel(server.licenseExpiresAt)}`;
+    return `Gestao por equipe - valido ate ${formatServerDateLabel(server.licenseExpiresAt)}`;
   }
 
-  return `Acesso de visualizacao · valido ate ${formatServerDateLabel(server.licenseExpiresAt)}`;
+  return `Acesso de visualizacao - valido ate ${formatServerDateLabel(server.licenseExpiresAt)}`;
 }

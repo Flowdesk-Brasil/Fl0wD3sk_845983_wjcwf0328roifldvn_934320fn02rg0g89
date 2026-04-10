@@ -8,13 +8,24 @@ import {
 } from "@/lib/payments/licenseStatus";
 
 export type PlanGuildRecord = {
+  id?: number;
   user_id: number;
   guild_id: string;
   activated_at: string;
   created_at: string;
+  updated_at?: string;
+  is_active?: boolean;
+  deactivated_reason?: string | null;
+  deactivated_at?: string | null;
+  reactivated_at?: string | null;
 };
 
-export type PlanGuildLicenseStatus = "paid" | "expired" | "off" | "not_paid";
+export type PlanGuildLicenseStatus =
+  | "paid"
+  | "expired"
+  | "off"
+  | "not_paid"
+  | "pending_payment";
 
 type PlanCoverage = {
   status: PlanGuildLicenseStatus;
@@ -29,6 +40,14 @@ type LegacyApprovedGuildOrderRecord = {
   created_at: string;
   plan_code: string | null;
   plan_billing_cycle_days: number | null;
+};
+
+type PlanGuildOwnershipRecord = {
+  id: number;
+  user_id: number;
+  activated_at: string;
+  created_at: string;
+  is_active: boolean;
 };
 
 function parseIsoToMs(value: string | null | undefined) {
@@ -115,22 +134,43 @@ async function getLegacyLicensedGuildsForUser(userId: number) {
       guild_id: guildId,
       activated_at: latestCoverage.licenseStartsAt,
       created_at: latestCoverage.order.created_at,
+      is_active: true,
+      deactivated_reason: null,
+      deactivated_at: null,
+      reactivated_at: null,
     });
   }
 
   return legacyGuilds;
 }
 
-export async function getPlanGuildsForUser(userId: number) {
+export async function getPlanGuildsForUser(
+  userId: number,
+  options?: {
+    includeInactive?: boolean;
+    includeLegacyFallback?: boolean;
+  },
+) {
   const supabase = getSupabaseAdminClientOrThrow();
+  const includeInactive = options?.includeInactive === true;
+  const includeLegacyFallback = options?.includeLegacyFallback !== false;
+  let authUserPlanGuildsQuery = supabase
+    .from("auth_user_plan_guilds")
+    .select(
+      "id, user_id, guild_id, activated_at, created_at, updated_at, is_active, deactivated_reason, deactivated_at, reactivated_at",
+    )
+    .eq("user_id", userId)
+    .order("activated_at", { ascending: false });
+
+  if (!includeInactive) {
+    authUserPlanGuildsQuery = authUserPlanGuildsQuery.eq("is_active", true);
+  }
+
   const [result, legacyGuilds] = await Promise.all([
-    supabase
-      .from("auth_user_plan_guilds")
-      .select("user_id, guild_id, activated_at, created_at")
-      .eq("user_id", userId)
-      .order("activated_at", { ascending: false })
-      .returns<PlanGuildRecord[]>(),
-    getLegacyLicensedGuildsForUser(userId),
+    authUserPlanGuildsQuery.returns<PlanGuildRecord[]>(),
+    includeLegacyFallback && !includeInactive
+      ? getLegacyLicensedGuildsForUser(userId)
+      : Promise.resolve(new Map<string, PlanGuildRecord>()),
   ]);
 
   if (result.error) {
@@ -153,7 +193,7 @@ export async function getPlanGuildsForUser(userId: number) {
 }
 
 export async function countPlanGuildsForUser(userId: number) {
-  const guilds = await getPlanGuildsForUser(userId);
+  const guilds = await getPlanGuildsForUser(userId, { includeInactive: false });
   return guilds.length;
 }
 
@@ -161,9 +201,14 @@ export async function getPlanGuildOwnerUserId(guildId: string) {
   const supabase = getSupabaseAdminClientOrThrow();
   const result = await supabase
     .from("auth_user_plan_guilds")
-    .select("user_id, activated_at, created_at")
+    .select("user_id, activated_at, created_at, is_active")
     .eq("guild_id", guildId)
-    .maybeSingle<{ user_id: number; activated_at: string; created_at: string }>();
+    .maybeSingle<{
+      user_id: number;
+      activated_at: string;
+      created_at: string;
+      is_active: boolean;
+    }>();
 
   if (result.error) {
     throw new Error(`Erro ao consultar licenca do servidor: ${result.error.message}`);
@@ -174,6 +219,7 @@ export async function getPlanGuildOwnerUserId(guildId: string) {
         userId: result.data.user_id,
         activatedAt: result.data.activated_at,
         createdAt: result.data.created_at,
+        isActive: result.data.is_active,
       };
   }
 
@@ -183,25 +229,31 @@ export async function getPlanGuildOwnerUserId(guildId: string) {
         userId: lockedLicense.userId,
         activatedAt: lockedLicense.licenseStartsAt,
         createdAt: lockedLicense.createdAt,
+        isActive: true,
       }
     : null;
 }
 
-export async function isGuildLicensedForUser(userId: number, guildId: string) {
+export async function isGuildLicensedForUser(
+  userId: number,
+  guildId: string,
+  options?: { activeOnly?: boolean },
+) {
+  const activeOnly = options?.activeOnly === true;
   const supabase = getSupabaseAdminClientOrThrow();
   const result = await supabase
     .from("auth_user_plan_guilds")
-    .select("id")
+    .select("id, is_active")
     .eq("user_id", userId)
     .eq("guild_id", guildId)
     .limit(1)
-    .maybeSingle<{ id: number }>();
+    .maybeSingle<{ id: number; is_active: boolean }>();
 
   if (result.error) {
     throw new Error(`Erro ao validar licenca do servidor: ${result.error.message}`);
   }
 
-  if (result.data?.id) {
+  if (result.data?.id && (!activeOnly || result.data.is_active)) {
     return true;
   }
 
@@ -250,8 +302,58 @@ export async function licenseGuildForUser(input: {
     await supabase.from("auth_user_plan_guilds").delete().eq("guild_id", input.guildId);
   }
 
-  const alreadyLicensed = await isGuildLicensedForUser(input.userId, input.guildId);
-  if (alreadyLicensed) {
+  const existingGuildLinkResult = await supabase
+    .from("auth_user_plan_guilds")
+    .select("id, user_id, activated_at, created_at, is_active")
+    .eq("user_id", input.userId)
+    .eq("guild_id", input.guildId)
+    .maybeSingle<PlanGuildOwnershipRecord>();
+
+  if (existingGuildLinkResult.error) {
+    throw new Error(
+      `Erro ao consultar vinculo atual do servidor no plano: ${existingGuildLinkResult.error.message}`,
+    );
+  }
+
+  if (existingGuildLinkResult.data) {
+    if (!existingGuildLinkResult.data.is_active) {
+      const reactivateResult = await supabase
+        .from("auth_user_plan_guilds")
+        .update({
+          is_active: true,
+          deactivated_reason: null,
+          deactivated_at: null,
+          reactivated_at: new Date().toISOString(),
+        })
+        .eq("id", existingGuildLinkResult.data.id)
+        .select(
+          "id, user_id, guild_id, activated_at, created_at, updated_at, is_active, deactivated_reason, deactivated_at, reactivated_at",
+        )
+        .single<PlanGuildRecord>();
+
+      if (reactivateResult.error || !reactivateResult.data) {
+        throw new Error(
+          reactivateResult.error?.message ||
+            "Falha ao reativar vinculo do servidor no plano.",
+        );
+      }
+    }
+
+    const currentCoverage = resolveCoverageFromPlanState(input.currentPlanState);
+    return {
+      ok: true as const,
+      alreadyLicensed: true,
+      status: currentCoverage.status,
+      expiresAt: currentCoverage.expiresAt,
+      graceExpiresAt: currentCoverage.graceExpiresAt,
+    };
+  }
+
+  const alreadyLicensedByLegacyCoverage = await isGuildLicensedForUser(
+    input.userId,
+    input.guildId,
+  );
+  if (alreadyLicensedByLegacyCoverage) {
     const currentCoverage = resolveCoverageFromPlanState(input.currentPlanState);
     return {
       ok: true as const,
@@ -278,8 +380,14 @@ export async function licenseGuildForUser(input: {
     .insert({
       user_id: input.userId,
       guild_id: input.guildId,
+      is_active: true,
+      deactivated_reason: null,
+      deactivated_at: null,
+      reactivated_at: new Date().toISOString(),
     })
-    .select("user_id, guild_id, activated_at, created_at")
+    .select(
+      "id, user_id, guild_id, activated_at, created_at, updated_at, is_active, deactivated_reason, deactivated_at, reactivated_at",
+    )
     .single<PlanGuildRecord>();
 
   if (insertResult.error || !insertResult.data) {

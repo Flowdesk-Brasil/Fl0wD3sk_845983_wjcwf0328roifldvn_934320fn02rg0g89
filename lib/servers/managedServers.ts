@@ -9,6 +9,11 @@ import {
 } from "@/lib/payments/licenseStatus";
 import { reconcileRecentPaymentOrders } from "@/lib/payments/reconciliation";
 import { cleanupExpiredUnpaidServerSetups } from "@/lib/payments/setupCleanup";
+import { getUserPlanScheduledChange } from "@/lib/plans/change";
+import {
+  ensureDowngradeEnforcementForUser,
+  getDowngradeEnforcementSummaryForUser,
+} from "@/lib/plans/downgradeEnforcement";
 import {
   getPlanGuildsForUser,
   resolveGuildLicenseFromUserPlanState,
@@ -16,7 +21,7 @@ import {
 import { getUserPlanState } from "@/lib/plans/state";
 import { getAcceptedTeamGuildIdsForUser } from "@/lib/teams/userTeams";
 
-export type ManagedServerStatus = "paid" | "expired" | "off";
+export type ManagedServerStatus = "paid" | "expired" | "off" | "pending_payment";
 
 export type ManagedServer = {
   guildId: string;
@@ -25,6 +30,8 @@ export type ManagedServer = {
   status: ManagedServerStatus;
   accessMode: "owner" | "viewer";
   canManage: boolean;
+  blockedByPlanLimit: boolean;
+  pendingDowngradePayment: boolean;
   licenseOwnerUserId: number;
   licensePaidAt: string;
   licenseExpiresAt: string;
@@ -94,17 +101,37 @@ export async function getManagedServersForCurrentSession(): Promise<ManagedServe
     // melhor esforco; nao bloquear dashboard por reconciliacao oportunista
   }
 
-  const [userPlanState, ownedPlanGuilds] = await Promise.all([
-    getUserPlanState(sessionData.authSession.user.id),
-    getPlanGuildsForUser(sessionData.authSession.user.id),
+  const userId = sessionData.authSession.user.id;
+  const [userPlanState, scheduledChange] = await Promise.all([
+    getUserPlanState(userId),
+    getUserPlanScheduledChange(userId),
   ]);
+  await ensureDowngradeEnforcementForUser({
+    userId,
+    userPlanState,
+    scheduledChange,
+  });
+  const [downgradeEnforcement, ownedPlanGuilds] = await Promise.all([
+    getDowngradeEnforcementSummaryForUser(userId),
+    getPlanGuildsForUser(userId, { includeInactive: true }),
+  ]);
+  const hasPendingDowngradePayment = Boolean(
+    downgradeEnforcement &&
+      (downgradeEnforcement.status === "selection_required" ||
+        downgradeEnforcement.status === "awaiting_payment"),
+  );
   const ownedPlanGuildsByGuildId = new Map(
     ownedPlanGuilds.map((record) => [record.guild_id, record]),
   );
   const ownedPlanGuildIds = new Set(ownedPlanGuilds.map((record) => record.guild_id));
+  const ownedActivePlanGuildIds = new Set(
+    ownedPlanGuilds
+      .filter((record) => record.is_active !== false)
+      .map((record) => record.guild_id),
+  );
   const ownedPlanCoverage = resolveGuildLicenseFromUserPlanState({
     userPlanState,
-    guildLicensed: ownedPlanGuildIds.size > 0,
+    guildLicensed: ownedPlanGuildIds.size > 0 || ownedActivePlanGuildIds.size > 0,
   });
 
   const accessibleGuilds = await getAccessibleGuildsForSession({
@@ -186,6 +213,8 @@ export async function getManagedServersForCurrentSession(): Promise<ManagedServe
         status: "off" as const,
         accessMode: guild.owner ? ("owner" as const) : ("viewer" as const),
         canManage: acceptedTeamGuildIds.has(guild.id) || guild.owner,
+        blockedByPlanLimit: false,
+        pendingDowngradePayment: false,
         licenseOwnerUserId: sessionData.authSession.user.id,
         licensePaidAt: new Date().toISOString(),
         licenseExpiresAt: new Date().toISOString(),
@@ -209,10 +238,22 @@ export async function getManagedServersForCurrentSession(): Promise<ManagedServe
         lockedRecord && lockedRecord.userId !== sessionData.authSession.user.id,
       );
       const accessMode: ManagedServer["accessMode"] = guild.owner ? "owner" : "viewer";
+      const isOwnedPlanGuildInactive = Boolean(
+        !currentLicenseBelongsToViewer &&
+          ownedPlanGuild &&
+          ownedPlanGuild.is_active === false,
+      );
+      const isPendingDowngradePayment = Boolean(
+        !currentLicenseBelongsToViewer &&
+          ownedPlanGuild &&
+          hasPendingDowngradePayment,
+      );
 
       const status: ManagedServerStatus = currentLicenseBelongsToViewer
         ? lockedRecord?.status || "off"
-        : ownedPlanGuild
+        : isPendingDowngradePayment
+          ? "pending_payment"
+          : ownedPlanGuild
           ? ownedPlanCoverage.status === "paid" || ownedPlanCoverage.status === "expired"
             ? ownedPlanCoverage.status
             : "off"
@@ -248,6 +289,8 @@ export async function getManagedServersForCurrentSession(): Promise<ManagedServe
         accessMode,
         canManage:
           accessibleGuildLookup.has(guild.id) || acceptedTeamGuildIds.has(guild.id),
+        blockedByPlanLimit: isOwnedPlanGuildInactive || isPendingDowngradePayment,
+        pendingDowngradePayment: isPendingDowngradePayment,
         licenseOwnerUserId:
           lockedRecord?.userId || sessionData.authSession.user.id,
         licensePaidAt:
@@ -268,7 +311,8 @@ export async function getManagedServersForCurrentSession(): Promise<ManagedServe
       const priority = {
         paid: 0,
         expired: 1,
-        off: 2,
+        pending_payment: 2,
+        off: 3,
       } as const;
 
       const statusDiff = priority[a.status] - priority[b.status];

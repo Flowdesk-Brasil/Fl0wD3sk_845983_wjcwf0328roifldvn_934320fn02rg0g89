@@ -42,8 +42,8 @@ import {
   applyUserPlanStatePricingAdjustments,
   getBasicPlanAvailability,
   getGuildPlanSettingsRecord,
-  resolveEffectivePlanSelection,
   getUserPlanState,
+  resolveEffectivePlanSelection,
   type BasicPlanAvailability,
   type GuildPlanSettingsRecord,
   type UserPlanStateRecord,
@@ -115,6 +115,13 @@ function normalizeRequestedPlanCode(value: unknown) {
 function normalizeRequestedBillingPeriodCode(value: unknown) {
   if (typeof value !== "string") return null;
   return normalizePlanBillingPeriodCode(value, DEFAULT_PLAN_BILLING_PERIOD_CODE);
+}
+
+function shouldIncludePaymentMethods(value: string | null) {
+  if (value === null) return true;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return true;
+  return normalized !== "0" && normalized !== "false" && normalized !== "no";
 }
 
 async function ensureGuildAccess(guildId: string) {
@@ -541,18 +548,23 @@ export async function GET(request: Request) {
     const requestedBillingPeriodCode = normalizeRequestedBillingPeriodCode(
       url.searchParams.get("billingPeriodCode"),
     );
-    const [settings, savedMethods, userPlanState, basicPlanAvailability] = await Promise.all([
-      getGuildPlanSettingsRecord(userId, guildId),
-      getAvailableSavedMethodsForUser(userId),
-      getUserPlanState(userId),
-      getBasicPlanAvailability(userId),
+    const includePaymentMethods = shouldIncludePaymentMethods(
+      url.searchParams.get("includePaymentMethods"),
+    );
+    const [selection, savedMethods] = await Promise.all([
+      resolveEffectivePlanSelection({
+        userId,
+        guildId,
+        preferredPlanCode: requestedPlanCode,
+        preferredBillingPeriodCode: requestedBillingPeriodCode,
+      }),
+      includePaymentMethods
+        ? getAvailableSavedMethodsForUser(userId)
+        : Promise.resolve([] as SavedMethodSummary[]),
     ]);
-    const selection = await resolveEffectivePlanSelection({
-      userId,
-      guildId,
-      preferredPlanCode: requestedPlanCode,
-      preferredBillingPeriodCode: requestedBillingPeriodCode,
-    });
+    const settings = selection.guildSettings;
+    const userPlanState = selection.userPlanState;
+    const basicPlanAvailability = selection.basicPlanAvailability;
 
     const recurringMethodId = settings?.recurring_method_id || null;
     const recurringMethod =

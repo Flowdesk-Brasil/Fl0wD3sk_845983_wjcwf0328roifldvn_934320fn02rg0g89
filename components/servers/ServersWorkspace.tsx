@@ -116,6 +116,7 @@ type SavedPanelAccount = {
 const FILTER_LABEL: Record<FilterOption, string> = {
   all: "Todos",
   paid: "Pago",
+  pending_payment: "Pendente",
   expired: "Expirados",
   off: "Desligados",
 };
@@ -428,6 +429,16 @@ function statusStyle(status: ManagedServerStatus) {
     };
   }
 
+  if (status === "pending_payment") {
+    return {
+      badgeText: "Pendente",
+      badgeClass:
+        "border border-[rgba(242,200,35,0.4)] bg-[rgba(242,200,35,0.12)] text-[#F2C823]",
+      ringColor:
+        "conic-gradient(#F2C823 0deg 180deg, rgba(255,255,255,0.08) 180deg 360deg)",
+    };
+  }
+
   return {
     badgeText: "Desligado",
     badgeClass:
@@ -656,10 +667,16 @@ function SidebarNavIcon({
 
 function StatusRing({ status }: { status: ManagedServerStatus }) {
   const style = statusStyle(status);
+  const dotColorClass =
+    status === "paid"
+      ? "bg-[#0062FF]"
+      : status === "expired" || status === "pending_payment"
+        ? "bg-[#F2C823]"
+        : "bg-[#DB4646]";
   return (
     <div className="flex h-[42px] w-[42px] items-center justify-center rounded-full p-[2px]" style={{ background: style.ringColor }} aria-hidden="true">
       <div className="flex h-full w-full items-center justify-center rounded-full bg-[#0A0A0A]">
-        <div className={`h-[8px] w-[8px] rounded-full ${status === "paid" ? "bg-[#0062FF]" : status === "expired" ? "bg-[#F2C823]" : "bg-[#DB4646]"}`} />
+        <div className={`h-[8px] w-[8px] rounded-full ${dotColorClass}`} />
       </div>
     </div>
   );
@@ -2922,7 +2939,7 @@ export function ServersWorkspace({
                               className="absolute right-0 top-[60px] z-[2000] min-w-[190px] rounded-[18px] border border-[#171717] bg-[#0A0A0A] p-[8px] shadow-[0_22px_60px_rgba(0,0,0,0.44)]"
                               onMouseDown={(event) => event.stopPropagation()}
                             >
-                              {(["all", "paid", "expired", "off"] as const).map((option) => (
+                              {(["all", "paid", "pending_payment", "expired", "off"] as const).map((option) => (
                                 <button
                                   key={option}
                                   type="button"

@@ -209,6 +209,25 @@ function parseAmount(amount: string | number) {
   return Number.isFinite(numeric) ? numeric : 0;
 }
 
+function roundCurrencyAmount(amount: number) {
+  if (!Number.isFinite(amount)) return 0;
+  return Math.round(amount * 100) / 100;
+}
+
+function resolveFlowPointsGrantedFromSubtotal(input: {
+  planChange: PlanChangePreview;
+  discountedSubtotalAmount: number;
+}) {
+  if (input.planChange.kind !== "upgrade") return 0;
+  const normalizedCredit = roundCurrencyAmount(
+    Math.max(0, input.planChange.currentCreditAmount),
+  );
+  const normalizedSubtotal = roundCurrencyAmount(
+    Math.max(0, input.discountedSubtotalAmount),
+  );
+  return roundCurrencyAmount(Math.max(0, normalizedCredit - normalizedSubtotal));
+}
+
 function normalizeCurrency(value: string | null | undefined) {
   return (value || "").trim().toUpperCase();
 }
@@ -1473,6 +1492,10 @@ export async function POST(request: Request) {
         balanceAfter: flowPointsPreview.nextBalanceAmount,
       },
     };
+    const flowPointsGranted = resolveFlowPointsGrantedFromSubtotal({
+      planChange: checkoutPlan.planChange,
+      discountedSubtotalAmount: pricing.subtotalAmount,
+    });
     const payerName =
       requestedPayerName || normalizePayerName(latestOrder?.payer_name);
     const payerDocument =
@@ -1482,7 +1505,7 @@ export async function POST(request: Request) {
     const transitionProviderPayload = buildCheckoutTransitionProviderPayload({
       planChange: checkoutPlan.planChange,
       flowPointsApplied: flowPointsPreview.appliedAmount,
-      flowPointsGranted: checkoutPlan.planChange.flowPointsGrantPreview,
+      flowPointsGranted,
       scheduledChangeId: checkoutPlan.scheduledChange?.id || null,
     });
 
@@ -1667,7 +1690,7 @@ export async function POST(request: Request) {
         order: createdOrder,
         pricing,
         flowPointsApplied: flowPointsPreview.appliedAmount,
-        flowPointsGranted: checkoutPlan.planChange.flowPointsGrantPreview,
+        flowPointsGranted,
         planChange: checkoutPlan.planChange,
       });
 

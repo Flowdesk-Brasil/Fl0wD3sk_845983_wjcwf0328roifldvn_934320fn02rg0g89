@@ -67,7 +67,7 @@ type GuildsApiResponse = {
   >;
 };
 
-type ManagedServerStatus = "paid" | "expired" | "off";
+type ManagedServerStatus = "paid" | "expired" | "off" | "pending_payment";
 
 type ServersApiResponse = {
   ok: boolean;
@@ -1336,8 +1336,9 @@ export function ConfigFlow({
 
     const priorityByStatus: Record<ManagedServerStatus, number> = {
       paid: 0,
-      expired: 1,
-      off: 2,
+      pending_payment: 1,
+      expired: 2,
+      off: 3,
     };
 
     return Array.from(mergedGuilds.values()).sort((left, right) => {

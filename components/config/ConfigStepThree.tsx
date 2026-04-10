@@ -12,7 +12,7 @@ import { hasStepThreeDraftValues } from "@/lib/auth/configContext";
 type ConfigStepThreeProps = {
   displayName: string;
   guildId: string | null;
-  guildLicenseStatus?: "paid" | "expired" | "off" | "not_paid";
+  guildLicenseStatus?: "paid" | "expired" | "off" | "pending_payment" | "not_paid";
   initialDraft?: StepThreeDraft | null;
   onDraftChange?: (guildId: string, draft: StepThreeDraft) => void;
   onProceedToStepFour?: () => void;
@@ -143,7 +143,10 @@ export function ConfigStepThree({
   const [notifyRoleIds, setNotifyRoleIds] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const isPlanLocked = guildLicenseStatus === "expired" || guildLicenseStatus === "off";
+  const isPlanLocked =
+    guildLicenseStatus === "expired" ||
+    guildLicenseStatus === "off" ||
+    guildLicenseStatus === "pending_payment";
 
   useEffect(() => {
     latestInitialDraftRef.current = buildStepThreeDraft(initialDraft);

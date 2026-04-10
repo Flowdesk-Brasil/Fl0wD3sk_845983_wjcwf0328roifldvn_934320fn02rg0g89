@@ -17,7 +17,7 @@ type ServersDashboardProps = {
   initialTab?: "settings" | "payments" | "methods" | "plans";
 };
 
-type ManagedServerStatus = "paid" | "expired" | "off";
+type ManagedServerStatus = "paid" | "expired" | "off" | "pending_payment";
 
 type ManagedServer = {
   guildId: string;
@@ -45,6 +45,7 @@ type ServerEditorTab = "settings" | "payments" | "methods" | "plans";
 const FILTER_LABEL: Record<FilterOption, string> = {
   all: "Status",
   paid: "Pago",
+  pending_payment: "Pendente",
   expired: "Expirados",
   off: "Desligado",
 };
@@ -184,6 +185,14 @@ function statusStyle(status: ManagedServerStatus) {
   if (status === "expired") {
     return {
       badgeText: "Expirado",
+      badgeClass:
+        "border border-[#F2C823] bg-[rgba(242,200,35,0.2)] text-[#F2C823]",
+    };
+  }
+
+  if (status === "pending_payment") {
+    return {
+      badgeText: "Pendente",
       badgeClass:
         "border border-[#F2C823] bg-[rgba(242,200,35,0.2)] text-[#F2C823]",
     };
@@ -618,7 +627,7 @@ export function ServersDashboard({
                     className="flowdesk-scale-in-soft absolute left-0 z-20 mt-2 w-full border border-[#2E2E2E] bg-[#0A0A0A] py-1"
                     style={{ borderRadius: `${serversScale.controlRadius}px` }}
                   >
-                    {(["all", "paid", "expired", "off"] as const).map((option) => (
+                    {(["all", "paid", "pending_payment", "expired", "off"] as const).map((option) => (
                       <button
                         key={option}
                         type="button"

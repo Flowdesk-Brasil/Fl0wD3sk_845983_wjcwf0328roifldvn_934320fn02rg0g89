@@ -11,7 +11,7 @@ export type ConfigGuildItem = {
   icon_url: string | null;
   hasSavedSetup?: boolean;
   lastConfiguredAt?: string | null;
-  managedStatus?: "paid" | "expired" | "off" | null;
+  managedStatus?: "paid" | "expired" | "off" | "pending_payment" | null;
 };
 
 type ConfigServerSwitcherProps = {
@@ -43,6 +43,15 @@ function resolveGuildStatusMeta(guild: ConfigGuildItem | null) {
     return {
       label: "Expirado",
       detail: "Servidor configurado, aguardando renovacao.",
+      pillClassName:
+        "border-[rgba(255,198,110,0.2)] bg-[rgba(42,29,10,0.88)] text-[#FFE3B0]",
+    };
+  }
+
+  if (guild.managedStatus === "pending_payment") {
+    return {
+      label: "Pagamento pendente",
+      detail: "Servidor bloqueado ate a regularizacao do plano.",
       pillClassName:
         "border-[rgba(255,198,110,0.2)] bg-[rgba(42,29,10,0.88)] text-[#FFE3B0]",
     };

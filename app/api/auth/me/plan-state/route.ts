@@ -2,7 +2,13 @@ import { NextResponse } from "next/server";
 
 import { resolveSessionAccessToken } from "@/lib/auth/discordGuildAccess";
 import { buildAccountPlanUsageSnapshot } from "@/lib/plans/accountPlanUsage";
-import { countPlanGuildsForUser } from "@/lib/plans/planGuilds";
+import { getUserPlanScheduledChange } from "@/lib/plans/change";
+import {
+  ensureDowngradeEnforcementForUser,
+  getDowngradeEnforcementSummaryForUser,
+} from "@/lib/plans/downgradeEnforcement";
+import { countPlanGuildsForUser, getPlanGuildsForUser } from "@/lib/plans/planGuilds";
+import { PLAN_ORDER, resolvePlanPricing, type PlanCode } from "@/lib/plans/catalog";
 import { getUserPlanState } from "@/lib/plans/state";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { applyNoStoreHeaders } from "@/lib/security/http";
@@ -13,6 +19,48 @@ import {
   extendSecurityRequestContext,
   logSecurityAuditEventSafe,
 } from "@/lib/security/requestSecurity";
+
+function resolveUpgradeRecommendation(input: {
+  currentPlanCode: PlanCode | null;
+  requiredServersCount: number;
+}) {
+  const minimumRequiredServers = Math.max(1, input.requiredServersCount);
+  const normalizedCurrentPlanCode =
+    input.currentPlanCode && PLAN_ORDER.includes(input.currentPlanCode)
+      ? input.currentPlanCode
+      : null;
+  const currentPlanIndex = normalizedCurrentPlanCode
+    ? PLAN_ORDER.indexOf(normalizedCurrentPlanCode)
+    : -1;
+  const paidPlanOrder = PLAN_ORDER.filter((planCode) => planCode !== "basic");
+  const candidates = paidPlanOrder.map((planCode) =>
+    resolvePlanPricing(planCode),
+  );
+  const recommendedPlan =
+    candidates.find(
+      (plan) =>
+        plan.entitlements.maxLicensedServers >= minimumRequiredServers &&
+        PLAN_ORDER.indexOf(plan.code) > currentPlanIndex,
+    ) ||
+    candidates.find(
+      (plan) => plan.entitlements.maxLicensedServers >= minimumRequiredServers,
+    ) ||
+    candidates[candidates.length - 1] ||
+    null;
+
+  if (!recommendedPlan) {
+    return null;
+  }
+
+  return {
+    planCode: recommendedPlan.code,
+    planName: recommendedPlan.name,
+    maxLicensedServers: recommendedPlan.entitlements.maxLicensedServers,
+    billingPeriodCode: recommendedPlan.billingPeriodCode,
+    totalAmount: recommendedPlan.totalAmount,
+    currency: recommendedPlan.currency,
+  };
+}
 
 export async function GET(request: Request) {
   const baseRequestContext = createSecurityRequestContext(request);
@@ -58,14 +106,31 @@ export async function GET(request: Request) {
       return response;
     }
 
-    const [userPlanState, licensedServersCount] = await Promise.all([
+    const userId = sessionData.authSession.user.id;
+    const [userPlanState, licensedServersCount, allPlanGuilds, scheduledChange] = await Promise.all([
       getUserPlanState(sessionData.authSession.user.id),
-      countPlanGuildsForUser(sessionData.authSession.user.id),
+      countPlanGuildsForUser(userId),
+      getPlanGuildsForUser(userId, { includeInactive: true }),
+      getUserPlanScheduledChange(userId),
     ]);
+    await ensureDowngradeEnforcementForUser({
+      userId,
+      userPlanState,
+      scheduledChange,
+    });
+    const downgradeEnforcement = await getDowngradeEnforcementSummaryForUser(userId);
     const usage = buildAccountPlanUsageSnapshot(
       userPlanState,
       licensedServersCount,
     );
+    const totalLinkedServersCount = allPlanGuilds.length;
+    const requiredServersForRecommendation = downgradeEnforcement
+      ? totalLinkedServersCount
+      : usage.licensedServersCount;
+    const upgradeRecommendation = resolveUpgradeRecommendation({
+      currentPlanCode: userPlanState?.plan_code || null,
+      requiredServersCount: requiredServersForRecommendation,
+    });
 
     await logSecurityAuditEventSafe(auditContext, {
       action: "plan_state_get",
@@ -77,6 +142,9 @@ export async function GET(request: Request) {
         licensedServersCount: usage.licensedServersCount,
         maxLicensedServers: usage.maxLicensedServers,
         limitReached: usage.hasReachedLicensedServersLimit,
+        totalLinkedServersCount,
+        hasDowngradeEnforcement: Boolean(downgradeEnforcement),
+        downgradeStatus: downgradeEnforcement?.status || null,
       },
     });
 
@@ -96,6 +164,21 @@ export async function GET(request: Request) {
           }
         : null,
       usage,
+      totalLinkedServersCount,
+      downgradeEnforcement: downgradeEnforcement
+        ? {
+            id: downgradeEnforcement.id,
+            status: downgradeEnforcement.status,
+            effectiveAt: downgradeEnforcement.effectiveAt,
+            targetPlanCode: downgradeEnforcement.targetPlanCode,
+            targetBillingPeriodCode: downgradeEnforcement.targetBillingPeriodCode,
+            targetBillingCycleDays: downgradeEnforcement.targetBillingCycleDays,
+            targetMaxLicensedServers: downgradeEnforcement.targetMaxLicensedServers,
+            selectedGuildIds: downgradeEnforcement.selectedGuildIds,
+            scheduledChangeId: downgradeEnforcement.scheduledChangeId,
+          }
+        : null,
+      upgradeRecommendation,
     });
   } catch (error) {
     return respond(

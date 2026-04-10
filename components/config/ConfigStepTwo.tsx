@@ -21,7 +21,7 @@ import { hasStepTwoDraftValues } from "@/lib/auth/configContext";
 type ConfigStepTwoProps = {
   displayName: string;
   guildId: string | null;
-  guildLicenseStatus?: "paid" | "expired" | "off" | "not_paid";
+  guildLicenseStatus?: "paid" | "expired" | "off" | "pending_payment" | "not_paid";
   initialDraft?: StepTwoDraft | null;
   onDraftChange?: (guildId: string, draft: StepTwoDraft) => void;
   onProceedToStepThree?: () => void;
@@ -98,7 +98,10 @@ export function ConfigStepTwo({
   const [logsClosedChannelId, setLogsClosedChannelId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const isPlanLocked = guildLicenseStatus === "expired" || guildLicenseStatus === "off";
+  const isPlanLocked =
+    guildLicenseStatus === "expired" ||
+    guildLicenseStatus === "off" ||
+    guildLicenseStatus === "pending_payment";
 
   useEffect(() => {
     latestInitialDraftRef.current = buildStepTwoDraft(initialDraft);

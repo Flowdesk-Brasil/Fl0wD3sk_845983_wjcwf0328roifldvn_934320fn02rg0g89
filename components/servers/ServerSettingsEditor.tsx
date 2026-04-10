@@ -61,7 +61,7 @@ import {
 } from "@/lib/payments/cardAvailability";
 import { useBodyScrollLock } from "@/lib/ui/useBodyScrollLock";
 
-type ManagedServerStatus = "paid" | "expired" | "off";
+type ManagedServerStatus = "paid" | "expired" | "off" | "pending_payment";
 type EditorTab = "settings" | "payments" | "methods" | "plans";
 type ServerSettingsSection =
   | "overview"

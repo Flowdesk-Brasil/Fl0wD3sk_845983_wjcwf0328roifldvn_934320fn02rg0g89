@@ -377,7 +377,11 @@ function decoratePlanSummaries(plans: PlanPricingDefinition[]): PlanSummary[] {
   }));
 }
 
-function buildFallbackPlanChangeSummary(plan: PlanSummary): PlanChangeSummary {
+function buildFallbackPlanChangeSummary(
+  plan: PlanSummary,
+  flowPointsBalance = 0,
+): PlanChangeSummary {
+  const normalizedFlowPointsBalance = roundMoney(Math.max(0, flowPointsBalance));
   return {
     kind: "new",
     execution: plan.isTrial ? "trial_activation" : "pay_now",
@@ -388,11 +392,21 @@ function buildFallbackPlanChangeSummary(plan: PlanSummary): PlanChangeSummary {
     currentCreditAmount: 0,
     remainingDaysExact: 0,
     immediateSubtotalAmount: plan.totalAmount,
-    flowPointsBalance: 0,
+    flowPointsBalance: normalizedFlowPointsBalance,
     flowPointsGrantPreview: 0,
     effectiveAt: null,
     scheduledChangeMatchesTarget: false,
   };
+}
+
+function resolveFlowPointsGrantFromSubtotal(input: {
+  planChange: Pick<PlanChangeSummary, "kind" | "currentCreditAmount">;
+  subtotalAmount: number;
+}) {
+  if (input.planChange.kind !== "upgrade") return 0;
+  const normalizedCredit = roundMoney(Math.max(0, input.planChange.currentCreditAmount));
+  const normalizedSubtotal = roundMoney(Math.max(0, input.subtotalAmount));
+  return roundMoney(Math.max(0, normalizedCredit - normalizedSubtotal));
 }
 
 function toPlanSummaryFromApi(
@@ -970,15 +984,31 @@ function formatMoney(amount: number, currency = "BRL") {
 function buildFallbackDiscountPreview(input: {
   baseAmount: number;
   currency: string;
+  flowPointsBalance?: number;
 }): NonNullable<DiscountPreviewApiResponse["preview"]> {
+  const normalizedBaseAmount = roundMoney(Math.max(0, input.baseAmount));
+  const normalizedFlowPointsBalance = roundMoney(
+    Math.max(0, input.flowPointsBalance || 0),
+  );
+  const flowPointsAppliedAmount = roundMoney(
+    Math.min(normalizedBaseAmount, normalizedFlowPointsBalance),
+  );
+  const flowPointsNextBalance = roundMoney(
+    Math.max(0, normalizedFlowPointsBalance - flowPointsAppliedAmount),
+  );
+
   return {
-    baseAmount: input.baseAmount,
+    baseAmount: normalizedBaseAmount,
     currency: input.currency,
     coupon: null,
     giftCard: null,
-    subtotalAmount: input.baseAmount,
-    totalAmount: input.baseAmount,
-    flowPoints: null,
+    subtotalAmount: normalizedBaseAmount,
+    totalAmount: roundMoney(normalizedBaseAmount - flowPointsAppliedAmount),
+    flowPoints: {
+      appliedAmount: flowPointsAppliedAmount,
+      balanceBefore: normalizedFlowPointsBalance,
+      balanceAfter: flowPointsNextBalance,
+    },
   };
 }
 
@@ -2973,6 +3003,7 @@ export function ConfigStepFour({
   const [selectedPlanChange, setSelectedPlanChange] = useState<PlanChangeSummary>(
     () => buildFallbackPlanChangeSummary(initialResolvedPlan),
   );
+  const [knownFlowPointsBalance, setKnownFlowPointsBalance] = useState(0);
   const [scheduledPlanChange, setScheduledPlanChange] =
     useState<ScheduledPlanChangeSummary | null>(null);
   const [isPlanLoading, setIsPlanLoading] = useState(false);
@@ -3007,6 +3038,7 @@ export function ConfigStepFour({
     useState<DiscountPreviewApiResponse["preview"] | null>(null);
   const [discountMessage, setDiscountMessage] = useState<string | null>(null);
   const [isDiscountLoading, setIsDiscountLoading] = useState(false);
+  const [discountRefreshTick, setDiscountRefreshTick] = useState(0);
   const [isCartNoticeDismissed, setIsCartNoticeDismissed] = useState(false);
   const [isDiscountEditorOpen, setIsDiscountEditorOpen] = useState(
     Boolean(initialStepFourDraft.couponCode || initialStepFourDraft.giftCardCode),
@@ -3143,6 +3175,7 @@ export function ConfigStepFour({
     buildFallbackDiscountPreview({
       baseAmount: baseCheckoutAmount,
       currency: checkoutCurrency,
+      flowPointsBalance: knownFlowPointsBalance,
     });
   const promoTargetTimestamp = useMemo(
     () => Date.now() + 3 * 24 * 60 * 60 * 1000,
@@ -3183,6 +3216,7 @@ export function ConfigStepFour({
         ),
       );
       setScheduledPlanChange(null);
+      setKnownFlowPointsBalance(0);
       setIsPlanLoading(false);
       return;
     }
@@ -3198,6 +3232,7 @@ export function ConfigStepFour({
             guildId,
             planCode: selectedPlanCode,
             billingPeriodCode: selectedBillingPeriodCode,
+            includePaymentMethods: "0",
           }).toString()}`,
           {
             cache: "no-store",
@@ -3230,6 +3265,9 @@ export function ConfigStepFour({
         setSelectedBillingPeriodCode(nextBillingPeriodCode);
         setResolvedPlan(nextResolvedPlan);
         setSelectedPlanChange(payload.plan.planChange);
+        setKnownFlowPointsBalance(
+          roundMoney(Math.max(0, payload.plan.planChange.flowPointsBalance)),
+        );
         setScheduledPlanChange(payload.plan.scheduledChange);
         if (requestedBasicBecameUnavailable) {
           setMethodMessage(null);
@@ -3245,7 +3283,13 @@ export function ConfigStepFour({
           [],
         );
         setResolvedPlan(fallbackPlan);
-        setSelectedPlanChange(buildFallbackPlanChangeSummary(fallbackPlan));
+        setSelectedPlanChange(
+          (current) =>
+            buildFallbackPlanChangeSummary(
+              fallbackPlan,
+              current.flowPointsBalance,
+            ),
+        );
         setScheduledPlanChange(null);
         setMethodMessage(
           error instanceof Error
@@ -3265,8 +3309,25 @@ export function ConfigStepFour({
   }, [guildId, selectedBillingPeriodCode, selectedPlanCode]);
 
   useEffect(() => {
+    if (!guildId || phase !== "cart") return;
+    const intervalId = window.setInterval(() => {
+      setDiscountRefreshTick((current) => current + 1);
+    }, 12_000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [guildId, phase]);
+
+  useEffect(() => {
+    const localFallbackPreview = buildFallbackDiscountPreview({
+      baseAmount: baseCheckoutAmount,
+      currency: checkoutCurrency,
+      flowPointsBalance: knownFlowPointsBalance,
+    });
+
     if (!guildId) {
-      setDiscountPreview(null);
+      setDiscountPreview(localFallbackPreview);
       setDiscountMessage(null);
       setIsDiscountLoading(false);
       return;
@@ -3274,91 +3335,105 @@ export function ConfigStepFour({
 
     const trimmedCouponCode = couponCode.trim();
     const trimmedGiftCardCode = giftCardCode.trim();
+    const hasManualDiscountCode = Boolean(
+      trimmedCouponCode || trimmedGiftCardCode,
+    );
 
-    if (!trimmedCouponCode && !trimmedGiftCardCode) {
-      setDiscountPreview(
-        buildFallbackDiscountPreview({
-          baseAmount: baseCheckoutAmount,
-          currency: checkoutCurrency,
-        }),
-      );
+    setDiscountPreview((current) =>
+      hasManualDiscountCode ? current || localFallbackPreview : localFallbackPreview,
+    );
+    if (!hasManualDiscountCode) {
       setDiscountMessage(null);
-      setIsDiscountLoading(false);
-      return;
     }
+    setIsDiscountLoading(hasManualDiscountCode);
 
     const controller = new AbortController();
     let abortedByTimeout = false;
-    const timeoutId = window.setTimeout(() => {
-      abortedByTimeout = true;
-      controller.abort();
-    }, 8000);
     let isActive = true;
+    let timeoutId: number | null = null;
 
-    setIsDiscountLoading(true);
+    const requestDelayMs = hasManualDiscountCode ? 220 : 0;
+    const requestDelayId = window.setTimeout(() => {
+      timeoutId = window.setTimeout(() => {
+        abortedByTimeout = true;
+        controller.abort();
+      }, 8000);
 
-    void (async () => {
-      try {
-        const response = await fetch("/api/auth/me/payments/discount-preview", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            guildId,
-            couponCode: trimmedCouponCode,
-            giftCardCode: trimmedGiftCardCode,
-            baseAmount: baseCheckoutAmount,
-            currency: checkoutCurrency,
-            planCode: selectedPlanCode,
-            billingPeriodCode: selectedBillingPeriodCode,
-          }),
-          signal: controller.signal,
-        });
-        const payload = (await response.json()) as DiscountPreviewApiResponse;
-        if (!response.ok || !payload.ok || !payload.preview) {
-          throw new Error(payload.message || "Nao foi possivel validar os codigos.");
-        }
+      void (async () => {
+        try {
+          const response = await fetch("/api/auth/me/payments/discount-preview", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              guildId,
+              couponCode: trimmedCouponCode,
+              giftCardCode: trimmedGiftCardCode,
+              baseAmount: baseCheckoutAmount,
+              currency: checkoutCurrency,
+              planCode: selectedPlanCode,
+              billingPeriodCode: selectedBillingPeriodCode,
+            }),
+            signal: controller.signal,
+          });
+          const payload = (await response.json()) as DiscountPreviewApiResponse;
+          if (!response.ok || !payload.ok || !payload.preview) {
+            throw new Error(payload.message || "Nao foi possivel validar os codigos.");
+          }
 
-        setDiscountPreview(payload.preview);
-        setDiscountMessage(payload.message || null);
-      } catch (error) {
-        if (!isActive) {
-          return;
-        }
-
-        if (isAbortLikeError(error)) {
-          if (!abortedByTimeout) {
+          if (!isActive) return;
+          setDiscountPreview(payload.preview);
+          setKnownFlowPointsBalance(
+            roundMoney(
+              Math.max(0, payload.preview.flowPoints?.balanceBefore || 0),
+            ),
+          );
+          setDiscountMessage(
+            hasManualDiscountCode ? payload.message || null : null,
+          );
+        } catch (error) {
+          if (!isActive) {
             return;
           }
-          setDiscountMessage("Tempo esgotado ao validar o codigo.");
-        } else {
-          setDiscountMessage(
-            error instanceof Error
-              ? error.message
-              : "Nao foi possivel validar o codigo.",
-          );
-        }
 
-        setDiscountPreview(
-          buildFallbackDiscountPreview({
-            baseAmount: baseCheckoutAmount,
-            currency: checkoutCurrency,
-          }),
-        );
-      } finally {
-        if (!isActive) {
-          return;
+          if (isAbortLikeError(error)) {
+            if (!abortedByTimeout) {
+              return;
+            }
+
+            if (hasManualDiscountCode) {
+              setDiscountMessage("Tempo esgotado ao validar o codigo.");
+            }
+          } else if (hasManualDiscountCode) {
+            setDiscountMessage(
+              error instanceof Error
+                ? error.message
+                : "Nao foi possivel validar o codigo.",
+            );
+          }
+
+          setDiscountPreview(localFallbackPreview);
+        } finally {
+          if (!isActive) {
+            return;
+          }
+
+          if (timeoutId !== null) {
+            window.clearTimeout(timeoutId);
+          }
+          setIsDiscountLoading(false);
         }
-        window.clearTimeout(timeoutId);
-        setIsDiscountLoading(false);
-      }
-    })();
+      })();
+    }, requestDelayMs);
 
     return () => {
       isActive = false;
       controller.abort();
-      window.clearTimeout(timeoutId);
+      window.clearTimeout(requestDelayId);
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
     };
   }, [
     baseCheckoutAmount,
@@ -3366,6 +3441,7 @@ export function ConfigStepFour({
     couponCode,
     giftCardCode,
     guildId,
+    discountRefreshTick,
     selectedBillingPeriodCode,
     selectedPlanCode,
   ]);
@@ -4471,8 +4547,6 @@ export function ConfigStepFour({
   ]);
   const isPlanSelectionLocked = Boolean(
     isPlanLoading ||
-      isLoadingOrder ||
-      isPreparingBaseOrder ||
       isSubmittingTrial ||
       isSubmittingPix ||
       isSubmittingCard ||
@@ -4623,7 +4697,9 @@ export function ConfigStepFour({
       setSelectedPlanCode(nextPlanCode);
       setSelectedBillingPeriodCode(nextBillingPeriodCode);
       setResolvedPlan(nextPlan);
-      setSelectedPlanChange(buildFallbackPlanChangeSummary(nextPlan));
+      setSelectedPlanChange(
+        buildFallbackPlanChangeSummary(nextPlan, knownFlowPointsBalance),
+      );
       setScheduledPlanChange(null);
       setPhase("cart");
       setView("methods");
@@ -4640,6 +4716,7 @@ export function ConfigStepFour({
         buildFallbackDiscountPreview({
           baseAmount: nextPlan.totalAmount,
           currency: nextPlan.currency,
+          flowPointsBalance: knownFlowPointsBalance,
         }),
       );
       setDiscountMessage(null);
@@ -4648,6 +4725,7 @@ export function ConfigStepFour({
     [
       guildId,
       isPlanSelectionLocked,
+      knownFlowPointsBalance,
       selectedBillingPeriodCode,
       selectedPlanCode,
     ],
@@ -4691,7 +4769,9 @@ export function ConfigStepFour({
 
       setSelectedBillingPeriodCode(nextBillingPeriodCode);
       setResolvedPlan(nextPlan);
-      setSelectedPlanChange(buildFallbackPlanChangeSummary(nextPlan));
+      setSelectedPlanChange(
+        buildFallbackPlanChangeSummary(nextPlan, knownFlowPointsBalance),
+      );
       setScheduledPlanChange(null);
       setPhase("cart");
       setView("methods");
@@ -4708,12 +4788,19 @@ export function ConfigStepFour({
         buildFallbackDiscountPreview({
           baseAmount: nextPlan.totalAmount,
           currency: nextPlan.currency,
+          flowPointsBalance: knownFlowPointsBalance,
         }),
       );
       setDiscountMessage(null);
       clearCheckoutStatusQuery();
     },
-    [guildId, isPlanSelectionLocked, selectedBillingPeriodCode, selectedPlanCode],
+    [
+      guildId,
+      isPlanSelectionLocked,
+      knownFlowPointsBalance,
+      selectedBillingPeriodCode,
+      selectedPlanCode,
+    ],
   );
 
   const handlePayerDocumentChange = useCallback((value: string) => {
@@ -6111,9 +6198,34 @@ export function ConfigStepFour({
           activeDiscountPreview.currency,
         )}`
       : formatMoney(0, activeDiscountPreview.currency);
+  const flowPointsBalanceAmount = Math.max(
+    0,
+    roundMoney(
+      activeDiscountPreview.flowPoints?.balanceBefore ??
+        knownFlowPointsBalance,
+    ),
+  );
+  const flowPointsBalanceLabel = formatMoney(
+    flowPointsBalanceAmount,
+    activeDiscountPreview.currency,
+  );
+  const flowPointsAfterApplyAmount = Math.max(
+    0,
+    roundMoney(
+      activeDiscountPreview.flowPoints?.balanceAfter ??
+        flowPointsBalanceAmount,
+    ),
+  );
+  const flowPointsAfterApplyLabel = formatMoney(
+    flowPointsAfterApplyAmount,
+    activeDiscountPreview.currency,
+  );
   const flowPointsGrantAmount = Math.max(
     0,
-    roundMoney(selectedPlanChange.flowPointsGrantPreview),
+    resolveFlowPointsGrantFromSubtotal({
+      planChange: selectedPlanChange,
+      subtotalAmount: activeDiscountPreview.subtotalAmount,
+    }),
   );
   const flowPointsGrantLabel =
     flowPointsGrantAmount > 0
@@ -6572,6 +6684,16 @@ export function ConfigStepFour({
                     <div className="flex items-center justify-between gap-[14px]">
                       <span className="text-[#DDDDDD]">FlowPoints</span>
                       <span className="font-medium text-[#F5F5F5]">{flowPointsDiscountLabel}</span>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-[14px]">
+                      <span className="text-[#DDDDDD]">Carteira FlowPoints</span>
+                      <span className="font-medium text-[#F5F5F5]">{flowPointsBalanceLabel}</span>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-[14px]">
+                      <span className="text-[#DDDDDD]">Saldo apos abatimento</span>
+                      <span className="font-medium text-[#F5F5F5]">{flowPointsAfterApplyLabel}</span>
                     </div>
 
                     <div className="flex items-center justify-between gap-[14px]">

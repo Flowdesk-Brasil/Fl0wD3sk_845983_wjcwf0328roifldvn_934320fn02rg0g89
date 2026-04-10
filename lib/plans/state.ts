@@ -31,6 +31,7 @@ import {
   resolveFlowPointsBalanceAmount,
   updateScheduledPlanChangeStatus,
 } from "@/lib/plans/change";
+import { finalizeDowngradeEnforcementAfterApprovedOrder } from "@/lib/plans/downgradeEnforcement";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 export type GuildPlanSettingsRecord = {
@@ -1038,6 +1039,12 @@ export async function syncUserPlanStateFromOrder(order: PaymentOrderPlanRecord) 
   await persistApprovedOrderTransitionEffects({
     order,
     currency: payload.currency,
+  });
+  await finalizeDowngradeEnforcementAfterApprovedOrder({
+    userId: order.user_id,
+    paymentOrderId: order.id,
+    paidPlanCode: resolvedPlanCode,
+    paidMaxLicensedServers: payload.max_licensed_servers,
   });
 
   return result.data;
