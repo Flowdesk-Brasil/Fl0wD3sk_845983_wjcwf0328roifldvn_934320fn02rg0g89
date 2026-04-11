@@ -32,8 +32,8 @@ function resolveGuildStatusMeta(guild: ConfigGuildItem | null) {
 
   if (guild.managedStatus === "paid") {
     return {
-      label: "Ativo",
-      detail: "Servidor com licenca ativa.",
+      label: "Em dia",
+      detail: "Servidor sincronizado com a assinatura da conta.",
       pillClassName:
         "border-[rgba(132,190,255,0.24)] bg-[rgba(20,34,52,0.9)] text-[#E4F0FF]",
     };
@@ -41,8 +41,8 @@ function resolveGuildStatusMeta(guild: ConfigGuildItem | null) {
 
   if (guild.managedStatus === "expired") {
     return {
-      label: "Expirado",
-      detail: "Servidor configurado, aguardando renovacao.",
+      label: "Conta expirada",
+      detail: "Pagamento da conta expirado para os servidores vinculados.",
       pillClassName:
         "border-[rgba(255,198,110,0.2)] bg-[rgba(42,29,10,0.88)] text-[#FFE3B0]",
     };
@@ -50,8 +50,8 @@ function resolveGuildStatusMeta(guild: ConfigGuildItem | null) {
 
   if (guild.managedStatus === "pending_payment") {
     return {
-      label: "Pagamento pendente",
-      detail: "Servidor bloqueado ate a regularizacao do plano.",
+      label: "Conta pendente",
+      detail: "Conta vinculada aguardando regularizacao do plano.",
       pillClassName:
         "border-[rgba(255,198,110,0.2)] bg-[rgba(42,29,10,0.88)] text-[#FFE3B0]",
     };
@@ -62,7 +62,7 @@ function resolveGuildStatusMeta(guild: ConfigGuildItem | null) {
       label: "Configurado",
       detail:
         guild.managedStatus === "off"
-          ? "Servidor salvo, aguardando licenca."
+          ? "Bot desligado - retorna imediatamente apos pagamento ou troca de plano."
           : "Servidor ja configurado nesta conta.",
       pillClassName:
         "border-[rgba(255,255,255,0.11)] bg-[rgba(18,18,18,0.92)] text-[#EAEAEA]",
@@ -71,8 +71,8 @@ function resolveGuildStatusMeta(guild: ConfigGuildItem | null) {
 
   if (guild.managedStatus === "off") {
     return {
-      label: "Sem licenca",
-      detail: "Servidor acessivel, ainda sem ativacao.",
+      label: "Desligado",
+      detail: "Bot desligado - retorna imediatamente apos pagamento ou troca de plano.",
       pillClassName:
         "border-[rgba(255,255,255,0.08)] bg-[rgba(10,10,10,0.92)] text-[#B6B6B6]",
     };

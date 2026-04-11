@@ -91,9 +91,9 @@ export function resolvePaymentDiagnostic(
         category: "duplicate",
         headline: "Tentativa duplicada",
         summary:
-          "Ja existia uma tentativa ou licenca ativa para este servidor, e o sistema evitou cobranca duplicada.",
+          "Ja existia uma tentativa ou assinatura ativa para esta conta, e o sistema evitou cobranca duplicada.",
         recommendation:
-          "Verifique o historico de cobrancas ou aguarde a atualizacao da licenca antes de iniciar outra tentativa.",
+          "Verifique o historico de cobrancas ou aguarde a atualizacao da conta antes de iniciar outra tentativa.",
         providerStatus,
         providerStatusDetail,
       };

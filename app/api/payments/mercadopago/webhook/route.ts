@@ -313,7 +313,7 @@ async function updateOrderFromProviderPayment(
         },
       );
 
-      invalidateGuildLicenseCaches(order.guild_id);
+      invalidateGuildLicenseCaches();
       return refundedTimeoutOrderResult.data;
     }
 
@@ -385,7 +385,7 @@ async function updateOrderFromProviderPayment(
         previousApprovedOrderNumber: existingCoverage?.order.order_number || null,
       });
 
-      invalidateGuildLicenseCaches(order.guild_id);
+      invalidateGuildLicenseCaches();
       return refundedOrderResult.data;
     }
   }
@@ -440,7 +440,7 @@ async function updateOrderFromProviderPayment(
     await syncUserPlanStateFromOrder(updatedOrderResult.data);
   }
 
-  invalidateGuildLicenseCaches(order.guild_id);
+  invalidateGuildLicenseCaches();
   return updatedOrderResult.data;
 }
 

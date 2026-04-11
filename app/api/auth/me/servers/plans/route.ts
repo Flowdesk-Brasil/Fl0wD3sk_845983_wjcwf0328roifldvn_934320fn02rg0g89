@@ -659,7 +659,7 @@ export async function POST(request: Request) {
           {
             ok: false,
             message:
-              "As funcoes financeiras deste servidor ficam disponiveis apenas para a conta responsavel pela licenca ativa.",
+              "As funcoes financeiras desta area ficam disponiveis apenas para a conta responsavel pelo plano vinculado.",
           },
           { status: 403 },
         ),

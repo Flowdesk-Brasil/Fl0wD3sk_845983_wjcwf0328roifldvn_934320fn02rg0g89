@@ -962,10 +962,10 @@ function formatLicenseExpiresAt(value: string | null | undefined) {
 function buildActiveLicenseMessage(licenseExpiresAt: string | null | undefined) {
   const formattedExpiresAt = formatLicenseExpiresAt(licenseExpiresAt);
   if (formattedExpiresAt) {
-    return `Licenca ativa para este servidor ate ${formattedExpiresAt}.`;
+    return `Assinatura da conta ativa ate ${formattedExpiresAt}.`;
   }
 
-  return "Licenca ativa para este servidor. Pagamento bloqueado ate o fim do periodo.";
+  return "Assinatura da conta ativa. Novos pagamentos ficam bloqueados ate o fim do periodo.";
 }
 
 function roundMoney(amount: number) {
@@ -2871,7 +2871,7 @@ function ApprovedPaymentPanel({
       </h2>
       <p className="mt-[8px] max-w-[720px] text-[14px] leading-[1.75] text-[#A1A1A1] sm:text-[15px]">
         Sua confirmacao ja foi recebida. Aguarde nesta pagina enquanto a Flowdesk
-        finaliza a liberacao do sistema e sincroniza o servidor automaticamente.
+        finaliza a liberacao do sistema, sincroniza a conta e libera este servidor automaticamente.
       </p>
 
       <div className="mt-[22px] grid gap-[12px] sm:grid-cols-3">
@@ -2909,7 +2909,7 @@ function ApprovedPaymentPanel({
         </p>
         <p className="mt-[10px] text-[15px] leading-[1.7] text-[#E3F6EF]">
           {statusMessage ||
-            "Estamos validando o pagamento e liberando o sistema deste servidor agora. Nao feche esta tela ate a sincronizacao terminar."}
+            "Estamos validando o pagamento e liberando o sistema da conta agora. Nao feche esta tela ate a sincronizacao terminar."}
         </p>
       </div>
 
@@ -3767,7 +3767,7 @@ export function ConfigStepFour({
             setMethodMessage(
               payload.licenseActive
                 ? buildActiveLicenseMessage(payload.licenseExpiresAt)
-                : "Ja existe um pagamento confirmado neste servidor. Revise o checkout antes de continuar.",
+                : "Ja existe um pagamento confirmado nesta conta. Revise o checkout antes de continuar.",
             );
             clearCheckoutStatusQuery();
             return;
@@ -3780,7 +3780,7 @@ export function ConfigStepFour({
           setMethodMessage(
             payload.licenseActive
               ? buildActiveLicenseMessage(payload.licenseExpiresAt)
-              : "Pagamento aprovado para este servidor.",
+              : "Pagamento aprovado para a conta.",
           );
           setCheckoutStatusQuery({ order: remoteOrder, guildId: activeGuildId });
           removeCachedOrderByGuild(activeGuildId);
@@ -3894,7 +3894,7 @@ export function ConfigStepFour({
           setLastKnownOrderNumber(null);
           setView("methods");
           setMethodMessage(
-            "Nao foi possivel validar este link de pagamento nesta conta. Faça login na conta que iniciou o pagamento e tente novamente.",
+            "Nao foi possivel validar este link de pagamento nesta conta. Fa�a login na conta que iniciou o pagamento e tente novamente.",
           );
           clearCheckoutStatusQuery();
           return;
@@ -4203,7 +4203,7 @@ export function ConfigStepFour({
             setMethodMessage(
               payload.licenseActive
                 ? buildActiveLicenseMessage(payload.licenseExpiresAt)
-                : "Pagamento aprovado para este servidor.",
+                : "Pagamento aprovado para a conta.",
             );
             setCheckoutStatusQuery({ order: payload.order, guildId: activeGuildId });
           } else if (payload.order.method === "card") {
@@ -4857,7 +4857,7 @@ export function ConfigStepFour({
     if (pixOrder?.method === "card" && pixOrder.status === "pending") {
       setView("methods");
       setMethodMessage(
-        "Ja existe um pagamento com cartao em analise para este servidor. Aguarde o retorno antes de tentar novamente.",
+        "Ja existe um pagamento com cartao em analise para esta conta. Aguarde o retorno antes de tentar novamente.",
       );
       return;
     }
@@ -4914,7 +4914,7 @@ export function ConfigStepFour({
         setMethodMessage(
           withSupportRequestId(
             payload.message ||
-              "Ja existe um pagamento com cartao em analise para este servidor.",
+              "Ja existe um pagamento com cartao em analise para esta conta.",
             requestId,
           ),
         );
@@ -5116,7 +5116,7 @@ export function ConfigStepFour({
         setMethodMessage(
           payload.licenseActive
             ? buildActiveLicenseMessage(payload.licenseExpiresAt)
-            : "Pagamento aprovado para este servidor.",
+            : "Pagamento aprovado para a conta.",
         );
         setCheckoutStatusQuery({ order: payload.order, guildId });
       } else if (payload.order.status === "pending" && payload.order.qrCodeText) {
@@ -5223,7 +5223,7 @@ export function ConfigStepFour({
         payload.licenseActive
           ? buildActiveLicenseMessage(payload.licenseExpiresAt)
           : payload.reused
-            ? "Plano gratuito ja estava ativo para este servidor."
+            ? "Plano gratuito ja estava ativo nesta conta."
             : "Plano gratuito ativado com sucesso. Redirecionando...",
       );
 
@@ -5522,7 +5522,7 @@ export function ConfigStepFour({
         setMethodMessage(
           payload.licenseActive
             ? buildActiveLicenseMessage(payload.licenseExpiresAt)
-            : "Pagamento aprovado para este servidor.",
+            : "Pagamento aprovado para a conta.",
         );
         setCheckoutStatusQuery({ order: payload.order, guildId });
       } else if (payload.order.status === "pending" && payload.order.qrCodeText) {
@@ -6246,7 +6246,7 @@ export function ConfigStepFour({
         ? "Dados do pagador"
         : "Pagamento";
   const checkoutPanelDescription = shouldShowApprovedConfirmationPanel
-    ? "O pagamento ja foi validado. Aguarde alguns instantes enquanto terminamos a liberacao do sistema deste servidor."
+    ? "O pagamento ja foi validado. Aguarde alguns instantes enquanto terminamos a liberacao do sistema da conta."
     : view === "pix_checkout"
       ? "Pague pelo app do seu banco ou use o copia e cola logo abaixo."
       : view === "pix_form"
@@ -6480,7 +6480,7 @@ export function ConfigStepFour({
 
                     <div className="mt-[28px] flex items-start gap-[10px] border-t border-[#1D1D1D] pt-[22px] text-[15px] leading-[1.55] text-[#F0F0F0]">
                       <span className="inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full bg-[#0ECF9C] text-[11px] font-semibold text-[#08100D]">
-                        ✓
+                        ?
                       </span>
                       <p>Boa noticia! A ativacao automatica ja esta incluida neste pedido.</p>
                     </div>
@@ -6861,3 +6861,4 @@ export function ConfigStepFour({
     </main>
   );
 }
+

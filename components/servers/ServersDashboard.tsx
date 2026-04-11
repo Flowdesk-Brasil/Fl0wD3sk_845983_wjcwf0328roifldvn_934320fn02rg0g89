@@ -44,9 +44,9 @@ type ServerEditorTab = "settings" | "payments" | "methods" | "plans";
 
 const FILTER_LABEL: Record<FilterOption, string> = {
   all: "Status",
-  paid: "Pago",
+  paid: "Em dia",
   pending_payment: "Pendente",
-  expired: "Expirados",
+  expired: "Expiradas",
   off: "Desligado",
 };
 
@@ -176,7 +176,7 @@ function NewBotIcon() {
 function statusStyle(status: ManagedServerStatus) {
   if (status === "paid") {
     return {
-      badgeText: "Pago",
+      badgeText: "Em dia",
       badgeClass:
         "border border-[#6AE25A] bg-[rgba(106,226,90,0.2)] text-[#6AE25A]",
     };
@@ -184,7 +184,7 @@ function statusStyle(status: ManagedServerStatus) {
 
   if (status === "expired") {
     return {
-      badgeText: "Expirado",
+      badgeText: "Expirada",
       badgeClass:
         "border border-[#F2C823] bg-[rgba(242,200,35,0.2)] text-[#F2C823]",
     };

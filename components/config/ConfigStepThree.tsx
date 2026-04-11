@@ -455,7 +455,7 @@ export function ConfigStepThree({
 
       {isPlanLocked ? (
         <p className="text-[13px] leading-[1.6] text-[#C9B27A]">
-          Este servidor esta expirado ou desligado. Renove a licenca para liberar alteracoes.
+          Este servidor esta com a cobranca da conta expirada ou com o bot desligado. Regularize o plano da conta para liberar alteracoes.
         </p>
       ) : null}
 

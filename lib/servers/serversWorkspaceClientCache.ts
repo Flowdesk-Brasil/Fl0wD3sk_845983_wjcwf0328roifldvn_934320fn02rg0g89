@@ -3,7 +3,7 @@
 import type { ManagedServer } from "@/lib/servers/managedServers";
 import type { PendingTeamInvite, UserTeam } from "@/lib/teams/userTeams";
 
-const WORKSPACE_CACHE_TTL_MS = 30_000;
+const WORKSPACE_CACHE_TTL_MS = 5_000;
 
 type CachedServersEntry = {
   timestamp: number;
@@ -28,7 +28,7 @@ function isFresh(timestamp: number) {
 }
 
 function getServersStorageKey(accountKey: string) {
-  return `flowdesk_servers_workspace_cache_v1:${accountKey}`;
+  return `flowdesk_servers_workspace_cache_v2:${accountKey}`;
 }
 
 function getTeamsStorageKey(accountKey: string) {

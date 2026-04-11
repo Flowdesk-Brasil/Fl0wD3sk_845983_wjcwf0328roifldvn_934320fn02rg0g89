@@ -47,7 +47,6 @@ import type { ManagedServer, ManagedServerStatus } from "@/lib/servers/managedSe
 import {
   buildServerMetaLabel,
   buildServerStatusDescription,
-  formatServerDateLabel,
 } from "@/lib/servers/licensePresentation";
 import { prefetchServerDashboardSettings } from "@/lib/servers/serverDashboardSettingsClient";
 import {
@@ -115,9 +114,9 @@ type SavedPanelAccount = {
 
 const FILTER_LABEL: Record<FilterOption, string> = {
   all: "Todos",
-  paid: "Pago",
+  paid: "Em dia",
   pending_payment: "Pendente",
-  expired: "Expirados",
+  expired: "Expirada",
   off: "Desligados",
 };
 
@@ -411,7 +410,7 @@ function normalizeComparablePath(value: string) {
 function statusStyle(status: ManagedServerStatus) {
   if (status === "paid") {
     return {
-      badgeText: "Pago",
+      badgeText: "Em dia",
       badgeClass:
         "border border-[rgba(0,98,255,0.42)] bg-[rgba(0,98,255,0.14)] text-[#8AB6FF]",
       ringColor:
@@ -421,7 +420,7 @@ function statusStyle(status: ManagedServerStatus) {
 
   if (status === "expired") {
     return {
-      badgeText: "Expirado",
+      badgeText: "Expirada",
       badgeClass:
         "border border-[rgba(242,200,35,0.4)] bg-[rgba(242,200,35,0.12)] text-[#F2C823]",
       ringColor:
@@ -457,13 +456,13 @@ function serverMetaLabel(server: ManagedServer) {
 }
 
 function serverAccessBadgeLabel(server: ManagedServer) {
-  if (server.accessMode === "owner") return "owner";
-  return server.canManage ? "equipe" : "viewer";
+  if (server.accessMode === "owner") return "titular";
+  return server.canManage ? "equipe" : "visualizar";
 }
 
-function serverLicenseScopeLabel(server: ManagedServer) {
-  if (server.accessMode === "owner") return "licenca principal";
-  return server.canManage ? "gestao por equipe" : "acesso de visualizacao";
+function serverAccountChipLabel(server: ManagedServer) {
+  if (server.accessMode === "owner") return "conta titular";
+  return server.canManage ? "conta da equipe" : "conta vinculada";
 }
 function SearchIcon() {
   return <SearchLucide className="h-[18px] w-[18px] shrink-0 text-[#6F6F6F]" strokeWidth={1.85} aria-hidden="true" />;
@@ -742,7 +741,7 @@ function ServerListRow({
           </div>
           <div className="flex flex-wrap items-center justify-end gap-[12px] xl:ml-[18px]">
             <span className="inline-flex items-center rounded-full border border-[#1B1B1B] bg-[#111111] px-[12px] py-[8px] text-[12px] leading-none text-[#D0D0D0]">
-              conta {String(server.licenseOwnerUserId).slice(0, 10)}
+              {serverAccountChipLabel(server)}
             </span>
             <StatusRing status={server.status} />
             <div
@@ -934,7 +933,7 @@ function ServerGridCard({
             {statusDescription(server)}
           </p>
           <p className="mt-[10px] text-[14px] leading-[1.45] text-[#8C8C8C]">
-            {formatServerDateLabel(server.licensePaidAt)}   {serverLicenseScopeLabel(server)}
+            {serverMetaLabel(server)}
           </p>
         </div>
       </article>
@@ -2188,11 +2187,11 @@ export function ServersWorkspace({
     ? "Gerencie tickets, canais e cargos do servidor em um fluxo unico, mais limpo e mais atual."
     : viewMode === "overview"
       ? selectedTeam
-        ? `Servidores vinculados a equipe ${selectedTeam.name}, com visao mais limpa para moderacao, licencas e operacao do painel.`
-        : "Uma visao mais limpa para encontrar servidores, acompanhar licencas e abrir configuracoes rapido."
+        ? `Servidores vinculados a equipe ${selectedTeam.name}, com visao mais limpa para moderacao, cobranca da conta e operacao do painel.`
+        : "Uma visao mais limpa para encontrar servidores, acompanhar a cobranca da conta e abrir configuracoes rapido."
       : selectedTeam
         ? `Modo lista da equipe ${selectedTeam.name}, com todos os servidores vinculados organizados no mesmo fluxo.`
-        : "Modo lista para navegar mais rapido entre todos os servidores e licencas.";
+        : "Modo lista para navegar mais rapido entre todos os servidores e estados da conta.";
   const teamSummaryLabel = isTeamsLoading
     ? "Carregando equipes..."
     : selectedTeam

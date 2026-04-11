@@ -1730,7 +1730,7 @@ export function ServerSettingsEditor({
   const viewerOnlyMessage =
     "Neste acesso o painel esta disponivel somente para visualizacao.";
   const financialViewerMessage =
-    "As funcoes financeiras deste servidor ficam disponiveis apenas para a conta responsavel pela licenca ativa.";
+    "As funcoes financeiras desta area ficam disponiveis apenas para a conta responsavel pelo plano vinculado.";
 
   const applyDashboardSettingsPayload = useCallback(
     (payload: ServerDashboardSettingsPayload) => {
@@ -5177,7 +5177,7 @@ export function ServerSettingsEditor({
                         ) : null}
                         {locked ? (
                           <p className="text-[12px] leading-[1.55] text-[#C2C2C2]">
-                            Plano expirado ou desligado. Renove a licenca na configuracao da conta para liberar alteracoes novamente.
+                            Plano da conta expirado ou bot desligado neste servidor. Regularize o pagamento ou ajuste o plano da conta para liberar alteracoes novamente.
                           </p>
                         ) : null}
                         {errorMessage ? (
@@ -5516,21 +5516,21 @@ export function ServerSettingsEditor({
                     <div className="min-w-0">
                       <p className="text-[14px] text-[#F2C823]">
                         {renewalWindowOpen
-                          ? "Renovacao antecipada disponivel neste servidor"
+                          ? "Renovacao antecipada disponivel para a conta"
                           : status === "expired"
-                            ? "Plano expirado neste servidor"
-                            : "Plano desligado neste servidor"}
+                            ? "Plano da conta expirado"
+                            : "Bot desligado por plano ou pagamento"}
                       </p>
                       <p className="mt-1 text-[11px] text-[#D6C68A]">
                         {renewalWindowOpen
                           ? `Renove agora e os ${daysUntilExpire} dia${
                               daysUntilExpire === 1 ? "" : "s"
-                            } restantes desta assinatura serao somados ao proximo ciclo de 30 dias.`
+                            } restantes do plano da conta serao somados ao proximo ciclo.`
                           : status === "expired"
-                            ? `Renove agora para reativar o Flowdesk. Os ${daysUntilOff} dia${
+                            ? `Renove agora para reativar os servidores da conta. Os ${daysUntilOff} dia${
                                 daysUntilOff === 1 ? "" : "s"
                               } de tolerancia em aberto nao viram bonus no proximo ciclo.`
-                            : "Renove agora para reativar o Flowdesk com mais 30 dias de licenca."}
+                            : "Renove agora para reativar o Flowdesk assim que o pagamento ou a troca de plano forem confirmados."}
                       </p>
                     </div>
 
@@ -5550,7 +5550,7 @@ export function ServerSettingsEditor({
                     <div>
                       <p className="text-[16px] font-medium text-[#D8D8D8]">Plano Pro</p>
                       <p className="text-[12px] text-[#8E8E8E]">
-                        Licenca padrao do servidor por 30 dias
+                        Cobranca da conta com ciclo padrao de 30 dias
                       </p>
                     </div>
                     <span className="inline-flex h-[23px] items-center justify-center rounded-[3px] border border-[#6AE25A] bg-[rgba(106,226,90,0.2)] px-3 text-[11px] text-[#6AE25A]">
@@ -5563,7 +5563,7 @@ export function ServerSettingsEditor({
                       <div>
                         <p className="text-[14px] text-[#D8D8D8]">Cobranca recorrente</p>
                         <p className="mt-1 text-[11px] text-[#8E8E8E]">
-                          Ative para renovar automaticamente a cada 30 dias.
+                          Ative para renovar automaticamente a assinatura da conta a cada ciclo.
                         </p>
                       </div>
 
@@ -5625,7 +5625,7 @@ export function ServerSettingsEditor({
                     {recurringMethodOptions.length > 1 ? (
                       <div className="mt-2">
                         <label className="mb-1 block text-[11px] text-[#686868]">
-                          Escolha o cartao para renovar
+                          Escolha o cartao da conta
                         </label>
                         <select
                           value={planSettings?.recurringMethodId || ""}
@@ -5862,13 +5862,13 @@ export function ServerSettingsEditor({
             </button>
 
             <h3 className="text-center text-[24px] text-[#D8D8D8]">
-              Escolha o cartao da renovacao
+              Escolha o cartao da conta
             </h3>
 
             <div className="mt-6 h-[1px] w-full bg-[#242424]" />
 
             <p className="mt-5 text-center text-[12px] text-[#8E8E8E]">
-              Selecione qual cartao sera usado para renovar automaticamente este servidor.
+              Selecione qual cartao sera usado para renovar automaticamente a conta.
             </p>
 
             <div className="thin-scrollbar mt-5 flex max-h-[320px] flex-col gap-3 overflow-y-auto pr-1">

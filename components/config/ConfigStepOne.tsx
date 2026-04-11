@@ -387,7 +387,7 @@ export function ConfigStepOne({
     setSelectedGuildId(null);
     onSelectedGuildChange?.(null);
     setNextActionError(
-      "Este servidor ja possui uma licenca ativa em outra conta ou nao esta mais disponivel para nova configuracao.",
+      "Este servidor ja esta vinculado a outra conta com plano ativo ou nao esta mais disponivel para nova configuracao.",
     );
   }, [guilds, hasFreshGuildsSync, onSelectedGuildChange, selectedGuildId]);
 
@@ -429,7 +429,7 @@ export function ConfigStepOne({
       >
         <section className="w-full max-w-[1240px] flowdesk-stage-fade">
           <div className="mx-auto max-w-[820px] text-center">
-            <LandingGlowTag>Ativacao da licenca | Etapa 1</LandingGlowTag>
+            <LandingGlowTag>Ativacao do plano | Etapa 1</LandingGlowTag>
 
             <h1 className="mt-[24px] bg-[linear-gradient(90deg,#E7E7E7_0%,#BFBFBF_100%)] bg-clip-text text-[38px] leading-[0.98] font-normal tracking-[-0.06em] text-transparent sm:text-[48px] lg:text-[56px]">
               Escolha o servidor que vai receber o Flowdesk

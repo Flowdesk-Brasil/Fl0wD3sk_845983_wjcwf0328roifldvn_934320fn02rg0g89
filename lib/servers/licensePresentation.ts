@@ -86,54 +86,53 @@ export function buildServerStatusDescription(
   server: ManagedServerLike,
   variant: "workspace" | "dashboard" = "workspace",
 ) {
-  const cycleLabel = resolveServerLicenseCycleLabel(server);
-
   if (server.status === "paid") {
-    if (cycleLabel) {
-      return variant === "dashboard"
-        ? `${cycleLabel} de licenca`
-        : `Licenca ativa por ${cycleLabel} - valida ate ${formatServerDateLabel(server.licenseExpiresAt)}`;
-    }
-
     return variant === "dashboard"
-      ? `Expira em ${server.daysUntilExpire} dias`
-      : `Renovacao ativa expira em ${server.daysUntilExpire} dias`;
+      ? "Conta em dia"
+      : "Assinatura da conta em dia para este servidor";
   }
 
   if (server.status === "expired") {
-    if (cycleLabel) {
-      return variant === "dashboard"
-        ? `${cycleLabel} expirado`
-        : `Licenca de ${cycleLabel} expirada - ${server.daysUntilOff} dias restantes`;
-    }
-
     return variant === "dashboard"
-      ? `Expirado - ${server.daysUntilOff} dias`
-      : `Licenca expirada - restam ${server.daysUntilOff} dias`;
+      ? "Conta expirada"
+      : "Pagamento da conta expirado - regularize para manter os servidores online";
   }
 
   if (server.status === "pending_payment") {
     return variant === "dashboard"
-      ? "Pagamento pendente"
-      : "Servidor aguardando regularizacao do downgrade";
+      ? "Conta pendente"
+      : "Mudanca de plano aguardando regularizacao da conta";
   }
 
-  return "Bot desligado - retorna imediatamente apos pagamento";
+  return variant === "dashboard"
+    ? "Bot desligado"
+    : "Bot desligado - retorna imediatamente apos pagamento ou troca de plano";
 }
 
 export function buildServerMetaLabel(
   server: Pick<
     ManagedServerLike,
-    "accessMode" | "canManage" | "licensePaidAt" | "licenseExpiresAt"
+    "status" | "accessMode" | "canManage"
   >,
 ) {
-  if (server.accessMode === "owner") {
-    return `Licenca principal - renovado em ${formatServerDateLabel(server.licensePaidAt)}`;
+  const accessContext =
+    server.accessMode === "owner"
+      ? "Conta titular"
+      : server.canManage
+        ? "Gestao em equipe"
+        : "Somente visualizacao";
+
+  if (server.status === "off") {
+    return "Bot desligado - retorna imediatamente apos pagamento ou troca de plano";
   }
 
-  if (server.canManage) {
-    return `Gestao por equipe - valido ate ${formatServerDateLabel(server.licenseExpiresAt)}`;
+  if (server.status === "expired") {
+    return `${accessContext} - cobranca da conta expirada`;
   }
 
-  return `Acesso de visualizacao - valido ate ${formatServerDateLabel(server.licenseExpiresAt)}`;
+  if (server.status === "pending_payment") {
+    return `${accessContext} - regularizacao da conta pendente`;
+  }
+
+  return `${accessContext} - cobranca validada pela conta`;
 }

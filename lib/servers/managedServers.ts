@@ -250,7 +250,9 @@ export async function getManagedServersForCurrentSession(): Promise<ManagedServe
       );
 
       const status: ManagedServerStatus = currentLicenseBelongsToViewer
-        ? lockedRecord?.status || "off"
+        ? lockedRecord?.isActive === false
+          ? "off"
+          : lockedRecord?.status || "off"
         : isPendingDowngradePayment
           ? "pending_payment"
           : ownedPlanGuild

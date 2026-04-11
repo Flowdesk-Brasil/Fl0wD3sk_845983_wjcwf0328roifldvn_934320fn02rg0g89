@@ -359,7 +359,7 @@ async function reconcilePaymentOrderWithFetchedProviderPayment(
         },
       );
 
-      invalidateGuildLicenseCaches(order.guild_id);
+      invalidateGuildLicenseCaches();
       return {
         order: refundedTimeoutOrderResult.data,
         changed: true,
@@ -438,7 +438,7 @@ async function reconcilePaymentOrderWithFetchedProviderPayment(
         previousApprovedOrderNumber: existingCoverage?.order.order_number || null,
       });
 
-      invalidateGuildLicenseCaches(order.guild_id);
+      invalidateGuildLicenseCaches();
       return {
         order: refundedOrderResult.data,
         changed: true,
@@ -535,7 +535,7 @@ async function reconcilePaymentOrderWithFetchedProviderPayment(
     await syncUserPlanStateFromOrder(updatedOrderResult.data);
   }
 
-  invalidateGuildLicenseCaches(order.guild_id);
+  invalidateGuildLicenseCaches();
   return {
     order: updatedOrderResult.data,
     changed: true,
