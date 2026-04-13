@@ -1217,7 +1217,7 @@ export function ServersWorkspace({
       const controller = new AbortController();
       activeController = controller;
       clearActiveTimeout();
-      activeTimeoutId = window.setTimeout(() => controller.abort(), 12000);
+      activeTimeoutId = window.setTimeout(() => controller.abort("timeout"), 12000);
 
       try {
         const response = await fetch("/api/auth/me/servers", { cache: "no-store", signal: controller.signal });
@@ -1241,7 +1241,8 @@ export function ServersWorkspace({
         if (!isMounted) return;
         const isAbortError =
           (error instanceof DOMException && error.name === "AbortError") ||
-          (error instanceof Error && error.message === "unmount");
+          (error instanceof Error && (error.name === "AbortError" || error.message === "unmount")) ||
+          (error && typeof error === "object" && "name" in error && error.name === "AbortError");
         const isNonRetryable =
           error instanceof Error &&
           "cause" in error &&
@@ -1371,7 +1372,7 @@ export function ServersWorkspace({
       const controller = new AbortController();
       activeController = controller;
       clearActiveTimeout();
-      activeTimeoutId = window.setTimeout(() => controller.abort(), 12000);
+      activeTimeoutId = window.setTimeout(() => controller.abort("timeout"), 12000);
 
       try {
         const response = await fetch("/api/auth/me/teams", {
@@ -1396,7 +1397,8 @@ export function ServersWorkspace({
         if (!isMounted) return;
         const isAbortError =
           (error instanceof DOMException && error.name === "AbortError") ||
-          (error instanceof Error && error.message === "unmount");
+          (error instanceof Error && (error.name === "AbortError" || error.message === "unmount")) ||
+          (error && typeof error === "object" && "name" in error && error.name === "AbortError");
         const isNonRetryable =
           error instanceof Error &&
           "cause" in error &&
@@ -1666,11 +1668,7 @@ export function ServersWorkspace({
   }, [normalizedSidebarQuery]);
 
   const filteredTicketSidebarItems = useMemo(() => {
-    const items = TICKET_SIDEBAR_ITEMS.filter((item) => {
-      if (currentDashboardPermissions === "full") return true;
-      if (!item.requiredPermission) return true;
-      return currentDashboardPermissions.includes(item.requiredPermission);
-    });
+    const items = TICKET_SIDEBAR_ITEMS;
 
     if (!normalizedSidebarQuery) return items;
 
@@ -1686,14 +1684,10 @@ export function ServersWorkspace({
           : a.item.label.localeCompare(b.item.label, "pt-BR"),
       )
       .map((entry) => entry.item);
-  }, [normalizedSidebarQuery, currentDashboardPermissions]);
+  }, [normalizedSidebarQuery]);
 
   const filteredEntryExitSidebarItems = useMemo(() => {
-    const items = ENTRY_EXIT_SIDEBAR_ITEMS.filter((item) => {
-      if (currentDashboardPermissions === "full") return true;
-      if (!item.requiredPermission) return true;
-      return currentDashboardPermissions.includes(item.requiredPermission);
-    });
+    const items = ENTRY_EXIT_SIDEBAR_ITEMS;
 
     if (!normalizedSidebarQuery) return items;
 
@@ -1709,13 +1703,9 @@ export function ServersWorkspace({
           : a.item.label.localeCompare(b.item.label, "pt-BR"),
       )
       .map((entry) => entry.item);
-  }, [normalizedSidebarQuery, currentDashboardPermissions]);
+  }, [normalizedSidebarQuery]);
   const filteredSecuritySidebarItems = useMemo(() => {
-    const items = SECURITY_SIDEBAR_ITEMS.filter((item) => {
-      if (currentDashboardPermissions === "full") return true;
-      if (!item.requiredPermission) return true;
-      return currentDashboardPermissions.includes(item.requiredPermission);
-    });
+    const items = SECURITY_SIDEBAR_ITEMS;
 
     if (!normalizedSidebarQuery) return items;
 
@@ -1731,7 +1721,7 @@ export function ServersWorkspace({
           : a.item.label.localeCompare(b.item.label, "pt-BR"),
       )
       .map((entry) => entry.item);
-  }, [normalizedSidebarQuery, currentDashboardPermissions]);
+  }, [normalizedSidebarQuery]);
   const isEditingServer = Boolean(selectedGuildIdForConfig);
   const activeTeamServerCount = visibleServers.length;
   const isCreateTeamNextDisabled =
@@ -2938,7 +2928,7 @@ export function ServersWorkspace({
   return (
     <div className="relative min-h-screen overflow-x-clip bg-[#040404] text-white">
       <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05)_0%,rgba(255,255,255,0.012)_28%,transparent_68%)]" />
-      <div className="hidden xl:block">
+      <div className="hidden lg:block">
         <aside className="fixed inset-y-0 left-0 z-20 w-[318px]">
           <div className={`${sidebarShellClass} h-full rounded-none border-y-0 border-l-0 border-r-[#151515]`}>
             <LandingReveal delay={90}>
@@ -2947,9 +2937,9 @@ export function ServersWorkspace({
           </div>
         </aside>
       </div>
-      <main className="relative px-[20px] pt-[32px] pb-[56px] md:px-6 lg:px-8 xl:min-h-screen xl:pl-[358px] xl:pr-[42px]">
+      <main className="relative px-[20px] pt-[32px] pb-[56px] md:px-6 lg:min-h-screen lg:pl-[358px] lg:pr-[42px]">
         <div className="mx-auto w-full max-w-[1220px]">
-          <aside className="mb-[20px] min-w-0 xl:hidden">
+          <aside className="mb-[20px] min-w-0 lg:hidden">
             <LandingReveal delay={90}>
               <div className={`${sidebarShellClass} rounded-[28px]`}>
                 {renderSidebarContent(mobileTeamMenuRef, mobileProfileMenuRef, mobileSidebarSearchInputRef)}

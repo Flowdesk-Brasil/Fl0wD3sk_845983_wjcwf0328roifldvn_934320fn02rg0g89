@@ -962,7 +962,12 @@ function TicketMessageBuilder({
         if (isMounted) {
           setEmojiCatalog(nextCatalog);
         }
-      } catch {
+      } catch (error) {
+        const isAbort =
+          (error instanceof DOMException && error.name === "AbortError") ||
+          (error instanceof Error && error.name === "AbortError") ||
+          (error && typeof error === "object" && "name" in error && (error as { name: string }).name === "AbortError");
+        if (isAbort) return;
         if (isMounted) {
           setEmojiCatalog([]);
         }
@@ -977,7 +982,7 @@ function TicketMessageBuilder({
 
     return () => {
       isMounted = false;
-      controller.abort();
+      controller.abort("unmount");
     };
   }, [guildId]);
 

@@ -2459,7 +2459,11 @@ export function ServerSettingsEditor({
         setErrorMessage(null);
       } catch (error) {
         if (!mounted) return;
-        if (error instanceof DOMException && error.name === "AbortError") {
+        if (
+          (error instanceof Error && error.name === "AbortError") ||
+          (error instanceof DOMException && error.name === "AbortError") ||
+          (error && typeof error === "object" && "name" in error && error.name === "AbortError")
+        ) {
           return;
         }
         if (!cachedPayload) {
@@ -2480,7 +2484,7 @@ export function ServerSettingsEditor({
 
     return () => {
       mounted = false;
-      controller.abort();
+      controller.abort("unmount");
     };
   }, [applyDashboardSettingsPayload, guildId, markDashboardSnapshotLoaded]);
 
