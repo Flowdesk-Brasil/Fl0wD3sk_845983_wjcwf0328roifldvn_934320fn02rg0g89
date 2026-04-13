@@ -130,6 +130,7 @@ type AntiLinkSettingsDraft = {
   enforcementAction: AntiLinkEnforcementAction;
   timeoutMinutes: number;
   ignoredRoleIds: string[];
+  ignoredChannelIds: string[];
   blockExternalLinks: boolean;
   blockDiscordInvites: boolean;
   blockObfuscatedLinks: boolean;
@@ -161,7 +162,6 @@ type SecurityLogEventKey =
   | "memberUnban"
   | "memberKick"
   | "memberTimeout"
-  | "voiceMove"
   | "voiceMute";
 
 type SecurityLogEventDraft = {
@@ -421,14 +421,7 @@ const SECURITY_LOG_EVENT_OPTIONS: Array<{
       "Dispara quando timeout e aplicado, com duracao e executor quando disponivel.",
     icon: TimerOff,
   },
-  {
-    key: "voiceMove",
-    title: "Membro movido de call",
-    description: "Registra troca de call por moderacao.",
-    tooltip:
-      "Tenta identificar quem moveu o membro usando audit log de movimentacao.",
-    icon: ArrowRightLeft,
-  },
+
   {
     key: "voiceMute",
     title: "Mute e desmute em call",
@@ -541,6 +534,7 @@ function normalizeAntiLinkSettingsDraft(
     ),
     timeoutMinutes: normalizeAntiLinkTimeoutMinutes(draft.timeoutMinutes),
     ignoredRoleIds: normalizeDraftIds(draft.ignoredRoleIds),
+    ignoredChannelIds: normalizeDraftIds(draft.ignoredChannelIds),
     blockExternalLinks: Boolean(draft.blockExternalLinks),
     blockDiscordInvites: Boolean(draft.blockDiscordInvites),
     blockObfuscatedLinks: Boolean(draft.blockObfuscatedLinks),
@@ -595,7 +589,6 @@ function createDefaultSecurityLogEventsDraft(): SecurityLogEventsDraft {
     memberUnban: { enabled: false, channelId: null },
     memberKick: { enabled: false, channelId: null },
     memberTimeout: { enabled: false, channelId: null },
-    voiceMove: { enabled: false, channelId: null },
     voiceMute: { enabled: false, channelId: null },
   };
 }
@@ -1689,6 +1682,9 @@ export function ServerSettingsEditor({
   const [antiLinkIgnoredRoleIds, setAntiLinkIgnoredRoleIds] = useState<string[]>(
     [],
   );
+  const [antiLinkIgnoredChannelIds, setAntiLinkIgnoredChannelIds] = useState<string[]>(
+    [],
+  );
   const [antiLinkBlockExternalLinks, setAntiLinkBlockExternalLinks] = useState<boolean>(
     ANTILINK_DEFAULT_DETECTION.blockExternalLinks
   );
@@ -1988,6 +1984,11 @@ export function ServerSettingsEditor({
       )
         ? payload.antiLinkSettings.ignoredRoleIds.filter((id) => roleSet.has(id))
         : [];
+      const nextAntiLinkIgnoredChannelIds = Array.isArray(
+        payload.antiLinkSettings?.ignoredChannelIds,
+      )
+        ? payload.antiLinkSettings.ignoredChannelIds.filter((id) => textSet.has(id))
+        : [];
       const nextAntiLinkBlockExternalLinks =
         ANTILINK_DEFAULT_DETECTION.blockExternalLinks;
       const nextAntiLinkBlockDiscordInvites =
@@ -2108,14 +2109,6 @@ export function ServerSettingsEditor({
                     ? payload.securityLogsSettings.events.memberTimeout.channelId
                     : null,
               },
-              voiceMove: {
-                enabled: payload.securityLogsSettings.events.voiceMove.enabled,
-                channelId:
-                  payload.securityLogsSettings.events.voiceMove.channelId &&
-                  textSet.has(payload.securityLogsSettings.events.voiceMove.channelId)
-                    ? payload.securityLogsSettings.events.voiceMove.channelId
-                    : null,
-              },
               voiceMute: {
                 enabled: payload.securityLogsSettings.events.voiceMute.enabled,
                 channelId:
@@ -2153,6 +2146,7 @@ export function ServerSettingsEditor({
       setAntiLinkEnforcementAction(nextAntiLinkEnforcementAction);
       setAntiLinkTimeoutMinutes(nextAntiLinkTimeoutMinutes);
       setAntiLinkIgnoredRoleIds(nextAntiLinkIgnoredRoleIds);
+      setAntiLinkIgnoredChannelIds(nextAntiLinkIgnoredChannelIds);
       setAntiLinkBlockExternalLinks(nextAntiLinkBlockExternalLinks);
       setAntiLinkBlockDiscordInvites(nextAntiLinkBlockDiscordInvites);
       setAntiLinkBlockObfuscatedLinks(nextAntiLinkBlockObfuscatedLinks);
@@ -2208,6 +2202,7 @@ export function ServerSettingsEditor({
           enforcementAction: nextAntiLinkEnforcementAction,
           timeoutMinutes: nextAntiLinkTimeoutMinutes,
           ignoredRoleIds: nextAntiLinkIgnoredRoleIds,
+          ignoredChannelIds: nextAntiLinkIgnoredChannelIds,
           blockExternalLinks: nextAntiLinkBlockExternalLinks,
           blockDiscordInvites: nextAntiLinkBlockDiscordInvites,
           blockObfuscatedLinks: nextAntiLinkBlockObfuscatedLinks,
@@ -2308,6 +2303,7 @@ export function ServerSettingsEditor({
     setAntiLinkEnforcementAction("delete_only");
     setAntiLinkTimeoutMinutes(10);
     setAntiLinkIgnoredRoleIds([]);
+    setAntiLinkIgnoredChannelIds([]);
     setAntiLinkBlockExternalLinks(true);
     setAntiLinkBlockDiscordInvites(true);
     setAntiLinkBlockObfuscatedLinks(true);
@@ -3088,6 +3084,7 @@ export function ServerSettingsEditor({
         enforcementAction: antiLinkEnforcementAction,
         timeoutMinutes: antiLinkTimeoutValue,
         ignoredRoleIds: antiLinkIgnoredRoleIds,
+        ignoredChannelIds: antiLinkIgnoredChannelIds,
         blockExternalLinks: ANTILINK_DEFAULT_DETECTION.blockExternalLinks,
         blockDiscordInvites: ANTILINK_DEFAULT_DETECTION.blockDiscordInvites,
         blockObfuscatedLinks: ANTILINK_DEFAULT_DETECTION.blockObfuscatedLinks,
@@ -4155,6 +4152,7 @@ export function ServerSettingsEditor({
       setAntiLinkEnforcementAction(savedAntiLinkSettingsDraft.enforcementAction);
       setAntiLinkTimeoutMinutes(savedAntiLinkSettingsDraft.timeoutMinutes);
       setAntiLinkIgnoredRoleIds(savedAntiLinkSettingsDraft.ignoredRoleIds);
+      setAntiLinkIgnoredChannelIds(savedAntiLinkSettingsDraft.ignoredChannelIds);
       setAntiLinkBlockExternalLinks(savedAntiLinkSettingsDraft.blockExternalLinks);
       setAntiLinkBlockDiscordInvites(savedAntiLinkSettingsDraft.blockDiscordInvites);
       setAntiLinkBlockObfuscatedLinks(savedAntiLinkSettingsDraft.blockObfuscatedLinks);
@@ -4277,6 +4275,7 @@ export function ServerSettingsEditor({
             enforcementAction: antiLinkEnforcementAction,
             timeoutMinutes: antiLinkTimeoutValue,
             ignoredRoleIds: antiLinkIgnoredRoleIds,
+            ignoredChannelIds: antiLinkIgnoredChannelIds,
             blockExternalLinks: antiLinkBlockExternalLinks,
             blockDiscordInvites: antiLinkBlockDiscordInvites,
             blockObfuscatedLinks: antiLinkBlockObfuscatedLinks,
@@ -4469,6 +4468,7 @@ export function ServerSettingsEditor({
     antiLinkEnabled,
     antiLinkEnforcementAction,
     antiLinkIgnoredRoleIds,
+    antiLinkIgnoredChannelIds,
     antiLinkLogChannelId,
     antiLinkTimeoutValue,
     autoRoleAssignmentDelayValue,
@@ -4679,6 +4679,7 @@ export function ServerSettingsEditor({
           enforcementAction: antiLinkEnforcementAction,
           timeoutMinutes: antiLinkTimeoutValue,
           ignoredRoleIds: antiLinkIgnoredRoleIds,
+          ignoredChannelIds: antiLinkIgnoredChannelIds,
           blockExternalLinks: ANTILINK_DEFAULT_DETECTION.blockExternalLinks,
           blockDiscordInvites: ANTILINK_DEFAULT_DETECTION.blockDiscordInvites,
           blockObfuscatedLinks: ANTILINK_DEFAULT_DETECTION.blockObfuscatedLinks,
@@ -4699,6 +4700,7 @@ export function ServerSettingsEditor({
           enforcementAction: antiLinkEnforcementAction,
           timeoutMinutes: antiLinkTimeoutValue,
           ignoredRoleIds: antiLinkIgnoredRoleIds,
+          ignoredChannelIds: antiLinkIgnoredChannelIds,
           blockExternalLinks: ANTILINK_DEFAULT_DETECTION.blockExternalLinks,
           blockDiscordInvites: ANTILINK_DEFAULT_DETECTION.blockDiscordInvites,
           blockObfuscatedLinks: ANTILINK_DEFAULT_DETECTION.blockObfuscatedLinks,
@@ -4717,6 +4719,7 @@ export function ServerSettingsEditor({
   }, [
     antiLinkEnforcementAction,
     antiLinkIgnoredRoleIds,
+    antiLinkIgnoredChannelIds,
     antiLinkLogChannelId,
     antiLinkTimeoutValue,
     guildId,
@@ -5200,6 +5203,17 @@ export function ServerSettingsEditor({
                             controlHeightPx={serverSettingsControlHeight}
                           />
                         </div>
+                        <div className="mt-[16px]">
+                          <ConfigStepMultiSelect
+                            label="Ignorar canais (opcional)"
+                            placeholder="Selecione canais que nao passam pelo anti-link"
+                            options={textChannelOptions}
+                            values={antiLinkIgnoredChannelIds}
+                            onChange={setAntiLinkIgnoredChannelIds}
+                            disabled={antiLinkControlsDisabled}
+                            controlHeightPx={serverSettingsControlHeight}
+                          />
+                        </div>
                       </div>
                     </div>
                   ) : settingsSection === "security_autorole" ? (
@@ -5629,17 +5643,22 @@ export function ServerSettingsEditor({
                         </div>
                       </div>
 
-                      <TicketMessageBuilder
-                        guildId={guildId}
-                        value={activeWelcomeLayout}
-                        onChange={handleWelcomeLayoutChange}
-                        disabled={welcomeControlsDisabled}
-                        canSendEmbed={false}
-                        isSendingEmbed={false}
-                        onSendEmbed={undefined}
-                        hideSendButton
-                        thumbnailPreviewUrl={activeWelcomeThumbnailPreviewUrl}
-                      />
+                      <div className="!h-auto !overflow-visible">
+                        <TicketMessageBuilder
+                          guildId={guildId}
+                          value={activeWelcomeLayout}
+                          onChange={handleWelcomeLayoutChange}
+                          disabled={welcomeControlsDisabled}
+                          canSendEmbed={false}
+                          isSendingEmbed={false}
+                          onSendEmbed={undefined}
+                          hideSendButton
+                          eyebrow=""
+                          headline=""
+                          description=""
+                          thumbnailPreviewUrl={activeWelcomeThumbnailPreviewUrl}
+                        />
+                      </div>
                     </>
                   )}
 

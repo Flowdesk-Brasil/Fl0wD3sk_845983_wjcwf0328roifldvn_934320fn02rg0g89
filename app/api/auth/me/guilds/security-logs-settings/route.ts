@@ -37,7 +37,6 @@ type SecurityLogEventKey =
   | "memberUnban"
   | "memberKick"
   | "memberTimeout"
-  | "voiceMove"
   | "voiceMute";
 
 type SecurityLogEventConfig = {
@@ -129,12 +128,7 @@ const SECURITY_LOG_EVENT_DESCRIPTORS = [
     channelColumn: "member_timeout_channel_id",
     label: "silenciamento de membro",
   },
-  {
-    key: "voiceMove",
-    enabledColumn: "voice_move_enabled",
-    channelColumn: "voice_move_channel_id",
-    label: "movimentacao entre calls",
-  },
+
   {
     key: "voiceMute",
     enabledColumn: "voice_mute_enabled",
@@ -185,7 +179,6 @@ function createDefaultSecurityLogsSettings(): SecurityLogsSettings {
     memberUnban: { enabled: false, channelId: null },
     memberKick: { enabled: false, channelId: null },
     memberTimeout: { enabled: false, channelId: null },
-    voiceMove: { enabled: false, channelId: null },
     voiceMute: { enabled: false, channelId: null },
   };
 }
