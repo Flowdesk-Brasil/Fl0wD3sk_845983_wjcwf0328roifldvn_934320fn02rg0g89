@@ -100,6 +100,11 @@ function resolveOptionalTextChannelId(
   return typeof value === "string" && textSet.has(value) ? value : null;
 }
 
+import { 
+  getEffectiveDashboardPermissions, 
+  type TeamRolePermission 
+} from "@/lib/teams/userTeams";
+
 async function ensureGuildAccess(guildId: string) {
   const sessionData = await resolveSessionAccessToken();
   if (!sessionData?.authSession) {
@@ -122,6 +127,11 @@ async function ensureGuildAccess(guildId: string) {
     };
   }
 
+  const { permissions: dashboardPerms, isTeamServer } = await getEffectiveDashboardPermissions({
+    authUserId: sessionData.authSession.user.id,
+    guildId: guildId,
+  });
+
   const accessibleGuild = await assertUserAdminInGuildOrNull(
     {
       authSession: sessionData.authSession,
@@ -130,25 +140,19 @@ async function ensureGuildAccess(guildId: string) {
     guildId,
   );
 
-  const hasTeamAccess = accessibleGuild
-    ? false
-    : await hasAcceptedTeamAccessToGuild(
-        {
-          authSession: sessionData.authSession,
-          accessToken: sessionData.accessToken,
-        },
-        guildId,
-      );
+  // If the user has Discord admin perms AND is the license owner (determined by getEffectiveDashboardPermissions returning "full"), they have full access.
+  // BUT the user said "acesso SOMENTE à conta da equipe, não nas contas pessoais"
+  // This means if it's a team server, Discord Admin role on Discord is NOT enough. They must have team permission.
+  
+  const hasAccess = dashboardPerms === "full" || 
+                    (dashboardPerms instanceof Set && dashboardPerms.size > 0) ||
+                    (!isTeamServer && accessibleGuild);
 
-  if (
-    !accessibleGuild &&
-    !hasTeamAccess &&
-    sessionData.authSession.activeGuildId !== guildId
-  ) {
+  if (!hasAccess) {
     return {
       ok: false as const,
       response: NextResponse.json(
-        { ok: false, message: "Servidor nao encontrado para este usuario." },
+        { ok: false, message: "Acesso negado." },
         { status: 403 },
       ),
     };
@@ -158,6 +162,7 @@ async function ensureGuildAccess(guildId: string) {
     ok: true as const,
     sessionData,
     accessibleGuild,
+    dashboardPerms: (dashboardPerms instanceof Set && !isTeamServer && accessibleGuild) ? "full" : dashboardPerms,
   };
 }
 
@@ -595,6 +600,7 @@ export async function GET(request: Request) {
                   : null,
             }
           : null,
+        dashboardPermissions: access.dashboardPerms === "full" ? "full" : Array.from(access.dashboardPerms),
       }),
     );
   } catch (error) {

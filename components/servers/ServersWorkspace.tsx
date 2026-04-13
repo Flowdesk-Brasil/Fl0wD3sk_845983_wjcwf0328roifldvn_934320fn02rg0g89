@@ -41,6 +41,7 @@ import { LandingReveal } from "@/components/landing/LandingReveal";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { ServerSettingsEditor } from "@/components/servers/ServerSettingsEditor";
 import { ServerSettingsEditorSkeleton } from "@/components/servers/ServerSettingsEditorSkeleton";
+import { PermissionDeniedState } from "@/components/servers/PermissionDeniedState";
 import { resolveAddServerTargetHref } from "@/lib/plans/addServerFlow";
 import { buildDiscordAuthStartHref } from "@/lib/auth/paths";
 import type { ManagedServer, ManagedServerStatus } from "@/lib/servers/managedServers";
@@ -129,6 +130,7 @@ type SidebarItem = {
   disabled?: boolean;
   chevron?: boolean;
   searchAliases?: string[];
+  requiredPermission?: string;
 };
 
 const PROJECTS_SIDEBAR_ITEMS: SidebarItem[] = [
@@ -142,10 +144,11 @@ const PROJECTS_SIDEBAR_ITEMS: SidebarItem[] = [
 
 const TICKET_SIDEBAR_ITEMS: SidebarItem[] = [
   {
-    label: "Visao geral",
+    label: "Visão Geral",
     kind: "ticket",
     tab: "settings",
     settingsSection: "overview",
+    requiredPermission: "server_manage_tickets_overview",
     searchAliases: [
       "ticket",
       "tickets",
@@ -163,6 +166,7 @@ const TICKET_SIDEBAR_ITEMS: SidebarItem[] = [
     kind: "ticket",
     tab: "settings",
     settingsSection: "message",
+    requiredPermission: "server_manage_tickets_message",
     searchAliases: [
       "mensagem",
       "embed",
@@ -181,6 +185,7 @@ const ENTRY_EXIT_SIDEBAR_ITEMS: SidebarItem[] = [
     kind: "entry_exit",
     tab: "settings",
     settingsSection: "entry_exit_overview",
+    requiredPermission: "server_manage_welcome_overview",
     searchAliases: [
       "entrada",
       "saida",
@@ -196,6 +201,7 @@ const ENTRY_EXIT_SIDEBAR_ITEMS: SidebarItem[] = [
     kind: "entry_exit",
     tab: "settings",
     settingsSection: "entry_exit_message",
+    requiredPermission: "server_manage_welcome_message",
     searchAliases: [
       "mensagem",
       "embed",
@@ -213,6 +219,7 @@ const SECURITY_SIDEBAR_ITEMS: SidebarItem[] = [
     kind: "security",
     tab: "settings",
     settingsSection: "security_antilink",
+    requiredPermission: "server_manage_antilink",
     searchAliases: [
       "seguranca",
       "anti link",
@@ -230,6 +237,7 @@ const SECURITY_SIDEBAR_ITEMS: SidebarItem[] = [
     kind: "security",
     tab: "settings",
     settingsSection: "security_autorole",
+    requiredPermission: "server_manage_autorole",
     searchAliases: [
       "seguranca",
       "autorole",
@@ -245,6 +253,7 @@ const SECURITY_SIDEBAR_ITEMS: SidebarItem[] = [
     kind: "security",
     tab: "settings",
     settingsSection: "security_logs",
+    requiredPermission: "server_view_security_logs",
     searchAliases: [
       "seguranca",
       "logs",
@@ -1024,6 +1033,7 @@ export function ServersWorkspace({
   const [isTicketSidebarOpen, setIsTicketSidebarOpen] = useState(true);
   const [isEntryExitSidebarOpen, setIsEntryExitSidebarOpen] = useState(true);
   const [isSecuritySidebarOpen, setIsSecuritySidebarOpen] = useState(true);
+  const [currentDashboardPermissions, setCurrentDashboardPermissions] = useState<string[] | "full">([]);
   const statusRef = useRef<HTMLDivElement | null>(null);
   const desktopTeamMenuRef = useRef<HTMLDivElement | null>(null);
   const mobileTeamMenuRef = useRef<HTMLDivElement | null>(null);
@@ -1656,9 +1666,15 @@ export function ServersWorkspace({
   }, [normalizedSidebarQuery]);
 
   const filteredTicketSidebarItems = useMemo(() => {
-    if (!normalizedSidebarQuery) return TICKET_SIDEBAR_ITEMS;
+    const items = TICKET_SIDEBAR_ITEMS.filter((item) => {
+      if (currentDashboardPermissions === "full") return true;
+      if (!item.requiredPermission) return true;
+      return currentDashboardPermissions.includes(item.requiredPermission);
+    });
 
-    return TICKET_SIDEBAR_ITEMS
+    if (!normalizedSidebarQuery) return items;
+
+    return items
       .map((item) => {
         const haystack = [item.label, ...(item.searchAliases || [])].join(" ");
         return { item, score: getSearchScore(haystack, normalizedSidebarQuery) };
@@ -1670,12 +1686,18 @@ export function ServersWorkspace({
           : a.item.label.localeCompare(b.item.label, "pt-BR"),
       )
       .map((entry) => entry.item);
-  }, [normalizedSidebarQuery]);
+  }, [normalizedSidebarQuery, currentDashboardPermissions]);
 
   const filteredEntryExitSidebarItems = useMemo(() => {
-    if (!normalizedSidebarQuery) return ENTRY_EXIT_SIDEBAR_ITEMS;
+    const items = ENTRY_EXIT_SIDEBAR_ITEMS.filter((item) => {
+      if (currentDashboardPermissions === "full") return true;
+      if (!item.requiredPermission) return true;
+      return currentDashboardPermissions.includes(item.requiredPermission);
+    });
 
-    return ENTRY_EXIT_SIDEBAR_ITEMS
+    if (!normalizedSidebarQuery) return items;
+
+    return items
       .map((item) => {
         const haystack = [item.label, ...(item.searchAliases || [])].join(" ");
         return { item, score: getSearchScore(haystack, normalizedSidebarQuery) };
@@ -1687,11 +1709,17 @@ export function ServersWorkspace({
           : a.item.label.localeCompare(b.item.label, "pt-BR"),
       )
       .map((entry) => entry.item);
-  }, [normalizedSidebarQuery]);
+  }, [normalizedSidebarQuery, currentDashboardPermissions]);
   const filteredSecuritySidebarItems = useMemo(() => {
-    if (!normalizedSidebarQuery) return SECURITY_SIDEBAR_ITEMS;
+    const items = SECURITY_SIDEBAR_ITEMS.filter((item) => {
+      if (currentDashboardPermissions === "full") return true;
+      if (!item.requiredPermission) return true;
+      return currentDashboardPermissions.includes(item.requiredPermission);
+    });
 
-    return SECURITY_SIDEBAR_ITEMS
+    if (!normalizedSidebarQuery) return items;
+
+    return items
       .map((item) => {
         const haystack = [item.label, ...(item.searchAliases || [])].join(" ");
         return { item, score: getSearchScore(haystack, normalizedSidebarQuery) };
@@ -1703,7 +1731,7 @@ export function ServersWorkspace({
           : a.item.label.localeCompare(b.item.label, "pt-BR"),
       )
       .map((entry) => entry.item);
-  }, [normalizedSidebarQuery]);
+  }, [normalizedSidebarQuery, currentDashboardPermissions]);
   const isEditingServer = Boolean(selectedGuildIdForConfig);
   const activeTeamServerCount = visibleServers.length;
   const isCreateTeamNextDisabled =
@@ -2158,6 +2186,36 @@ export function ServersWorkspace({
     () => servers.find((server) => server.guildId === selectedGuildIdForConfig) || null,
     [selectedGuildIdForConfig, servers],
   );
+  const isEditorViewerOnly = useMemo(() => {
+    if (!selectedServer) return false;
+    return !(selectedServer.canManage ?? selectedServer.accessMode === "owner");
+  }, [selectedServer]);
+
+  const hasCurrentSectionPermission = useMemo(() => {
+    if (currentDashboardPermissions === "full") return true;
+    const perms = new Set(currentDashboardPermissions);
+    const section = selectedSettingsSectionForConfig;
+
+    if (section === "overview" || section === "message") {
+      return perms.has("server_manage_tickets_overview");
+    }
+    if (section === "entry_exit_overview" || section === "entry_exit_message") {
+      return perms.has("server_manage_welcome_overview");
+    }
+    if (section === "security_antilink") return perms.has("server_manage_security_antilink");
+    if (section === "security_autorole") return perms.has("server_manage_security_autorole");
+    if (section === "security_logs") return perms.has("server_manage_security_logs");
+    
+    return false;
+  }, [currentDashboardPermissions, selectedSettingsSectionForConfig]);
+
+  const shouldHideEditorHeaderDueToPermissions = 
+    isEditingServer && 
+    !isLoading && 
+    !isEditorViewerOnly && 
+    !hasCurrentSectionPermission &&
+    (errorMessage === "Acesso negado." || (Array.isArray(currentDashboardPermissions) && currentDashboardPermissions.length === 0));
+  
   const shouldShowEditorSkeleton =
     Boolean(selectedGuildIdForConfig) && (isLoading || (!selectedServer && !errorMessage));
   const shouldShowEditorUnavailableState =
@@ -2893,7 +2951,7 @@ export function ServersWorkspace({
                         <div className="flowdesk-shimmer h-[42px] w-[min(460px,78vw)] max-w-full rounded-[18px] bg-[#131313]" />
                         <div className="flowdesk-shimmer h-[14px] w-[min(620px,82vw)] max-w-full rounded-[12px] bg-[#111111]" />
                       </div>
-                    ) : (
+                    ) : shouldHideEditorHeaderDueToPermissions ? null : (
                       <>
                         <LandingGlowTag className="px-[24px]">
                           {isEditingServer ? "Configurando servidor" : "Central de servidores"}
@@ -3025,35 +3083,20 @@ export function ServersWorkspace({
                 <LandingReveal delay={180}>
                   <div className={editorPanelRevealClass}>
                     <ServerSettingsEditor
-                      guildId={selectedServer.guildId}
-                      guildName={selectedServer.guildName}
-                      status={selectedServer.status}
-                      daysUntilExpire={selectedServer.daysUntilExpire}
-                      daysUntilOff={selectedServer.daysUntilOff}
-                      accessMode={selectedServer.accessMode}
-                      canManage={selectedServer.canManage}
+                      {...selectedServer}
                       allServers={servers}
                       initialTab={selectedEditorTabForConfig}
                       settingsSection={selectedSettingsSectionForConfig}
                       onTabChange={(tab) => {
-                        setSelectedEditorTabForConfig(tab);
-                        navigateToUrl(
-                          buildServerConfigUrl(
-                            selectedServer.guildId,
-                            tab,
-                            selectedSettingsSectionForConfig,
-                            {
-                              explicitSection:
-                                selectedSettingsSectionForConfig !== "overview" ||
-                                pathname?.includes("/tickets/overview/"),
-                            },
-                          ),
-                          "replace",
-                        );
+                        handleSidebarSettingsSectionNavigation({
+                          guildId: selectedServer.guildId,
+                          tab,
+                          settingsSection: "overview",
+                        });
                       }}
                       onUnsavedChangesChange={setHasUnsavedSettingsChanges}
+                      onPermissionsChange={setCurrentDashboardPermissions}
                       navigationBlockSignal={navigationBlockSignal}
-                      standalone
                       onClose={() => {
                         setSelectedGuildIdForConfig(null);
                         setSelectedEditorTabForConfig("settings");
@@ -3073,38 +3116,53 @@ export function ServersWorkspace({
                 <LandingReveal delay={180}>
                   <div className={`${editorPanelRevealClass} ${shellClass} px-[22px] py-[24px]`}>
                     <div className="rounded-[22px] border border-[#141414] bg-[#090909] px-[20px] py-[20px]">
-                      <p className="text-[12px] uppercase tracking-[0.18em] text-[#666666]">
-                        Servidor
-                      </p>
-                      <h2 className="mt-[12px] text-[24px] leading-none font-medium tracking-[-0.04em] text-[#E5E5E5]">
-                        Nao foi possivel abrir este servidor agora
-                      </h2>
-                      <p className="mt-[12px] max-w-[720px] text-[14px] leading-[1.6] text-[#7D7D7D]">
-                        {errorMessage || "Estamos tentando recuperar os dados deste servidor. Voce pode tentar novamente sem sair da configuracao."}
-                      </p>
-                      <div className="mt-[18px] flex flex-wrap items-center gap-[12px]">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            requestServersReload();
-                          }}
-                          className="inline-flex h-[46px] items-center justify-center rounded-[12px] bg-[#F3F3F3] px-6 text-[15px] font-medium text-[#101010] transition-colors hover:bg-white"
-                        >
-                          Tentar novamente
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedGuildIdForConfig(null);
-                            setSelectedEditorTabForConfig("settings");
-                            setSelectedSettingsSectionForConfig("overview");
-                            navigateToUrl("/servers/", "replace");
-                          }}
-                          className="inline-flex h-[46px] items-center justify-center rounded-[12px] border border-[#181818] bg-[#101010] px-6 text-[15px] font-medium text-[#B7B7B7] transition-colors hover:border-[#222222] hover:bg-[#141414] hover:text-[#E5E5E5]"
-                        >
-                          Voltar aos projetos
-                        </button>
-                      </div>
+                      {errorMessage === "Acesso negado." ? (
+                        <div className="py-[60px]">
+                          <PermissionDeniedState 
+                            onAction={() => {
+                              setSelectedGuildIdForConfig(null);
+                              setSelectedEditorTabForConfig("settings");
+                              setSelectedSettingsSectionForConfig("overview");
+                              navigateToUrl("/servers/", "replace");
+                            }}
+                          />
+                        </div>
+                      ) : (
+                        <>
+                          <p className="text-[12px] uppercase tracking-[0.18em] text-[#666666]">
+                            Servidor
+                          </p>
+                          <h2 className="mt-[12px] text-[24px] leading-none font-medium tracking-[-0.04em] text-[#E5E5E5]">
+                            Nao foi possivel abrir este servidor agora
+                          </h2>
+                          <p className="mt-[12px] max-w-[720px] text-[14px] leading-[1.6] text-[#7D7D7D]">
+                            {errorMessage || "Estamos tentando recuperar os dados deste servidor. Voce pode tentar novamente sem sair da configuracao."}
+                          </p>
+                          <div className="mt-[18px] flex flex-wrap items-center gap-[12px]">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                requestServersReload();
+                              }}
+                              className="inline-flex h-[46px] items-center justify-center rounded-[12px] bg-[#F3F3F3] px-6 text-[15px] font-medium text-[#101010] transition-colors hover:bg-white"
+                            >
+                              Tentar novamente
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedGuildIdForConfig(null);
+                                setSelectedEditorTabForConfig("settings");
+                                setSelectedSettingsSectionForConfig("overview");
+                                navigateToUrl("/servers/", "replace");
+                              }}
+                              className="inline-flex h-[46px] items-center justify-center rounded-[12px] border border-[#181818] bg-[#101010] px-6 text-[15px] font-medium text-[#B7B7B7] transition-colors hover:border-[#222222] hover:bg-[#141414] hover:text-[#E5E5E5]"
+                            >
+                              Voltar aos projetos
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
                 </LandingReveal>

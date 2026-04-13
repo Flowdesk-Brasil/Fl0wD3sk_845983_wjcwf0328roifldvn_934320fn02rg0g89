@@ -3,10 +3,10 @@ import { NextResponse } from "next/server";
 import {
   assertUserAdminInGuildOrNull,
   fetchGuildChannelsByBot,
-  hasAcceptedTeamAccessToGuild,
   isGuildId,
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
+import { getEffectiveDashboardPermissions } from "@/lib/teams/userTeams";
 import { cleanupExpiredUnpaidServerSetups } from "@/lib/payments/setupCleanup";
 import { getGuildLicenseStatus } from "@/lib/payments/licenseStatus";
 import {
@@ -486,6 +486,11 @@ export async function POST(request: Request) {
       },
     });
 
+    const { permissions: dashboardPerms, isTeamServer } = await getEffectiveDashboardPermissions({
+      authUserId,
+      guildId,
+    });
+
     const accessibleGuild = await assertUserAdminInGuildOrNull(
       {
         authSession: sessionData.authSession,
@@ -494,27 +499,17 @@ export async function POST(request: Request) {
       guildId,
     );
 
-    const hasTeamAccess = accessibleGuild
-      ? false
-      : await hasAcceptedTeamAccessToGuild(
-          {
-            authSession: sessionData.authSession,
-            accessToken: sessionData.accessToken,
-          },
-          guildId,
-        );
+    const hasFullAccess = dashboardPerms === "full";
+    const hasSpecificPerm = dashboardPerms instanceof Set && dashboardPerms.has("server_manage_tickets_message");
+    const canManageServer = hasFullAccess || hasSpecificPerm || (!isTeamServer && accessibleGuild);
 
-    if (
-      !accessibleGuild &&
-      !hasTeamAccess &&
-      sessionData.authSession.activeGuildId !== guildId
-    ) {
+    if (!canManageServer) {
       recordServerSaveDiagnostic({
         context: diagnostic,
         authUserId,
         outcome: "access_denied",
         httpStatus: 403,
-        detail: "Servidor nao encontrado para este usuario.",
+        detail: "Voce nao possui permissao para gerenciar este modulo.",
       });
       await logSecurityAuditEventSafe(auditContext, {
         action: "guild_ticket_panel_dispatch_post",
@@ -524,45 +519,16 @@ export async function POST(request: Request) {
         },
       });
       return respond(
-        { ok: false, message: "Servidor nao encontrado para este usuario." },
+        { ok: false, message: "Voce nao possui permissao para gerenciar este modulo." },
         { status: 403 },
       );
     }
 
+    const hasTeamAccess = isTeamServer;
     const accessMode = resolveServerSaveAccessMode({
       accessibleGuild,
       hasTeamAccess,
     });
-    const canManageServer = Boolean(
-      accessibleGuild?.owner || hasTeamAccess,
-    );
-
-    if (!canManageServer) {
-      recordServerSaveDiagnostic({
-        context: diagnostic,
-        authUserId,
-        accessMode,
-        outcome: "view_only",
-        httpStatus: 403,
-        detail: "Conta em modo somente visualizacao.",
-      });
-      await logSecurityAuditEventSafe(auditContext, {
-        action: "guild_ticket_panel_dispatch_post",
-        outcome: "blocked",
-        metadata: {
-          reason: "view_only",
-        },
-      });
-
-      return respond(
-        {
-          ok: false,
-          message:
-            "Esta conta esta em modo somente visualizacao para este servidor.",
-        },
-        { status: 403 },
-      );
-    }
 
     let licenseStatus = await getGuildLicenseStatus(guildId);
     if (licenseStatus !== "paid") {

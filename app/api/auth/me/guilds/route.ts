@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import {
+  fetchGuildSummaryByBot,
   getAccessibleGuildsForSession,
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
+import { getAcceptedTeamGuildIdsForUser } from "@/lib/teams/userTeams";
 import { getLockedGuildLicenseMap } from "@/lib/payments/licenseStatus";
 import { getPlanGuildsForUser } from "@/lib/plans/planGuilds";
 import { repairOrphanPlanGuildLinkForUser } from "@/lib/plans/state";
@@ -168,18 +170,47 @@ export async function GET(request: Request) {
       source: "auth_me_guilds_list",
     });
 
-    let guilds = (await getAccessibleGuildsForSession({
+    const personalGuilds = await getAccessibleGuildsForSession({
       authSession: sessionData.authSession,
       accessToken: sessionData.accessToken,
-    })).map((guild) => ({
+    });
+
+    const teamGuildIds = await getAcceptedTeamGuildIdsForUser({
+      authUserId: sessionData.authSession.user.id,
+      discordUserId: sessionData.authSession.user.discord_user_id,
+    });
+
+    const guildIdSet = new Set(personalGuilds.map((g) => g.id));
+    const missingTeamGuildIds = teamGuildIds.filter((id) => !guildIdSet.has(id));
+
+    const teamGuildSummaries = await Promise.all(
+      missingTeamGuildIds.map((id) => fetchGuildSummaryByBot(id))
+    );
+
+    let guilds = personalGuilds.map((guild) => ({
       id: guild.id,
       name: guild.name,
       icon_url: buildGuildIconUrl(guild.id, guild.icon),
       owner: guild.owner,
       admin: true,
+      is_team_guild: false,
       hasSavedSetup: false,
       lastConfiguredAt: null as string | null,
     }));
+
+    for (const summary of teamGuildSummaries) {
+      if (!summary) continue;
+      guilds.push({
+        id: summary.id,
+        name: summary.name,
+        icon_url: buildGuildIconUrl(summary.id, summary.icon),
+        owner: false,
+        admin: false, // Not a Discord admin, but has team access
+        is_team_guild: true,
+        hasSavedSetup: false,
+        lastConfiguredAt: null,
+      });
+    }
 
     const savedSetupMap = await getGuildSavedSetupMap(
       sessionData.authSession.user.id,

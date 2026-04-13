@@ -92,6 +92,7 @@ type ServerDashboardSettingsPayload = {
     };
     updatedAt: string | null;
   } | null;
+  dashboardPermissions: string[] | "full";
 };
 
 type ServerDashboardSettingsApiResponse =

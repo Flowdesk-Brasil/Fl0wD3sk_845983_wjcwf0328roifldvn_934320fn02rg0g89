@@ -2,7 +2,18 @@ import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 export type TeamMembershipStatus = "pending" | "accepted" | "declined";
 
-export type TeamRolePermission = "manage_servers" | "manage_members" | "manage_roles" | "view_audit_logs";
+export type TeamRolePermission =
+  | "manage_servers"
+  | "manage_members"
+  | "manage_roles"
+  | "server_manage_tickets_overview"
+  | "server_manage_tickets_message"
+  | "server_manage_welcome_overview"
+  | "server_manage_welcome_message"
+  | "server_manage_antilink"
+  | "server_manage_autorole"
+  | "server_view_security_logs"
+  | "view_audit_logs";
 
 export type TeamRole = {
   id: number;
@@ -133,6 +144,14 @@ export async function getAcceptedTeamGuildIdsForUser(input: {
   discordUserId: string;
 }) {
   const supabase = getSupabaseAdminClientOrThrow();
+  
+  // 1. Teams where user is the owner
+  const ownedTeamsResult = await supabase
+    .from("auth_user_teams")
+    .select("id")
+    .eq("owner_user_id", input.authUserId);
+
+  // 2. Teams where user is a member
   const membershipsResult = await supabase
     .from("auth_user_team_members")
     .select("team_id")
@@ -141,13 +160,13 @@ export async function getAcceptedTeamGuildIdsForUser(input: {
       `invited_discord_user_id.eq.${input.discordUserId},invited_auth_user_id.eq.${input.authUserId}`,
     );
 
-  if (membershipsResult.error) {
-    throw new Error(membershipsResult.error.message);
-  }
+  if (ownedTeamsResult.error) throw new Error(ownedTeamsResult.error.message);
+  if (membershipsResult.error) throw new Error(membershipsResult.error.message);
 
-  const teamIds = uniqueStrings(
-    (membershipsResult.data || []).map((row) => String(row.team_id)),
-  ).map((value) => Number(value));
+  const teamIds = uniqueStrings([
+    ...(ownedTeamsResult.data || []).map((row) => String(row.id)),
+    ...(membershipsResult.data || []).map((row) => String(row.team_id)),
+  ]).map((value) => Number(value));
 
   if (!teamIds.length) {
     return [];
@@ -388,7 +407,13 @@ export async function getUserTeamsSnapshotForUser(input: {
         iconKey: normalizeTeamIconKey(team.icon_key || "aurora"),
         role: isAdminOrOwner ? "owner" : "member",
         currentUserPermissions: isAdminOrOwner 
-          ? ["manage_servers", "manage_members", "manage_roles", "view_audit_logs"] as TeamRolePermission[]
+          ? [
+              "manage_servers", "manage_members", "manage_roles", "view_audit_logs",
+              "server_manage_tickets_overview", "server_manage_tickets_message",
+              "server_manage_welcome_overview", "server_manage_welcome_message",
+              "server_manage_antilink", "server_manage_autorole",
+              "server_view_security_logs"
+            ] as TeamRolePermission[]
           : effectivePerms,
         ownerUserId: team.owner_user_id,
         ownerDisplayName: owner?.display_name || "Equipe Flowdesk",
@@ -633,5 +658,110 @@ export async function assertTeamPermission(teamId: number, authUserId: number, r
   }
   
   return true;
+}
+
+export async function getEffectiveDashboardPermissions(input: {
+  authUserId: number;
+  guildId: string;
+}): Promise<{ permissions: Set<TeamRolePermission> | "full"; isTeamServer: boolean }> {
+  const supabase = getSupabaseAdminClientOrThrow();
+
+  // 1. Direct License check (Is the user the person who paid for the bot on this guild?)
+  const ownerCheck = await supabase
+    .from("auth_user_plan_guilds")
+    .select("user_id")
+    .eq("guild_id", input.guildId)
+    .maybeSingle();
+  
+  if (ownerCheck.data?.user_id === input.authUserId) {
+    return { permissions: "full", isTeamServer: false };
+  }
+
+  // Fallback to legacy orders if not in plan_guilds
+  if (!ownerCheck.data) {
+     const legacyOwnerCheck = await supabase
+       .from("payment_orders")
+       .select("user_id")
+       .eq("guild_id", input.guildId)
+       .eq("status", "approved")
+       .order("created_at", { ascending: false })
+       .limit(1)
+       .maybeSingle();
+       
+     if (legacyOwnerCheck.data?.user_id === input.authUserId) {
+       return { permissions: "full", isTeamServer: false };
+     }
+  }
+
+  // 2. Team check
+  // Find teams that have this guild
+  const teamServersResult = await supabase
+    .from("auth_user_team_servers")
+    .select("team_id")
+    .eq("guild_id", input.guildId);
+
+  const teamIds = (teamServersResult.data || []).map(ts => ts.team_id);
+  const isTeamServer = teamIds.length > 0;
+
+  if (!isTeamServer) {
+    return { permissions: new Set<TeamRolePermission>(), isTeamServer: false };
+  }
+
+  // Check if user is owner of any of these teams
+  const teamOwnersResult = await supabase
+    .from("auth_user_teams")
+    .select("id")
+    .in("id", teamIds)
+    .eq("owner_user_id", input.authUserId);
+  
+  if (teamOwnersResult.data?.length) {
+    return { permissions: "full", isTeamServer: true };
+  }
+
+  // Check memberships in these teams
+  const membershipsResult = await supabase
+    .from("auth_user_team_members")
+    .select(`
+      role_id,
+      custom_permissions,
+      auth_user_team_roles (
+        permissions
+      )
+    `)
+    .in("team_id", teamIds)
+    .eq("invited_auth_user_id", input.authUserId)
+    .eq("status", "accepted");
+
+  if (!membershipsResult.data?.length) {
+    return { permissions: new Set<TeamRolePermission>(), isTeamServer: true };
+  }
+
+  const perms = new Set<TeamRolePermission>();
+  for (const m of membershipsResult.data) {
+    if (Array.isArray(m.custom_permissions)) {
+      m.custom_permissions.forEach((p: any) => perms.add(p as TeamRolePermission));
+    }
+    const roleData = m.auth_user_team_roles as unknown as { permissions: TeamRolePermission[] } | null;
+    if (roleData && Array.isArray(roleData.permissions)) {
+      roleData.permissions.forEach((p: TeamRolePermission) => perms.add(p));
+    }
+  }
+
+  return { permissions: perms, isTeamServer: true };
+}
+
+/**
+ * Returns a set of guild IDs that are linked to ANY team.
+ */
+export async function getGlobalTeamLinkedGuildIds(guildIds: string[]): Promise<Set<string>> {
+  if (guildIds.length === 0) return new Set();
+
+  const supabase = getSupabaseAdminClientOrThrow();
+  const { data } = await supabase
+    .from("auth_user_team_servers")
+    .select("guild_id")
+    .in("guild_id", guildIds);
+
+  return new Set((data || []).map(row => row.guild_id));
 }
 

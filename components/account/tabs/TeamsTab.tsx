@@ -4,13 +4,24 @@ import { useEffect, useRef, useState } from "react";
 import {
   Users, Trash2, Clock, CheckCircle2, Crown, AlertCircle,
   ChevronDown, ChevronUp, X, Plus, Server, ShieldAlert,
-  Shield, Settings, UserPlus, Edit2, Check, Loader2, Search
+  Shield, Settings, UserPlus, Edit2, Check, Loader2, Search, Info
 } from "lucide-react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { DangerActionModal } from "../DangerActionModal";
 
-type TeamRolePermission = "manage_servers" | "manage_members" | "manage_roles" | "view_audit_logs";
-
+type TeamRolePermission =
+  | "manage_servers"
+  | "manage_members"
+  | "manage_roles"
+  | "server_manage_tickets_overview"
+  | "server_manage_tickets_message"
+  | "server_manage_welcome_overview"
+  | "server_manage_welcome_message"
+  | "server_manage_antilink"
+  | "server_manage_autorole"
+  | "server_view_security_logs"
+  | "view_audit_logs";
 type TeamRole = {
   id: number;
   name: string;
@@ -58,6 +69,13 @@ const PERMISSION_OPTIONS: { id: TeamRolePermission; label: string; description: 
   { id: "manage_members", label: "Gerenciar Membros", description: "Pode convidar e remover membros" },
   { id: "manage_roles", label: "Gerenciar Cargos", description: "Pode criar, editar e deletar cargos" },
   { id: "view_audit_logs", label: "Ver Audit Logs", description: "Pode visualizar o histórico de ações" },
+  { id: "server_manage_tickets_overview", label: "Painel: Visão Geral", description: "Acesso à visão geral de Tickets" },
+  { id: "server_manage_tickets_message", label: "Painel: Mensagem do Ticket", description: "Pode editar o embed do painel de tickets" },
+  { id: "server_manage_welcome_overview", label: "Painel: Canais e Logs (Boas-vindas)", description: "Acesso aos logs de entrada/saída" },
+  { id: "server_manage_welcome_message", label: "Painel: Configurando Mensagem (Boas-vindas)", description: "Pode editar as embeds de boas-vindas" },
+  { id: "server_manage_antilink", label: "Painel: AntiLink", description: "Pode configurar o sistema de AntiLink" },
+  { id: "server_manage_autorole", label: "Painel: AutoRole", description: "Pode configurar atribuição automática de cargos" },
+  { id: "server_view_security_logs", label: "Painel: Logs", description: "Acesso aos logs de segurança" },
 ];
 
 // ─── Spinner helper ─────────────────────────────────────────────────────────
@@ -106,20 +124,33 @@ export function TeamsTab() {
   const router = useRouter();
 
   // ─── Data Loading ──────────────────────────────────────────────────────────
-  async function loadTeams() {
+  async function loadTeams(silent = false) {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const res = await fetch("/api/auth/me/teams");
       const json = await res.json();
       if (json.ok) setTeams(json.teams || []);
     } catch (err) {
       console.error(err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
 
+  // Row selection for role dropdown etc.
+  const [roleMenuState, setRoleMenuState] = useState<{
+    memberId: number;
+    anchorRect: DOMRect | null;
+  } | null>(null);
+
   useEffect(() => { loadTeams(); }, []);
+
+  useEffect(() => {
+    if (!roleMenuState) return;
+    const handleScroll = () => setRoleMenuState(null);
+    window.addEventListener("scroll", handleScroll, true);
+    return () => window.removeEventListener("scroll", handleScroll, true);
+  }, [roleMenuState]);
 
   useEffect(() => {
     if (teams.length > 0) {
@@ -185,7 +216,7 @@ export function TeamsTab() {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
       });
-      await loadTeams();
+      await loadTeams(true);
     } catch (err) { console.error(err); }
     finally {
       setRemovingMemberId(null);
@@ -219,17 +250,33 @@ export function TeamsTab() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ roleId }),
       });
-      if (res.ok) await loadTeams();
+      if (res.ok) await loadTeams(true);
     } catch (err) { console.error(err); }
     finally { setIsUpdatingMemberRole(null); }
   }
 
   // ─── Custom permissions ────────────────────────────────────────────────────
   async function handleToggleMemberPerm(teamId: number, member: TeamMember, perm: TeamRolePermission) {
-    setIsUpdatingMemberPerms(true);
     const newPerms = member.customPermissions.includes(perm)
       ? member.customPermissions.filter((p) => p !== perm)
       : [...member.customPermissions, perm];
+
+    // Optimistic update
+    setTeams(prev => prev.map(t => {
+      if (t.id === teamId) {
+        return {
+          ...t,
+          members: t.members.map(m => {
+            if (m.id === member.id) {
+              return { ...m, customPermissions: newPerms };
+            }
+            return m;
+          })
+        };
+      }
+      return t;
+    }));
+
     try {
       const res = await fetch(`/api/auth/me/teams/${teamId}/members/${member.id}/permissions`, {
         method: "PATCH",
@@ -238,9 +285,13 @@ export function TeamsTab() {
       });
       if (res.ok) {
         setMemberPermsToEdit({ teamId, member: { ...member, customPermissions: newPerms } });
-        await loadTeams();
+        await loadTeams(true);
       }
-    } catch (err) { console.error(err); }
+    } catch (err) { 
+      console.error(err);
+      // Rollback on error
+      await loadTeams(true);
+    }
     finally { setIsUpdatingMemberPerms(false); }
   }
 
@@ -264,7 +315,7 @@ export function TeamsTab() {
       if (json.ok) {
         setNewRoleName((p) => ({ ...p, [teamId]: "" }));
         setNewRolePerms((p) => ({ ...p, [teamId]: [] }));
-        await loadTeams();
+        await loadTeams(true);
       } else {
         setRoleCreateError((p) => ({ ...p, [teamId]: json.message || "Erro ao criar cargo." }));
       }
@@ -287,7 +338,7 @@ export function TeamsTab() {
       });
       if (res.ok) {
         setEditingRole(null);
-        await loadTeams();
+        await loadTeams(true);
       }
     } catch (err) { console.error(err); }
     finally { setIsSavingRoleEdit(false); }
@@ -302,7 +353,7 @@ export function TeamsTab() {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
       });
-      await loadTeams();
+      await loadTeams(true);
     } catch (err) { console.error(err); }
     finally {
       setIsDeletingRole(false);
@@ -550,23 +601,83 @@ export function TeamsTab() {
                             {/* Role badge / selector */}
                             {canManageRoles ? (
                               <div className="relative">
-                                <select
-                                  value={member.roleId || ""}
-                                  disabled={isUpdatingMemberRole === member.id}
-                                  onChange={(e) =>
-                                    handleAssignMemberRole(team.id, member.id, e.target.value ? Number(e.target.value) : null)
-                                  }
-                                  className="appearance-none h-[28px] rounded-[8px] bg-[#111111] border border-[#1A1A1A] pl-[10px] pr-[24px] text-[11px] font-medium text-[#8AB6FF] cursor-pointer outline-none focus:border-[rgba(0,98,255,0.3)] disabled:opacity-50 transition-colors"
-                                >
-                                  <option value="">Sem cargo</option>
-                                  {team.availableRoles.map((r) => (
-                                    <option key={r.id} value={r.id}>{r.name}</option>
-                                  ))}
-                                </select>
-                                {isUpdatingMemberRole === member.id ? (
-                                  <Loader2 className="h-[10px] w-[10px] animate-spin text-[#555555]" />
+                                {member.roleName ? (
+                                  <button
+                                    onClick={(e) => {
+                                      const rect = e.currentTarget.getBoundingClientRect();
+                                      setRoleMenuState({ memberId: member.id, anchorRect: rect });
+                                    }}
+                                    disabled={isUpdatingMemberRole === member.id}
+                                    className="flex items-center gap-[6px] rounded-full bg-[rgba(0,98,255,0.08)] border border-[rgba(0,98,255,0.12)] pl-[10px] pr-[8px] py-[3px] text-[11px] font-semibold text-[#8AB6FF] hover:bg-[rgba(0,98,255,0.12)] transition-colors disabled:opacity-50"
+                                  >
+                                    {member.roleName}
+                                    <ChevronUp className="h-[10px] w-[10px] text-[#555]" />
+                                  </button>
                                 ) : (
-                                  <ChevronDown className="pointer-events-none absolute right-[8px] top-1/2 -translate-y-1/2 h-[10px] w-[10px] text-[#555555]" />
+                                  <button
+                                    onClick={(e) => {
+                                      const rect = e.currentTarget.getBoundingClientRect();
+                                      setRoleMenuState({ memberId: member.id, anchorRect: rect });
+                                    }}
+                                    disabled={isUpdatingMemberRole === member.id}
+                                    className="group flex h-[28px] w-[28px] items-center justify-center rounded-[8px] bg-[#080808] border border-dashed border-[#222] text-[#444] hover:border-[#8AB6FF] hover:text-[#8AB6FF] transition-all hover:scale-105 active:scale-95 disabled:opacity-50"
+                                    title="Atribuir cargo"
+                                  >
+                                    {isUpdatingMemberRole === member.id ? (
+                                      <Loader2 className="h-[12px] w-[12px] animate-spin" />
+                                    ) : (
+                                      <Plus className="h-[14px] w-[14px]" />
+                                    )}
+                                  </button>
+                                )}
+
+                                {/* Role Selection Portal */}
+                                {roleMenuState?.memberId === member.id && roleMenuState.anchorRect && (
+                                  createPortal(
+                                    <div className="fixed inset-0 z-[3000]">
+                                      <div className="absolute inset-0" onClick={() => setRoleMenuState(null)} />
+                                      <div
+                                        className="absolute w-[180px] overflow-hidden rounded-[16px] border border-[#151515] bg-[#0A0A0A] p-[6px] shadow-[0_12px_40px_rgba(0,0,0,0.6)] animate-in fade-in zoom-in duration-150"
+                                        style={{
+                                          top: roleMenuState.anchorRect.bottom + 8,
+                                          left: roleMenuState.anchorRect.right - 180,
+                                        }}
+                                      >
+                                        <p className="px-[10px] py-[8px] text-[10px] font-bold uppercase tracking-wider text-[#444]">Cargos disponíveis</p>
+                                        <div className="space-y-[2px]">
+                                          <button
+                                            onClick={() => {
+                                              handleAssignMemberRole(team.id, member.id, null);
+                                              setRoleMenuState(null);
+                                            }}
+                                            className={`flex w-full items-center justify-between rounded-[10px] px-[10px] py-[8px] text-left text-[12px] transition-colors ${
+                                              !member.roleId ? "bg-[#111111] text-[#8AB6FF]" : "text-[#777] hover:bg-[#111111] hover:text-[#D8D8D8]"
+                                            }`}
+                                          >
+                                            Sem cargo
+                                            {!member.roleId && <Check className="h-[12px] w-[12px]" />}
+                                          </button>
+                                          <div className="h-[1px] bg-[#121212] my-[4px]" />
+                                          {team.availableRoles.map((r) => (
+                                            <button
+                                              key={r.id}
+                                              onClick={() => {
+                                                handleAssignMemberRole(team.id, member.id, r.id);
+                                                setRoleMenuState(null);
+                                              }}
+                                              className={`flex w-full items-center justify-between rounded-[10px] px-[10px] py-[8px] text-left text-[12px] transition-colors ${
+                                                member.roleId === r.id ? "bg-[#111111] text-[#8AB6FF]" : "text-[#777] hover:bg-[#111111] hover:text-[#D8D8D8]"
+                                              }`}
+                                            >
+                                              {r.name}
+                                              {member.roleId === r.id && <Check className="h-[12px] w-[12px]" />}
+                                            </button>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    </div>,
+                                    document.body
+                                  )
                                 )}
                               </div>
                             ) : (
@@ -936,68 +1047,99 @@ export function TeamsTab() {
       />
 
       {/* ── Custom Permissions Modal ─────────────────────────────────────── */}
-      {memberPermsToEdit && (
-        <div className="fixed inset-0 z-[2700] flex items-center justify-center bg-[rgba(0,0,0,0.8)] backdrop-blur-[5px] px-[20px]">
-          <div className="w-full max-w-[440px] rounded-[24px] border border-[#141414] bg-[#0A0A0A] p-[24px] shadow-2xl">
-            <div className="flex items-start justify-between mb-[6px]">
-              <div>
-                <p className="text-[15px] font-semibold text-[#EEEEEE]">Permissões Individuais</p>
-                <p className="text-[12px] text-[#555555] mt-[2px]">
-                  {memberPermsToEdit.member.displayName || memberPermsToEdit.member.discordUserId}
-                </p>
-              </div>
-              <button onClick={() => setMemberPermsToEdit(null)} className="text-[#555555] hover:text-[#EEEEEE] transition-colors mt-[2px]">
-                <X className="h-[18px] w-[18px]" />
-              </button>
-            </div>
+      {(() => {
+        if (!memberPermsToEdit) return null;
+        if (typeof document === "undefined") return null;
 
-            <div className="my-[16px] rounded-[10px] border border-[rgba(255,163,47,0.1)] bg-[rgba(255,163,47,0.03)] px-[12px] py-[10px]">
-              <p className="text-[11px] text-[#888888] leading-[1.6]">
-                <span className="text-[#FFB966] font-medium">Nota:</span> Estas permissões são <strong className="text-[#AAAAAA]">somadas</strong> às permissões do cargo atual do membro. Use para conceder acesso pontual sem criar um cargo novo.
-              </p>
-            </div>
-
-            <div className="space-y-[6px]">
-              {PERMISSION_OPTIONS.map((opt) => {
-                const active = memberPermsToEdit.member.customPermissions.includes(opt.id);
-                return (
-                  <label
-                    key={opt.id}
-                    className={`flex items-center justify-between rounded-[12px] border p-[12px] cursor-pointer transition-colors ${
-                      active ? "border-[rgba(0,98,255,0.2)] bg-[rgba(0,98,255,0.05)]" : "border-[#141414] bg-[#080808] hover:bg-[#0B0B0B]"
-                    }`}
-                  >
-                    <div>
-                      <p className={`text-[13px] font-medium ${active ? "text-[#8AB6FF]" : "text-[#AAAAAA]"}`}>{opt.label}</p>
-                      <p className="text-[11px] text-[#444444] mt-[2px]">{opt.description}</p>
-                    </div>
-                    <div className="relative ml-[12px] shrink-0">
-                      <input
-                        type="checkbox"
-                        disabled={isUpdatingMemberPerms}
-                        checked={active}
-                        onChange={() =>
-                          handleToggleMemberPerm(memberPermsToEdit.teamId, memberPermsToEdit.member, opt.id)
-                        }
-                        className="peer sr-only"
-                      />
-                      <div className={`h-[20px] w-[36px] rounded-full transition-colors ${active ? "bg-[#8AB6FF]" : "bg-[#1A1A1A]"}`} />
-                      <div className={`absolute top-[3px] h-[14px] w-[14px] rounded-full bg-white transition-transform ${active ? "left-[19px]" : "left-[3px]"}`} />
-                    </div>
-                  </label>
-                );
-              })}
-            </div>
-
+        return createPortal(
+          <div className="fixed inset-0 z-[2700] flex items-center justify-center bg-[rgba(0,0,0,0.85)] backdrop-blur-[8px] px-[20px] py-[40px]">
             <button
               onClick={() => setMemberPermsToEdit(null)}
-              className="mt-[20px] w-full h-[40px] rounded-[12px] bg-[#141414] text-[13px] font-medium text-[#EEEEEE] hover:bg-[#1A1A1A] transition-colors"
-            >
-              Concluir
-            </button>
-          </div>
-        </div>
-      )}
+              className="absolute inset-0 cursor-default"
+              aria-label="Fundo do modal"
+            />
+            <div className="relative w-full max-w-[760px] max-h-full flex flex-col rounded-[24px] border border-[#141414] bg-[#0A0A0A] p-[24px] shadow-2xl overflow-hidden">
+              <div className="flex items-start justify-between mb-[6px] shrink-0">
+                <div>
+                  <p className="text-[17px] font-semibold text-[#EEEEEE]">Permissões Individuais</p>
+                  <p className="text-[13px] text-[#555555] mt-[2px]">
+                    {memberPermsToEdit.member.displayName || memberPermsToEdit.member.discordUserId}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setMemberPermsToEdit(null)}
+                  className="flex h-[32px] w-[32px] items-center justify-center rounded-full bg-[#111111] text-[#555555] hover:text-[#EEEEEE] transition-colors"
+                >
+                  <X className="h-[18px] w-[18px]" />
+                </button>
+              </div>
+
+              <div className="my-[16px] rounded-[12px] border border-[rgba(255,163,47,0.12)] bg-[rgba(255,163,47,0.03)] px-[14px] py-[12px] shrink-0">
+                <p className="flex items-start gap-[8px] text-[12px] text-[#888888] leading-[1.6]">
+                  <Info className="h-[14px] w-[14px] text-[#FFB966] mt-[2px] shrink-0" />
+                  <span>
+                    <strong className="text-[#FFB966] font-medium">Nota:</strong> Estas permissões são <strong className="text-[#AAAAAA]">somadas</strong> às permissões do cargo atual do membro. Use para conceder acesso pontual sem criar um cargo novo.
+                  </span>
+                </p>
+              </div>
+
+              <div className="flex-1 overflow-y-auto pr-[4px] min-h-0 thin-scrollbar">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-[10px] pb-[4px]">
+                  {PERMISSION_OPTIONS.map((opt) => {
+                    const active = memberPermsToEdit.member.customPermissions.includes(opt.id);
+                    return (
+                      <label
+                        key={opt.id}
+                        className={`flex items-start gap-[12px] rounded-[14px] border p-[12px] cursor-pointer transition-all duration-200 ${
+                          active
+                            ? "border-[rgba(0,98,255,0.22)] bg-[rgba(0,98,255,0.06)] shadow-[0_0_15px_rgba(0,98,255,0.03)]"
+                            : "border-[#141414] bg-[#080808] hover:border-[#1A1A1A] hover:bg-[#0B0B0B]"
+                        }`}
+                      >
+                        <div className="relative mt-[2px] shrink-0">
+                          <input
+                            type="checkbox"
+                            disabled={isUpdatingMemberPerms}
+                            checked={active}
+                            onChange={() =>
+                              handleToggleMemberPerm(memberPermsToEdit.teamId, memberPermsToEdit.member, opt.id)
+                            }
+                            className="peer sr-only"
+                          />
+                          <div className={`h-[20px] w-[36px] rounded-full transition-colors ${active ? "bg-[#8AB6FF]" : "bg-[#1A1A1A]"}`} />
+                          <div
+                            className={`absolute top-[3px] h-[14px] w-[14px] rounded-full bg-white transition-transform duration-200 ${
+                              active ? "left-[19px]" : "left-[3px]"
+                            }`}
+                          />
+                        </div>
+                        <div className="min-w-0">
+                          <p className={`text-[13px] font-semibold tracking-tight transition-colors ${active ? "text-[#8AB6FF]" : "text-[#D0D0D0]"}`}>
+                            {opt.label}
+                          </p>
+                          <p className={`mt-[3px] text-[11px] leading-[1.5] transition-colors ${active ? "text-[#556A8A]" : "text-[#525252]"}`}>
+                            {opt.description}
+                          </p>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="mt-[20px] pt-[16px] border-t border-[#121212] shrink-0">
+                <button
+                  onClick={() => setMemberPermsToEdit(null)}
+                  className="w-full h-[44px] rounded-[12px] bg-[#EEEEEE] text-[14px] font-bold text-[#0A0A0A] hover:bg-white transition-all shadow-lg active:scale-[0.985]"
+                >
+                  Concluir alterações
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        );
+      })()}
     </div>
   );
 }

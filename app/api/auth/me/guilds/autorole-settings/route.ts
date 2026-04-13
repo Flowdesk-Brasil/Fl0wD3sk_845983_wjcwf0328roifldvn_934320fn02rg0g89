@@ -2,10 +2,13 @@ import { NextResponse } from "next/server";
 import {
   assertUserAdminInGuildOrNull,
   fetchGuildRolesByBot,
-  hasAcceptedTeamAccessToGuild,
   isGuildId,
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
+import { 
+  getEffectiveDashboardPermissions, 
+  type TeamRolePermission 
+} from "@/lib/teams/userTeams";
 import { getGuildLicenseStatus } from "@/lib/payments/licenseStatus";
 import { cleanupExpiredUnpaidServerSetups } from "@/lib/payments/setupCleanup";
 import {
@@ -119,7 +122,7 @@ async function upsertAutoRoleSettingsWithRetry(input: {
   throw lastError || new Error("Falha ao salvar configuracoes de autorole.");
 }
 
-async function ensureGuildAccess(guildId: string) {
+async function ensureGuildAccess(guildId: string, requiredPermission: TeamRolePermission) {
   const sessionData = await resolveSessionAccessToken();
   if (!sessionData?.authSession) {
     return {
@@ -141,6 +144,11 @@ async function ensureGuildAccess(guildId: string) {
     };
   }
 
+  const { permissions: dashboardPerms, isTeamServer } = await getEffectiveDashboardPermissions({
+    authUserId: sessionData.authSession.user.id,
+    guildId: guildId,
+  });
+
   const accessibleGuild = await assertUserAdminInGuildOrNull(
     {
       authSession: sessionData.authSession,
@@ -149,21 +157,17 @@ async function ensureGuildAccess(guildId: string) {
     guildId,
   );
 
-  const hasTeamAccess = accessibleGuild
-    ? false
-    : await hasAcceptedTeamAccessToGuild(
-        {
-          authSession: sessionData.authSession,
-          accessToken: sessionData.accessToken,
-        },
-        guildId,
-      );
+  const hasFullAccess = dashboardPerms === "full";
+  const hasSpecificPerm = dashboardPerms instanceof Set && dashboardPerms.has(requiredPermission);
+  
+  // Rule: Team server requires Team Permission. Personal server requires Discord Admin.
+  const canManage = hasFullAccess || hasSpecificPerm || (!isTeamServer && accessibleGuild);
 
-  if (!accessibleGuild && !hasTeamAccess && sessionData.authSession.activeGuildId !== guildId) {
+  if (!canManage) {
     return {
       ok: false as const,
       response: NextResponse.json(
-        { ok: false, message: "Servidor nao encontrado para este usuario." },
+        { ok: false, message: "Voce nao possui permissao para gerenciar este modulo." },
         { status: 403 },
       ),
     };
@@ -174,8 +178,9 @@ async function ensureGuildAccess(guildId: string) {
     context: {
       sessionData,
       accessibleGuild,
-      hasTeamAccess,
-    } satisfies GuildAccessContext,
+      hasTeamAccess: isTeamServer,
+      dashboardPerms,
+    },
   };
 }
 
@@ -193,7 +198,7 @@ export async function GET(request: Request) {
       );
     }
 
-    const access = await ensureGuildAccess(guildId);
+    const access = await ensureGuildAccess(guildId, "server_manage_autorole");
     if (!access.ok) {
       return access.response;
     }
@@ -340,7 +345,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const access = await ensureGuildAccess(guildId);
+    const access = await ensureGuildAccess(guildId, "server_manage_autorole");
     if (!access.ok) {
       return access.response;
     }
@@ -350,9 +355,7 @@ export async function POST(request: Request) {
       accessibleGuild: access.context.accessibleGuild,
       hasTeamAccess: access.context.hasTeamAccess,
     });
-    const canManageServer = Boolean(
-      access.context.accessibleGuild?.owner || access.context.hasTeamAccess,
-    );
+    const canManageServer = true; // ensureGuildAccess already checked this
     if (!canManageServer) {
       recordServerSaveDiagnostic({
         context: diagnostic,

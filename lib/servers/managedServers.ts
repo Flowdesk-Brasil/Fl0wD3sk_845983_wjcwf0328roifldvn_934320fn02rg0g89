@@ -22,7 +22,10 @@ import {
   getUserPlanState,
   repairOrphanPlanGuildLinkForUser,
 } from "@/lib/plans/state";
-import { getAcceptedTeamGuildIdsForUser } from "@/lib/teams/userTeams";
+import { 
+  getAcceptedTeamGuildIdsForUser,
+  getGlobalTeamLinkedGuildIds
+} from "@/lib/teams/userTeams";
 
 export type ManagedServerStatus = "paid" | "expired" | "off" | "pending_payment";
 
@@ -209,7 +212,10 @@ export async function getManagedServersForCurrentSession(): Promise<ManagedServe
     ].map((guild) => [guild.id, guild]),
   );
 
-  const lockedGuildMap = await getLockedGuildLicenseMap(guildIdsForLookup);
+  const [lockedGuildMap, globalTeamLinkedGuildIds] = await Promise.all([
+    getLockedGuildLicenseMap(guildIdsForLookup),
+    getGlobalTeamLinkedGuildIds(guildIdsForLookup),
+  ]);
 
   if (!ownedPlanGuildIds.size && !lockedGuildMap.size) {
     return Array.from(guildCatalog.values())
@@ -220,7 +226,10 @@ export async function getManagedServersForCurrentSession(): Promise<ManagedServe
         iconUrl: buildGuildIconUrl(guild.id, guild.icon),
         status: "off" as const,
         accessMode: guild.owner ? ("owner" as const) : ("viewer" as const),
-        canManage: acceptedTeamGuildIds.has(guild.id) || guild.owner,
+        canManage: 
+          ownedPlanGuildIds.has(guild.id) || 
+          acceptedTeamGuildIds.has(guild.id) || 
+          (!globalTeamLinkedGuildIds.has(guild.id) && (guild.owner || false)),
         blockedByPlanLimit: false,
         pendingDowngradePayment: false,
         licenseOwnerUserId: sessionData.authSession.user.id,
@@ -306,7 +315,9 @@ export async function getManagedServersForCurrentSession(): Promise<ManagedServe
         status,
         accessMode,
         canManage:
-          accessibleGuildLookup.has(guild.id) || acceptedTeamGuildIds.has(guild.id),
+          ownedPlanGuildIds.has(guild.id) ||
+          acceptedTeamGuildIds.has(guild.id) ||
+          (!globalTeamLinkedGuildIds.has(guild.id) && accessibleGuildLookup.has(guild.id)),
         blockedByPlanLimit: isOwnedPlanGuildInactive || isPendingDowngradePayment,
         pendingDowngradePayment: isPendingDowngradePayment,
         licenseOwnerUserId:

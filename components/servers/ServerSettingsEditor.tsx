@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -27,6 +27,7 @@ import { LandingGlowTag } from "@/components/landing/LandingGlowTag";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { ServerSettingsEditorSkeleton } from "@/components/servers/ServerSettingsEditorSkeleton";
 import { TicketMessageBuilder } from "@/components/servers/TicketMessageBuilder";
+import { PermissionDeniedState } from "@/components/servers/PermissionDeniedState";
 import { serversScale } from "@/components/servers/serversScale";
 import {
   getServerDashboardSettings,
@@ -282,6 +283,7 @@ type ServerSettingsEditorProps = {
   settingsSection?: ServerSettingsSection;
   onTabChange?: (tab: EditorTab) => void;
   onUnsavedChangesChange?: (hasUnsavedChanges: boolean) => void;
+  onPermissionsChange?: (perms: string[] | "full") => void;
   navigationBlockSignal?: number;
   onClose: () => void;
   standalone?: boolean;
@@ -1607,6 +1609,7 @@ export function ServerSettingsEditor({
   settingsSection = "overview",
   onTabChange: _onTabChange,
   onUnsavedChangesChange,
+  onPermissionsChange,
   navigationBlockSignal = 0,
   onClose,
   standalone = false,
@@ -1702,6 +1705,8 @@ export function ServerSettingsEditor({
   const [openSecurityLogTooltipKey, setOpenSecurityLogTooltipKey] =
     useState<SecurityLogEventKey | null>(null);
 
+  const [dashboardPermissions, setDashboardPermissions] =
+    useState<string[] | "full">([]);
   const [adminRoleId, setAdminRoleId] = useState<string | null>(null);
   const [claimRoleIds, setClaimRoleIds] = useState<string[]>([]);
   const [closeRoleIds, setCloseRoleIds] = useState<string[]>([]);
@@ -1801,7 +1806,30 @@ export function ServerSettingsEditor({
   const renewalWindowOpen = status === "paid" && daysUntilExpire <= 3;
   const canRenewPlan = status !== "paid" || renewalWindowOpen;
   const isViewerOnly = !(canManage ?? accessMode === "owner");
-  const settingsReadOnly = locked || isViewerOnly;
+
+  const hasSectionPermission = useCallback(
+    (section: ServerSettingsSection) => {
+      if (dashboardPermissions === "full") return true;
+      const map: Record<ServerSettingsSection, string> = {
+        overview: "server_manage_tickets_overview",
+        message: "server_manage_tickets_message",
+        entry_exit_overview: "server_manage_welcome_overview",
+        entry_exit_message: "server_manage_welcome_message",
+        security_antilink: "server_manage_antilink",
+        security_autorole: "server_manage_autorole",
+        security_logs: "server_view_security_logs",
+      };
+      const required = map[section];
+      if (!required) return true;
+      return dashboardPermissions.includes(required);
+    },
+    [dashboardPermissions],
+  );
+
+  const isUnauthorizedForSection =
+    !isViewerOnly && !hasSectionPermission(settingsSection);
+  const settingsReadOnly = locked || isViewerOnly || isUnauthorizedForSection;
+
   const viewerOnlyMessage =
     "Neste acesso o painel esta disponivel somente para visualizacao.";
   const financialViewerMessage =
@@ -2159,8 +2187,13 @@ export function ServerSettingsEditor({
         }),
       );
       setSavedSecurityLogsDraft(nextSecurityLogsDraft);
+      setDashboardPermissions(payload.dashboardPermissions);
+      
+      if (onPermissionsChange) {
+        onPermissionsChange(payload.dashboardPermissions);
+      }
     },
-    [],
+    [onPermissionsChange],
   );
 
   useEffect(() => {
@@ -2253,6 +2286,7 @@ export function ServerSettingsEditor({
     setAutoRoleSyncCompletedAt(null);
     setAutoRoleSyncError(null);
     setSecurityLogsDraft(createDefaultSecurityLogsSettingsDraft());
+    setDashboardPermissions([]);
   }, [guildId, initialTab]);
 
   useEffect(() => {
@@ -3150,7 +3184,7 @@ export function ServerSettingsEditor({
     (hasUnsavedChanges || isSaving || showSaveSuccessBar);
   const showSaveBarActions = !showSaveSuccessBar || hasUnsavedChanges || isSaving;
   const showInlineMessages = Boolean(
-    isViewerOnly || locked || errorMessage,
+    isViewerOnly || isUnauthorizedForSection || locked || errorMessage,
   );
   const ticketControlsDisabled = isSaving || settingsReadOnly || !ticketEnabled;
   const welcomeControlsDisabled =
@@ -4768,8 +4802,14 @@ export function ServerSettingsEditor({
                     Atualizando dados do servidor...
                   </div>
                 ) : null}
-                <div className={`space-y-[18px] ${showFloatingSaveBar ? "pb-[112px]" : ""} ${isLoading ? "pointer-events-none opacity-[0.78]" : ""}`}>
-                  {settingsSection === "overview" ? (
+                <div className={`space-y-[18px] ${showFloatingSaveBar && !isUnauthorizedForSection ? "pb-[112px]" : ""} ${isLoading ? "pointer-events-none opacity-[0.78]" : ""}`}>
+                  {isUnauthorizedForSection ? (
+                    <PermissionDeniedState 
+                      onAction={() => {
+                        onTabChange?.("settings");
+                      }} 
+                    />
+                  ) : settingsSection === "overview" ? (
                     <div className="space-y-[14px]">
                       <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
                         <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
@@ -5555,7 +5595,7 @@ export function ServerSettingsEditor({
                             Plano da conta expirado ou bot desligado neste servidor. Regularize o pagamento ou ajuste o plano da conta para liberar alteracoes novamente.
                           </p>
                         ) : null}
-                        {errorMessage ? (
+                        {errorMessage && !isUnauthorizedForSection ? (
                           <p className="text-[12px] leading-[1.55] text-[#D98A8A]">
                             {errorMessage}
                           </p>
