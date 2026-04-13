@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import {
+  assertUserAdminInGuildOrNull,
+  fetchGuildRolesByBot,
   isGuildId,
   resolveSessionAccessToken,
+  type DiscordGuildRole,
 } from "@/lib/auth/discordGuildAccess";
 import { 
   getEffectiveDashboardPermissions, 
@@ -456,8 +459,8 @@ export async function POST(request: Request) {
 
     const validRoleIds = new Set(
       rawRoles
-        .filter((role) => role.id !== guildId && !role.managed)
-        .map((role) => role.id),
+        .filter((role: DiscordGuildRole) => role.id !== guildId && !role.managed)
+        .map((role: DiscordGuildRole) => role.id),
     );
 
     if (

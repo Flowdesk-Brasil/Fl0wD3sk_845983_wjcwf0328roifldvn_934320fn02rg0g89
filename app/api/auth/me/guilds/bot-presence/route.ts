@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { authConfig } from "@/lib/auth/config";
 import {
   assertUserAdminInGuildOrNull,
-  hasAcceptedTeamAccessToGuild,
   buildBotInviteUrl,
+  hasAcceptedTeamAccessToGuild,
   isGuildId,
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";

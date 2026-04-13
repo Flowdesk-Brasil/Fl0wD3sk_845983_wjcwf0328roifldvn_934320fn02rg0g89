@@ -4948,7 +4948,7 @@ export function ServerSettingsEditor({
                   {isUnauthorizedForSection ? (
                     <PermissionDeniedState 
                       onAction={() => {
-                        onTabChange?.("settings");
+                        _onTabChange?.("settings");
                       }} 
                     />
                   ) : settingsSection === "overview" ? (

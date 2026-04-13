@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import {
+  assertUserAdminInGuildOrNull,
+  fetchGuildChannelsByBot,
   isGuildId,
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
