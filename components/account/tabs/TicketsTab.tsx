@@ -14,6 +14,7 @@ type Ticket = {
   opened_reason?: string;
   transcript_file?: string | null;
   closed_by?: string | null;
+  access_code?: string | null;
 };
 
 function resolveTicketStatus(status: string) {
@@ -229,7 +230,7 @@ export function TicketsTab() {
                     <div className="mt-[24px] pt-[20px] border-t border-[rgba(255,255,255,0.02)]">
                       {ticket.transcript_file ? (
                         <a 
-                          href={ticket.transcript_file}
+                          href={`${ticket.transcript_file.startsWith("http") ? new URL(ticket.transcript_file).pathname : ticket.transcript_file}${ticket.access_code ? `?code=${ticket.access_code}` : ""}`}
                           target="_blank"
                           rel="noreferrer noopener"
                           className="flex items-center gap-[10px] rounded-[12px] bg-[rgba(255,255,255,0.05)] border border-[#222] px-[18px] py-[12px] text-[14px] font-bold text-white transition-all hover:bg-[rgba(255,255,255,0.08)] w-fit"

@@ -18,6 +18,7 @@ type Violation = {
   category: ViolationCategory | null;
   reason: string | null;
   createdAt: string;
+  expiresAt: string | null;
   expired: boolean;
 };
 
@@ -54,7 +55,8 @@ function ViolationDetailModal({
   const ruleUrl = violation.category?.ruleUrl || "https://flwdesk.com/privacy";
 
   // Friendly date formatting (Discord-style)
-  const formatDateFriendly = (dateString: string) => {
+  const formatDateFriendly = (dateString: string | null) => {
+    if (!dateString) return "por tempo indeterminado";
     const d = new Date(dateString);
     return d.toLocaleDateString("pt-BR", {
       day: "numeric",
@@ -64,9 +66,10 @@ function ViolationDetailModal({
   };
 
   const createdAtFriendly = formatDateFriendly(violation.createdAt);
+  const expiresAtFriendly = formatDateFriendly(violation.expiresAt);
 
   // For violations, we can assume impact until expiry or a long time if permanent
-  const impactDateFriendly = violation.expired ? "Expirada" : "por tempo indeterminado";
+  const impactDateFriendly = violation.expired ? "Expirada" : (violation.expiresAt ? formatDateFriendly(violation.expiresAt) : "por tempo indeterminado");
 
   if (!mounted) return null;
 
@@ -115,11 +118,11 @@ function ViolationDetailModal({
               <ul className="mt-[16px] space-y-[14px]">
                 <li className="flex items-start gap-3 text-[16px] leading-[1.6] text-[#BBBBBB]">
                   <span className="mt-[11px] h-[5px] w-[5px] shrink-0 rounded-full bg-[#5F5F5F]" />
-                  <span>Seu acesso a certas ferramentas está limitado até {createdAtFriendly}.</span>
+                  <span>Esta punição foi aplicada em: <span className="text-white font-medium">{createdAtFriendly}</span></span>
                 </li>
                 <li className="flex items-start gap-3 text-[16px] leading-[1.6] text-[#BBBBBB]">
                   <span className="mt-[11px] h-[5px] w-[5px] shrink-0 rounded-full bg-[#5F5F5F]" />
-                  <span>As violações afetarão o status da sua conta até {impactDateFriendly}.</span>
+                  <span>As violações afetarão o status da sua conta até: <span className="text-white font-medium">{impactDateFriendly}</span></span>
                 </li>
               </ul>
             </div>

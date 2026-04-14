@@ -6,6 +6,7 @@ import type {
   KeyboardEvent,
 } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { LandingGlowTag } from "@/components/landing/LandingGlowTag";
 import { LandingReveal } from "@/components/landing/LandingReveal";
 
@@ -42,6 +43,8 @@ export function TranscriptAccessPageClient({
   const [remainingLabel, setRemainingLabel] = useState<string | null>(null);
   const inputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const lastSubmittedCodeRef = useRef<string | null>(null);
+  const searchParams = useSearchParams();
+  const autoCode = searchParams.get("code");
 
   const code = useMemo(() => digits.join(""), [digits]);
   const hasActiveSession = useMemo(() => {
@@ -211,6 +214,12 @@ export function TranscriptAccessPageClient({
 
     void validateCode(code);
   }, [code, hasActiveSession, isSubmitting, isUnavailable, validateCode]);
+
+  useEffect(() => {
+    if (autoCode && autoCode.length === 4 && !hasActiveSession && !isSubmitting && digits.every(d => d === "")) {
+      setDigits(autoCode.split(""));
+    }
+  }, [autoCode, hasActiveSession, isSubmitting, digits]);
 
   async function handleLockNow() {
     setSessionExpiresAt(null);

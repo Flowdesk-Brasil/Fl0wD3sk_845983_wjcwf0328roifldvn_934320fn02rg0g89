@@ -247,9 +247,7 @@ export function PaymentHistoryTab({ onNavigateTickets }: { onNavigateTickets?: (
 
                              <div className="flex flex-col justify-end">
                                <a 
-                                 href="https://discord.gg/ddXtHhvvrx"
-                                 target="_blank"
-                                 rel="noreferrer noopener"
+                                 href="/support"
                                  className="flex items-center gap-[10px] rounded-[12px] bg-[rgba(255,255,255,0.05)] border border-[#222] px-[18px] py-[12px] text-[14px] font-bold text-white transition-all hover:bg-[rgba(255,255,255,0.08)] w-fit"
                                >
                                  <MessageSquare className="h-[18px] w-[18px] text-[#A0A0A0]" />
