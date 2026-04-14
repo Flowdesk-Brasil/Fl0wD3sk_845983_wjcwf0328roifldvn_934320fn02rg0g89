@@ -295,7 +295,8 @@ export function LandingHero() {
                     width={1124}
                     height={640}
                     sizes="(max-width: 1180px) calc(100vw - 40px), 1124px"
-                    className="pointer-events-none h-auto w-full select-none object-contain"
+                    style={{ width: "100%", height: "auto" }}
+                    className="pointer-events-none select-none object-contain"
                     draggable={false}
                   />
                 </div>

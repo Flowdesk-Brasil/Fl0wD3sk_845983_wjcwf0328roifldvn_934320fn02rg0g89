@@ -329,7 +329,11 @@ export function LandingOfferPlans() {
 
     return () => {
       isMounted = false;
-      controller.abort();
+      try {
+        controller.abort();
+      } catch (e) {
+        // Ignora erros de abort() do browser local
+      }
     };
   }, [refreshTick]);
 

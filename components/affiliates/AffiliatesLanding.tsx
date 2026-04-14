@@ -331,7 +331,7 @@ export function AffiliatesLanding({ isAuthenticated }: { isAuthenticated: boolea
 
       {/* Background Blocks Pattern */}
       <LandingReveal delay={140}>
-        <div className="pointer-events-none absolute inset-x-0 top-[180px] -translate-y-1/2">
+        <div className="pointer-events-none absolute inset-x-0 top-[340px] -translate-y-1/2">
           <div className="flowdesk-landing-soft-motion relative left-1/2 aspect-[1542/492] w-[160%] max-w-none -translate-x-1/2 scale-[1.05] transform-gpu min-[861px]:w-[98%] min-[861px]:scale-100">
             <Image
               src="/cdn/hero-blocks-1.svg"
@@ -424,7 +424,7 @@ export function AffiliatesLanding({ isAuthenticated }: { isAuthenticated: boolea
       {/* ───── Como funciona ─────────────────────────────────────── */}
       <section id="como-funciona" className="relative z-10 mx-auto max-w-[1220px] px-[20px] py-[80px] md:px-6 lg:px-8">
         <LandingReveal>
-          <div className="text-left">
+          <div className="flex flex-col items-center text-center">
             <LandingGlowTag className="px-[24px]">Como funciona</LandingGlowTag>
             <h2 className="mt-[20px] text-[32px] font-normal leading-[1.1] tracking-[-0.045em] text-[#D0D0D0] md:text-[40px]">
               Simples do início ao saque
@@ -455,7 +455,7 @@ export function AffiliatesLanding({ isAuthenticated }: { isAuthenticated: boolea
       {/* ───── Níveis e Comissões ─────────────────────────────────── */}
       <section className="relative z-10 mx-auto max-w-[1220px] px-[20px] py-[80px] md:px-6 lg:px-8">
         <LandingReveal>
-          <div className="text-left">
+          <div className="flex flex-col items-center text-center">
             <LandingGlowTag className="px-[24px]">Níveis de afiliado</LandingGlowTag>
             <h2 className="mt-[20px] text-[32px] font-normal leading-[1.1] tracking-[-0.045em] text-[#D0D0D0] md:text-[40px]">
               Quanto mais você vende, mais você ganha
@@ -474,29 +474,16 @@ export function AffiliatesLanding({ isAuthenticated }: { isAuthenticated: boolea
         </div>
       </section>
 
-      {/* Background Blocks Pattern Middle */}
-      <div className="pointer-events-none absolute inset-x-0 top-[2200px] -translate-y-1/2 opacity-40">
-        <div className="flowdesk-landing-soft-motion relative left-1/2 aspect-[1542/492] w-[160%] max-w-none -translate-x-1/2 scale-[1.05] transform-gpu">
-          <Image
-            src="/cdn/hero-blocks-1.svg"
-            alt=""
-            fill
-            className="pointer-events-none select-none object-contain"
-            draggable={false}
-          />
-        </div>
-      </div>
-
       {/* ───── Ranking ao vivo ────────────────────────────────────── */}
       <section className="relative z-10 mx-auto max-w-[1220px] px-[20px] py-[80px] md:px-6 lg:px-8">
         <LandingReveal>
-          <div className="text-left">
+          <div className="flex flex-col items-center text-center">
             <LandingGlowTag className="px-[24px]">Ranking do mês</LandingGlowTag>
             <h2 className="mt-[20px] text-[32px] font-normal leading-[1.1] tracking-[-0.045em] text-[#D0D0D0] md:text-[40px]">
               Top 3 afiliados com bônus especiais
             </h2>
             <p className="mt-[14px] max-w-[560px] text-[15px] leading-[1.65] text-[#6A6A6A]">
-              Todo mês rankeamos afiliados por vendasocorrido. O Top 3 recebe % de bônus extra na comissão do mês seguinte.
+              Todo mês rankeamos afiliados por volume de vendas. O Top 3 recebe % de bônus extra na comissão do mês seguinte.
             </p>
           </div>
         </LandingReveal>
@@ -512,7 +499,7 @@ export function AffiliatesLanding({ isAuthenticated }: { isAuthenticated: boolea
       {/* ───── Benefícios ─────────────────────────────────────────── */}
       <section className="relative z-10 mx-auto max-w-[1220px] px-[20px] py-[80px] md:px-6 lg:px-8">
         <LandingReveal>
-          <div className="text-left">
+          <div className="flex flex-col items-center text-center">
             <LandingGlowTag className="px-[24px]">Ferramentas incluídas</LandingGlowTag>
             <h2 className="mt-[20px] text-[32px] font-normal leading-[1.1] tracking-[-0.045em] text-[#D0D0D0] md:text-[40px]">
               Tudo que você precisa para vender mais
@@ -540,7 +527,7 @@ export function AffiliatesLanding({ isAuthenticated }: { isAuthenticated: boolea
       {/* ───── FAQ ────────────────────────────────────────────────── */}
       <section id="faq" className="relative z-10 mx-auto max-w-[1220px] px-[20px] py-[80px] md:px-6 lg:px-8">
         <LandingReveal>
-          <div className="text-left">
+          <div className="flex flex-col items-center text-center">
             <LandingGlowTag className="px-[24px]">Perguntas frequentes</LandingGlowTag>
             <h2 className="mt-[20px] text-[32px] font-normal leading-[1.1] tracking-[-0.045em] text-[#D0D0D0] md:text-[40px]">
               Ficou com dúvidas?
@@ -561,26 +548,13 @@ export function AffiliatesLanding({ isAuthenticated }: { isAuthenticated: boolea
               aria-hidden="true"
               className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(255,255,255,0.035)_0%,transparent_70%)]"
             />
-            
-            {/* Background Blocks Pattern */}
-            <div className="pointer-events-none absolute inset-x-0 top-[20%] -translate-y-1/2 opacity-60">
-              <div className="flowdesk-landing-soft-motion relative left-1/2 aspect-[1542/492] w-[140%] max-w-none -translate-x-1/2 scale-[1.05] transform-gpu">
-                <Image
-                  src="/cdn/hero-blocks-1.svg"
-                  alt=""
-                  fill
-                  sizes="(max-width: 860px) 140vw, 1200px"
-                  className="pointer-events-none select-none object-contain"
-                  draggable={false}
-                />
-              </div>
-            </div>
-            
+
             <div className="relative z-10 mx-auto mb-10 h-[42px] w-[180px]">
               <Image 
                 src="/cdn/logos/logo.png" 
                 alt="Flowdesk" 
                 fill 
+                sizes="180px"
                 className="object-contain"
                 priority
               />
