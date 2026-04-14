@@ -2202,6 +2202,7 @@ export function ServersWorkspace({
   }, [selectedServer]);
 
   const hasCurrentSectionPermission = useMemo(() => {
+    if (selectedServer?.accessMode === "owner") return true;
     if (currentDashboardPermissions === "full") return true;
     const perms = new Set(currentDashboardPermissions);
     const section = selectedSettingsSectionForConfig;
@@ -2217,7 +2218,7 @@ export function ServersWorkspace({
     if (section === "security_logs") return perms.has("server_manage_security_logs");
     
     return false;
-  }, [currentDashboardPermissions, selectedSettingsSectionForConfig]);
+  }, [currentDashboardPermissions, selectedServer?.accessMode, selectedSettingsSectionForConfig]);
 
   const shouldHideEditorHeaderDueToPermissions = 
     isEditingServer && 

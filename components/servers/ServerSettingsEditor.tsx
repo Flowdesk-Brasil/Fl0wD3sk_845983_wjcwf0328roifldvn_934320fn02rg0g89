@@ -1835,6 +1835,7 @@ export function ServerSettingsEditor({
 
   const hasSectionPermission = useCallback(
     (section: ServerSettingsSection) => {
+      if (accessMode === "owner") return true;
       if (dashboardPermissions === "full") return true;
       const map: Record<ServerSettingsSection, string> = {
         overview: "server_manage_tickets_overview",
@@ -1849,7 +1850,7 @@ export function ServerSettingsEditor({
       if (!required) return true;
       return dashboardPermissions.includes(required);
     },
-    [dashboardPermissions],
+    [accessMode, dashboardPermissions],
   );
 
   const isUnauthorizedForSection =
