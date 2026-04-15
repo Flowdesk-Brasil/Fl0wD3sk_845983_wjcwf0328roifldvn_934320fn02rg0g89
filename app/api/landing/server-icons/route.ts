@@ -36,11 +36,9 @@ const MAX_RETURNED_ICONS = 48;
 const GUILD_COUNT_FETCH_CONCURRENCY = 12;
 const MAX_SESSION_CACHE_ROWS = 400;
 
-let cachedIcons: { id: string; name: string; iconUrl: string }[] = [];
+let cachedIcons: QualifiedGuildIcon[] = [];
 let cachedIconsAt = 0;
-let activeIconsFetchPromise:
-  | Promise<{ id: string; name: string; iconUrl: string }[]>
-  | null = null;
+let isRefreshing = false;
 type QualifiedGuildIcon = {
   id: string;
   name: string;
@@ -313,64 +311,95 @@ async function mapGuildsToIcons(botToken: string, guilds: DiscordBotGuild[]) {
     }));
 }
 
-async function resolveIcons(botToken: string) {
-  const now = Date.now();
-  if (cachedIcons.length && now - cachedIconsAt < ICONS_CACHE_TTL_MS) {
-    return cachedIcons;
-  }
+async function backgroundSync(botToken: string) {
+  if (isRefreshing) return;
+  isRefreshing = true;
 
-  if (activeIconsFetchPromise) {
-    return activeIconsFetchPromise;
-  }
-
-  activeIconsFetchPromise = (async () => {
+  try {
     const guilds = await fetchBotGuilds(botToken);
     const icons = await mapGuildsToIcons(botToken, guilds);
 
-    cachedIcons = icons;
-    cachedIconsAt = Date.now();
-    return icons;
-  })();
+    if (icons.length > 0) {
+      cachedIcons = icons;
+      cachedIconsAt = Date.now();
 
-  try {
-    return await activeIconsFetchPromise;
+      const supabase = createSupabaseAdminClient();
+      if (supabase) {
+        // Upsert icons to persistent cache
+        for (const icon of icons) {
+          await supabase.from("discord_cdn_cache").upsert({
+            id: icon.id,
+            name: icon.name,
+            icon_url: icon.iconUrl,
+            last_updated_at: new Date().toISOString(),
+            is_featured: true
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Back-end CDN Sync Error:", err);
   } finally {
-    activeIconsFetchPromise = null;
+    isRefreshing = false;
   }
 }
 
+async function resolveIconsFromDb() {
+  const supabase = createSupabaseAdminClient();
+  if (!supabase) return [];
+
+  const { data, error } = await supabase
+    .from("discord_cdn_cache")
+    .select("id, name, icon_url")
+    .eq("is_featured", true)
+    .order("last_updated_at", { ascending: false })
+    .limit(MAX_RETURNED_ICONS);
+
+  if (error || !data) return [];
+  return data.map(row => ({
+    id: row.id,
+    name: row.name,
+    iconUrl: row.icon_url
+  }));
+}
+
 export async function GET() {
+  const now = Date.now();
+  const botToken = resolveBotToken();
+  const CACHE_STALE_THRESHOLD = 3600_000 * 6; // 6 hours
+
   try {
-    const botToken = resolveBotToken();
-    if (!botToken) {
-      return NextResponse.json(
-        { icons: [] },
-        {
-          headers: {
-            "Cache-Control": "no-store, max-age=0",
-          },
-        },
-      );
+    // 1. Check Memory Cache
+    if (cachedIcons.length > 0) {
+      // If stale, trigger background sync but return stale data
+      if (now - cachedIconsAt > CACHE_STALE_THRESHOLD && botToken) {
+        backgroundSync(botToken);
+      }
+      return NextResponse.json({ icons: cachedIcons }, { headers: { "Cache-Control": "no-store", "X-Cache": "MEMORY_STALE" }});
     }
 
-    const icons = await resolveIcons(botToken);
+    // 2. Check DB Cache (Survives server restarts)
+    const dbIcons = await resolveIconsFromDb();
+    if (dbIcons.length > 0) {
+      cachedIcons = dbIcons;
+      cachedIconsAt = now; // Mark as fresh in memory to avoid constant DB calls
+      if (botToken) backgroundSync(botToken);
+      return NextResponse.json({ icons: dbIcons }, { headers: { "Cache-Control": "no-store", "X-Cache": "DB_PERSISTENT" }});
+    }
 
-    return NextResponse.json(
-      { icons },
-      {
-        headers: {
-          "Cache-Control": "no-store, max-age=0",
-        },
-      },
-    );
-  } catch {
-    return NextResponse.json(
-      { icons: [] },
-      {
-        headers: {
-          "Cache-Control": "no-store, max-age=0",
-        },
-      },
-    );
+    // 3. Absolute Fallback: Fresh sync (only if cache is empty)
+    if (!botToken) return NextResponse.json({ icons: [] });
+    
+    const guilds = await fetchBotGuilds(botToken);
+    const icons = await mapGuildsToIcons(botToken, guilds);
+    
+    cachedIcons = icons;
+    cachedIconsAt = now;
+    backgroundSync(botToken); // Updates DB in background
+    
+    return NextResponse.json({ icons }, { headers: { "Cache-Control": "no-store", "X-Cache": "MISS" }});
+
+  } catch (error) {
+    return NextResponse.json({ icons: cachedIcons || [] }, { headers: { "Cache-Control": "no-store", "X-Cache": "ERROR_FALLBACK" }});
   }
 }

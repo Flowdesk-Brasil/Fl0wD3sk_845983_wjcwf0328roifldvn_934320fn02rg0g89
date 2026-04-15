@@ -189,3 +189,69 @@ export async function generateCriticalTeamNote(
     return fallbackNote;
   }
 }
+
+export async function generateIncidentSummary(
+  day: string,
+  components: Array<{ name: string; status: string }>,
+): Promise<{ title: string; summary: string; updateMessage: string }> {
+  const apiKey = getOpenAiApiKey();
+  const dayLabel = new Date(day + "T12:00:00Z").toLocaleDateString("pt-BR", {
+    day: "numeric", month: "long", year: "numeric", timeZone: "UTC"
+  });
+
+  const fallback = {
+    title: `Instabilidade detectada em ${components.map(c => c.name).join(", ")}`,
+    summary: `Em ${dayLabel}, identificamos instabilidade em ${components.map(c => c.name).join(", ")}. Nossa equipe monitorou e os servicos foram normalizados.`,
+    updateMessage: "Incidente resolvido. A estabilidade dos sistemas foi confirmada pela nossa equipe de monitoramento."
+  };
+
+  if (!apiKey) return fallback;
+
+  try {
+    const response = await fetch(`${getOpenAiBaseUrl()}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: getOpenAiModel(),
+        temperature: 0.3,
+        max_tokens: 250,
+        messages: [
+          {
+            role: "system",
+            content: "Você é um engenheiro de SRE escrevendo resumos para uma página de status. Responda APENAS um JSON com 'title', 'summary' e 'updateMessage'. Use um tom profissional, transparente e em português do Brasil."
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              date: dayLabel,
+              affectedComponents: components,
+              instructions: "Gere um titulo curto, um resumo do que aconteceu em 2 frases, e uma mensagem final de resolucao."
+            })
+          }
+        ]
+      }),
+      cache: "no-store",
+    });
+
+    if (!response.ok) return fallback;
+    const json = await response.json().catch(() => null);
+    const content = json?.choices?.[0]?.message?.content || "";
+    const match = content.match(/\{[\s\S]*\}/);
+    
+    if (match) {
+      const parsed = JSON.parse(match[0]);
+      return {
+        title: parsed.title || fallback.title,
+        summary: parsed.summary || fallback.summary,
+        updateMessage: parsed.updateMessage || fallback.updateMessage
+      };
+    }
+  } catch {
+    // fallback
+  }
+
+  return fallback;
+}

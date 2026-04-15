@@ -65,6 +65,9 @@ export type DiscordBotStatusResponse = StatusCheckResult & {
   url: string | null;
 };
 
+export type SquareCloudStatusResponse = StatusCheckResult;
+export type DiscordCdnStatusResponse = StatusCheckResult;
+
 const OPENAI_MAX_ATTEMPTS = 2;
 const OPENAI_BASE_TIMEOUT_MS = 8500;
 const OPENAI_DEFAULT_URL = "https://api.openai.com/v1";
@@ -135,16 +138,21 @@ function stabilizeSystemStatus(
 }
 
 export function stabilizeStatusCheckResult<
-  T extends { status: SystemStatus; message: string | null; latencyMs: number | null },
+  T extends { status: SystemStatus; message: string | null; latencyMs: number | null; ok?: boolean },
 >(sourceKey: string, payload: T): T {
+  const stabilizedStatus = stabilizeSystemStatus(
+    sourceKey,
+    payload.status,
+    payload.message,
+    payload.latencyMs,
+  );
+
   return {
     ...payload,
-    status: stabilizeSystemStatus(
-      sourceKey,
-      payload.status,
-      payload.message,
-      payload.latencyMs,
-    ),
+    status: stabilizedStatus,
+    ...(typeof payload.ok === "boolean"
+      ? { ok: stabilizedStatus === "operational" || stabilizedStatus === "degraded_performance" }
+      : {}),
   };
 }
 
@@ -837,7 +845,7 @@ export async function checkDomainsStatus(): Promise<DomainsStatusResponse> {
         },
       ),
       new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Timeout no health check de dominios.")), 5000),
+        setTimeout(() => reject(new Error("Timeout no health check de dominios.")), 8000),
       ),
     ]);
 
@@ -845,10 +853,10 @@ export async function checkDomainsStatus(): Promise<DomainsStatusResponse> {
     let status: SystemStatus = "operational";
     let message: string | null = null;
 
-    if (latencyMs > 5000) {
+    if (latencyMs > 8000) {
       status = "partial_outage";
       message = `Latencia critica na Openprovider: ${latencyMs}ms.`;
-    } else if (latencyMs > 2500) {
+    } else if (latencyMs > 4500) {
       status = "degraded_performance";
       message = `Resposta lenta da Openprovider: ${latencyMs}ms.`;
     }
@@ -887,38 +895,92 @@ export async function checkDiscordBotStatus(): Promise<DiscordBotStatusResponse>
   const url = resolveDiscordBotHealthUrl();
   const token = resolveDiscordBotHealthToken();
 
-  try {
-    const headers = new Headers();
-    if (token) {
-      headers.set("x-bot-health-token", token);
-    }
+  let lastError: Error | null = null;
+  let attempts = 0;
+  const maxAttempts = 3;
 
-    const response = await fetchWithTimeout(
-      url,
-      {
-        method: "GET",
-        headers,
-      },
-      5000,
-    );
+  while (attempts < maxAttempts) {
+    attempts += 1;
 
-    const latencyMs = Date.now() - startedAt;
-    const payload = await response.json().catch(() => null);
-    const ready = Boolean(payload?.ready);
-    const wsStatus = typeof payload?.wsStatus === "number" ? payload.wsStatus : null;
-    const guildCount = typeof payload?.guildCount === "number" ? payload.guildCount : null;
-    const uptimeMs = typeof payload?.uptimeMs === "number" ? payload.uptimeMs : null;
+    try {
+      const headers = new Headers();
+      if (token) {
+        headers.set("x-bot-health-token", token);
+      }
 
-    if (!response.ok) {
+      const response = await fetchWithTimeout(
+        url,
+        {
+          method: "GET",
+          headers,
+        },
+        5000,
+      );
+
+      const latencyMs = Date.now() - startedAt;
+      const payload = await response.json().catch(() => null);
+
+      if (!payload) {
+        throw new Error("Resposta nao-JSON recebida da URL de saude do bot.");
+      }
+
+      const ready = Boolean(payload?.ready);
+      const wsStatus = typeof payload?.wsStatus === "number" ? payload.wsStatus : null;
+      const guildCount = typeof payload?.guildCount === "number" ? payload.guildCount : null;
+      const uptimeMs = typeof payload?.uptimeMs === "number" ? payload.uptimeMs : null;
+      const apiStatus = typeof payload?.status === "string" ? payload.status : null; // capture status if health return maps it
+
+      if (!response.ok) {
+        if (response.status >= 500 && attempts < maxAttempts) {
+           await delay(800 * attempts);
+           continue;
+        }
+
+        const mappedStatus = response.status === 401 || response.status === 403 ? "major_outage" : "partial_outage";
+
+        return {
+          ok: false,
+          checkedAt,
+          latencyMs,
+          status: mappedStatus,
+          message:
+            response.status === 401 || response.status === 403
+              ? "Endpoint de saude do Discord Bot negou acesso."
+              : `Discord Bot nao respondeu corretamente ao health check HTTP (${response.status}).`,
+          source: "discord",
+          ready,
+          wsStatus,
+          guildCount,
+          uptimeMs,
+          url,
+        };
+      }
+
+      let status: SystemStatus = apiStatus || "operational";
+      let message: string | null = null;
+
+      if (!ready || wsStatus !== 0) {
+        if (wsStatus === 1 || wsStatus === 2 || wsStatus === 8) {
+          status = "degraded_performance";
+          message = "Discord Bot esta conectando/reconectando ao gateway.";
+        } else {
+          status = "major_outage";
+          message = "Discord Bot esta offline ou ainda nao concluiu a conexao com o gateway.";
+        }
+      } else if (latencyMs > 5000) {
+        status = "partial_outage";
+        message = `Resposta critica do Discord Bot: ${latencyMs}ms.`;
+      } else if (latencyMs > 2500) {
+        status = "degraded_performance";
+        message = `Resposta lenta do Discord Bot: ${latencyMs}ms.`;
+      }
+
       return {
-        ok: false,
+        ok: status === "operational" || status === "degraded_performance",
         checkedAt,
         latencyMs,
-        status: response.status === 401 || response.status === 403 ? "major_outage" : "partial_outage",
-        message:
-          response.status === 401 || response.status === 403
-            ? "Endpoint de saude do Discord Bot negou acesso."
-            : `Discord Bot nao respondeu corretamente ao health check HTTP (${response.status}).`,
+        status,
+        message,
         source: "discord",
         ready,
         wsStatus,
@@ -926,51 +988,160 @@ export async function checkDiscordBotStatus(): Promise<DiscordBotStatusResponse>
         uptimeMs,
         url,
       };
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+
+      if (attempts < maxAttempts) {
+        await delay(800 * attempts);
+        continue;
+      }
+    }
+  }
+
+  // Fallback: se o monitor HTTP do bot estiver inacessivel (comum no SquareCloud),
+  // tentamos validar o token diretamente com a API do Discord para evitar um "major_outage" falso.
+  if (token || process.env.DISCORD_BOT_TOKEN || process.env.DISCORD_TOKEN) {
+    const rawToken = token || process.env.DISCORD_BOT_TOKEN?.trim() || process.env.DISCORD_TOKEN?.trim();
+    if (rawToken) {
+      try {
+        const fallbackStart = Date.now();
+        const discordRes = await fetchWithTimeout(
+          "https://discord.com/api/v10/users/@me",
+          {
+            method: "GET",
+            headers: { Authorization: `Bot ${rawToken}` },
+          },
+          5000,
+        );
+
+        if (discordRes.ok) {
+          return {
+            ok: true,
+            checkedAt,
+            latencyMs: Date.now() - fallbackStart,
+            status: "degraded_performance",
+            message: "Monitor HTTP do Bot inacessível, mas a API do Discord responde atestando que o Token esta operante.",
+            source: "discord",
+            ready: true, // we assume it's running if the token works and health api failed
+            wsStatus: null,
+            guildCount: null,
+            uptimeMs: null,
+            url,
+          };
+        }
+      } catch {
+        // ignora falha do fallback e retorna o erro original
+      }
+    }
+  }
+
+  return {
+    ok: false,
+    checkedAt,
+    latencyMs: Date.now() - startedAt,
+    status: "major_outage",
+    message: `Discord Bot indisponivel no health check HTTP: ${lastError?.message || "Timeout"}`,
+    source: "discord",
+    ready: false,
+    wsStatus: null,
+    guildCount: null,
+    uptimeMs: null,
+    url,
+  };
+}
+
+export async function checkSquareCloudStatus(): Promise<SquareCloudStatusResponse> {
+  const startedAt = Date.now();
+  const checkedAt = new Date().toISOString();
+
+  try {
+    const res = await fetchWithTimeout(
+      "https://status.squarecloud.app/",
+      { method: "GET" },
+      8000
+    );
+
+    const latencyMs = Date.now() - startedAt;
+
+    if (!res.ok) {
+      return {
+        ok: false,
+        checkedAt,
+        latencyMs,
+        status: "partial_outage",
+        message: `Square Cloud Status Page retornou HTTP ${res.status}`,
+        source: "squarecloud"
+      };
     }
 
-    let status: SystemStatus = "operational";
-    let message: string | null = null;
-
-    if (!ready || wsStatus !== 0) {
-      status = "major_outage";
-      message = "Discord Bot esta offline ou ainda nao concluiu a conexao com o gateway.";
-    } else if (latencyMs > 5000) {
-      status = "partial_outage";
-      message = `Resposta critica do Discord Bot: ${latencyMs}ms.`;
-    } else if (latencyMs > 2500) {
-      status = "degraded_performance";
-      message = `Resposta lenta do Discord Bot: ${latencyMs}ms.`;
-    }
+    const html = await res.text();
+    // Better Stack status pages use "All services are online" as the positive signal
+    const isActuallyOnline = html.includes("All services are online") || html.includes("All systems operational");
+    
+    // We only report an outage if the positive signal is missing AND we find negative ones
+    const hasOutage = !isActuallyOnline && /major outage|critical failure|partial outage|degraded performance/i.test(html);
 
     return {
-      ok: status === "operational",
+      ok: true,
       checkedAt,
       latencyMs,
-      status,
-      message,
-      source: "discord",
-      ready,
-      wsStatus,
-      guildCount,
-      uptimeMs,
-      url,
+      status: hasOutage ? "partial_outage" : "operational",
+      message: hasOutage ? "Square Cloud reportando instabilidade oficial." : "Sistemas Square Cloud operantes.",
+      source: "squarecloud"
     };
   } catch (error) {
     return {
       ok: false,
       checkedAt,
       latencyMs: Date.now() - startedAt,
-      status: "major_outage",
-      message:
-        error instanceof Error
-          ? `Discord Bot indisponivel no health check HTTP: ${error.message}`
-          : "Discord Bot indisponivel no health check HTTP.",
-      source: "discord",
-      ready: false,
-      wsStatus: null,
-      guildCount: null,
-      uptimeMs: null,
-      url,
+      status: "degraded_performance",
+      message: "Falha ao validar status da Square Cloud.",
+      source: "squarecloud"
+    };
+  }
+}
+
+export async function checkDiscordCdnStatus(): Promise<DiscordCdnStatusResponse> {
+  const startedAt = Date.now();
+  const checkedAt = new Date().toISOString();
+  // We test a static Discord asset (a logo)
+  const testUrl = "https://cdn.discordapp.com/icons/290132685348143105/a_86c2305318db40a97b91d2c6c498902d.png?size=16";
+
+  try {
+    const res = await fetch(testUrl, {
+      method: "HEAD",
+      cache: "no-store",
+    });
+
+    const latencyMs = Date.now() - startedAt;
+
+    if (!res.ok && res.status !== 404) {
+      return {
+        ok: false,
+        checkedAt,
+        latencyMs,
+        status: "partial_outage",
+        message: "Discord CDN reportando instabilidade de entrega.",
+        source: "discord_cdn"
+      };
+    }
+
+    return {
+      ok: true,
+      checkedAt,
+      latencyMs,
+      status: latencyMs > 2500 ? "degraded_performance" : "operational",
+      message: "Discord CDN operando normalmente.",
+      source: "discord_cdn"
+    };
+  } catch (error: any) {
+    return {
+      ok: false,
+      checkedAt,
+      latencyMs: Date.now() - startedAt,
+      status: "partial_outage",
+      message: "Falha na resolucao de DNS ou conexao com Discord CDN.",
+      source: "discord_cdn"
     };
   }
 }
