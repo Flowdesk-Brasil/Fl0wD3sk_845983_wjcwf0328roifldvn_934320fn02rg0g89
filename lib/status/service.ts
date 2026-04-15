@@ -1,104 +1,653 @@
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
+import {
+  checkApiStatus,
+  checkDiscordBotStatus,
+  checkDomainsStatus,
+  checkFlowAiStatus,
+  checkScheduledTasksStatus,
+} from "./monitors";
+import type {
+  ComponentStatus,
+  Incident,
+  IncidentImpact,
+  IncidentStatus,
+  IncidentUpdate,
+  StatusSubscriptionType,
+  SystemStatus,
+} from "./types";
+import { getWorstSystemStatus } from "./types";
 
-export type SystemStatus = 'operational' | 'degraded_performance' | 'partial_outage' | 'major_outage';
-export type IncidentImpact = 'critical' | 'warning' | 'info';
-export type IncidentStatus = 'investigating' | 'identified' | 'monitoring' | 'resolved';
+export * from "./types";
 
-export type ComponentStatus = {
-    id: string;
-    name: string;
-    description: string | null;
-    status: SystemStatus;
-    updated_at: string;
-    created_at: string;
-    history: { date: string; status: SystemStatus }[];
+type ComponentRow = {
+  id: string;
+  name: string;
+  description: string | null;
+  status: SystemStatus;
+  updated_at: string;
+  created_at: string;
+  display_order?: number;
 };
 
-export type IncidentUpdate = {
-    id: string;
-    message: string;
-    status: IncidentStatus;
-    created_at: string;
+type HistoryRow = {
+  component_id: string;
+  status: SystemStatus;
+  recorded_at: string;
 };
 
-export type Incident = {
-    id: string;
-    title: string;
-    impact: IncidentImpact;
-    status: IncidentStatus;
-    created_at: string;
-    updated_at: string;
-    updates: IncidentUpdate[];
+type IncidentRow = {
+  id: string;
+  title: string;
+  impact: IncidentImpact;
+  status: IncidentStatus;
+  created_at: string;
+  updated_at: string;
+  public_summary?: string | null;
+  ai_summary?: string | null;
+  component_summary?: string | null;
+  updates?: IncidentUpdate[] | null;
 };
 
-export async function getSystemStatus() {
-    const supabase = getSupabaseAdminClientOrThrow();
+type IncidentComponentLink = {
+  incident_id: string;
+  component_id?: string | null;
+  component?: {
+    name?: string | null;
+  } | null;
+};
 
-    try {
-        // Parallel fetching for maximum speed
-        const ninetyDaysAgo = new Date();
-        ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-        const historyDateStr = ninetyDaysAgo.toISOString().split('T')[0];
+type MonitorSignal = {
+  status: SystemStatus;
+  message: string | null;
+  checkedAt: string | null;
+  latencyMs: number | null;
+};
 
-        const thirtyDaysAgo = new Date();
-        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-        const incidentDateStr = thirtyDaysAgo.toISOString();
+type TableProbeResult = {
+  available: boolean;
+  count: number | null;
+  error: string | null;
+};
 
-        const [componentsRes, historyRes, incidentsRes] = await Promise.all([
-            supabase
-                .from('system_components')
-                .select('id, name, description, status, display_order, updated_at, created_at')
-                .order('display_order', { ascending: true }),
-            
-            supabase
-                .from('system_status_history')
-                .select('component_id, status, recorded_at')
-                .gte('recorded_at', historyDateStr)
-                .order('recorded_at', { ascending: true }),
-
-            supabase
-                .from('system_incidents')
-                .select('id, title, impact, status, created_at, updated_at, updates:system_incident_updates(id, message, status, created_at)')
-                .gte('created_at', incidentDateStr)
-                .order('created_at', { ascending: false })
-        ]);
-
-        if (componentsRes.error) {
-            console.error("Supabase error fetching components:", componentsRes.error);
-            throw componentsRes.error;
-        }
-
-        const components = componentsRes.data || [];
-        const history = historyRes.data || [];
-        const incidents = incidentsRes.data || [];
-
-        // Efficient mapping
-        const componentsWithHistory: ComponentStatus[] = components.map(comp => ({
-            ...comp,
-            history: history
-                .filter(h => h.component_id === comp.id)
-                .map(h => ({ date: h.recorded_at, status: h.status }))
-        }));
-
-        return {
-            components: componentsWithHistory,
-            incidents: (incidents as any[]) || []
-        };
-    } catch (e: any) {
-        if (e.code === 'PGRST205') {
-            throw new Error("As tabelas de status ainda não foram criadas no banco de dados. Por favor, execute o script SQL 064_system_status.sql no painel do Supabase.");
-        }
-        throw e;
-    }
+function normalizeText(input: string | null | undefined) {
+  return (input || "").trim();
 }
 
-export async function subscribeToStatus(type: 'email' | 'discord_dm' | 'webhook' | 'discord_channel', target: string) {
+function formatDateTimePtBr(dateLike: string) {
+  return new Date(dateLike).toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "UTC",
+  });
+}
+
+function joinNames(names: string[]) {
+  if (names.length === 0) return "os servicos monitorados";
+  if (names.length === 1) return names[0];
+  if (names.length === 2) return `${names[0]} e ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")} e ${names[names.length - 1]}`;
+}
+
+function inferComponentSourceKey(name: string) {
+  const normalized = name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+
+  if (normalized.includes("flow ai")) return "flowai";
+  if (normalized.includes("tarefas agendadas")) return "scheduled_tasks";
+  if (normalized.includes("registro de dominio")) return "domains";
+  if (normalized.includes("dns")) return "domains";
+  if (normalized.includes("certificado ssl")) return "domains";
+  if (normalized.includes("firewall")) return "domains";
+  if (normalized.includes("geolocalizacao")) return "domains";
+  if (normalized.includes("pagamentos") || normalized.includes("transacoes")) {
+    return "payments";
+  }
+  if (normalized.includes("discord bot") || normalized.includes("notificacoes")) {
+    return "discord";
+  }
+  if (normalized.includes("auditoria") || normalized.includes("analises")) {
+    return "audit";
+  }
+  if (
+    normalized.includes("painel") ||
+    normalized.includes("cache") ||
+    normalized.includes("rede") ||
+    normalized.includes("otimizacao") ||
+    normalized.includes("velocidade") ||
+    normalized.includes("cdn") ||
+    normalized.includes("armazenamento db")
+  ) {
+    return "api";
+  }
+  if (normalized.includes("api")) return "api";
+  return null;
+}
+
+function buildIncidentSummary(
+  incident: IncidentRow,
+  componentNames: string[],
+  overrideMessage?: string | null,
+) {
+  const explicitMessage = normalizeText(overrideMessage);
+  if (explicitMessage) {
+    return explicitMessage;
+  }
+
+  const summarySources = [
+    normalizeText(incident.public_summary),
+    normalizeText(incident.ai_summary),
+    normalizeText(incident.component_summary),
+  ].filter(Boolean);
+
+  if (summarySources.length > 0) {
+    return summarySources[0];
+  }
+
+  const componentsText = joinNames(componentNames);
+  const dateLabel = formatDateTimePtBr(incident.updated_at || incident.created_at);
+
+  switch (incident.status) {
+    case "investigating":
+      return `Em ${dateLabel}, detectamos uma instabilidade em ${componentsText} e iniciamos a investigacao.`;
+    case "identified":
+      return `Em ${dateLabel}, identificamos a causa do incidente em ${componentsText} e seguimos aplicando a correcao.`;
+    case "monitoring":
+      return `Em ${dateLabel}, aplicamos a correcao em ${componentsText} e seguimos monitorando a estabilidade.`;
+    case "resolved":
+      return `Em ${dateLabel}, o incidente em ${componentsText} foi resolvido e os servicos voltaram ao funcionamento normal.`;
+    default:
+      return `Em ${dateLabel}, houve uma ocorrencia monitorada em ${componentsText}.`;
+  }
+}
+
+function buildIncidentUpdates(
+  incident: IncidentRow,
+  componentNames: string[],
+) {
+  const updates = Array.isArray(incident.updates) ? [...incident.updates] : [];
+
+  if (updates.length === 0) {
+    return [
+      {
+        id: `generated-${incident.id}`,
+        status: incident.status,
+        created_at: incident.updated_at || incident.created_at,
+        message: buildIncidentSummary(incident, componentNames),
+      },
+    ] satisfies IncidentUpdate[];
+  }
+
+  return updates
+    .sort(
+      (left, right) =>
+        new Date(left.created_at).getTime() - new Date(right.created_at).getTime(),
+    )
+    .map((update, index) => ({
+      ...update,
+      message: buildIncidentSummary(
+        incident,
+        componentNames,
+        update.message || (index === updates.length - 1 ? incident.public_summary : null),
+      ),
+    }));
+}
+
+function ensureTodayHistory(
+  history: { date: string; status: SystemStatus }[],
+  status: SystemStatus,
+) {
+  const today = new Date().toISOString().slice(0, 10);
+  const withoutToday = history.filter((entry) => entry.date !== today);
+  return [...withoutToday, { date: today, status }].sort((left, right) =>
+    left.date.localeCompare(right.date),
+  );
+}
+
+async function safeHeadCount(
+  table: string,
+): Promise<TableProbeResult> {
+  try {
     const supabase = getSupabaseAdminClientOrThrow();
+    const { count, error } = await supabase
+      .from(table)
+      .select("id", { count: "exact", head: true });
 
-    const { error } = await supabase
-        .from('system_status_subscriptions')
-        .insert({ type, target });
+    if (error) {
+      return {
+        available: false,
+        count: null,
+        error: error.message,
+      };
+    }
 
-    if (error) throw error;
-    return { ok: true };
+    return {
+      available: true,
+      count: typeof count === "number" ? count : 0,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      available: false,
+      count: null,
+      error: error instanceof Error ? error.message : "Erro desconhecido",
+    };
+  }
+}
+
+async function safePendingPaymentsCount(
+  stalePendingDate: string,
+): Promise<TableProbeResult> {
+  try {
+    const supabase = getSupabaseAdminClientOrThrow();
+    const { count, error } = await supabase
+      .from("payment_orders")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "pending")
+      .lt("created_at", stalePendingDate);
+
+    if (error) {
+      return {
+        available: false,
+        count: null,
+        error: error.message,
+      };
+    }
+
+    return {
+      available: true,
+      count: typeof count === "number" ? count : 0,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      available: false,
+      count: null,
+      error: error instanceof Error ? error.message : "Erro desconhecido",
+    };
+  }
+}
+
+async function safeRecentPaymentFailuresCount(
+  recentFailuresDate: string,
+): Promise<TableProbeResult> {
+  try {
+    const supabase = getSupabaseAdminClientOrThrow();
+    const { count, error } = await supabase
+      .from("payment_orders")
+      .select("id", { count: "exact", head: true })
+      .in("status", ["failed", "rejected", "expired"])
+      .gte("created_at", recentFailuresDate);
+
+    if (error) {
+      return {
+        available: false,
+        count: null,
+        error: error.message,
+      };
+    }
+
+    return {
+      available: true,
+      count: typeof count === "number" ? count : 0,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      available: false,
+      count: null,
+      error: error instanceof Error ? error.message : "Erro desconhecido",
+    };
+  }
+}
+
+async function collectInternalSignals() {
+  const now = new Date();
+  const stalePendingDate = new Date(now.getTime() - 30 * 60 * 1000).toISOString();
+  const recentFailuresDate = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+
+  const paymentsStartedAt = Date.now();
+  const [paymentPendingProbe, paymentFailureProbe] = await Promise.all([
+    safePendingPaymentsCount(stalePendingDate),
+    safeRecentPaymentFailuresCount(recentFailuresDate),
+  ]);
+  const paymentsLatencyMs = Date.now() - paymentsStartedAt;
+
+  const discordStartedAt = Date.now();
+  const [discordLinksProbe, teamServersProbe] = await Promise.all([
+    safeHeadCount("auth_user_discord_links"),
+    safeHeadCount("auth_user_team_servers"),
+  ]);
+  const discordLatencyMs = Date.now() - discordStartedAt;
+
+  const auditStartedAt = Date.now();
+  const [transcriptsProbe, auditLogsProbe] = await Promise.all([
+    safeHeadCount("ticket_transcripts"),
+    safeHeadCount("guild_security_logs_settings"),
+  ]);
+  const auditLatencyMs = Date.now() - auditStartedAt;
+
+  const paymentPending = paymentPendingProbe.count || 0;
+  const paymentFailures = paymentFailureProbe.count || 0;
+
+  let paymentsStatus: SystemStatus = "operational";
+  let paymentsMessage: string | null = null;
+
+  if (!paymentPendingProbe.available && !paymentFailureProbe.available) {
+    paymentsStatus = "degraded_performance";
+    paymentsMessage = "Monitoramento de pagamentos indisponivel na base.";
+  } else if (paymentPending > 25 || paymentFailures > 20) {
+    paymentsStatus = "partial_outage";
+    paymentsMessage = `Fila de pagamentos com ${paymentPending} pendentes antigos e ${paymentFailures} falhas recentes.`;
+  } else if (paymentPending > 0 || paymentFailures > 0) {
+    paymentsStatus = "degraded_performance";
+    paymentsMessage = `Foram detectados ${paymentPending} pagamentos pendentes antigos e ${paymentFailures} falhas recentes.`;
+  }
+
+  const discordTablesAvailable =
+    discordLinksProbe.available || teamServersProbe.available;
+  const discordStatus: MonitorSignal = {
+    status: discordTablesAvailable ? "operational" : "degraded_performance",
+    message: discordTablesAvailable
+      ? null
+      : "Monitoramento do ecossistema Discord indisponivel na base.",
+    checkedAt: now.toISOString(),
+    latencyMs: discordLatencyMs,
+  };
+
+  const auditTablesAvailable = transcriptsProbe.available && auditLogsProbe.available;
+  const auditStatus: MonitorSignal = {
+    status: auditTablesAvailable ? "operational" : "degraded_performance",
+    message: auditTablesAvailable
+      ? null
+      : "Parte das tabelas de auditoria ainda nao esta disponivel.",
+    checkedAt: now.toISOString(),
+    latencyMs: auditLatencyMs,
+  };
+
+  return {
+    payments: {
+      status: paymentsStatus,
+      message: paymentsMessage,
+      checkedAt: now.toISOString(),
+      latencyMs: paymentsLatencyMs,
+    } satisfies MonitorSignal,
+    discord: discordStatus,
+    audit: auditStatus,
+  };
+}
+
+function resolveSignalForComponent(
+  componentName: string,
+  signals: Record<string, MonitorSignal>,
+) {
+  const sourceKey = inferComponentSourceKey(componentName);
+  if (!sourceKey) {
+    return null;
+  }
+
+  return {
+    sourceKey,
+    signal: signals[sourceKey] || null,
+  };
+}
+
+function validateSubscriptionTarget(
+  type: StatusSubscriptionType,
+  target: string,
+) {
+  const value = target.trim();
+  if (!value) {
+    throw new Error("Destino da inscricao nao pode ser vazio.");
+  }
+
+  if (type === "email") {
+    const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+    if (!emailOk) {
+      throw new Error("Informe um e-mail valido.");
+    }
+  }
+
+  if (type === "webhook") {
+    try {
+      const url = new URL(value);
+      if (!["http:", "https:"].includes(url.protocol)) {
+        throw new Error("Protocolo invalido.");
+      }
+    } catch {
+      throw new Error("Informe uma URL de webhook valida.");
+    }
+  }
+
+  if (type === "discord_dm" || type === "discord_channel") {
+    if (!/^\d{16,22}$/.test(value)) {
+      throw new Error("Informe um ID do Discord valido.");
+    }
+  }
+
+  return value;
+}
+
+export async function getSystemStatus() {
+  const supabase = getSupabaseAdminClientOrThrow();
+
+  try {
+    const ninetyDaysAgo = new Date();
+    ninetyDaysAgo.setUTCDate(ninetyDaysAgo.getUTCDate() - 90);
+    const historyDateStr = ninetyDaysAgo.toISOString().slice(0, 10);
+
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setUTCDate(thirtyDaysAgo.getUTCDate() - 30);
+    const incidentDateStr = thirtyDaysAgo.toISOString();
+
+    const [
+      componentsRes,
+      historyRes,
+      incidentsRes,
+      incidentLinksRes,
+      apiLive,
+      flowAiLive,
+      scheduledTasksLive,
+      domainsLive,
+      discordBotLive,
+      internalSignals,
+    ] = await Promise.all([
+      supabase
+        .from("system_components")
+        .select("id, name, description, status, display_order, updated_at, created_at")
+        .order("display_order", { ascending: true }),
+      supabase
+        .from("system_status_history")
+        .select("component_id, status, recorded_at")
+        .gte("recorded_at", historyDateStr)
+        .order("recorded_at", { ascending: true }),
+      supabase
+        .from("system_incidents")
+        .select("*, updates:system_incident_updates(id, message, status, created_at)")
+        .gte("created_at", incidentDateStr)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("system_incident_components")
+        .select("incident_id, component_id, component:system_components(name)"),
+      checkApiStatus(),
+      checkFlowAiStatus(),
+      checkScheduledTasksStatus(),
+      checkDomainsStatus(),
+      checkDiscordBotStatus(),
+      collectInternalSignals(),
+    ]);
+
+    if (componentsRes.error) {
+      throw componentsRes.error;
+    }
+
+    const components = (componentsRes.data || []) as ComponentRow[];
+    const history = (historyRes.data || []) as HistoryRow[];
+    const incidentsRaw = (incidentsRes.data || []) as IncidentRow[];
+    const incidentLinks = incidentLinksRes.error
+      ? []
+      : ((incidentLinksRes.data || []) as IncidentComponentLink[]);
+
+    const signals: Record<string, MonitorSignal> = {
+      api: {
+        status: apiLive.status,
+        message: apiLive.message,
+        checkedAt: apiLive.checkedAt,
+        latencyMs: apiLive.latencyMs,
+      },
+      flowai: {
+        status: flowAiLive.overall.status,
+        message: flowAiLive.overall.message,
+        checkedAt: flowAiLive.checkedAt,
+        latencyMs: flowAiLive.overall.latencyMs,
+      },
+      scheduled_tasks: {
+        status: scheduledTasksLive.status,
+        message: scheduledTasksLive.message,
+        checkedAt: scheduledTasksLive.checkedAt,
+        latencyMs: scheduledTasksLive.latencyMs,
+      },
+      domains: {
+        status: domainsLive.status,
+        message: domainsLive.message,
+        checkedAt: domainsLive.checkedAt,
+        latencyMs: domainsLive.latencyMs,
+      },
+      discord: {
+        status: discordBotLive.status,
+        message: discordBotLive.message,
+        checkedAt: discordBotLive.checkedAt,
+        latencyMs: discordBotLive.latencyMs,
+      },
+      payments: internalSignals.payments,
+      audit: internalSignals.audit,
+    };
+
+    const historyByComponent = new Map<string, HistoryRow[]>();
+    for (const entry of history) {
+      const current = historyByComponent.get(entry.component_id);
+      if (current) {
+        current.push(entry);
+      } else {
+        historyByComponent.set(entry.component_id, [entry]);
+      }
+    }
+
+    const incidentComponentsByIncident = new Map<string, string[]>();
+    for (const link of incidentLinks) {
+      const componentName = normalizeText(link.component?.name);
+      if (!componentName) continue;
+
+      const current = incidentComponentsByIncident.get(link.incident_id);
+      if (current) {
+        if (!current.includes(componentName)) {
+          current.push(componentName);
+        }
+      } else {
+        incidentComponentsByIncident.set(link.incident_id, [componentName]);
+      }
+    }
+
+    const componentsWithHistory: ComponentStatus[] = components.map((component) => {
+      const historyEntries = (historyByComponent.get(component.id) || []).map((entry) => ({
+        date: entry.recorded_at,
+        status: entry.status,
+      }));
+
+      const resolvedSignal = resolveSignalForComponent(component.name, signals);
+      const effectiveStatus = resolvedSignal?.signal?.status || component.status;
+      const effectiveUpdatedAt =
+        resolvedSignal?.signal?.checkedAt || component.updated_at || component.created_at;
+
+      return {
+        ...component,
+        status: effectiveStatus,
+        updated_at: effectiveUpdatedAt,
+        history: ensureTodayHistory(historyEntries, effectiveStatus),
+        status_message: resolvedSignal?.signal?.message || null,
+        source_key: resolvedSignal?.sourceKey || null,
+        last_checked_at: resolvedSignal?.signal?.checkedAt || null,
+        latency_ms: resolvedSignal?.signal?.latencyMs ?? null,
+      };
+    });
+
+    const incidents: Incident[] = incidentsRaw.map((incident) => {
+      const componentNames = incidentComponentsByIncident.get(incident.id) || [];
+      const updates = buildIncidentUpdates(incident, componentNames);
+
+      return {
+        id: incident.id,
+        title: incident.title,
+        impact: incident.impact,
+        status: incident.status,
+        created_at: incident.created_at,
+        updated_at: incident.updated_at,
+        updates,
+        summary: buildIncidentSummary(incident, componentNames),
+        affected_components: componentNames,
+      };
+    });
+
+    const overallStatus = getWorstSystemStatus(
+      componentsWithHistory.map((component) => component.status),
+    );
+
+    return {
+      components: componentsWithHistory,
+      incidents,
+      overallStatus,
+      checkedAt: new Date().toISOString(),
+      liveChecks: {
+        api: apiLive,
+        flowAi: flowAiLive,
+        scheduledTasks: scheduledTasksLive,
+        domains: domainsLive,
+        discordBot: discordBotLive,
+      },
+    };
+  } catch (error: unknown) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "PGRST205"
+    ) {
+      throw new Error(
+        "As tabelas de status ainda nao foram criadas no banco. Execute primeiro o SQL 064_system_status.sql e depois a migration de upgrade do status.",
+      );
+    }
+
+    throw error;
+  }
+}
+
+export async function subscribeToStatus(
+  type: StatusSubscriptionType,
+  target: string,
+) {
+  const supabase = getSupabaseAdminClientOrThrow();
+  const normalizedTarget = validateSubscriptionTarget(type, target);
+
+  const { error } = await supabase
+    .from("system_status_subscriptions")
+    .upsert(
+      {
+        type,
+        target: normalizedTarget,
+      },
+      {
+        onConflict: "type,target",
+        ignoreDuplicates: false,
+      },
+    );
+
+  if (error) {
+    throw error;
+  }
+
+  return { ok: true };
 }

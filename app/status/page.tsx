@@ -3,7 +3,7 @@ import StatusPageClient from "@/components/status/StatusPageClient";
 
 export const metadata: Metadata = {
   title: "Status - Flowdesk",
-  description: "Acompanhe o status de todos os serviços da Flowdesk em tempo real.",
+  description: "Acompanhe o status de todos os servicos da Flowdesk em tempo real.",
 };
 
 export default function StatusPage() {

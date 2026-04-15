@@ -35,7 +35,7 @@ function mapDomainError(error: unknown) {
   if (error.maintenance) {
     return {
       status: 503,
-      message: "A Openprovider esta em manutencao no momento. Tente novamente mais tarde.",
+      message: "Nosso sistema de dominios está em manutenção no momento. Tente novamente mais tarde.",
     };
   }
 
@@ -58,6 +58,20 @@ function mapDomainError(error: unknown) {
     return {
       status: 502,
       message: "A Openprovider recusou o token da requisicao. Revise a configuracao de autenticacao.",
+    };
+  }
+
+  if (error.status === 429) {
+    return {
+      status: 429,
+      message: "Muitas consultas simultaneas. Aguarde alguns segundos e tente novamente.",
+    };
+  }
+
+  if (error.status === 503) {
+    return {
+      status: 503,
+      message: "Servico temporariamente indisponivel. Tente novamente em alguns minutos.",
     };
   }
 
@@ -143,8 +157,13 @@ export async function POST(req: Request) {
   } catch (error) {
     const mapped = mapDomainError(error);
     const details = getOpenProviderErrorDetails(error);
+    const circuitBreakerStatus = openProviderClient.getCircuitBreakerStatus();
 
-    console.error(`[Domains API][${requestId}] ${mapped.message}`, details || error);
+    console.error(`[Domains API][${requestId}] ${mapped.message}`, {
+      error: details || error,
+      circuitBreaker: circuitBreakerStatus,
+      retryCount: error instanceof OpenProviderRequestError ? error.retryCount : undefined,
+    });
 
     return NextResponse.json(
       {
@@ -152,6 +171,8 @@ export async function POST(req: Request) {
         message: mapped.message,
         provider: "openprovider",
         code: error instanceof OpenProviderRequestError ? error.code : undefined,
+        retryCount: error instanceof OpenProviderRequestError ? error.retryCount : undefined,
+        circuitBreakerState: circuitBreakerStatus.state,
       },
       { status: mapped.status, headers: getJsonSecurityHeaders(requestId) },
     );

@@ -32,13 +32,15 @@ export default async function AffiliatesPage() {
 
   return (
     <div className="relative min-h-screen overflow-x-clip bg-[#040404] text-white">
-      <TopBetaBanner />
-      <LandingFrameLines />
-      <LandingHeader authenticatedUser={authenticatedUser} />
-      <main className="w-full">
-        <AffiliatesLanding isAuthenticated={Boolean(user)} />
-      </main>
-      <LandingFooter />
+      <div className="flowdesk-page-scale-80">
+        <TopBetaBanner />
+        <LandingFrameLines />
+        <LandingHeader authenticatedUser={authenticatedUser} />
+        <main className="w-full pb-20">
+          <AffiliatesLanding isAuthenticated={Boolean(user)} />
+        </main>
+        <LandingFooter />
+      </div>
     </div>
   );
 }

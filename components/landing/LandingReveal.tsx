@@ -25,12 +25,29 @@ export function LandingReveal({
   const [isVisible, setIsVisible] = useState(false);
 
   useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
+    let raf = 0;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+
+    const revealNow = () => {
       setIsVisible(true);
-    });
+    };
+
+    // Use rAF for smoothness, but keep a timeout fallback (background tabs/BFCache can skip rAF).
+    raf = window.requestAnimationFrame(revealNow);
+    timeout = setTimeout(revealNow, 80);
+
+    // When returning via back/forward cache, effects may not rerun as expected.
+    // These events ensure we never stay stuck in the hidden state.
+    window.addEventListener("pageshow", revealNow);
+    window.addEventListener("focus", revealNow);
+    document.addEventListener("visibilitychange", revealNow);
 
     return () => {
-      window.cancelAnimationFrame(frame);
+      window.cancelAnimationFrame(raf);
+      if (timeout) clearTimeout(timeout);
+      window.removeEventListener("pageshow", revealNow);
+      window.removeEventListener("focus", revealNow);
+      document.removeEventListener("visibilitychange", revealNow);
     };
   }, []);
 

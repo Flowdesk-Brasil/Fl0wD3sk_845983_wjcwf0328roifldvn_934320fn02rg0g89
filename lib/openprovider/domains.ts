@@ -1,4 +1,4 @@
-import { openProviderClient } from "./client";
+import { OpenProviderRequestError, openProviderClient } from "./client";
 import {
   DomainCheckResult,
   DomainCheckRequest,
@@ -326,7 +326,7 @@ export async function checkDomains(domains: CheckDomainInput[]) {
   const batchResults = await runWithConcurrencyLimit(
     chunks,
     getPositiveIntEnv("OPENPROVIDER_BATCH_CONCURRENCY", DEFAULT_BATCH_CONCURRENCY),
-    async (batch) => {
+    async (batch, batchIndex) => {
       try {
         const payload: DomainCheckRequest = {
           domains: batch.map(({ name, extension }) => ({
@@ -355,7 +355,49 @@ export async function checkDomains(domains: CheckDomainInput[]) {
         // Hydrate missing prices for this batch
         return await hydrateMissingPrices(batch, normalized);
       } catch (error) {
-        console.error(`[checkDomains] Batch failed:`, error);
+        console.warn(`[checkDomains] Batch ${batchIndex} failed (${batch.length} domains):`, error instanceof Error ? error.message : String(error));
+
+        // For batch failures, try individual requests as fallback
+        if (batch.length > 1) {
+          console.log(`[checkDomains] Attempting individual requests for batch ${batchIndex}`);
+
+          const individualResults = await runWithConcurrencyLimit(
+            batch,
+            Math.min(batch.length, 2), // Limit concurrency for individual requests
+            async (domain) => {
+              try {
+                const payload: DomainCheckRequest = {
+                  domains: [{
+                    name: normalizeName(domain.name),
+                    extension: normalizeExtension(domain.extension),
+                  }],
+                  with_price: true,
+                };
+
+                if (domain.idn_script) {
+                  payload.additional_data = {
+                    idn_script: domain.idn_script,
+                  };
+                }
+
+                const response = await openProviderClient.post<DomainCheckResponseData>("domains/check", payload);
+                const rawResult = response.data?.results?.[0];
+                const normalized = normalizeResult(domain, rawResult);
+
+                // Try to hydrate price individually
+                const hydrated = await hydrateMissingPrices([domain], [normalized]);
+                return hydrated[0];
+              } catch (individualError) {
+                console.warn(`[checkDomains] Individual request failed for ${domain.name}.${domain.extension}:`, individualError instanceof Error ? individualError.message : String(individualError));
+                return normalizeResult(domain, undefined);
+              }
+            },
+          );
+
+          return individualResults;
+        }
+
+        // If single domain or individual requests also fail, return fallback results
         return batch.map((domain) => normalizeResult(domain, undefined));
       }
     },

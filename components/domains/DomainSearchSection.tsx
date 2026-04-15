@@ -42,6 +42,26 @@ type DomainSearchFailure = {
   message: string;
 };
 
+function resolveDomainSearchMessage(input: {
+  isLoading?: boolean;
+  status?: number;
+  backendMessage?: string | null;
+}) {
+  if (input.status === 503) {
+    return "Sistema de domínios se encontra em manutenção no momento. Tente novamente mais tarde.";
+  }
+
+  if (input.backendMessage && /manutenc/i.test(input.backendMessage)) {
+    return "Sistema de domínios se encontra em manutenção no momento. Tente novamente mais tarde.";
+  }
+
+  if (input.backendMessage && /circuit breaker is open/i.test(input.backendMessage)) {
+    return "Sistema de domínios se encontra em manutenção no momento. Tente novamente mais tarde.";
+  }
+
+  return input.backendMessage?.trim() || "Nao foi possivel concluir a busca agora. Tente novamente.";
+}
+
 type AiSuggestionGroup = {
   name: string;
   rationale: string;
@@ -275,6 +295,7 @@ export function DomainSearchSection({ initialTab = "register" }: DomainSearchSec
   const [searchQuery, setSearchQuery] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isMaintenanceMode, setIsMaintenanceMode] = useState(false);
   const [activeFilter, setActiveFilter] = useState("popular");
   const [registerData, setRegisterData] = useState<RegisterSearchResponse | null>(null);
   const [exchangeRate, setExchangeRate] = useState(5.65);
@@ -381,12 +402,27 @@ export function DomainSearchSection({ initialTab = "register" }: DomainSearchSec
         const data = (await response.json()) as DomainAiResponse | DomainSearchFailure;
         if (!response.ok || !data.ok) {
           setAiData(null);
-          setError(data.ok ? "Falha ao gerar dominios com IA." : data.message);
+          const errorMessage = resolveDomainSearchMessage({
+            status: response.status,
+            backendMessage: data.ok ? "Falha ao gerar dominios com IA." : data.message,
+          });
+          setError(errorMessage);
+          setIsMaintenanceMode(/manutenc/i.test(errorMessage) || /pre[cç]o/i.test(errorMessage));
+          setAiData(null);
           return;
         }
 
         setAiData(data);
         setSelectedAiName(data.suggestions[0]?.name || null);
+
+        // Verificar se algum domínio sugerido tem preço indisponível
+        const hasUnavailablePrices = data.suggestions.some(suggestion =>
+          suggestion.search.results.some(result => result.price <= 0)
+        );
+        if (hasUnavailablePrices) {
+          setIsMaintenanceMode(true);
+          setError("Sistema temporariamente indisponível para consulta de preço");
+        }
         return;
       }
 
@@ -400,7 +436,12 @@ export function DomainSearchSection({ initialTab = "register" }: DomainSearchSec
       const data = (await response.json()) as RegisterSearchResponse | DomainSearchFailure;
       if (!response.ok || !data.ok) {
         setRegisterData(null);
-        setError(data.ok ? "Falha ao consultar dominios." : data.message);
+        const errorMessage = resolveDomainSearchMessage({
+          status: response.status,
+          backendMessage: data.ok ? "Falha ao consultar dominios." : data.message,
+        });
+        setError(errorMessage);
+        setIsMaintenanceMode(/manutenc/i.test(errorMessage) || /Sistema temporariamente indispon[ií]vel para consulta de preço/i.test(errorMessage));
         return;
       }
 
@@ -408,12 +449,21 @@ export function DomainSearchSection({ initialTab = "register" }: DomainSearchSec
       if (data.exchangeRate) {
         setExchangeRate(data.exchangeRate);
       }
+
+      // Verificar se o domínio exato tem preço indisponível (problema sistêmico)
+      const exactDomainResult = data.exactDomain ? data.results.find(r => r.domain === data.exactDomain) : data.results[0];
+      if (exactDomainResult && exactDomainResult.price <= 0) {
+        setIsMaintenanceMode(true);
+        setError("Sistema temporariamente indisponível para consulta de preço");
+      }
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         return;
       }
 
-      setError("Nao foi possivel consultar agora. Tente novamente em instantes.");
+      const fallbackError = resolveDomainSearchMessage({ backendMessage: null });
+      setError(fallbackError);
+      setIsMaintenanceMode(/manutenc/i.test(fallbackError) || /pre[cç]o/i.test(fallbackError));
     } finally {
       if (activeRequestRef.current === controller) {
         activeRequestRef.current = null;
@@ -425,6 +475,7 @@ export function DomainSearchSection({ initialTab = "register" }: DomainSearchSec
   const handleTabChange = useCallback((mode: DomainMode) => {
     setActiveTab(mode);
     setError(null);
+    setIsMaintenanceMode(false);
     setActiveFilter("popular");
     setSearchQuery(readStoredSearch(mode));
 
@@ -559,6 +610,20 @@ export function DomainSearchSection({ initialTab = "register" }: DomainSearchSec
               {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Search className="h-5 w-5" />}
             </button>
           </div>
+
+          <AnimatePresence initial={false}>
+            {error && (
+              <motion.div
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                className="mt-[10px] rounded-[18px] bg-[#0A0A0A] px-[16px] py-[12px] text-left text-[12px] leading-[1.55] text-[#9A9A9A]"
+                aria-live="polite"
+              >
+                {resolveDomainSearchMessage({ backendMessage: error })}
+              </motion.div>
+            )}
+          </AnimatePresence>
         </form>
 
         {activeTab === "ai" && (
@@ -569,22 +634,9 @@ export function DomainSearchSection({ initialTab = "register" }: DomainSearchSec
         )}
       </div>
 
-      <AnimatePresence>
-        {error && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="mx-auto mt-5 w-full max-w-[1200px] rounded-[18px] border border-[#351818] bg-[#1B0C0C] px-[16px] py-[14px] text-[13px] font-medium text-[#FF8E8E]"
-          >
-            {error}
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {isLoading && <DomainSkeleton />}
 
-      {!isLoading && activeTab === "ai" && aiData && aiData.suggestions.length > 0 && (
+      {!isLoading && !isMaintenanceMode && activeTab === "ai" && aiData && aiData.suggestions.length > 0 && (
         <div className="mx-auto mt-7 w-full max-w-[1200px] rounded-[22px] border border-[#141414] bg-[#090909] p-[16px]">
           <div className="flex flex-col items-start gap-[14px] lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0 space-y-[8px] text-left">
@@ -643,7 +695,7 @@ export function DomainSearchSection({ initialTab = "register" }: DomainSearchSec
         </div>
       )}
 
-      {!isLoading && exactMatch && (
+      {!isLoading && !isMaintenanceMode && exactMatch && (
         <div className="mx-auto mt-7 w-full max-w-[1200px] space-y-3">
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1.06fr)_minmax(0,0.94fr)]">
             <section className="flex flex-col rounded-[22px] border border-[#141414] bg-[#0A0A0A] p-[16px]">

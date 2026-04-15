@@ -1,18 +1,20 @@
 "use client";
 
-import React, { useEffect, useState, useMemo, useCallback, memo } from "react";
+import React, { useEffect, useState, useMemo, memo } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import Image from "next/image";
-import { 
-  CheckCircle2, 
-  AlertCircle, 
-  AlertTriangle, 
-  XCircle, 
-  ChevronRight, 
+import Link from "next/link";
+import {
+  CheckCircle2,
+  AlertCircle,
+  AlertTriangle,
+  XCircle,
+  ChevronRight,
   Bell,
   Mail,
   Webhook,
-  MessageSquare
+  MessageSquare,
+  type LucideIcon
 } from "lucide-react";
 import { LandingActionButton } from "@/components/landing/LandingActionButton";
 import { LandingReveal } from "@/components/landing/LandingReveal";
@@ -20,7 +22,7 @@ import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { LandingGlowTag } from "@/components/landing/LandingGlowTag";
 import type { ComponentStatus, Incident, SystemStatus, IncidentImpact, IncidentStatus } from "@/lib/status/service";
 
-const STATUS_CONFIG: Record<SystemStatus, { label: string; color: string; icon: any; bannerClass: string }> = {
+const STATUS_CONFIG: Record<SystemStatus, { label: string; color: string; icon: LucideIcon; bannerClass: string }> = {
   operational: { 
     label: "Todos os sistemas operacionais", 
     color: "#0070FF", 
@@ -45,6 +47,13 @@ const STATUS_CONFIG: Record<SystemStatus, { label: string; color: string; icon: 
     icon: XCircle,
     bannerClass: "bg-[#FF3B30]"
   }
+};
+
+const BANNER_LABELS: Record<SystemStatus, string> = {
+  operational: "Todos os sistemas operacionais",
+  degraded_performance: "Operacional",
+  partial_outage: "Alguns sistemas operando com latÃªncia",
+  major_outage: "Falha Critica - Nossa equipe jÃ¡ estÃ¡ lidando com a situaÃ§Ã£o",
 };
 
 const IMPACT_CONFIG: Record<IncidentImpact, { label: string; color: string }> = {
@@ -157,7 +166,7 @@ const SubscribeModalContent = ({ resetSubscribeModal, subscribing, setSubscribin
         setSubscribeStatus('error');
         setSubscribeErrorMessage(json.error || "Erro ao se inscrever.");
       }
-    } catch (error) {
+    } catch {
       setSubscribeStatus('error');
       setSubscribeErrorMessage("Erro ao se inscrever. Tente novamente.");
     } finally {
@@ -304,7 +313,7 @@ const SubscribeModalContent = ({ resetSubscribeModal, subscribing, setSubscribin
   );
 };
 
-const StatusHistoryBar = memo(({ componentId, history, incidents }: { componentId: string; history: { date: string; status: SystemStatus }[]; incidents: Incident[] }) => {
+const StatusHistoryBar = memo(({ history, incidents }: { history: { date: string; status: SystemStatus }[]; incidents: Incident[] }) => {
   const historyByDate = useMemo(() => {
     const map = new Map<string, SystemStatus>();
     for (const entry of history) {
@@ -371,6 +380,40 @@ export default function StatusPageClient() {
   const [error, setError] = useState<string | null>(null);
   const [showSubscribe, setShowSubscribe] = useState(false);
   const [subscribing, setSubscribing] = useState(false);
+  const [flowAiLive, setFlowAiLive] = useState<null | {
+    checkedAt: string;
+    overall: { status: SystemStatus; latencyMs: number | null };
+    upstream: { openai: { status: SystemStatus; latencyMs: number | null } };
+    integrations: {
+      domainSuggestions: { status: SystemStatus; latencyMs: number | null };
+      ticketAi: { status: SystemStatus; latencyMs: number | null };
+      discordMessageAi: { status: SystemStatus; latencyMs: number | null };
+    };
+  }>(null);
+  const [apiLive, setApiLive] = useState<null | {
+    checkedAt: string;
+    latencyMs: number | null;
+    status: SystemStatus;
+    message: string | null;
+  }>(null);
+  const [scheduledTasksLive, setScheduledTasksLive] = useState<null | {
+    checkedAt: string;
+    latencyMs: number | null;
+    status: SystemStatus;
+    message: string | null;
+  }>(null);
+  const [domainsLive, setDomainsLive] = useState<null | {
+    checkedAt: string;
+    latencyMs: number | null;
+    status: SystemStatus;
+    message: string | null;
+  }>(null);
+  const [discordBotLive, setDiscordBotLive] = useState<null | {
+    checkedAt: string;
+    latencyMs: number | null;
+    status: SystemStatus;
+    message: string | null;
+  }>(null);
 
   const incidentsByDay = useMemo(() => {
     const map = new Map<string, Incident[]>();
@@ -412,6 +455,165 @@ export default function StatusPageClient() {
     fetchStatus();
   }, []);
 
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    async function fetchFlowAiLive() {
+      try {
+        const res = await fetch("/api/status/flowai", { cache: "no-store" });
+        const json = await res.json();
+        if (!alive) return;
+        if (json?.ok) {
+          setFlowAiLive({
+            checkedAt: json.checkedAt,
+            overall: { status: json.overall?.status || "operational", latencyMs: json.overall?.latencyMs ?? null },
+            upstream: { openai: { status: json.upstream?.openai?.status || "operational", latencyMs: json.upstream?.openai?.latencyMs ?? null } },
+            integrations: {
+              domainSuggestions: { status: json.integrations?.domainSuggestions?.status || "operational", latencyMs: json.integrations?.domainSuggestions?.latencyMs ?? null },
+              ticketAi: { status: json.integrations?.ticketAi?.status || "operational", latencyMs: json.integrations?.ticketAi?.latencyMs ?? null },
+              discordMessageAi: { status: json.integrations?.discordMessageAi?.status || "operational", latencyMs: json.integrations?.discordMessageAi?.latencyMs ?? null },
+            },
+          });
+        }
+      } catch {
+        // Silent: status page should still work from DB-based components.
+      }
+    }
+
+    void fetchFlowAiLive();
+    timer = setInterval(fetchFlowAiLive, 15000);
+
+    return () => {
+      alive = false;
+      if (timer) clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    async function fetchDomainsLive() {
+      try {
+        const res = await fetch("/api/status/domains", { cache: "no-store" });
+        const json = await res.json();
+        if (!alive) return;
+        if (json?.ok !== undefined) {
+          setDomainsLive({
+            checkedAt: json.checkedAt,
+            latencyMs: json.latencyMs ?? null,
+            status: json.status || "operational",
+            message: json.message || null,
+          });
+        }
+      } catch {
+        // Silent: page still works with aggregate status data.
+      }
+    }
+
+    void fetchDomainsLive();
+    timer = setInterval(fetchDomainsLive, 15000);
+
+    return () => {
+      alive = false;
+      if (timer) clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    async function fetchDiscordBotLive() {
+      try {
+        const res = await fetch("/api/status/discord-bot", { cache: "no-store" });
+        const json = await res.json();
+        if (!alive) return;
+        if (json?.status) {
+          setDiscordBotLive({
+            checkedAt: json.checkedAt,
+            latencyMs: json.latencyMs ?? null,
+            status: json.status || "operational",
+            message: json.message || null,
+          });
+        }
+      } catch {
+        // Silent: aggregate data still renders.
+      }
+    }
+
+    void fetchDiscordBotLive();
+    timer = setInterval(fetchDiscordBotLive, 15000);
+
+    return () => {
+      alive = false;
+      if (timer) clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    async function fetchApiLive() {
+      try {
+        const res = await fetch("/api/status/api", { cache: "no-store" });
+        const json = await res.json();
+        if (!alive) return;
+        if (json?.ok !== undefined) {
+          setApiLive({
+            checkedAt: json.checkedAt,
+            latencyMs: json.latencyMs ?? null,
+            status: json.status || "operational",
+            message: json.message || null,
+          });
+        }
+      } catch {
+        // Silent: status page should still work from DB-based components.
+      }
+    }
+
+    void fetchApiLive();
+    timer = setInterval(fetchApiLive, 15000);
+
+    return () => {
+      alive = false;
+      if (timer) clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    async function fetchScheduledTasksLive() {
+      try {
+        const res = await fetch("/api/status/scheduled-tasks", { cache: "no-store" });
+        const json = await res.json();
+        if (!alive) return;
+        if (json?.ok !== undefined) {
+          setScheduledTasksLive({
+            checkedAt: json.checkedAt,
+            latencyMs: json.latencyMs ?? null,
+            status: json.status || "operational",
+            message: json.message || null,
+          });
+        }
+      } catch {
+        // Silent: status page should still work from DB-based components.
+      }
+    }
+
+    void fetchScheduledTasksLive();
+    timer = setInterval(fetchScheduledTasksLive, 15000);
+
+    return () => {
+      alive = false;
+      if (timer) clearInterval(timer);
+    };
+  }, []);
+
   const syncStatus = useMemo(() => {
     if (!data?.components.length) return { label: null, isStale: false };
 
@@ -443,7 +645,7 @@ export default function StatusPageClient() {
     if (data.components.some(c => c.status === "partial_outage")) return "partial_outage";
     if (data.components.some(c => c.status === "degraded_performance")) return "degraded_performance";
     return "operational";
-  }, [data]);
+  }, [data, syncStatus.isStale]);
 
   if (isInitialLoad) {
     return (
@@ -471,7 +673,7 @@ export default function StatusPageClient() {
             {error}
           </p>
           <div className="rounded-lg bg-black/40 p-4 text-left font-mono text-[12px] text-red-400">
-            PGRST205: Could not find the table 'public.system_components'
+            <code>PGRST205: Could not find the table &apos;public.system_components&apos;</code>
           </div>
           <button 
             onClick={() => window.location.reload()}
@@ -486,6 +688,7 @@ export default function StatusPageClient() {
 
   const config = STATUS_CONFIG[overallStatus];
   const Icon = config.icon;
+  const bannerLabel = syncStatus.isStale ? "Status sob monitoramento" : BANNER_LABELS[overallStatus];
 
   return (
     <div className="min-h-screen bg-black text-white font-sans selection:bg-[#0070FF]/30">
@@ -520,7 +723,7 @@ export default function StatusPageClient() {
               </div>
               <div>
                 <span className="text-[20px] font-bold tracking-tight text-white block leading-tight">
-                  {syncStatus.isStale ? "Status sob monitoramento" : config.label}
+                  {bannerLabel}
                 </span>
                 {syncStatus.isStale && (
                   <span className="text-[12px] font-medium text-white/60">
@@ -534,7 +737,39 @@ export default function StatusPageClient() {
 
         {/* Components List */}
         <div className="mb-24 space-y-12">
-          {data?.components.map((component, idx) => (
+          {data?.components.map((component, idx) => {
+            const sourceKey = component.source_key || "";
+            const isFlowAi = sourceKey === "flowai" || /flow\s*ai/i.test(component.name);
+            const isApi = sourceKey === "api" || /api/i.test(component.name);
+            const isScheduledTasks = sourceKey === "scheduled_tasks" || /tarefas\s*agendadas/i.test(component.name);
+            const isDomainsRelated = sourceKey === "domains" || /registro de dom[ií]nio|dns|certificado ssl|firewall dns|geolocaliza/i.test(component.name);
+            const isDiscordBot = sourceKey === "discord" || /discord bot|notifica/i.test(component.name);
+            const effectiveStatus =
+              isFlowAi && flowAiLive
+                ? flowAiLive.overall.status
+                : isApi && apiLive
+                  ? apiLive.status
+                  : isScheduledTasks && scheduledTasksLive
+                    ? scheduledTasksLive.status
+                    : isDomainsRelated && domainsLive
+                      ? domainsLive.status
+                      : isDiscordBot && discordBotLive
+                        ? discordBotLive.status
+                      : component.status;
+            const effectiveLatencyMs =
+              isFlowAi && flowAiLive
+                ? flowAiLive.overall.latencyMs
+                : isApi && apiLive
+                  ? apiLive.latencyMs
+                  : isScheduledTasks && scheduledTasksLive
+                    ? scheduledTasksLive.latencyMs
+                    : isDomainsRelated && domainsLive
+                      ? domainsLive.latencyMs
+                      : isDiscordBot && discordBotLive
+                        ? discordBotLive.latencyMs
+                        : component.latency_ms ?? null;
+
+            return (
             <LandingReveal key={component.id} delay={0.05 * idx}>
               <div className="group">
                 <div className="mb-3 flex items-center justify-between">
@@ -542,14 +777,14 @@ export default function StatusPageClient() {
                     {/* {component.description && <ChevronRight className="h-4 w-4 text-[#666]" />} */}
                     <span className="text-[16px] font-medium text-[#EDEDED]">{component.name}</span>
                   </div>
-                  <span className="text-[14px] font-medium" style={{ color: STATUS_CONFIG[component.status].color }}>
-                    {component.status === 'operational' ? 'Operacional' : STATUS_CONFIG[component.status].label}
+                  <span className="text-[14px] font-medium" style={{ color: STATUS_CONFIG[effectiveStatus].color }}>
+                    {effectiveStatus === 'operational' ? 'Operacional' : STATUS_CONFIG[effectiveStatus].label}
+                    {effectiveLatencyMs !== null ? ` - ${effectiveLatencyMs}ms` : ""}
                   </span>
                 </div>
                 
                 {/* 90 Days History Bar */}
                 <StatusHistoryBar 
-                  componentId={component.id} 
                   history={component.history} 
                   incidents={data?.incidents || []} 
                 />
@@ -561,7 +796,8 @@ export default function StatusPageClient() {
                 </div>
               </div>
             </LandingReveal>
-          ))}
+            );
+          })}
         </div>
 
         {/* Incidents History */}
@@ -582,7 +818,7 @@ export default function StatusPageClient() {
                   <h3 className="mb-4 text-[18px] font-semibold text-white">{dateStr}</h3>
                   
                   {dayIncidents.length === 0 ? (
-                    <p className="text-[14px] text-[#666]">Nenhum incidente foi relatado hoje.</p>
+                    <p className="text-[14px] text-[#666]">Nenhum incidente foi relatado nesta data.</p>
                   ) : (
                     <div className="space-y-8">
                       {dayIncidents.map(incident => (
@@ -619,9 +855,9 @@ export default function StatusPageClient() {
             &copy; {new Date().getFullYear()} Flowdesk. Todos os direitos reservados.
           </p>
           <div className="mt-4 flex justify-center gap-6">
-            <a href="/terms" className="text-[13px] text-[#444] transition-colors hover:text-[#666]">Termos</a>
-            <a href="/privacy" className="text-[13px] text-[#444] transition-colors hover:text-[#666]">Privacidade</a>
-            <a href="/" className="text-[13px] text-[#444] transition-colors hover:text-[#666]">Página Inicial</a>
+            <Link href="/terms" className="text-[13px] text-[#444] transition-colors hover:text-[#666]">Termos</Link>
+            <Link href="/privacy" className="text-[13px] text-[#444] transition-colors hover:text-[#666]">Privacidade</Link>
+            <Link href="/" className="text-[13px] text-[#444] transition-colors hover:text-[#666]">Pagina Inicial</Link>
           </div>
         </div>
       </div>
@@ -661,7 +897,7 @@ export default function StatusPageClient() {
   );
 }
 
-function SubscriptionOption({ icon: Icon, label, description, onClick }: { icon: any, label: string, description: string, onClick: () => void }) {
+function SubscriptionOption({ icon: Icon, label, description, onClick }: { icon: LucideIcon, label: string, description: string, onClick: () => void }) {
   return (
     <button 
       onClick={onClick}

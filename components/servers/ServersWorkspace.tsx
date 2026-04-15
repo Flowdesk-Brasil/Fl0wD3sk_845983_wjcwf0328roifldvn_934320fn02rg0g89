@@ -2274,7 +2274,7 @@ export function ServersWorkspace({
   );
   const isEditorViewerOnly = useMemo(() => {
     if (!selectedServer) return false;
-    return !(selectedServer.canManage ?? selectedServer.accessMode === "owner");
+    return !(selectedServer.canManage && selectedServer.accessMode === "owner");
   }, [selectedServer]);
 
   const hasCurrentSectionPermission = useMemo(() => {
@@ -3411,7 +3411,7 @@ export function ServersWorkspace({
                     className="inline-flex h-[40px] w-[40px] items-center justify-center rounded-[14px] border border-[#171717] bg-[#0D0D0D] text-[#9C9C9C] transition-colors hover:border-[#242424] hover:text-[#E4E4E4]"
                     aria-label="Fechar modal"
                   >
-                    <span className="text-[18px] leading-none">Ã—</span>
+                    <span className="text-[18px] leading-none">x</span>
                   </button>
                 </div>
 
@@ -3595,7 +3595,7 @@ export function ServersWorkspace({
                                 className="inline-flex items-center gap-[8px] rounded-full border border-[#171717] bg-[#121212] px-[10px] py-[7px] text-[12px] leading-none text-[#C4C4C4] transition-colors hover:border-[#242424] hover:text-[#F0F0F0]"
                               >
                                 <span>{discordId}</span>
-                                <span className="text-[13px] leading-none text-[#777777]">Ã—</span>
+                                <span className="text-[13px] leading-none text-[#777777]">x</span>
                               </button>
                             ))}
                           </div>
@@ -3727,7 +3727,7 @@ export function ServersWorkspace({
                     className="inline-flex h-[38px] w-[38px] items-center justify-center rounded-[12px] border border-[#171717] bg-[#0D0D0D] text-[#9C9C9C] transition-colors hover:border-[#242424] hover:text-[#E4E4E4]"
                     aria-label="Fechar submodal"
                   >
-                    <span className="text-[18px] leading-none">Ã—</span>
+                    <span className="text-[18px] leading-none">x</span>
                   </button>
                 </div>
 

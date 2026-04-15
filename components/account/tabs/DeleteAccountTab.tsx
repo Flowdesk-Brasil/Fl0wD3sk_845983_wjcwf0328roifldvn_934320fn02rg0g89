@@ -1,16 +1,13 @@
 import { useState } from "react";
 import { UserMinus, AlertTriangle } from "lucide-react";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
-import { useRouter } from "next/navigation";
 import { DangerActionModal } from "../DangerActionModal";
 
 export function DeleteAccountTab() {
   const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
-  const router = useRouter();
 
   async function handleDeleteConfirm() {
-    
     setLoading(true);
     try {
       const res = await fetch("/api/auth/me/account", { method: "DELETE" });
@@ -37,22 +34,37 @@ export function DeleteAccountTab() {
       <div className="rounded-[18px] border border-[#3E1A1A] bg-[rgba(30,10,10,0.4)] p-[24px]">
         <div className="flex items-center gap-[12px] text-[#DB8A8A]">
           <AlertTriangle className="h-[24px] w-[24px]" />
-          <h2 className="text-[18px] font-semibold text-[#E9E9E9]">Gostaria mesmo de excluir sua conta?</h2>
+          <h2 className="text-[18px] font-semibold text-[#E9E9E9]">
+            Gostaria mesmo de excluir sua conta?
+          </h2>
         </div>
-        <div className="mt-[12px] text-[#B0B0B0] max-w-[600px] leading-[1.6]">
+        <div className="mt-[12px] max-w-[600px] leading-[1.6] text-[#B0B0B0]">
           <span>Ao excluir sua conta:</span>
-          <ul className="mt-[8px] list-disc ml-[20px] space-y-[4px]">
-             <li>Você perderá o acesso aos seus dados de pagamento e configurações em todos os painéis.</li>
-             <li>Suas equipes ativas perderão a posse caso você seja o administrador primário.</li>
-             <li>Quaisquer assinaturas ou chaves de API ligadas à sua conta serão invalidadas / tornadas inacessíveis.</li>
+          <ul className="ml-[20px] mt-[8px] list-disc space-y-[4px]">
+            <li>
+              Você perderá o acesso aos seus dados de pagamento e configurações
+              em todos os painéis.
+            </li>
+            <li>
+              Suas equipes ativas perderão a posse caso você seja o
+              administrador primário.
+            </li>
+            <li>
+              Quaisquer assinaturas ou chaves de API ligadas à sua conta serão
+              invalidadas ou tornadas inacessíveis.
+            </li>
           </ul>
         </div>
-        <button 
+        <button
           onClick={handleOpenModal}
           disabled={loading}
           className="mt-[24px] flex h-[44px] items-center justify-center gap-[8px] rounded-[12px] bg-[#BB3535] px-[24px] text-[15px] font-medium text-white transition hover:bg-[#8D2525] disabled:opacity-50"
         >
-          {loading ? <ButtonLoader size={18} /> : <UserMinus className="h-[18px] w-[18px]" />}
+          {loading ? (
+            <ButtonLoader size={18} />
+          ) : (
+            <UserMinus className="h-[18px] w-[18px]" />
+          )}
           Sim, excluir minha conta permanentemente
         </button>
         <DangerActionModal

@@ -1,45 +1,37 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import {
   ArrowRight,
   Check,
   ChevronDown,
-  Copy,
   DollarSign,
-  ExternalLink,
   Globe,
   Link2,
-  Medal,
-  MousePointerClick,
   QrCode,
   Sparkles,
   TrendingUp,
   Trophy,
   Webhook,
-  Zap,
   Bell,
-  MessageSquare,
-  BarChart3,
   Users,
-  Star,
 } from "lucide-react";
 
 import { AFFILIATE_LEVELS } from "@/lib/affiliates/affiliateLevels";
 import type { AffiliateLevel } from "@/lib/affiliates/affiliateTypes";
+import { LandingActionButton } from "@/components/landing/LandingActionButton";
 import { LandingReveal } from "@/components/landing/LandingReveal";
 import { LandingGlowTag } from "@/components/landing/LandingGlowTag";
 import { LandingSmoothScroll } from "@/components/landing/LandingSmoothScroll";
-import { motion, AnimatePresence } from "framer-motion";
 
-// ─── Data ────────────────────────────────────────────────────────────────────
+// Data
 
 const MOCK_RANKING = [
   {
     rank: 1,
-    name: "João S.",
+    name: "Joao S.",
     level: "diamond" as AffiliateLevel,
     sales: 87,
     commission: "R$ 12.480",
@@ -67,7 +59,7 @@ const BENEFITS = [
   {
     icon: Link2,
     title: "Link exclusivo por plano",
-    description: "Links únicos para cada plano e período, rastreando toda conversão sua.",
+    description: "Links unicos para cada plano e periodo, rastreando toda conversao sua.",
   },
   {
     icon: QrCode,
@@ -77,27 +69,27 @@ const BENEFITS = [
   {
     icon: Webhook,
     title: "Webhook em tempo real",
-    description: "Receba notificações de vendas pendentes, aprovadas e canceladas.",
+    description: "Receba notificacoes de vendas pendentes, aprovadas e canceladas.",
   },
   {
     icon: Bell,
     title: "Alertas por SMS e Email",
-    description: "Nunca perca uma venda. Alertas instantâneos a cada conversão.",
+    description: "Nunca perca uma venda. Alertas instantaneos a cada conversao.",
   },
   {
     icon: Globe,
     title: "Templates de sites prontos",
-    description: "Divulgue com seu próprio site em subdomínio personalizado.",
+    description: "Divulgue com seu proprio site em subdominio personalizado.",
   },
   {
     icon: Sparkles,
-    title: "Análises com IA",
-    description: "Insights inteligentes para otimizar sua taxa de conversão.",
+    title: "Analises com IA",
+    description: "Insights inteligentes para otimizar sua taxa de conversao.",
   },
   {
     icon: Trophy,
-    title: "Ranking com bônus",
-    description: "Top 3 do mês ganham % extra de comissão e benefícios exclusivos.",
+    title: "Ranking com bonus",
+    description: "Top 3 do mes ganham % extra de comissao e beneficios exclusivos.",
   },
   {
     icon: Users,
@@ -122,35 +114,76 @@ const HOW_IT_WORKS = [
   {
     step: "03",
     title: "Receba",
-    description: "Ganhe comissão a cada venda aprovada. Saque quando quiser via Pix.",
+    description: "Ganhe comissao a cada venda aprovada. Saque quando quiser via Pix.",
     icon: DollarSign,
   },
 ];
 
-const FAQS = [
+const PRIMARY_AFFILIATE_FAQ_ITEMS = [
   {
-    q: "Como funciona o pagamento de comissões?",
-    a: "Após a aprovação de cada venda, sua comissão é creditada no saldo disponível. Você pode solicitar saque a qualquer momento via Pix.",
+    question: "Como funciona o pagamento de comissoes?",
+    answer:
+      "Depois que a venda e aprovada, a comissao entra no seu saldo disponivel. A partir disso, voce pode solicitar saque conforme as regras do programa.",
   },
   {
-    q: "Qual é o prazo para receber após solicitar saque?",
-    a: "Processamos saques em até 2 dias úteis após a solicitação.",
+    question: "Qual e o prazo para receber apos solicitar o saque?",
+    answer:
+      "Os saques sao processados em ate 2 dias uteis. Assim voce consegue acompanhar tudo pelo dashboard sem depender de atendimento manual.",
   },
   {
-    q: "Como subo de nível?",
-    a: "Seu nível sobe automaticamente conforme você acumula vendas aprovadas no mês. Bronze (0+), Prata (5+), Ouro (20+) e Diamante (50+ vendas/mês).",
+    question: "Como subo de nivel dentro do programa?",
+    answer:
+      "Seu nivel sobe automaticamente conforme a quantidade de vendas aprovadas no mes. Quanto maior seu volume, maior o percentual de comissao e os beneficios liberados.",
   },
   {
-    q: "Posso ter mais de um link?",
-    a: "Sim! Você tem links específicos por plano (Basic, Pro, Enterprise) e por período (mensal/anual), totalizando 6 links rastreáveis.",
+    question: "Posso divulgar mais de um link de afiliado?",
+    answer:
+      "Sim. Voce pode trabalhar com links diferentes por plano e por periodo, o que ajuda a testar campanhas, canais e tipos de publico com mais controle.",
   },
   {
-    q: "O que é o ranking de afiliados?",
-    a: "Todo mês rankeamos os afiliados por volume de vendas. O Top 3 recebe bônus extra na comissão e benefícios exclusivos.",
+    question: "O que e o ranking de afiliados?",
+    answer:
+      "O ranking mensal destaca quem mais vendeu no periodo. Os melhores colocados podem receber bonus extras e maior visibilidade dentro do programa.",
   },
-];
+] as const;
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+const EXPANDED_AFFILIATE_FAQ_ITEMS = [
+  {
+    question: "Quando uma venda conta como aprovada?",
+    answer:
+      "A venda passa a contar quando conclui a validacao do pagamento e atende as regras internas do programa. Enquanto isso, ela pode aparecer como pendente no painel.",
+  },
+  {
+    question: "Consigo acompanhar cliques e conversoes em tempo real?",
+    answer:
+      "Sim. O dashboard mostra o desempenho dos seus links, ajudando voce a ver quais campanhas geram mais cliques, vendas aprovadas e comissoes.",
+  },
+  {
+    question: "Posso anunciar em redes sociais, grupos e comunidades?",
+    answer:
+      "Sim, desde que a divulgacao respeite as regras da plataforma e nao utilize spam, promessas enganosas ou abordagens proibidas. O ideal e trabalhar canais com audiencia qualificada.",
+  },
+  {
+    question: "Existe algum custo para participar do programa de afiliados?",
+    answer:
+      "Nao. A entrada no programa e gratuita. Voce recebe acesso ao painel, aos links e aos materiais de divulgacao sem taxa de adesao.",
+  },
+  {
+    question: "Se o cliente cancelar, eu perco a comissao?",
+    answer:
+      "Em casos de cancelamento, reembolso ou fraude, a venda pode deixar de ser valida para comissao. Isso garante um controle mais justo para todo o programa.",
+  },
+  {
+    question: "Posso usar trafego pago para divulgar?",
+    answer:
+      "Pode, desde que a campanha siga as diretrizes da marca e nao use termos proibidos, paginas enganosas ou promessas irreais. O ideal e alinhar bem a comunicacao da oferta.",
+  },
+  {
+    question: "Recebo material para ajudar na divulgacao?",
+    answer:
+      "Sim. O programa pode disponibilizar links, referencias, direcionamentos e recursos para facilitar sua divulgacao e melhorar sua conversao ao longo do tempo.",
+  },
+] as const;
 
 function LevelCard({ level }: { level: AffiliateLevel }) {
   const config = AFFILIATE_LEVELS[level];
@@ -168,7 +201,7 @@ function LevelCard({ level }: { level: AffiliateLevel }) {
         className="text-[13px] font-bold uppercase tracking-[0.05em]"
         style={{ color: config.color }}
       >
-        Nível
+        Nivel
       </p>
       <p
         className="mt-[12px] text-[20px] font-semibold tracking-[-0.03em]"
@@ -178,8 +211,8 @@ function LevelCard({ level }: { level: AffiliateLevel }) {
       </p>
       <p className="mt-[6px] text-[13px] leading-[1.55] text-[#6E6E6E]">
         {config.minSalesPerMonth === 0
-          ? "Nível inicial para todos"
-          : `A partir de ${config.minSalesPerMonth} vendas/mês`}
+          ? "Nivel inicial para todos"
+          : `A partir de ${config.minSalesPerMonth} vendas/mes`}
       </p>
       <div
         className="mt-[20px] flex items-end gap-[4px]"
@@ -190,24 +223,24 @@ function LevelCard({ level }: { level: AffiliateLevel }) {
         >
           {config.commissionPct}%
         </span>
-        <span className="mb-[6px] text-[14px] text-[#666666]">comissão</span>
+        <span className="mb-[6px] text-[14px] text-[#666666]">comissao</span>
       </div>
       {config.rankBonusPct > 0 && (
         <p
           className="mt-[8px] text-[12px]"
           style={{ color: config.color }}
         >
-          + até {config.rankBonusPct}% bônus Top 3
+          + ate {config.rankBonusPct}% bonus Top 3
         </p>
       )}
       <div className="mt-[20px] space-y-[8px]">
         {[
           "Painel de afiliado completo",
-          "Links rastreáveis por plano",
+          "Links rastreaveis por plano",
           "QR Code personalizado",
           ...(level !== "bronze" ? ["Webhook personalizado"] : []),
-          ...(level === "gold" || level === "diamond" ? ["Análises com IA"] : []),
-          ...(level === "diamond" ? ["Bônus Top 3 de ranking"] : []),
+          ...(level === "gold" || level === "diamond" ? ["Analises com IA"] : []),
+          ...(level === "diamond" ? ["Bonus Top 3 de ranking"] : []),
         ].map((feat) => (
           <div key={feat} className="flex items-center gap-[8px]">
             <Check className="h-[14px] w-[14px] shrink-0" style={{ color: config.color }} strokeWidth={2.5} />
@@ -223,8 +256,6 @@ function RankPodium({ entry }: { entry: typeof MOCK_RANKING[0] }) {
   const config = AFFILIATE_LEVELS[entry.level];
   const rankColors = ["#FFFFFF", "#E5E5E5", "#AFAFAF"] as const;
   const rankColor = rankColors[entry.rank - 1];
-  const rankIcons = [Star, Star, Star];
-  const RankIcon = rankIcons[entry.rank - 1];
 
   return (
     <div
@@ -247,7 +278,7 @@ function RankPodium({ entry }: { entry: typeof MOCK_RANKING[0] }) {
       <div className="mt-[14px] space-y-[4px]">
         <div className="flex items-center justify-center gap-[6px] text-[13px] text-[#888]">
           <TrendingUp className="h-[13px] w-[13px]" />
-          {entry.sales} vendas este mês
+          {entry.sales} vendas este mes
         </div>
         <p className="text-[18px] font-semibold" style={{ color: rankColor }}>
           {entry.commission}
@@ -257,46 +288,182 @@ function RankPodium({ entry }: { entry: typeof MOCK_RANKING[0] }) {
   );
 }
 
-function FaqItem({ q, a }: { q: string; a: string }) {
-  const [open, setOpen] = useState(false);
-
+function AffiliateFaqChevron({ isOpen }: { isOpen: boolean }) {
   return (
-    <div className="border-b border-[#111111]">
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className={`h-[22px] w-[22px] shrink-0 text-[rgba(218,218,218,0.7)] transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+        isOpen ? "rotate-180" : "rotate-0"
+      }`}
+      fill="none"
+    >
+      <path
+        d="M6.5 9.5L12 15L17.5 9.5"
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function AffiliateFaqItem({
+  question,
+  answer,
+  isOpen,
+  onToggle,
+  className = "",
+  style,
+  "data-flowdesk-visible": dataFlowdeskVisible,
+}: {
+  question: string;
+  answer: string;
+  isOpen: boolean;
+  onToggle: () => void;
+  className?: string;
+  style?: CSSProperties;
+  "data-flowdesk-visible"?: "true" | "false";
+}) {
+  return (
+    <div
+      className={`border-b border-[rgba(255,255,255,0.03)] ${className}`.trim()}
+      style={style}
+      data-flowdesk-visible={dataFlowdeskVisible}
+    >
       <button
         type="button"
-        onClick={() => setOpen(!open)}
-        className="flex w-full items-center justify-between gap-[16px] py-[22px] text-left transition-colors hover:text-white"
+        onClick={onToggle}
+        className="flex w-full items-center justify-between gap-[20px] py-[28px] text-left transition-opacity duration-200 hover:opacity-100"
+        aria-expanded={isOpen}
       >
-        <span className="text-[16px] font-medium text-[#D8D8D8] md:text-[17px]">{q}</span>
-        <ChevronDown
-          className={`h-[18px] w-[18px] shrink-0 text-[#444] transition-transform duration-300 ${open ? "rotate-180" : ""}`}
-          strokeWidth={2}
-        />
+        <span
+          className={`pr-[12px] text-[16px] leading-[1.2] font-normal transition-colors duration-300 md:text-[18px] ${
+            isOpen
+              ? "text-[rgba(218,218,218,0.96)]"
+              : "text-[rgba(183,183,183,0.8)]"
+          }`}
+        >
+          {question}
+        </span>
+        <AffiliateFaqChevron isOpen={isOpen} />
       </button>
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.3, ease: [0.23, 1, 0.32, 1] }}
-            className="overflow-hidden"
-          >
-            <p className="pb-[22px] text-[15px] leading-[1.7] text-[#787878] md:text-[16px]">
-              {a}
-            </p>
-          </motion.div>
-        )}
-      </AnimatePresence>
+
+      <div
+        className={`grid overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+          isOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+        }`}
+      >
+        <div className="overflow-hidden">
+          <p className="max-w-[960px] pb-[28px] pr-[44px] text-[14px] leading-[1.38] font-normal text-[rgba(183,183,183,0.7)] md:text-[16px]">
+            {answer}
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
 
-// ─── Main Component ───────────────────────────────────────────────────────────
+function AffiliateFaqAccordion() {
+  const [openIndex, setOpenIndex] = useState(1);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const baseDelay = 320;
+
+  function handleToggleExpanded() {
+    setIsExpanded((currentExpanded) => {
+      const nextExpanded = !currentExpanded;
+
+      if (!nextExpanded && openIndex >= PRIMARY_AFFILIATE_FAQ_ITEMS.length) {
+        setOpenIndex(1);
+      }
+
+      return nextExpanded;
+    });
+  }
+
+  return (
+    <div className="mx-auto mt-[56px] w-full max-w-[1124px] text-left">
+      {PRIMARY_AFFILIATE_FAQ_ITEMS.map((item, index) => {
+        const isOpen = openIndex === index;
+
+        return (
+          <LandingReveal key={item.question} delay={baseDelay + index * 70}>
+            <AffiliateFaqItem
+              question={item.question}
+              answer={item.answer}
+              isOpen={isOpen}
+              onToggle={() =>
+                setOpenIndex((currentIndex) =>
+                  currentIndex === index ? -1 : index,
+                )
+              }
+            />
+          </LandingReveal>
+        );
+      })}
+
+      <div
+        className={`grid overflow-hidden transition-all duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+          isExpanded
+            ? "grid-rows-[1fr] opacity-100"
+            : "grid-rows-[0fr] opacity-0"
+        }`}
+      >
+        <div className="overflow-hidden">
+          <div
+            className={`transition-all duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+              isExpanded
+                ? "translate-y-0 opacity-100"
+                : "-translate-y-[14px] opacity-0"
+            }`}
+          >
+            {EXPANDED_AFFILIATE_FAQ_ITEMS.map((item, index) => {
+              const resolvedIndex = PRIMARY_AFFILIATE_FAQ_ITEMS.length + index;
+              const isOpen = openIndex === resolvedIndex;
+
+              return (
+                <LandingReveal key={item.question} delay={120 + index * 55}>
+                  <AffiliateFaqItem
+                    question={item.question}
+                    answer={item.answer}
+                    isOpen={isOpen}
+                    onToggle={() =>
+                      setOpenIndex((currentIndex) =>
+                        currentIndex === resolvedIndex ? -1 : resolvedIndex,
+                      )
+                    }
+                  />
+                </LandingReveal>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      <LandingReveal
+        delay={baseDelay + PRIMARY_AFFILIATE_FAQ_ITEMS.length * 70}
+      >
+        <div className="flex justify-center pt-[28px]">
+          <button
+            type="button"
+            onClick={handleToggleExpanded}
+            className={`inline-flex h-[46px] items-center justify-center overflow-visible whitespace-nowrap rounded-[12px] px-6 text-[16px] leading-none font-semibold transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+              isExpanded
+                ? "bg-[#111111] text-[#B7B7B7]"
+                : "bg-[linear-gradient(180deg,#FFFFFF_0%,#D1D1D1_100%)] text-[#282828]"
+            }`}
+          >
+            {isExpanded ? "Ver menos" : "Ver mais"}
+          </button>
+        </div>
+      </LandingReveal>
+    </div>
+  );
+}
 
 export function AffiliatesLanding({ isAuthenticated }: { isAuthenticated: boolean }) {
   const router = useRouter();
-  const [statsAnimated, setStatsAnimated] = useState(false);
   const statsRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -305,7 +472,6 @@ export function AffiliatesLanding({ isAuthenticated }: { isAuthenticated: boolea
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) {
-          setStatsAnimated(true);
           observer.disconnect();
         }
       },
@@ -324,110 +490,108 @@ export function AffiliatesLanding({ isAuthenticated }: { isAuthenticated: boolea
   }
 
   return (
-    <div className="relative min-h-screen overflow-x-clip bg-[#040404] text-white">
+    <div className="relative overflow-x-clip bg-[#040404] text-white">
       <LandingSmoothScroll />
       {/* Background surface */}
       <div className="absolute inset-0 bg-[#040404]" />
 
       {/* Background Blocks Pattern */}
-      <LandingReveal delay={140}>
-        <div className="pointer-events-none absolute inset-x-0 top-[340px] -translate-y-1/2">
-          <div className="flowdesk-landing-soft-motion relative left-1/2 aspect-[1542/492] w-[160%] max-w-none -translate-x-1/2 scale-[1.05] transform-gpu min-[861px]:w-[98%] min-[861px]:scale-100">
-            <Image
-              src="/cdn/hero-blocks-1.svg"
-              alt=""
-              fill
-              sizes="(max-width: 860px) 170vw, (max-width: 1640px) 126vw, 1772px"
-              className="pointer-events-none select-none object-contain opacity-80"
-              draggable={false}
-              priority
-            />
+      <section className="w-full">
+        <div className="mx-auto mt-[35px] w-full max-w-[1582px] px-[20px] md:px-6 lg:px-8 xl:px-10 2xl:px-[20px]">
+          <div className="relative isolate min-h-[620px] overflow-hidden pb-8">
+            <LandingReveal delay={140}>
+              <div className="pointer-events-none absolute inset-x-0 top-[21%] -translate-y-1/2">
+                <div className="flowdesk-landing-soft-motion relative left-1/2 aspect-[1542/492] w-[160%] max-w-none -translate-x-1/2 scale-[1.05] transform-gpu min-[861px]:w-[98%] min-[861px]:scale-100">
+                  <Image
+                    src="/cdn/hero-blocks-1.svg"
+                    alt=""
+                    fill
+                    sizes="(max-width: 860px) 170vw, (max-width: 1640px) 126vw, 1772px"
+                    className="pointer-events-none select-none object-contain opacity-90"
+                    draggable={false}
+                    priority
+                  />
+                </div>
+              </div>
+            </LandingReveal>
+
+            <div className="relative z-10">
+              <div className="mx-auto flex max-w-[980px] flex-col items-center pt-[73px] text-center">
+                <LandingReveal delay={60}>
+                  <div className="flex w-full justify-center">
+                    <LandingGlowTag className="px-[28px]">
+                      Programa de Afiliados Flowdesk
+                    </LandingGlowTag>
+                  </div>
+                </LandingReveal>
+
+                <LandingReveal delay={120}>
+                  <h1 className="mt-[28px] max-w-[820px] bg-[linear-gradient(90deg,#DADADA_0%,#C1C1C1_100%)] bg-clip-text text-[42px] leading-[1.0] font-normal tracking-[-0.05em] text-transparent md:text-[56px] lg:text-[68px]">
+                    Indique e ganhe <span className="text-white">ate 35%</span> de comissao
+                  </h1>
+                </LandingReveal>
+
+                <LandingReveal delay={180}>
+                  <p className="mt-[22px] max-w-[580px] text-[16px] leading-[1.65] text-[#787878] md:text-[18px]">
+                    Indique o Flowdesk, receba comissao em cada venda aprovada e acompanhe tudo em tempo real no seu dashboard exclusivo de afiliado.
+                  </p>
+                </LandingReveal>
+
+                <LandingReveal delay={240}>
+                  <div className="mt-[36px] flex flex-col items-center gap-[14px] sm:flex-row">
+                    <LandingActionButton
+                      onClick={handleCTA}
+                      variant="light"
+                      className="h-[40px] px-4 text-[14px] sm:h-[46px] sm:px-6 sm:text-[16px]"
+                    >
+                      <span className="inline-flex items-center gap-[8px]">
+                        {isAuthenticated ? "Acessar meu dashboard" : "Quero ser afiliado"}
+                        <ArrowRight className="h-[16px] w-[16px]" strokeWidth={2.2} />
+                      </span>
+                    </LandingActionButton>
+                    <a
+                      href="#como-funciona"
+                      className="flex items-center gap-[6px] text-[14px] text-[#666666] transition-colors hover:text-[#A0A0A0]"
+                    >
+                      Como funciona
+                      <ChevronDown className="h-[14px] w-[14px]" strokeWidth={1.8} />
+                    </a>
+                  </div>
+                </LandingReveal>
+
+                <LandingReveal delay={300}>
+                  <div
+                    ref={statsRef}
+                    className="mt-[56px] grid w-full max-w-[1124px] grid-cols-2 gap-[1px] overflow-hidden rounded-[20px] border border-[#111111] bg-[#0C0C0C] sm:grid-cols-4"
+                  >
+                    {[
+                      { label: "Afiliados ativos", value: "1.200+" },
+                      { label: "Comissoes pagas", value: "R$ 480k+" },
+                      { label: "Taxa de conversao", value: "8,4%" },
+                      { label: "Saques processados", value: "3.700+" },
+                    ].map((stat) => (
+                      <div key={stat.label} className="flex flex-col items-center px-[24px] py-[20px]">
+                        <span className="text-[22px] font-semibold tracking-[-0.04em] text-[#E5E5E5] md:text-[26px]">
+                          {stat.value}
+                        </span>
+                        <span className="mt-[4px] text-[12px] text-[#5A5A5A]">{stat.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </LandingReveal>
+              </div>
+            </div>
           </div>
         </div>
-      </LandingReveal>
-
-      {/* ───── Hero ───────────────────────────────────────────────── */}
-      <section className="relative mx-auto flex max-w-[1220px] flex-col items-center px-[20px] pt-[120px] pb-[80px] text-center md:px-6 lg:px-8">
-        <LandingReveal delay={60}>
-          <div className="flex w-full justify-center">
-            <LandingGlowTag className="px-[28px]">
-              Programa de Afiliados Flowdesk
-            </LandingGlowTag>
-          </div>
-        </LandingReveal>
-
-        <LandingReveal delay={120}>
-          <h1 className="mt-[28px] max-w-[820px] bg-[linear-gradient(90deg,#DADADA_0%,#C1C1C1_100%)] bg-clip-text text-[42px] leading-[1.0] font-normal tracking-[-0.05em] text-transparent md:text-[56px] lg:text-[68px]">
-            Indique e ganhe{" "}
-            <span className="text-white">
-              até 35%
-            </span>{" "}
-            de comissão
-          </h1>
-        </LandingReveal>
-
-        <LandingReveal delay={180}>
-          <p className="mt-[22px] max-w-[580px] text-[16px] leading-[1.65] text-[#787878] md:text-[18px]">
-            Indique o Flowdesk, receba comissão em cada venda aprovada e acompanhe tudo em tempo real no seu dashboard exclusivo de afiliado.
-          </p>
-        </LandingReveal>
-
-        <LandingReveal delay={240}>
-          <div className="mt-[36px] flex flex-col items-center gap-[14px] sm:flex-row">
-            <button
-              type="button"
-              onClick={handleCTA}
-              className="group relative inline-flex h-[52px] items-center justify-center overflow-visible whitespace-nowrap rounded-[16px] px-8 text-[15px] font-semibold"
-            >
-              <span
-                aria-hidden="true"
-                className="absolute inset-0 rounded-[16px] bg-[#F3F3F3] transition-transform duration-150 ease-out group-hover:scale-[1.02] group-active:scale-[0.985]"
-              />
-              <span className="relative z-10 flex items-center gap-[8px] text-[#111111]">
-                {isAuthenticated ? "Acessar meu dashboard" : "Quero ser afiliado"}
-                <ArrowRight className="h-[16px] w-[16px]" strokeWidth={2.2} />
-              </span>
-            </button>
-            <a
-              href="#como-funciona"
-              className="flex items-center gap-[6px] text-[14px] text-[#666666] transition-colors hover:text-[#A0A0A0]"
-            >
-              Como funciona
-              <ChevronDown className="h-[14px] w-[14px]" strokeWidth={1.8} />
-            </a>
-          </div>
-        </LandingReveal>
-
-        {/* Stats bar */}
-        <LandingReveal delay={300}>
-          <div
-            ref={statsRef}
-            className="mt-[56px] grid grid-cols-2 gap-[1px] overflow-hidden rounded-[20px] border border-[#111111] bg-[#0C0C0C] sm:grid-cols-4"
-          >
-            {[
-              { label: "Afiliados ativos", value: "1.200+" },
-              { label: "Comissões pagas", value: "R$ 480k+" },
-              { label: "Taxa de conversão", value: "8,4%" },
-              { label: "Saques processados", value: "3.700+" },
-            ].map((stat) => (
-              <div key={stat.label} className="flex flex-col items-center px-[24px] py-[20px]">
-                <span className="text-[22px] font-semibold tracking-[-0.04em] text-[#E5E5E5] md:text-[26px]">
-                  {stat.value}
-                </span>
-                <span className="mt-[4px] text-[12px] text-[#5A5A5A]">{stat.label}</span>
-              </div>
-            ))}
-          </div>
-        </LandingReveal>
       </section>
 
-      {/* ───── Como funciona ─────────────────────────────────────── */}
-      <section id="como-funciona" className="relative z-10 mx-auto max-w-[1220px] px-[20px] py-[80px] md:px-6 lg:px-8">
+      {/* Como funciona */}
+      <section id="como-funciona" className="relative z-10 mx-auto max-w-[1124px] px-[20px] py-[80px] md:px-6 lg:px-8">
         <LandingReveal>
           <div className="flex flex-col items-center text-center">
             <LandingGlowTag className="px-[24px]">Como funciona</LandingGlowTag>
             <h2 className="mt-[20px] text-[32px] font-normal leading-[1.1] tracking-[-0.045em] text-[#D0D0D0] md:text-[40px]">
-              Simples do início ao saque
+              Simples do inicio ao saque
             </h2>
           </div>
         </LandingReveal>
@@ -452,16 +616,16 @@ export function AffiliatesLanding({ isAuthenticated }: { isAuthenticated: boolea
         </div>
       </section>
 
-      {/* ───── Níveis e Comissões ─────────────────────────────────── */}
-      <section className="relative z-10 mx-auto max-w-[1220px] px-[20px] py-[80px] md:px-6 lg:px-8">
+      {/* Niveis e comissoes */}
+      <section className="relative z-10 mx-auto max-w-[1320px] px-[20px] py-[80px] md:px-6 lg:px-8">
         <LandingReveal>
           <div className="flex flex-col items-center text-center">
-            <LandingGlowTag className="px-[24px]">Níveis de afiliado</LandingGlowTag>
+            <LandingGlowTag className="px-[24px]">Niveis de afiliado</LandingGlowTag>
             <h2 className="mt-[20px] text-[32px] font-normal leading-[1.1] tracking-[-0.045em] text-[#D0D0D0] md:text-[40px]">
-              Quanto mais você vende, mais você ganha
+              Quanto mais voce vende, mais voce ganha
             </h2>
             <p className="mt-[14px] max-w-[560px] text-[15px] leading-[1.65] text-[#6A6A6A]">
-              Seus níveis sobem automaticamente conforme suas vendas mensais aumentam. Suba de Bronze a Diamante e maximize seus ganhos.
+              Seus niveis sobem automaticamente conforme suas vendas mensais aumentam. Suba de Bronze a Diamante e maximize seus ganhos.
             </p>
           </div>
         </LandingReveal>
@@ -474,16 +638,16 @@ export function AffiliatesLanding({ isAuthenticated }: { isAuthenticated: boolea
         </div>
       </section>
 
-      {/* ───── Ranking ao vivo ────────────────────────────────────── */}
-      <section className="relative z-10 mx-auto max-w-[1220px] px-[20px] py-[80px] md:px-6 lg:px-8">
+      {/* Ranking ao vivo */}
+      <section className="relative z-10 mx-auto max-w-[1124px] px-[20px] py-[80px] md:px-6 lg:px-8">
         <LandingReveal>
           <div className="flex flex-col items-center text-center">
-            <LandingGlowTag className="px-[24px]">Ranking do mês</LandingGlowTag>
+            <LandingGlowTag className="px-[24px]">Ranking do mes</LandingGlowTag>
             <h2 className="mt-[20px] text-[32px] font-normal leading-[1.1] tracking-[-0.045em] text-[#D0D0D0] md:text-[40px]">
-              Top 3 afiliados com bônus especiais
+              Top 3 afiliados com bonus especiais
             </h2>
             <p className="mt-[14px] max-w-[560px] text-[15px] leading-[1.65] text-[#6A6A6A]">
-              Todo mês rankeamos afiliados por volume de vendas. O Top 3 recebe % de bônus extra na comissão do mês seguinte.
+              Todo mes rankeamos afiliados por volume de vendas. O Top 3 recebe % de bonus extra na comissao do mes seguinte.
             </p>
           </div>
         </LandingReveal>
@@ -496,13 +660,13 @@ export function AffiliatesLanding({ isAuthenticated }: { isAuthenticated: boolea
         </div>
       </section>
 
-      {/* ───── Benefícios ─────────────────────────────────────────── */}
-      <section className="relative z-10 mx-auto max-w-[1220px] px-[20px] py-[80px] md:px-6 lg:px-8">
+      {/* Beneficios */}
+      <section className="relative z-10 mx-auto max-w-[1320px] px-[20px] py-[80px] md:px-6 lg:px-8">
         <LandingReveal>
           <div className="flex flex-col items-center text-center">
-            <LandingGlowTag className="px-[24px]">Ferramentas incluídas</LandingGlowTag>
+            <LandingGlowTag className="px-[24px]">Ferramentas incluidas</LandingGlowTag>
             <h2 className="mt-[20px] text-[32px] font-normal leading-[1.1] tracking-[-0.045em] text-[#D0D0D0] md:text-[40px]">
-              Tudo que você precisa para vender mais
+              Tudo que voce precisa para vender mais
             </h2>
           </div>
         </LandingReveal>
@@ -524,24 +688,50 @@ export function AffiliatesLanding({ isAuthenticated }: { isAuthenticated: boolea
         </div>
       </section>
 
-      {/* ───── FAQ ────────────────────────────────────────────────── */}
-      <section id="faq" className="relative z-10 mx-auto max-w-[1220px] px-[20px] py-[80px] md:px-6 lg:px-8">
-        <LandingReveal>
-          <div className="flex flex-col items-center text-center">
-            <LandingGlowTag className="px-[24px]">Perguntas frequentes</LandingGlowTag>
-            <h2 className="mt-[20px] text-[32px] font-normal leading-[1.1] tracking-[-0.045em] text-[#D0D0D0] md:text-[40px]">
-              Ficou com dúvidas?
+      {/* FAQ */}
+      <section id="faq" className="relative z-10 mx-auto max-w-[1320px] px-[20px] py-[80px] md:px-6 lg:px-8">
+        <div className="flex flex-col items-center text-center">
+          <LandingReveal>
+            <div className="flex w-full justify-center">
+              <LandingGlowTag>Saiba mais sobre o programa de afiliados</LandingGlowTag>
+            </div>
+          </LandingReveal>
+
+          <LandingReveal delay={80}>
+            <h2 className="mt-[20px] max-w-[1280px] bg-[linear-gradient(90deg,#DADADA_0%,#C1C1C1_100%)] bg-clip-text text-[34px] leading-[1.08] font-normal tracking-[-0.04em] text-transparent sm:text-[40px] md:text-[52px] lg:text-[50px]">
+              Duvidas frequentes para afiliados
             </h2>
-          </div>
-        </LandingReveal>
-        <div className="mt-[40px] flex flex-col w-full">
-          {FAQS.map((faq) => (
-            <FaqItem key={faq.q} q={faq.q} a={faq.a} />
-          ))}
+          </LandingReveal>
+
+          <LandingReveal delay={160}>
+            <p className="mt-[20px] max-w-[1280px] text-[14px] leading-[1.42] font-normal text-[#B7B7B7] md:text-[17px]">
+              <span className="block">
+                Entenda como funcionam links, niveis, comissoes, aprovacoes e saques dentro do programa de afiliados.
+              </span>
+              <span className="mt-[4px] block">
+                Se precisar, voce ainda pode falar com a equipe para melhorar sua divulgacao e acompanhar seus resultados.
+              </span>
+            </p>
+          </LandingReveal>
+
+          <LandingReveal delay={240}>
+            <LandingActionButton
+              onClick={handleCTA}
+              variant="light"
+              className="mt-[28px] h-[46px] rounded-[12px] px-6 text-[16px]"
+            >
+              {isAuthenticated ? "Acessar meu dashboard" : "Quero ser afiliado"}
+            </LandingActionButton>
+          </LandingReveal>
+
+          <LandingReveal delay={320}>
+            <AffiliateFaqAccordion />
+          </LandingReveal>
         </div>
       </section>
-      {/* ───── CTA Final ──────────────────────────────────────────── */}
-      <section className="relative z-10 mx-auto max-w-[1220px] px-[20px] py-[80px] md:px-6 lg:px-8">
+
+      {/* CTA final */}
+      <section className="relative z-10 mx-auto max-w-[1124px] px-[20px] py-[80px] md:px-6 lg:px-8">
         <LandingReveal>
           <div className="relative overflow-hidden rounded-[32px] border border-[#1A1A1A] bg-[#070707] px-[40px] py-[80px] text-center">
             <div
@@ -566,22 +756,18 @@ export function AffiliatesLanding({ isAuthenticated }: { isAuthenticated: boolea
             <p className="relative z-10 mt-[16px] max-w-[480px] mx-auto text-[15px] leading-[1.65] text-[#6A6A6A]">
               Cadastre-se gratuitamente e comece a divulgar seu link em minutos. Sem burocracia e com a infraestrutura oficial Flowdesk.
             </p>
-            <button
-              type="button"
+            <LandingActionButton
               onClick={handleCTA}
-              className="group relative z-10 mt-[40px] inline-flex h-[52px] items-center justify-center overflow-visible whitespace-nowrap rounded-[16px] px-10 text-[15px] font-semibold"
+              variant="light"
+              className="relative z-10 mt-[40px] h-[40px] px-4 text-[14px] sm:h-[46px] sm:px-6 sm:text-[16px]"
             >
-              <span
-                aria-hidden="true"
-                className="absolute inset-0 rounded-[16px] bg-[#F3F3F3] transition-transform duration-150 ease-out group-hover:scale-[1.02] group-active:scale-[0.985]"
-              />
-              <span className="relative z-10 flex items-center gap-[8px] text-[#111111]">
+              <span className="inline-flex items-center gap-[8px]">
                 {isAuthenticated ? "Acessar meu dashboard" : "Quero ser um afiliado"}
                 <ArrowRight className="h-[16px] w-[16px]" strokeWidth={2.2} />
               </span>
-            </button>
+            </LandingActionButton>
             <p className="relative z-10 mt-[20px] text-[12px] text-[#484848]">
-              Adesão Gratuita • Sem Fidelidade • Saques via Pix
+              Adesao Gratuita - Sem Fidelidade - Saques via Pix
             </p>
           </div>
         </LandingReveal>
