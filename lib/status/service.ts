@@ -538,7 +538,7 @@ export async function getSystemStatus() {
       for (const comp of components) {
         const resolved = resolveSignalForComponent(comp.name, {
           api: apiLive,
-          flowai: flowAiLive?.overall,
+          flowai: flowAiLive ? { ...flowAiLive.overall, checkedAt: flowAiLive.checkedAt } : undefined,
           scheduled_tasks: scheduledTasksLive,
           domains: domainsLive,
           discord: discordBotLive,
