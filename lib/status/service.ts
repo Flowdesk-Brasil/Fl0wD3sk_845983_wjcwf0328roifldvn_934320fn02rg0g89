@@ -806,52 +806,63 @@ export async function getSystemStatus() {
       }
     }
 
-    const componentsWithHistory: ComponentStatus[] = components.map((component) => {
-      const historyEntries = (historyByComponent.get(component.id) || []).map((entry) => ({
-        date: entry.recorded_at,
-        status: entry.status,
-      }));
+    const componentsWithHistory: ComponentStatus[] = components
+      .filter((component) => inferComponentSourceKey(component.name) !== "flowai")
+      .map((component) => {
+        const historyEntries = (historyByComponent.get(component.id) || []).map((entry) => ({
+          date: entry.recorded_at,
+          status: entry.status,
+        }));
 
-      const resolvedSignal = resolveSignalForComponent(component.name, signals);
-      const storedSignal = buildStoredSignal(component);
-      const effectiveSignal = resolvedSignal?.signal || storedSignal;
-      const effectiveStatus = effectiveSignal?.status || component.status;
-      const effectiveUpdatedAt =
-        effectiveSignal?.checkedAt || component.updated_at || component.created_at;
+        const resolvedSignal = resolveSignalForComponent(component.name, signals);
+        const storedSignal = buildStoredSignal(component);
+        const effectiveSignal = resolvedSignal?.signal || storedSignal;
+        const effectiveStatus = effectiveSignal?.status || component.status;
+        const effectiveUpdatedAt =
+          effectiveSignal?.checkedAt || component.updated_at || component.created_at;
 
-      return {
-        ...component,
-        status: effectiveStatus,
-        is_core: Boolean(component.is_core),
-        updated_at: effectiveUpdatedAt,
-        history: ensureTodayHistory(historyEntries, effectiveStatus),
-        status_message: effectiveSignal?.message || component.status_message || null,
-        source_key: resolvedSignal?.sourceKey || component.source_key || null,
-        last_checked_at: effectiveSignal?.checkedAt || component.last_checked_at || null,
-        latency_ms: effectiveSignal?.latencyMs ?? component.latency_ms ?? null,
-      };
-    });
+        return {
+          ...component,
+          status: effectiveStatus,
+          is_core: Boolean(component.is_core),
+          updated_at: effectiveUpdatedAt,
+          history: ensureTodayHistory(historyEntries, effectiveStatus),
+          status_message: effectiveSignal?.message || component.status_message || null,
+          source_key: resolvedSignal?.sourceKey || component.source_key || null,
+          last_checked_at: effectiveSignal?.checkedAt || component.last_checked_at || null,
+          latency_ms: effectiveSignal?.latencyMs ?? component.latency_ms ?? null,
+        };
+      });
 
-    const incidents: Incident[] = incidentsRaw.map((incident) => {
-      const componentNames = incidentComponentsByIncident.get(incident.id) || [];
-      const updates = buildIncidentUpdates(incident, componentNames);
-      const inferredStatus = inferSystemStatusFromIncidentStatus(
-        incident.status,
-        incident.impact,
-      );
+    const incidents: Incident[] = incidentsRaw
+      .map((incident) => {
+        const allComponentNames = incidentComponentsByIncident.get(incident.id) || [];
+        // Remove FlowAI from affected components list
+        const componentNames = allComponentNames.filter(
+          (name) => inferComponentSourceKey(name) !== "flowai",
+        );
+        const updates = buildIncidentUpdates(incident, componentNames);
+        const inferredStatus = inferSystemStatusFromIncidentStatus(
+          incident.status,
+          incident.impact,
+        );
 
-      return {
-        id: incident.id,
-        title: normalizeText(incident.title) || buildIncidentTitleFromContext(componentNames, inferredStatus),
-        impact: incident.impact,
-        status: incident.status,
-        created_at: incident.created_at,
-        updated_at: incident.updated_at,
-        updates,
-        summary: buildIncidentSummary(incident, componentNames),
-        affected_components: componentNames,
-      };
-    });
+        return {
+          id: incident.id,
+          title: normalizeText(incident.title) || buildIncidentTitleFromContext(componentNames, inferredStatus),
+          impact: incident.impact,
+          status: incident.status,
+          created_at: incident.created_at,
+          updated_at: incident.updated_at,
+          updates,
+          summary: buildIncidentSummary(incident, componentNames),
+          affected_components: componentNames,
+          _onlyFlowAi: allComponentNames.length > 0 && componentNames.length === 0,
+        };
+      })
+      // Hide incidents that were exclusively linked to FlowAI
+      .filter((incident) => !incident._onlyFlowAi)
+      .map(({ _onlyFlowAi: _, ...rest }) => rest);
 
     const rawOverallStatus = getWorstSystemStatus(
       componentsWithHistory.map((component) => component.status),
