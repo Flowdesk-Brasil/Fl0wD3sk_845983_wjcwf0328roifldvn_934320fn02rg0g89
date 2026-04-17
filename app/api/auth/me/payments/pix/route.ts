@@ -1,3 +1,5 @@
+// api atualizada
+
 import { NextResponse } from "next/server";
 import { clearPlanStateCacheForUser } from "@/lib/account/managedPlanState";
 import {
