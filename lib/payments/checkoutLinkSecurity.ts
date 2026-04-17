@@ -1,12 +1,13 @@
 import crypto from "node:crypto";
 
+import { invalidatePaymentOrderQueryCaches } from "@/lib/payments/orderQueryCache";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 export type PaymentOrderCheckoutLinkRecord = {
   id: number;
   order_number: number;
   user_id: number;
-  guild_id: string;
+  guild_id: string | null;
   checkout_link_nonce: string | null;
   checkout_link_expires_at: string | null;
   checkout_link_invalidated_at: string | null;
@@ -17,7 +18,7 @@ type CheckoutLinkTokenPayload = {
   oid: number;
   on: number;
   uid: number;
-  gid: string;
+  gid: string | null;
   nonce: string;
   exp: string;
 };
@@ -150,7 +151,7 @@ function decodeCheckoutLinkToken(token: string) {
       typeof parsed.oid !== "number" ||
       typeof parsed.on !== "number" ||
       typeof parsed.uid !== "number" ||
-      typeof parsed.gid !== "string" ||
+      (typeof parsed.gid !== "string" && parsed.gid !== null) ||
       typeof parsed.nonce !== "string" ||
       typeof parsed.exp !== "string"
     ) {
@@ -295,6 +296,13 @@ export async function ensureCheckoutAccessTokenForOrder<
       .is("checkout_link_invalidated_at", null)
       .not("checkout_link_nonce", "is", null);
   }
+
+  invalidatePaymentOrderQueryCaches({
+    userId: currentOrder.user_id,
+    guildId: currentOrder.guild_id,
+    orderId: currentOrder.id,
+    orderNumber: currentOrder.order_number,
+  });
 
   return {
     order: currentOrder,

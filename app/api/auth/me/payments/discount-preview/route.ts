@@ -69,7 +69,7 @@ function normalizeBillingPeriodCode(value: unknown) {
   return isPlanBillingPeriodCode(normalized) ? normalized : null;
 }
 
-async function ensureGuildAccess(guildId: string) {
+async function ensureGuildAccess(guildId: string | null) {
   const sessionData = await resolveSessionAccessToken();
   if (!sessionData?.authSession) {
     return {
@@ -88,6 +88,15 @@ async function ensureGuildAccess(guildId: string) {
         { ok: false, message: "Token OAuth ausente na sessao." },
         { status: 401 },
       ),
+    };
+  }
+
+  if (!guildId) {
+    return {
+      ok: true as const,
+      sessionData: sessionData as NonNullable<
+        Awaited<ReturnType<typeof resolveSessionAccessToken>>
+      >,
     };
   }
 
@@ -147,14 +156,6 @@ export async function POST(request: Request) {
     }
 
     const guildId = normalizeGuildId(body.guildId);
-    if (!guildId) {
-      return applyNoStoreHeaders(
-        NextResponse.json(
-          { ok: false, message: "Guild ID invalido para o carrinho." },
-          { status: 400 },
-        ),
-      );
-    }
 
     const access = await ensureGuildAccess(guildId);
     if (!access.ok) {

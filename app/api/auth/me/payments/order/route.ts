@@ -27,6 +27,11 @@ import {
   getApprovedOrdersForGuild,
   resolveCoverageForApprovedOrder,
 } from "@/lib/payments/licenseStatus";
+import {
+  getCachedLatestPaymentOrderForUserAndGuild,
+  getCachedPaymentOrderByCodeForGuild,
+  invalidatePaymentOrderQueryCaches,
+} from "@/lib/payments/orderQueryCache";
 import { cleanupExpiredUnpaidServerSetups } from "@/lib/payments/setupCleanup";
 import {
   extractAuditErrorMessage,
@@ -54,7 +59,7 @@ type PaymentOrderStatus =
 type PaymentOrderRecord = {
   id: number;
   order_number: number;
-  guild_id: string;
+  guild_id: string | null;
   payment_method: PaymentMethod;
   status: PaymentOrderStatus;
   amount: string | number;
@@ -99,10 +104,19 @@ function normalizeOrderCode(value: string | null) {
   return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
 }
 
+function normalizeCartId(value: string | null) {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!/^\d{1,12}$/.test(trimmed)) return null;
+  const numeric = Number(trimmed);
+  return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
+}
+
 function normalizePaymentId(value: string | null) {
   if (!value) return null;
   const trimmed = value.trim();
-  return trimmed ? trimmed : null;
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(trimmed)) return null;
+  return trimmed || null;
 }
 
 function normalizeCheckoutToken(value: string | null) {
@@ -237,6 +251,12 @@ async function finalizeHostedCheckoutFallbackOrder(input: {
   }
 
   const nextOrder = result.data || order;
+  invalidatePaymentOrderQueryCaches({
+    userId: nextOrder.user_id,
+    guildId: nextOrder.guild_id,
+    orderId: nextOrder.id,
+    orderNumber: nextOrder.order_number,
+  });
   const diagnostic = resolvePaymentDiagnostic({
     paymentMethod: "card",
     status: nextOrder.status,
@@ -344,30 +364,26 @@ async function ensureGuildAccess(guildId: string | null) {
   };
 }
 
-async function getOrderByCodeForGuild(guildId: string, orderCode: number) {
-  const supabase = getSupabaseAdminClientOrThrow();
-  const result = await supabase
-    .from("payment_orders")
-    .select(PAYMENT_ORDER_SELECT_COLUMNS)
-    .eq("guild_id", guildId)
-    .eq("order_number", orderCode)
-    .maybeSingle<PaymentOrderRecord | null>();
-
-  if (result.error) {
-    throw new Error(
-      `Erro ao carregar pedido por codigo: ${result.error.message}`,
-    );
-  }
-
-  return result.data || null;
+async function getOrderByCodeForScope(
+  guildId: string | null,
+  orderCode: number,
+  cartId?: number | null,
+) {
+  return getCachedPaymentOrderByCodeForGuild<PaymentOrderRecord>({
+    guildId,
+    orderNumber: orderCode,
+    cartId,
+    selectColumns: PAYMENT_ORDER_SELECT_COLUMNS,
+  });
 }
 
-async function getOrderByCodeForUserAndGuild(
+async function getOrderByCodeForUserAndScope(
   userId: number,
-  guildId: string,
+  guildId: string | null,
   orderCode: number,
+  cartId?: number | null,
 ) {
-  const order = await getOrderByCodeForGuild(guildId, orderCode);
+  const order = await getOrderByCodeForScope(guildId, orderCode, cartId);
   if (!order) return { order: null, foreignOwner: false };
 
   if (order.user_id !== userId) {
@@ -376,33 +392,29 @@ async function getOrderByCodeForUserAndGuild(
   return { order, foreignOwner: false };
 }
 
-async function getLatestOrderForUserAndGuild(userId: number, guildId: string) {
-  const supabase = getSupabaseAdminClientOrThrow();
-  const result = await supabase
-    .from("payment_orders")
-    .select(PAYMENT_ORDER_SELECT_COLUMNS)
-    .eq("user_id", userId)
-    .eq("guild_id", guildId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle<PaymentOrderRecord>();
-
-  if (result.error) {
-    throw new Error(`Erro ao carregar pedido atual: ${result.error.message}`);
-  }
-
-  return result.data || null;
+async function getLatestOrderForUserAndScope(userId: number, guildId: string | null) {
+  return getCachedLatestPaymentOrderForUserAndGuild<PaymentOrderRecord>({
+    userId,
+    guildId,
+    selectColumns: PAYMENT_ORDER_SELECT_COLUMNS,
+  });
 }
 
 async function getCoverageForApprovedOrder(order: PaymentOrderRecord) {
   if (order.status !== "approved") return null;
+  if (!order.guild_id) return null;
 
-  const approvedOrders = await getApprovedOrdersForGuild<PaymentOrderRecord>(
+  const approvedOrders = await getApprovedOrdersForGuild<
+    PaymentOrderRecord & { guild_id: string }
+  >(
     order.guild_id,
     PAYMENT_ORDER_SELECT_COLUMNS,
   );
 
-  return resolveCoverageForApprovedOrder(approvedOrders, order);
+  return resolveCoverageForApprovedOrder(
+    approvedOrders,
+    order as PaymentOrderRecord & { guild_id: string },
+  );
 }
 
 async function reconcileHostedCardOrderByExternalReference(
@@ -447,7 +459,8 @@ async function reconcileHostedCardOrderByExternalReference(
   });
 
   const refreshedOrder =
-    (await getOrderByCodeForGuild(order.guild_id, order.order_number)) || order;
+    (await getOrderByCodeForScope(order.guild_id, order.order_number, order.id)) ||
+    order;
 
   await createPaymentOrderEventSafe(
     order.id,
@@ -481,6 +494,9 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const guildId = normalizeGuildId(url.searchParams.get("guildId"));
     const orderCode = normalizeOrderCode(url.searchParams.get("code"));
+    const cartId =
+      normalizeCartId(url.searchParams.get("cartId")) ||
+      normalizeCartId(url.searchParams.get("orderId"));
     const paymentId =
       normalizePaymentId(url.searchParams.get("paymentId")) ||
       normalizePaymentId(url.searchParams.get("payment_id")) ||
@@ -491,13 +507,6 @@ export async function GET(request: Request) {
     const returnStatus = normalizeHostedCheckoutReturnStatus(
       url.searchParams.get("status"),
     );
-
-    if (!guildId) {
-      return respond(
-        { ok: false, message: "Guild ID invalido." },
-        { status: 400 },
-      );
-    }
 
     const access = await ensureGuildAccess(guildId);
     if (!access.ok) {
@@ -544,25 +553,28 @@ export async function GET(request: Request) {
       },
     });
 
-    await cleanupExpiredUnpaidServerSetups({
-      userId: user.id,
-      guildId,
-      source: "auth_payment_order_query",
-    });
+    if (guildId) {
+      await cleanupExpiredUnpaidServerSetups({
+        userId: user.id,
+        guildId,
+        source: "auth_payment_order_query",
+      });
+    }
 
     let foreignOwner = false;
     let order = null;
 
     if (orderCode) {
-      const lookup = await getOrderByCodeForUserAndGuild(
+      const lookup = await getOrderByCodeForUserAndScope(
         user.id,
         guildId,
         orderCode,
+        cartId,
       );
       order = lookup.order;
       foreignOwner = lookup.foreignOwner;
     } else {
-      order = await getLatestOrderForUserAndGuild(user.id, guildId);
+      order = await getLatestOrderForUserAndScope(user.id, guildId);
     }
 
     if (!order) {
@@ -578,7 +590,9 @@ export async function GET(request: Request) {
       return respond(
         {
           ok: false,
-          message: "Pedido nao encontrado para este servidor.",
+          message: guildId
+            ? "Pedido nao encontrado para este servidor."
+            : "Pedido nao encontrado para esta conta.",
         },
         { status: 404 },
       );
@@ -603,12 +617,15 @@ export async function GET(request: Request) {
     if (paymentId && (order.payment_method !== "card" || cardPaymentsEnabled)) {
       try {
         const providerPayment = await fetchMercadoPagoPaymentById(paymentId, {
+          forceFresh: true,
           useCardToken: order.payment_method === "card",
         });
         await reconcilePaymentOrderWithProviderPayment(order, providerPayment, {
           source: "auth_payment_order_query_payment_id",
         });
-        order = (await getOrderByCodeForGuild(guildId, order.order_number)) || order;
+        order =
+          (await getOrderByCodeForScope(guildId, order.order_number, order.id)) ||
+          order;
       } catch {
         // melhor esforco; ainda podemos cair no estado persistido ou na reconciliacao normal
       }
@@ -672,7 +689,9 @@ export async function GET(request: Request) {
           source: "auth_payment_order_query",
         });
         if (reconciled.changed) {
-          order = (await getOrderByCodeForGuild(guildId, order.order_number)) || order;
+          order =
+            (await getOrderByCodeForScope(guildId, order.order_number, order.id)) ||
+            order;
         }
       } catch {
         // manter o estado persistido mesmo se a reconciliacao oportunista falhar

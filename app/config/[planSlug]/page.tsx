@@ -5,6 +5,7 @@ import { buildServersPlansPath } from "@/lib/plans/addServerFlow";
 import { buildAccountPlanUsageSnapshot } from "@/lib/plans/accountPlanUsage";
 import { getCurrentUserFromSessionCookie } from "@/lib/auth/session";
 import {
+  buildConfigPlanPath,
   normalizePlanCodeFromSlug,
   resolvePlanDefinition,
 } from "@/lib/plans/catalog";
@@ -37,13 +38,14 @@ export default async function ConfigPlanPage({
     searchParams: query,
     omitSearchParamKeys: ["plan", "billing"],
   });
+  const canonicalPathname = buildConfigPlanPath(initialPlanCode);
   const user = await getCurrentUserFromSessionCookie({ fullContext: true });
 
   if (!user) {
     redirect(buildLoginHref(canonicalPath));
   }
 
-  if (`/config/${routeParams.planSlug}`.toLowerCase() !== canonicalPath.toLowerCase()) {
+  if (`/config/${routeParams.planSlug}`.toLowerCase() !== canonicalPathname.toLowerCase()) {
     redirect(canonicalPath);
   }
 

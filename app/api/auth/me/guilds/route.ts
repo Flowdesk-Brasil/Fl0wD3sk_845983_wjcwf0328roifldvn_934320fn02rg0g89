@@ -17,6 +17,23 @@ type GuildSavedSetupRecord = {
   updated_at: string | null;
 };
 
+type GuildSavedSetupMapValue = {
+  hasSavedSetup: boolean;
+  lastConfiguredAt: string | null;
+};
+
+type GuildSavedSetupCacheEntry = {
+  expiresAt: number;
+  value: Map<string, GuildSavedSetupMapValue>;
+};
+
+const GUILD_SAVED_SETUP_CACHE_TTL_MS = 30_000;
+const guildSavedSetupCache = new Map<string, GuildSavedSetupCacheEntry>();
+const guildSavedSetupInflight = new Map<
+  string,
+  Promise<Map<string, GuildSavedSetupMapValue>>
+>();
+
 function buildGuildIconUrl(guildId: string, icon: string | null) {
   if (!icon) return null;
 
@@ -30,113 +47,153 @@ function toComparableTimestamp(value: string | null | undefined) {
   return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
 }
 
+function buildGuildSavedSetupCacheKey(userId: number, guildIds: string[]) {
+  return `${userId}:${[...guildIds].sort().join(",")}`;
+}
+
+function cloneGuildSavedSetupMap(value: Map<string, GuildSavedSetupMapValue>) {
+  return new Map(
+    Array.from(value.entries()).map(([guildId, setup]) => [
+      guildId,
+      { ...setup },
+    ]),
+  );
+}
+
 async function getGuildSavedSetupMap(userId: number, guildIds: string[]) {
   if (!guildIds.length) {
     return new Map<string, { hasSavedSetup: boolean; lastConfiguredAt: string | null }>();
   }
 
-  const supabase = getSupabaseAdminClientOrThrow();
-  const [
-    ticketSettingsResult,
-    staffSettingsResult,
-    welcomeSettingsResult,
-    antiLinkSettingsResult,
-    autoRoleSettingsResult,
-    planSettingsResult,
-  ] = await Promise.all([
-    supabase
-      .from("guild_ticket_settings")
-      .select("guild_id, updated_at")
-      .eq("configured_by_user_id", userId)
-      .in("guild_id", guildIds)
-      .returns<GuildSavedSetupRecord[]>(),
-    supabase
-      .from("guild_ticket_staff_settings")
-      .select("guild_id, updated_at")
-      .eq("configured_by_user_id", userId)
-      .in("guild_id", guildIds)
-      .returns<GuildSavedSetupRecord[]>(),
-    supabase
-      .from("guild_welcome_settings")
-      .select("guild_id, updated_at")
-      .eq("configured_by_user_id", userId)
-      .in("guild_id", guildIds)
-      .returns<GuildSavedSetupRecord[]>(),
-    supabase
-      .from("guild_antilink_settings")
-      .select("guild_id, updated_at")
-      .eq("configured_by_user_id", userId)
-      .in("guild_id", guildIds)
-      .returns<GuildSavedSetupRecord[]>(),
-    supabase
-      .from("guild_autorole_settings")
-      .select("guild_id, updated_at")
-      .eq("configured_by_user_id", userId)
-      .in("guild_id", guildIds)
-      .returns<GuildSavedSetupRecord[]>(),
-    supabase
-      .from("guild_plan_settings")
-      .select("guild_id, updated_at")
-      .eq("user_id", userId)
-      .in("guild_id", guildIds)
-      .returns<GuildSavedSetupRecord[]>(),
-  ]);
-
-  if (ticketSettingsResult.error) {
-    throw new Error(ticketSettingsResult.error.message);
+  const cacheKey = buildGuildSavedSetupCacheKey(userId, guildIds);
+  const cached = guildSavedSetupCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cloneGuildSavedSetupMap(cached.value);
   }
 
-  if (staffSettingsResult.error) {
-    throw new Error(staffSettingsResult.error.message);
+  if (cached) {
+    guildSavedSetupCache.delete(cacheKey);
   }
 
-  if (welcomeSettingsResult.error) {
-    throw new Error(welcomeSettingsResult.error.message);
+  const inflight = guildSavedSetupInflight.get(cacheKey);
+  if (inflight) {
+    return cloneGuildSavedSetupMap(await inflight);
   }
 
-  if (antiLinkSettingsResult.error) {
-    throw new Error(antiLinkSettingsResult.error.message);
-  }
+  const loadPromise = (async () => {
+    const supabase = getSupabaseAdminClientOrThrow();
+    const [
+      ticketSettingsResult,
+      staffSettingsResult,
+      welcomeSettingsResult,
+      antiLinkSettingsResult,
+      autoRoleSettingsResult,
+      planSettingsResult,
+    ] = await Promise.all([
+      supabase
+        .from("guild_ticket_settings")
+        .select("guild_id, updated_at")
+        .eq("configured_by_user_id", userId)
+        .in("guild_id", guildIds)
+        .returns<GuildSavedSetupRecord[]>(),
+      supabase
+        .from("guild_ticket_staff_settings")
+        .select("guild_id, updated_at")
+        .eq("configured_by_user_id", userId)
+        .in("guild_id", guildIds)
+        .returns<GuildSavedSetupRecord[]>(),
+      supabase
+        .from("guild_welcome_settings")
+        .select("guild_id, updated_at")
+        .eq("configured_by_user_id", userId)
+        .in("guild_id", guildIds)
+        .returns<GuildSavedSetupRecord[]>(),
+      supabase
+        .from("guild_antilink_settings")
+        .select("guild_id, updated_at")
+        .eq("configured_by_user_id", userId)
+        .in("guild_id", guildIds)
+        .returns<GuildSavedSetupRecord[]>(),
+      supabase
+        .from("guild_autorole_settings")
+        .select("guild_id, updated_at")
+        .eq("configured_by_user_id", userId)
+        .in("guild_id", guildIds)
+        .returns<GuildSavedSetupRecord[]>(),
+      supabase
+        .from("guild_plan_settings")
+        .select("guild_id, updated_at")
+        .eq("user_id", userId)
+        .in("guild_id", guildIds)
+        .returns<GuildSavedSetupRecord[]>(),
+    ]);
 
-  if (autoRoleSettingsResult.error) {
-    throw new Error(autoRoleSettingsResult.error.message);
-  }
-
-  if (planSettingsResult.error) {
-    throw new Error(planSettingsResult.error.message);
-  }
-
-  const savedSetupMap = new Map<
-    string,
-    { hasSavedSetup: boolean; lastConfiguredAt: string | null }
-  >();
-
-  const registerRecord = (record: GuildSavedSetupRecord) => {
-    const current = savedSetupMap.get(record.guild_id);
-    if (!current) {
-      savedSetupMap.set(record.guild_id, {
-        hasSavedSetup: true,
-        lastConfiguredAt: record.updated_at || null,
-      });
-      return;
+    if (ticketSettingsResult.error) {
+      throw new Error(ticketSettingsResult.error.message);
     }
 
-    if (
-      toComparableTimestamp(record.updated_at) >
-      toComparableTimestamp(current.lastConfiguredAt)
-    ) {
-      current.lastConfiguredAt = record.updated_at || null;
+    if (staffSettingsResult.error) {
+      throw new Error(staffSettingsResult.error.message);
     }
-  };
 
-  for (const record of ticketSettingsResult.data || []) registerRecord(record);
-  for (const record of staffSettingsResult.data || []) registerRecord(record);
-  for (const record of welcomeSettingsResult.data || []) registerRecord(record);
-  for (const record of antiLinkSettingsResult.data || []) registerRecord(record);
-  for (const record of autoRoleSettingsResult.data || []) registerRecord(record);
-  for (const record of planSettingsResult.data || []) registerRecord(record);
+    if (welcomeSettingsResult.error) {
+      throw new Error(welcomeSettingsResult.error.message);
+    }
 
-  return savedSetupMap;
+    if (antiLinkSettingsResult.error) {
+      throw new Error(antiLinkSettingsResult.error.message);
+    }
+
+    if (autoRoleSettingsResult.error) {
+      throw new Error(autoRoleSettingsResult.error.message);
+    }
+
+    if (planSettingsResult.error) {
+      throw new Error(planSettingsResult.error.message);
+    }
+
+    const savedSetupMap = new Map<
+      string,
+      { hasSavedSetup: boolean; lastConfiguredAt: string | null }
+    >();
+
+    const registerRecord = (record: GuildSavedSetupRecord) => {
+      const current = savedSetupMap.get(record.guild_id);
+      if (!current) {
+        savedSetupMap.set(record.guild_id, {
+          hasSavedSetup: true,
+          lastConfiguredAt: record.updated_at || null,
+        });
+        return;
+      }
+
+      if (
+        toComparableTimestamp(record.updated_at) >
+        toComparableTimestamp(current.lastConfiguredAt)
+      ) {
+        current.lastConfiguredAt = record.updated_at || null;
+      }
+    };
+
+    for (const record of ticketSettingsResult.data || []) registerRecord(record);
+    for (const record of staffSettingsResult.data || []) registerRecord(record);
+    for (const record of welcomeSettingsResult.data || []) registerRecord(record);
+    for (const record of antiLinkSettingsResult.data || []) registerRecord(record);
+    for (const record of autoRoleSettingsResult.data || []) registerRecord(record);
+    for (const record of planSettingsResult.data || []) registerRecord(record);
+
+    guildSavedSetupCache.set(cacheKey, {
+      value: cloneGuildSavedSetupMap(savedSetupMap),
+      expiresAt: Date.now() + GUILD_SAVED_SETUP_CACHE_TTL_MS,
+    });
+
+    return savedSetupMap;
+  })().finally(() => {
+    guildSavedSetupInflight.delete(cacheKey);
+  });
+
+  guildSavedSetupInflight.set(cacheKey, loadPromise);
+  return cloneGuildSavedSetupMap(await loadPromise);
 }
 
 export async function GET(request: Request) {

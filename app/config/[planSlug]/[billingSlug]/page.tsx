@@ -5,6 +5,7 @@ import { buildServersPlansPath } from "@/lib/plans/addServerFlow";
 import { buildAccountPlanUsageSnapshot } from "@/lib/plans/accountPlanUsage";
 import { getCurrentUserFromSessionCookie } from "@/lib/auth/session";
 import {
+  buildConfigCheckoutPath,
   normalizePlanBillingPeriodCodeFromSlug,
   normalizePlanCodeFromSlug,
   resolvePlanPricing,
@@ -46,6 +47,10 @@ export default async function ConfigPlanBillingPage({
     searchParams: query,
     omitSearchParamKeys: ["plan", "billing"],
   });
+  const canonicalPathname = buildConfigCheckoutPath({
+    planCode: resolvedPricing.code,
+    billingPeriodCode: resolvedPricing.billingPeriodCode,
+  });
   const user = await getCurrentUserFromSessionCookie({ fullContext: true });
 
   if (!user) {
@@ -54,7 +59,7 @@ export default async function ConfigPlanBillingPage({
 
   if (
     `/config/${routeParams.planSlug}/${routeParams.billingSlug}`.toLowerCase() !==
-    canonicalPath.toLowerCase()
+    canonicalPathname.toLowerCase()
   ) {
     redirect(canonicalPath);
   }

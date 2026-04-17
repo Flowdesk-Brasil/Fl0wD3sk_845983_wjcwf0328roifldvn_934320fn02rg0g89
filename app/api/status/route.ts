@@ -8,13 +8,14 @@ const ALLOWED_SUBSCRIPTION_TYPES: StatusSubscriptionType[] = [
   "webhook",
   "discord_channel",
 ];
+const STATUS_PUBLIC_CACHE_HEADER = "public, s-maxage=30, stale-while-revalidate=60";
 
 export async function GET() {
   try {
     const status = await getSystemStatus();
     return NextResponse.json(
       { ok: true, ...status },
-      { headers: { "Cache-Control": "no-store, max-age=0" } },
+      { headers: { "Cache-Control": STATUS_PUBLIC_CACHE_HEADER } },
     );
   } catch (error) {
     console.error("Error fetching system status:", error);

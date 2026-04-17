@@ -22,6 +22,10 @@ import {
   resolveLatestLicenseCoverageFromApprovedOrders,
 } from "@/lib/payments/licenseStatus";
 import { areCardPaymentsEnabled } from "@/lib/payments/cardAvailability";
+import {
+  getCachedLatestPaymentOrderForUserAndGuild,
+  invalidatePaymentOrderQueryCaches,
+} from "@/lib/payments/orderQueryCache";
 import { cleanupExpiredUnpaidServerSetups } from "@/lib/payments/setupCleanup";
 import {
   extractAuditErrorMessage,
@@ -141,7 +145,15 @@ async function finalizeStaleHostedCardPendingOrder(order: PaymentOrderStateRecor
     );
   }
 
-  return result.data || order;
+  const nextOrder = result.data || order;
+  invalidatePaymentOrderQueryCaches({
+    userId: nextOrder.user_id,
+    guildId: nextOrder.guild_id,
+    orderId: nextOrder.id,
+    orderNumber: nextOrder.order_number,
+  });
+
+  return nextOrder;
 }
 
 async function reconcileHostedCardPendingOrderByExternalReference(
@@ -200,7 +212,7 @@ async function reconcileHostedCardPendingOrderByExternalReference(
     provider_status: reconciled.order.provider_status ?? null,
     provider_status_detail:
       reconciled.order.provider_status_detail ?? null,
-  };
+  } as PaymentOrderStateRecord;
 }
 
 async function refreshLatestOrderIfProviderPaymentExists(
@@ -223,7 +235,7 @@ async function refreshLatestOrderIfProviderPaymentExists(
     provider_status: reconciled.order.provider_status ?? null,
     provider_status_detail:
       reconciled.order.provider_status_detail ?? null,
-  };
+  } as PaymentOrderStateRecord;
 }
 
 async function ensureGuildAccess(guildId: string) {
@@ -313,22 +325,11 @@ async function getLatestApprovedLicenseCoverageForGuild(guildId: string) {
 }
 
 async function getLatestUserOrderForGuild(userId: number, guildId: string) {
-  const supabase = getSupabaseAdminClientOrThrow();
-
-  const result = await supabase
-    .from("payment_orders")
-    .select(PAYMENT_STATE_SELECT_COLUMNS)
-    .eq("user_id", userId)
-    .eq("guild_id", guildId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle<PaymentOrderStateRecord>();
-
-  if (result.error) {
-    throw new Error(`Erro ao carregar pedido do usuario: ${result.error.message}`);
-  }
-
-  return result.data || null;
+  return getCachedLatestPaymentOrderForUserAndGuild<PaymentOrderStateRecord>({
+    userId,
+    guildId,
+    selectColumns: PAYMENT_STATE_SELECT_COLUMNS,
+  });
 }
 
 export async function GET(request: Request) {

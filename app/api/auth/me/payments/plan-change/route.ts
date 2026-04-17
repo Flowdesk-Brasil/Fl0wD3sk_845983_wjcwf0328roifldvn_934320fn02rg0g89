@@ -6,10 +6,23 @@ import {
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
 import {
+  getUserPlanFlowPointsBalance,
+  getUserPlanScheduledChange,
+  resolveFlowPointsBalanceAmount,
   resolvePlanChangePreview,
   scheduleUserPlanDowngrade,
 } from "@/lib/plans/change";
-import { resolveEffectivePlanSelection } from "@/lib/plans/state";
+import {
+  applyUserPlanStatePricingAdjustments,
+  getBasicPlanAvailability,
+  getUserPlanState,
+  resolveEffectivePlanSelection,
+} from "@/lib/plans/state";
+import {
+  normalizePlanBillingPeriodCode,
+  normalizePlanCode,
+  resolvePlanPricing,
+} from "@/lib/plans/catalog";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 
@@ -25,7 +38,7 @@ function normalizeGuildId(value: unknown) {
   return isGuildId(guildId) ? guildId : null;
 }
 
-async function ensureGuildAccess(guildId: string) {
+async function ensureGuildAccess(guildId: string | null) {
   const sessionData = await resolveSessionAccessToken();
   if (!sessionData?.authSession) {
     return {
@@ -44,6 +57,15 @@ async function ensureGuildAccess(guildId: string) {
         { ok: false, message: "Token OAuth ausente na sessao." },
         { status: 401 },
       ),
+    };
+  }
+
+  if (!guildId) {
+    return {
+      ok: true as const,
+      context: {
+        sessionData,
+      },
     };
   }
 
@@ -97,6 +119,46 @@ async function ensureGuildAccess(guildId: string) {
   };
 }
 
+async function resolveEffectivePlanSelectionForCheckout(input: {
+  userId: number;
+  guildId: string | null;
+  preferredPlanCode?: unknown;
+  preferredBillingPeriodCode?: unknown;
+}) {
+  if (input.guildId) {
+    return resolveEffectivePlanSelection({
+      userId: input.userId,
+      guildId: input.guildId,
+      preferredPlanCode: input.preferredPlanCode,
+      preferredBillingPeriodCode: input.preferredBillingPeriodCode,
+    });
+  }
+
+  const [userPlanState, basicPlanAvailability, flowPointsBalanceRecord, scheduledChange] =
+    await Promise.all([
+      getUserPlanState(input.userId),
+      getBasicPlanAvailability(input.userId),
+      getUserPlanFlowPointsBalance(input.userId),
+      getUserPlanScheduledChange(input.userId),
+    ]);
+  const selectedPlan = applyUserPlanStatePricingAdjustments(
+    resolvePlanPricing(
+      normalizePlanCode(input.preferredPlanCode),
+      normalizePlanBillingPeriodCode(input.preferredBillingPeriodCode),
+    ),
+    userPlanState,
+  );
+
+  return {
+    plan: selectedPlan,
+    guildSettings: null,
+    userPlanState,
+    basicPlanAvailability,
+    flowPointsBalance: resolveFlowPointsBalanceAmount(flowPointsBalanceRecord),
+    scheduledChange,
+  };
+}
+
 export async function POST(request: Request) {
   try {
     const securityResponse = ensureSameOriginJsonMutationRequest(request);
@@ -115,18 +177,11 @@ export async function POST(request: Request) {
     }
 
     const guildId = normalizeGuildId(body.guildId);
-    if (!guildId) {
-      return NextResponse.json(
-        { ok: false, message: "Guild ID invalido para agendar a troca de plano." },
-        { status: 400 },
-      );
-    }
-
     const access = await ensureGuildAccess(guildId);
     if (!access.ok) return access.response;
 
     const userId = access.context.sessionData.authSession.user.id;
-    const selection = await resolveEffectivePlanSelection({
+    const selection = await resolveEffectivePlanSelectionForCheckout({
       userId,
       guildId,
       preferredPlanCode: body.planCode,

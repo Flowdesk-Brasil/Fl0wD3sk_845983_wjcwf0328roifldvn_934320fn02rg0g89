@@ -102,6 +102,83 @@ type AuthUserLookupRow = {
   display_name: string;
 };
 
+type CacheEntry<TValue> = {
+  expiresAt: number;
+  value: TValue;
+};
+
+type CachedDashboardPermissions = {
+  permissions: "full" | TeamRolePermission[];
+  isTeamServer: boolean;
+};
+
+const ACCEPTED_TEAM_GUILD_IDS_CACHE_TTL_MS = 20_000;
+const DASHBOARD_PERMISSIONS_CACHE_TTL_MS = 15_000;
+const acceptedTeamGuildIdsCache = new Map<string, CacheEntry<string[]>>();
+const acceptedTeamGuildIdsInflight = new Map<string, Promise<string[]>>();
+const dashboardPermissionsCache = new Map<
+  string,
+  CacheEntry<CachedDashboardPermissions>
+>();
+const dashboardPermissionsInflight = new Map<
+  string,
+  Promise<{ permissions: Set<TeamRolePermission> | "full"; isTeamServer: boolean }>
+>();
+
+function readCacheEntry<TValue>(
+  cache: Map<string, CacheEntry<TValue>>,
+  key: string,
+) {
+  const cached = cache.get(key);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    cache.delete(key);
+    return null;
+  }
+  return cached.value;
+}
+
+function writeCacheEntry<TValue>(
+  cache: Map<string, CacheEntry<TValue>>,
+  key: string,
+  value: TValue,
+  ttlMs: number,
+) {
+  cache.set(key, {
+    value,
+    expiresAt: Date.now() + ttlMs,
+  });
+}
+
+function cloneAcceptedTeamGuildIds(value: string[]) {
+  return [...value];
+}
+
+function toDashboardPermissionsResult(
+  value: CachedDashboardPermissions,
+): { permissions: Set<TeamRolePermission> | "full"; isTeamServer: boolean } {
+  return {
+    permissions:
+      value.permissions === "full"
+        ? "full"
+        : new Set<TeamRolePermission>(value.permissions),
+    isTeamServer: value.isTeamServer,
+  };
+}
+
+function cacheDashboardPermissions(
+  key: string,
+  value: CachedDashboardPermissions,
+) {
+  writeCacheEntry(
+    dashboardPermissionsCache,
+    key,
+    value,
+    DASHBOARD_PERMISSIONS_CACHE_TTL_MS,
+  );
+  return toDashboardPermissionsResult(value);
+}
+
 function uniqueStrings(values: string[]) {
   return Array.from(new Set(values));
 }
@@ -143,45 +220,78 @@ export async function getAcceptedTeamGuildIdsForUser(input: {
   authUserId: number;
   discordUserId: string;
 }) {
-  const supabase = getSupabaseAdminClientOrThrow();
-  
-  // 1. Teams where user is the owner
-  const ownedTeamsResult = await supabase
-    .from("auth_user_teams")
-    .select("id")
-    .eq("owner_user_id", input.authUserId);
+  const cacheKey = `${input.authUserId}:${input.discordUserId}`;
+  const cached = readCacheEntry(acceptedTeamGuildIdsCache, cacheKey);
+  if (cached) {
+    return cloneAcceptedTeamGuildIds(cached);
+  }
 
-  // 2. Teams where user is a member
-  const membershipsResult = await supabase
-    .from("auth_user_team_members")
-    .select("team_id")
-    .eq("status", "accepted")
-    .or(
-      `invited_discord_user_id.eq.${input.discordUserId},invited_auth_user_id.eq.${input.authUserId}`,
+  const inflight = acceptedTeamGuildIdsInflight.get(cacheKey);
+  if (inflight) {
+    return cloneAcceptedTeamGuildIds(await inflight);
+  }
+
+  const loadPromise = (async () => {
+    const supabase = getSupabaseAdminClientOrThrow();
+    
+    // 1. Teams where user is the owner
+    const ownedTeamsResult = await supabase
+      .from("auth_user_teams")
+      .select("id")
+      .eq("owner_user_id", input.authUserId);
+
+    // 2. Teams where user is a member
+    const membershipsResult = await supabase
+      .from("auth_user_team_members")
+      .select("team_id")
+      .eq("status", "accepted")
+      .or(
+        `invited_discord_user_id.eq.${input.discordUserId},invited_auth_user_id.eq.${input.authUserId}`,
+      );
+
+    if (ownedTeamsResult.error) throw new Error(ownedTeamsResult.error.message);
+    if (membershipsResult.error) throw new Error(membershipsResult.error.message);
+
+    const teamIds = uniqueStrings([
+      ...(ownedTeamsResult.data || []).map((row) => String(row.id)),
+      ...(membershipsResult.data || []).map((row) => String(row.team_id)),
+    ]).map((value) => Number(value));
+
+    if (!teamIds.length) {
+      writeCacheEntry(
+        acceptedTeamGuildIdsCache,
+        cacheKey,
+        [],
+        ACCEPTED_TEAM_GUILD_IDS_CACHE_TTL_MS,
+      );
+      return [];
+    }
+
+    const teamServersResult = await supabase
+      .from("auth_user_team_servers")
+      .select("guild_id")
+      .in("team_id", teamIds);
+
+    if (teamServersResult.error) {
+      throw new Error(teamServersResult.error.message);
+    }
+
+    const guildIds = uniqueStrings(
+      (teamServersResult.data || []).map((row) => row.guild_id),
     );
+    writeCacheEntry(
+      acceptedTeamGuildIdsCache,
+      cacheKey,
+      guildIds,
+      ACCEPTED_TEAM_GUILD_IDS_CACHE_TTL_MS,
+    );
+    return guildIds;
+  })().finally(() => {
+    acceptedTeamGuildIdsInflight.delete(cacheKey);
+  });
 
-  if (ownedTeamsResult.error) throw new Error(ownedTeamsResult.error.message);
-  if (membershipsResult.error) throw new Error(membershipsResult.error.message);
-
-  const teamIds = uniqueStrings([
-    ...(ownedTeamsResult.data || []).map((row) => String(row.id)),
-    ...(membershipsResult.data || []).map((row) => String(row.team_id)),
-  ]).map((value) => Number(value));
-
-  if (!teamIds.length) {
-    return [];
-  }
-
-  const teamServersResult = await supabase
-    .from("auth_user_team_servers")
-    .select("guild_id")
-    .in("team_id", teamIds);
-
-  if (teamServersResult.error) {
-    throw new Error(teamServersResult.error.message);
-  }
-
-  return uniqueStrings((teamServersResult.data || []).map((row) => row.guild_id));
+  acceptedTeamGuildIdsInflight.set(cacheKey, loadPromise);
+  return cloneAcceptedTeamGuildIds(await loadPromise);
 }
 
 export async function getUserTeamsSnapshotForUser(input: {
@@ -664,90 +774,143 @@ export async function getEffectiveDashboardPermissions(input: {
   authUserId: number;
   guildId: string;
 }): Promise<{ permissions: Set<TeamRolePermission> | "full"; isTeamServer: boolean }> {
-  const supabase = getSupabaseAdminClientOrThrow();
-
-  // 1. Direct License check (Is the user the person who paid for the bot on this guild?)
-  const ownerCheck = await supabase
-    .from("auth_user_plan_guilds")
-    .select("user_id")
-    .eq("guild_id", input.guildId)
-    .maybeSingle();
-  
-  if (ownerCheck.data?.user_id === input.authUserId) {
-    return { permissions: "full", isTeamServer: false };
+  const cacheKey = `${input.authUserId}:${input.guildId}`;
+  const cached = readCacheEntry(dashboardPermissionsCache, cacheKey);
+  if (cached) {
+    return toDashboardPermissionsResult(cached);
   }
 
-  // Fallback to legacy orders if not in plan_guilds
-  if (!ownerCheck.data) {
-     const legacyOwnerCheck = await supabase
-       .from("payment_orders")
-       .select("user_id")
-       .eq("guild_id", input.guildId)
-       .eq("status", "approved")
-       .order("created_at", { ascending: false })
-       .limit(1)
-       .maybeSingle();
-       
-     if (legacyOwnerCheck.data?.user_id === input.authUserId) {
-       return { permissions: "full", isTeamServer: false };
-     }
+  const inflight = dashboardPermissionsInflight.get(cacheKey);
+  if (inflight) {
+    return inflight;
   }
 
-  // 2. Team check
-  // Find teams that have this guild
-  const teamServersResult = await supabase
-    .from("auth_user_team_servers")
-    .select("team_id")
-    .eq("guild_id", input.guildId);
+  const loadPromise = (async () => {
+    const supabase = getSupabaseAdminClientOrThrow();
 
-  const teamIds = (teamServersResult.data || []).map(ts => ts.team_id);
-  const isTeamServer = teamIds.length > 0;
-
-  if (!isTeamServer) {
-    return { permissions: new Set<TeamRolePermission>(), isTeamServer: false };
-  }
-
-  // Check if user is owner of any of these teams
-  const teamOwnersResult = await supabase
-    .from("auth_user_teams")
-    .select("id")
-    .in("id", teamIds)
-    .eq("owner_user_id", input.authUserId);
-  
-  if (teamOwnersResult.data?.length) {
-    return { permissions: "full", isTeamServer: true };
-  }
-
-  // Check memberships in these teams
-  const membershipsResult = await supabase
-    .from("auth_user_team_members")
-    .select(`
-      role_id,
-      custom_permissions,
-      auth_user_team_roles (
-        permissions
-      )
-    `)
-    .in("team_id", teamIds)
-    .eq("invited_auth_user_id", input.authUserId)
-    .eq("status", "accepted");
-
-  if (!membershipsResult.data?.length) {
-    return { permissions: new Set<TeamRolePermission>(), isTeamServer: true };
-  }
-
-  const perms = new Set<TeamRolePermission>();
-  for (const m of membershipsResult.data) {
-    if (Array.isArray(m.custom_permissions)) {
-      m.custom_permissions.forEach((p: any) => perms.add(p as TeamRolePermission));
+    // 1. Direct License check (Is the user the person who paid for the bot on this guild?)
+    const ownerCheck = await supabase
+      .from("auth_user_plan_guilds")
+      .select("user_id")
+      .eq("guild_id", input.guildId)
+      .maybeSingle();
+    
+    if (ownerCheck.data?.user_id === input.authUserId) {
+      return cacheDashboardPermissions(cacheKey, {
+        permissions: "full",
+        isTeamServer: false,
+      });
     }
-    const roleData = m.auth_user_team_roles as unknown as { permissions: TeamRolePermission[] } | null;
-    if (roleData && Array.isArray(roleData.permissions)) {
-      roleData.permissions.forEach((p: TeamRolePermission) => perms.add(p));
-    }
-  }
 
-  return { permissions: perms, isTeamServer: true };
+    // Fallback to legacy orders if not in plan_guilds
+    if (!ownerCheck.data) {
+      const legacyOwnerCheck = await supabase
+        .from("payment_orders")
+        .select("user_id")
+        .eq("guild_id", input.guildId)
+        .eq("status", "approved")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+        
+      if (legacyOwnerCheck.data?.user_id === input.authUserId) {
+        return cacheDashboardPermissions(cacheKey, {
+          permissions: "full",
+          isTeamServer: false,
+        });
+      }
+    }
+
+    // 2. Team check
+    // Find teams that have this guild
+    const teamServersResult = await supabase
+      .from("auth_user_team_servers")
+      .select("team_id")
+      .eq("guild_id", input.guildId);
+
+    if (teamServersResult.error) {
+      throw new Error(teamServersResult.error.message);
+    }
+
+    const teamIds = (teamServersResult.data || []).map((ts) => ts.team_id);
+    const isTeamServer = teamIds.length > 0;
+
+    if (!isTeamServer) {
+      return cacheDashboardPermissions(cacheKey, {
+        permissions: [],
+        isTeamServer: false,
+      });
+    }
+
+    // Check if user is owner of any of these teams
+    const teamOwnersResult = await supabase
+      .from("auth_user_teams")
+      .select("id")
+      .in("id", teamIds)
+      .eq("owner_user_id", input.authUserId);
+
+    if (teamOwnersResult.error) {
+      throw new Error(teamOwnersResult.error.message);
+    }
+    
+    if (teamOwnersResult.data?.length) {
+      return cacheDashboardPermissions(cacheKey, {
+        permissions: "full",
+        isTeamServer: true,
+      });
+    }
+
+    // Check memberships in these teams
+    const membershipsResult = await supabase
+      .from("auth_user_team_members")
+      .select(`
+        role_id,
+        custom_permissions,
+        auth_user_team_roles (
+          permissions
+        )
+      `)
+      .in("team_id", teamIds)
+      .eq("invited_auth_user_id", input.authUserId)
+      .eq("status", "accepted");
+
+    if (membershipsResult.error) {
+      throw new Error(membershipsResult.error.message);
+    }
+
+    if (!membershipsResult.data?.length) {
+      return cacheDashboardPermissions(cacheKey, {
+        permissions: [],
+        isTeamServer: true,
+      });
+    }
+
+    const perms = new Set<TeamRolePermission>();
+    for (const m of membershipsResult.data) {
+      if (Array.isArray(m.custom_permissions)) {
+        const customPermissions = m.custom_permissions.filter(
+          (permission): permission is TeamRolePermission =>
+            typeof permission === "string",
+        );
+        customPermissions.forEach((permission) => perms.add(permission));
+      }
+      const roleData =
+        m.auth_user_team_roles as unknown as { permissions: TeamRolePermission[] } | null;
+      if (roleData && Array.isArray(roleData.permissions)) {
+        roleData.permissions.forEach((p: TeamRolePermission) => perms.add(p));
+      }
+    }
+
+    return cacheDashboardPermissions(cacheKey, {
+      permissions: [...perms],
+      isTeamServer: true,
+    });
+  })().finally(() => {
+    dashboardPermissionsInflight.delete(cacheKey);
+  });
+
+  dashboardPermissionsInflight.set(cacheKey, loadPromise);
+  return loadPromise;
 }
 
 /**

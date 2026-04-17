@@ -39,6 +39,14 @@ type RoleOption = {
   position: number;
 };
 
+type DashboardSettingsCacheEntry = {
+  expiresAt: number;
+  value: unknown;
+};
+
+const DASHBOARD_SETTINGS_CACHE_TTL_MS = 15_000;
+const dashboardSettingsCache = new Map<string, DashboardSettingsCacheEntry>();
+
 function sortChannels(channels: ChannelOption[]) {
   return [...channels].sort((a, b) => {
     if (a.position !== b.position) return a.position - b.position;
@@ -50,6 +58,39 @@ function sortRoles(roles: RoleOption[]) {
   return [...roles].sort((a, b) => {
     if (a.position !== b.position) return b.position - a.position;
     return a.name.localeCompare(b.name, "pt-BR");
+  });
+}
+
+function cloneJsonValue<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function buildDashboardSettingsCacheKey(input: {
+  userId: number;
+  guildId: string;
+  dashboardPermissions: "full" | Set<string>;
+}) {
+  const permissionsKey =
+    input.dashboardPermissions === "full"
+      ? "full"
+      : Array.from(input.dashboardPermissions).sort().join(",");
+  return `${input.userId}:${input.guildId}:${permissionsKey}`;
+}
+
+function readDashboardSettingsCache(key: string) {
+  const cached = dashboardSettingsCache.get(key);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    dashboardSettingsCache.delete(key);
+    return null;
+  }
+  return cloneJsonValue(cached.value);
+}
+
+function writeDashboardSettingsCache(key: string, value: unknown) {
+  dashboardSettingsCache.set(key, {
+    value: cloneJsonValue(value),
+    expiresAt: Date.now() + DASHBOARD_SETTINGS_CACHE_TTL_MS,
   });
 }
 
@@ -218,6 +259,19 @@ export async function GET(request: Request) {
       source: "guild_dashboard_settings_get",
     });
 
+    const cacheKey = buildDashboardSettingsCacheKey({
+      userId: access.sessionData.authSession.user.id,
+      guildId,
+      dashboardPermissions:
+        access.dashboardPerms === "full"
+          ? "full"
+          : new Set(Array.from(access.dashboardPerms)),
+    });
+    const cachedPayload = readDashboardSettingsCache(cacheKey);
+    if (cachedPayload) {
+      return applyNoStoreHeaders(NextResponse.json(cachedPayload));
+    }
+
     const supabase = getSupabaseAdminClientOrThrow();
     const [rawChannels, rawRoles, ticketResult, staffResult, welcomeResult, antiLinkResult, autoRoleResult, securityLogsResult] = await Promise.all([
       fetchGuildChannelsByBot(guildId),
@@ -352,284 +406,287 @@ export async function GET(request: Request) {
       ticketResult.data as Record<string, unknown> | null | undefined,
     );
 
-    return applyNoStoreHeaders(
-      NextResponse.json({
-        ok: true,
-        guild: {
-          id: access.accessibleGuild?.id || guildId,
-          name: access.accessibleGuild?.name || "Servidor selecionado",
-        },
-        channels: {
-          text: textChannels,
-          categories,
-        },
-        roles,
-        ticketSettings: ticketResult.data
-          ? {
-              enabled: Boolean(ticketResult.data.enabled),
-              menuChannelId: ticketResult.data.menu_channel_id,
-              ticketsCategoryId: ticketResult.data.tickets_category_id,
-              logsCreatedChannelId: ticketResult.data.logs_created_channel_id,
-              logsClosedChannelId: ticketResult.data.logs_closed_channel_id,
-              panelLayout: normalizeTicketPanelLayout(
-                ticketResult.data.panel_layout,
-                {
-                  panelTitle: ticketResult.data.panel_title,
-                  panelDescription: ticketResult.data.panel_description,
-                  panelButtonLabel: ticketResult.data.panel_button_label,
-                },
-              ),
+    const payload = {
+      ok: true,
+      guild: {
+        id: access.accessibleGuild?.id || guildId,
+        name: access.accessibleGuild?.name || "Servidor selecionado",
+      },
+      channels: {
+        text: textChannels,
+        categories,
+      },
+      roles,
+      ticketSettings: ticketResult.data
+        ? {
+            enabled: Boolean(ticketResult.data.enabled),
+            menuChannelId: ticketResult.data.menu_channel_id,
+            ticketsCategoryId: ticketResult.data.tickets_category_id,
+            logsCreatedChannelId: ticketResult.data.logs_created_channel_id,
+            logsClosedChannelId: ticketResult.data.logs_closed_channel_id,
+            panelLayout: normalizeTicketPanelLayout(ticketResult.data.panel_layout, {
               panelTitle: ticketResult.data.panel_title,
               panelDescription: ticketResult.data.panel_description,
               panelButtonLabel: ticketResult.data.panel_button_label,
-              aiRules: ticketAiSettings.aiRules,
-              aiEnabled: ticketAiSettings.aiEnabled,
-              aiCompanyName: ticketAiSettings.aiCompanyName,
-              aiCompanyBio: ticketAiSettings.aiCompanyBio,
-              aiTone: ticketAiSettings.aiTone,
-              updatedAt: ticketResult.data.updated_at,
-            }
-          : null,
-        staffSettings: staffResult.data
-          ? {
-              adminRoleId: staffResult.data.admin_role_id,
-              claimRoleIds: Array.isArray(staffResult.data.claim_role_ids)
-                ? staffResult.data.claim_role_ids.filter(
-                    (roleId): roleId is string => typeof roleId === "string",
+            }),
+            panelTitle: ticketResult.data.panel_title,
+            panelDescription: ticketResult.data.panel_description,
+            panelButtonLabel: ticketResult.data.panel_button_label,
+            aiRules: ticketAiSettings.aiRules,
+            aiEnabled: ticketAiSettings.aiEnabled,
+            aiCompanyName: ticketAiSettings.aiCompanyName,
+            aiCompanyBio: ticketAiSettings.aiCompanyBio,
+            aiTone: ticketAiSettings.aiTone,
+            updatedAt: ticketResult.data.updated_at,
+          }
+        : null,
+      staffSettings: staffResult.data
+        ? {
+            adminRoleId: staffResult.data.admin_role_id,
+            claimRoleIds: Array.isArray(staffResult.data.claim_role_ids)
+              ? staffResult.data.claim_role_ids.filter(
+                  (roleId): roleId is string => typeof roleId === "string",
+                )
+              : [],
+            closeRoleIds: Array.isArray(staffResult.data.close_role_ids)
+              ? staffResult.data.close_role_ids.filter(
+                  (roleId): roleId is string => typeof roleId === "string",
+                )
+              : [],
+            notifyRoleIds: Array.isArray(staffResult.data.notify_role_ids)
+              ? staffResult.data.notify_role_ids.filter(
+                  (roleId): roleId is string => typeof roleId === "string",
+                )
+              : [],
+            updatedAt: staffResult.data.updated_at,
+          }
+        : null,
+      welcomeSettings: welcomeResult.data
+        ? {
+            enabled: Boolean(welcomeResult.data.enabled),
+            entryPublicChannelId:
+              welcomeResult.data.entry_public_channel_id &&
+              textSet.has(welcomeResult.data.entry_public_channel_id)
+                ? welcomeResult.data.entry_public_channel_id
+                : null,
+            entryLogChannelId:
+              welcomeResult.data.entry_log_channel_id &&
+              textSet.has(welcomeResult.data.entry_log_channel_id)
+                ? welcomeResult.data.entry_log_channel_id
+                : null,
+            exitPublicChannelId:
+              welcomeResult.data.exit_public_channel_id &&
+              textSet.has(welcomeResult.data.exit_public_channel_id)
+                ? welcomeResult.data.exit_public_channel_id
+                : null,
+            exitLogChannelId:
+              welcomeResult.data.exit_log_channel_id &&
+              textSet.has(welcomeResult.data.exit_log_channel_id)
+                ? welcomeResult.data.exit_log_channel_id
+                : null,
+            entryLayout: normalizeWelcomeLayout(
+              welcomeResult.data.entry_layout,
+              defaultEntryLayout,
+            ),
+            exitLayout: normalizeWelcomeLayout(
+              welcomeResult.data.exit_layout,
+              defaultExitLayout,
+            ),
+            entryThumbnailMode: normalizeWelcomeThumbnailMode(
+              welcomeResult.data.entry_thumbnail_mode,
+            ),
+            exitThumbnailMode: normalizeWelcomeThumbnailMode(
+              welcomeResult.data.exit_thumbnail_mode,
+            ),
+            updatedAt: welcomeResult.data.updated_at,
+          }
+        : null,
+      antiLinkSettings: antiLinkResult.data
+        ? {
+            enabled: Boolean(antiLinkResult.data.enabled),
+            logChannelId:
+              antiLinkResult.data.log_channel_id &&
+              textSet.has(antiLinkResult.data.log_channel_id)
+                ? antiLinkResult.data.log_channel_id
+                : null,
+            enforcementAction: normalizeAntiLinkAction(
+              antiLinkResult.data.enforcement_action,
+            ),
+            timeoutMinutes: normalizeAntiLinkTimeoutMinutes(
+              antiLinkResult.data.timeout_minutes,
+            ),
+            ignoredRoleIds: Array.isArray(antiLinkResult.data.ignored_role_ids)
+              ? antiLinkResult.data.ignored_role_ids.filter(
+                  (roleId): roleId is string =>
+                    typeof roleId === "string" && roleSet.has(roleId),
+                )
+              : [],
+            ignoredChannelIds: Array.isArray(
+              antiLinkResult.data.ignored_channel_ids,
+            )
+              ? antiLinkResult.data.ignored_channel_ids.filter(
+                  (channelId): channelId is string =>
+                    typeof channelId === "string" && textSet.has(channelId),
+                )
+              : [],
+            blockExternalLinks: true,
+            blockDiscordInvites: true,
+            blockObfuscatedLinks: true,
+            updatedAt: antiLinkResult.data.updated_at,
+          }
+        : null,
+      autoRoleSettings: autoRoleResult.data
+        ? {
+            enabled: Boolean(autoRoleResult.data.enabled),
+            roleIds: Array.isArray(autoRoleResult.data.role_ids)
+              ? autoRoleResult.data.role_ids.filter(
+                  (roleId): roleId is string =>
+                    typeof roleId === "string" && roleSet.has(roleId),
+                )
+              : [],
+            assignmentDelayMinutes:
+              autoRoleResult.data.assignment_delay_minutes === 10 ||
+              autoRoleResult.data.assignment_delay_minutes === 20 ||
+              autoRoleResult.data.assignment_delay_minutes === 30
+                ? autoRoleResult.data.assignment_delay_minutes
+                : 0,
+            syncStatus:
+              autoRoleResult.data.existing_members_sync_status === "pending" ||
+              autoRoleResult.data.existing_members_sync_status === "processing" ||
+              autoRoleResult.data.existing_members_sync_status === "completed" ||
+              autoRoleResult.data.existing_members_sync_status === "failed"
+                ? autoRoleResult.data.existing_members_sync_status
+                : "idle",
+            syncRequestedAt:
+              autoRoleResult.data.existing_members_sync_requested_at,
+            syncStartedAt:
+              autoRoleResult.data.existing_members_sync_started_at,
+            syncCompletedAt:
+              autoRoleResult.data.existing_members_sync_completed_at,
+            syncError: autoRoleResult.data.existing_members_sync_error,
+            updatedAt: autoRoleResult.data.updated_at,
+          }
+        : null,
+      securityLogsSettings: securityLogsResult.data
+        ? {
+            enabled: Boolean(
+              (securityLogsResult.data as Record<string, unknown>).enabled,
+            ),
+            useDefaultChannel:
+              (securityLogsResult.data as Record<string, unknown>)
+                .use_default_channel === true,
+            defaultChannelId: resolveOptionalTextChannelId(
+              (securityLogsResult.data as Record<string, unknown>)
+                .default_channel_id,
+              textSet,
+            ),
+            events: {
+              nicknameChange: resolveSecurityLogEvent(
+                securityLogsResult.data as Record<string, unknown>,
+                {
+                  enabledColumn: "nickname_change_enabled",
+                  channelColumn: "nickname_change_channel_id",
+                  textSet,
+                },
+              ),
+              avatarChange: resolveSecurityLogEvent(
+                securityLogsResult.data as Record<string, unknown>,
+                {
+                  enabledColumn: "avatar_change_enabled",
+                  channelColumn: "avatar_change_channel_id",
+                  textSet,
+                },
+              ),
+              voiceJoin: resolveSecurityLogEvent(
+                securityLogsResult.data as Record<string, unknown>,
+                {
+                  enabledColumn: "voice_join_enabled",
+                  channelColumn: "voice_join_channel_id",
+                  textSet,
+                },
+              ),
+              voiceLeave: resolveSecurityLogEvent(
+                securityLogsResult.data as Record<string, unknown>,
+                {
+                  enabledColumn: "voice_leave_enabled",
+                  channelColumn: "voice_leave_channel_id",
+                  textSet,
+                },
+              ),
+              messageDelete: resolveSecurityLogEvent(
+                securityLogsResult.data as Record<string, unknown>,
+                {
+                  enabledColumn: "message_delete_enabled",
+                  channelColumn: "message_delete_channel_id",
+                  textSet,
+                },
+              ),
+              messageEdit: resolveSecurityLogEvent(
+                securityLogsResult.data as Record<string, unknown>,
+                {
+                  enabledColumn: "message_edit_enabled",
+                  channelColumn: "message_edit_channel_id",
+                  textSet,
+                },
+              ),
+              memberBan: resolveSecurityLogEvent(
+                securityLogsResult.data as Record<string, unknown>,
+                {
+                  enabledColumn: "member_ban_enabled",
+                  channelColumn: "member_ban_channel_id",
+                  textSet,
+                },
+              ),
+              memberUnban: resolveSecurityLogEvent(
+                securityLogsResult.data as Record<string, unknown>,
+                {
+                  enabledColumn: "member_unban_enabled",
+                  channelColumn: "member_unban_channel_id",
+                  textSet,
+                },
+              ),
+              memberKick: resolveSecurityLogEvent(
+                securityLogsResult.data as Record<string, unknown>,
+                {
+                  enabledColumn: "member_kick_enabled",
+                  channelColumn: "member_kick_channel_id",
+                  textSet,
+                },
+              ),
+              memberTimeout: resolveSecurityLogEvent(
+                securityLogsResult.data as Record<string, unknown>,
+                {
+                  enabledColumn: "member_timeout_enabled",
+                  channelColumn: "member_timeout_channel_id",
+                  textSet,
+                },
+              ),
+              voiceMute: resolveSecurityLogEvent(
+                securityLogsResult.data as Record<string, unknown>,
+                {
+                  enabledColumn: "voice_mute_enabled",
+                  channelColumn: "voice_mute_channel_id",
+                  textSet,
+                },
+              ),
+            },
+            updatedAt:
+              (securityLogsResult.data as Record<string, unknown>).updated_at
+                ? String(
+                    (securityLogsResult.data as Record<string, unknown>)
+                      .updated_at,
                   )
-                : [],
-              closeRoleIds: Array.isArray(staffResult.data.close_role_ids)
-                ? staffResult.data.close_role_ids.filter(
-                    (roleId): roleId is string => typeof roleId === "string",
-                  )
-                : [],
-              notifyRoleIds: Array.isArray(staffResult.data.notify_role_ids)
-                ? staffResult.data.notify_role_ids.filter(
-                    (roleId): roleId is string => typeof roleId === "string",
-                  )
-                : [],
-              updatedAt: staffResult.data.updated_at,
-            }
-          : null,
-        welcomeSettings: welcomeResult.data
-          ? {
-              enabled: Boolean(welcomeResult.data.enabled),
-              entryPublicChannelId:
-                welcomeResult.data.entry_public_channel_id &&
-                textSet.has(welcomeResult.data.entry_public_channel_id)
-                  ? welcomeResult.data.entry_public_channel_id
-                  : null,
-              entryLogChannelId:
-                welcomeResult.data.entry_log_channel_id &&
-                textSet.has(welcomeResult.data.entry_log_channel_id)
-                  ? welcomeResult.data.entry_log_channel_id
-                  : null,
-              exitPublicChannelId:
-                welcomeResult.data.exit_public_channel_id &&
-                textSet.has(welcomeResult.data.exit_public_channel_id)
-                  ? welcomeResult.data.exit_public_channel_id
-                  : null,
-              exitLogChannelId:
-                welcomeResult.data.exit_log_channel_id &&
-                textSet.has(welcomeResult.data.exit_log_channel_id)
-                  ? welcomeResult.data.exit_log_channel_id
-                  : null,
-              entryLayout: normalizeWelcomeLayout(
-                welcomeResult.data.entry_layout,
-                defaultEntryLayout,
-              ),
-              exitLayout: normalizeWelcomeLayout(
-                welcomeResult.data.exit_layout,
-                defaultExitLayout,
-              ),
-              entryThumbnailMode: normalizeWelcomeThumbnailMode(
-                welcomeResult.data.entry_thumbnail_mode,
-              ),
-              exitThumbnailMode: normalizeWelcomeThumbnailMode(
-                welcomeResult.data.exit_thumbnail_mode,
-              ),
-              updatedAt: welcomeResult.data.updated_at,
-            }
-          : null,
-        antiLinkSettings: antiLinkResult.data
-          ? {
-              enabled: Boolean(antiLinkResult.data.enabled),
-              logChannelId:
-                antiLinkResult.data.log_channel_id &&
-                textSet.has(antiLinkResult.data.log_channel_id)
-                  ? antiLinkResult.data.log_channel_id
-                  : null,
-              enforcementAction: normalizeAntiLinkAction(
-                antiLinkResult.data.enforcement_action,
-              ),
-              timeoutMinutes: normalizeAntiLinkTimeoutMinutes(
-                antiLinkResult.data.timeout_minutes,
-              ),
-              ignoredRoleIds: Array.isArray(antiLinkResult.data.ignored_role_ids)
-                ? antiLinkResult.data.ignored_role_ids.filter(
-                    (roleId): roleId is string =>
-                      typeof roleId === "string" && roleSet.has(roleId),
-                  )
-                : [],
-              ignoredChannelIds: Array.isArray(antiLinkResult.data.ignored_channel_ids)
-                ? antiLinkResult.data.ignored_channel_ids.filter(
-                    (channelId): channelId is string =>
-                      typeof channelId === "string" && textSet.has(channelId),
-                  )
-                : [],
-              blockExternalLinks: true,
-              blockDiscordInvites: true,
-              blockObfuscatedLinks: true,
-              updatedAt: antiLinkResult.data.updated_at,
-            }
-          : null,
-        autoRoleSettings: autoRoleResult.data
-          ? {
-              enabled: Boolean(autoRoleResult.data.enabled),
-              roleIds: Array.isArray(autoRoleResult.data.role_ids)
-                ? autoRoleResult.data.role_ids.filter(
-                    (roleId): roleId is string =>
-                      typeof roleId === "string" && roleSet.has(roleId),
-                  )
-                : [],
-              assignmentDelayMinutes:
-                autoRoleResult.data.assignment_delay_minutes === 10 ||
-                autoRoleResult.data.assignment_delay_minutes === 20 ||
-                autoRoleResult.data.assignment_delay_minutes === 30
-                  ? autoRoleResult.data.assignment_delay_minutes
-                  : 0,
-              syncStatus:
-                autoRoleResult.data.existing_members_sync_status === "pending" ||
-                autoRoleResult.data.existing_members_sync_status === "processing" ||
-                autoRoleResult.data.existing_members_sync_status === "completed" ||
-                autoRoleResult.data.existing_members_sync_status === "failed"
-                  ? autoRoleResult.data.existing_members_sync_status
-                  : "idle",
-              syncRequestedAt:
-                autoRoleResult.data.existing_members_sync_requested_at,
-              syncStartedAt:
-                autoRoleResult.data.existing_members_sync_started_at,
-              syncCompletedAt:
-                autoRoleResult.data.existing_members_sync_completed_at,
-              syncError: autoRoleResult.data.existing_members_sync_error,
-              updatedAt: autoRoleResult.data.updated_at,
-            }
-          : null,
-        securityLogsSettings: securityLogsResult.data
-          ? {
-              enabled: Boolean(
-                (securityLogsResult.data as Record<string, unknown>).enabled,
-              ),
-              useDefaultChannel:
-                (securityLogsResult.data as Record<string, unknown>)
-                  .use_default_channel === true,
-              defaultChannelId: resolveOptionalTextChannelId(
-                (securityLogsResult.data as Record<string, unknown>)
-                  .default_channel_id,
-                textSet,
-              ),
-              events: {
-                nicknameChange: resolveSecurityLogEvent(
-                  securityLogsResult.data as Record<string, unknown>,
-                  {
-                    enabledColumn: "nickname_change_enabled",
-                    channelColumn: "nickname_change_channel_id",
-                    textSet,
-                  },
-                ),
-                avatarChange: resolveSecurityLogEvent(
-                  securityLogsResult.data as Record<string, unknown>,
-                  {
-                    enabledColumn: "avatar_change_enabled",
-                    channelColumn: "avatar_change_channel_id",
-                    textSet,
-                  },
-                ),
-                voiceJoin: resolveSecurityLogEvent(
-                  securityLogsResult.data as Record<string, unknown>,
-                  {
-                    enabledColumn: "voice_join_enabled",
-                    channelColumn: "voice_join_channel_id",
-                    textSet,
-                  },
-                ),
-                voiceLeave: resolveSecurityLogEvent(
-                  securityLogsResult.data as Record<string, unknown>,
-                  {
-                    enabledColumn: "voice_leave_enabled",
-                    channelColumn: "voice_leave_channel_id",
-                    textSet,
-                  },
-                ),
-                messageDelete: resolveSecurityLogEvent(
-                  securityLogsResult.data as Record<string, unknown>,
-                  {
-                    enabledColumn: "message_delete_enabled",
-                    channelColumn: "message_delete_channel_id",
-                    textSet,
-                  },
-                ),
-                messageEdit: resolveSecurityLogEvent(
-                  securityLogsResult.data as Record<string, unknown>,
-                  {
-                    enabledColumn: "message_edit_enabled",
-                    channelColumn: "message_edit_channel_id",
-                    textSet,
-                  },
-                ),
-                memberBan: resolveSecurityLogEvent(
-                  securityLogsResult.data as Record<string, unknown>,
-                  {
-                    enabledColumn: "member_ban_enabled",
-                    channelColumn: "member_ban_channel_id",
-                    textSet,
-                  },
-                ),
-                memberUnban: resolveSecurityLogEvent(
-                  securityLogsResult.data as Record<string, unknown>,
-                  {
-                    enabledColumn: "member_unban_enabled",
-                    channelColumn: "member_unban_channel_id",
-                    textSet,
-                  },
-                ),
-                memberKick: resolveSecurityLogEvent(
-                  securityLogsResult.data as Record<string, unknown>,
-                  {
-                    enabledColumn: "member_kick_enabled",
-                    channelColumn: "member_kick_channel_id",
-                    textSet,
-                  },
-                ),
-                memberTimeout: resolveSecurityLogEvent(
-                  securityLogsResult.data as Record<string, unknown>,
-                  {
-                    enabledColumn: "member_timeout_enabled",
-                    channelColumn: "member_timeout_channel_id",
-                    textSet,
-                  },
-                ),
-                voiceMute: resolveSecurityLogEvent(
-                  securityLogsResult.data as Record<string, unknown>,
-                  {
-                    enabledColumn: "voice_mute_enabled",
-                    channelColumn: "voice_mute_channel_id",
-                    textSet,
-                  },
-                ),
-              },
-              updatedAt:
-                (securityLogsResult.data as Record<string, unknown>).updated_at
-                  ? String(
-                      (securityLogsResult.data as Record<string, unknown>)
-                        .updated_at,
-                    )
-                  : null,
-            }
-          : null,
-        dashboardPermissions: access.dashboardPerms === "full" ? "full" : Array.from(access.dashboardPerms),
-      }),
-    );
+                : null,
+          }
+        : null,
+      dashboardPermissions:
+        access.dashboardPerms === "full"
+          ? "full"
+          : Array.from(access.dashboardPerms),
+    };
+
+    writeDashboardSettingsCache(cacheKey, payload);
+    return applyNoStoreHeaders(NextResponse.json(payload));
   } catch (error) {
     return applyNoStoreHeaders(
       NextResponse.json(

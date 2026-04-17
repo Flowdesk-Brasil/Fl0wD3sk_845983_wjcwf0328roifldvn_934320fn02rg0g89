@@ -44,6 +44,20 @@ type AuthenticateFlowAiApiTokenInput = {
   requestedTaskKey?: string | null;
 };
 
+const TOKEN_LOOKUP_CACHE_TTL_MS = 30 * 1000;
+const MONTHLY_USAGE_CACHE_TTL_MS = 60 * 1000;
+const TOKEN_USAGE_TOUCH_TTL_MS = 5 * 60 * 1000;
+
+const tokenLookupCache = new Map<
+  string,
+  { expiresAt: number; token: FlowAiApiTokenRecord }
+>();
+const monthlyUsageCache = new Map<
+  number,
+  { expiresAt: number; monthKey: string; count: number }
+>();
+const lastTokenUsageTouchAt = new Map<string, number>();
+
 function normalizeText(value: unknown, maxLength: number) {
   return String(value || "").trim().slice(0, maxLength);
 }
@@ -128,6 +142,75 @@ function parsePositiveInteger(value: unknown, fallback: number) {
   return Math.max(1, Math.round(numeric));
 }
 
+function getCurrentMonthKey() {
+  const current = new Date();
+  return `${current.getUTCFullYear()}-${String(current.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function readTokenLookupCache(keyHash: string) {
+  const entry = tokenLookupCache.get(keyHash);
+  if (!entry) {
+    return null;
+  }
+
+  if (entry.expiresAt <= Date.now()) {
+    tokenLookupCache.delete(keyHash);
+    return null;
+  }
+
+  return entry.token;
+}
+
+function writeTokenLookupCache(keyHash: string, token: FlowAiApiTokenRecord) {
+  tokenLookupCache.set(keyHash, {
+    expiresAt: Date.now() + TOKEN_LOOKUP_CACHE_TTL_MS,
+    token: JSON.parse(JSON.stringify(token)) as FlowAiApiTokenRecord,
+  });
+}
+
+function invalidateTokenLookupCacheById(tokenId: number) {
+  for (const [keyHash, entry] of tokenLookupCache.entries()) {
+    if (entry.token.id === tokenId) {
+      tokenLookupCache.delete(keyHash);
+    }
+  }
+}
+
+function readMonthlyUsageCache(apiKeyId: number) {
+  const entry = monthlyUsageCache.get(apiKeyId);
+  if (!entry) {
+    return null;
+  }
+
+  if (entry.expiresAt <= Date.now() || entry.monthKey !== getCurrentMonthKey()) {
+    monthlyUsageCache.delete(apiKeyId);
+    return null;
+  }
+
+  return entry.count;
+}
+
+function writeMonthlyUsageCache(apiKeyId: number, count: number) {
+  monthlyUsageCache.set(apiKeyId, {
+    expiresAt: Date.now() + MONTHLY_USAGE_CACHE_TTL_MS,
+    monthKey: getCurrentMonthKey(),
+    count: Math.max(0, Math.trunc(count)),
+  });
+}
+
+function bumpMonthlyUsageCache(apiKeyId?: number | null) {
+  if (typeof apiKeyId !== "number" || !Number.isFinite(apiKeyId)) {
+    return;
+  }
+
+  const cachedCount = readMonthlyUsageCache(apiKeyId);
+  if (cachedCount === null) {
+    return;
+  }
+
+  writeMonthlyUsageCache(apiKeyId, cachedCount + 1);
+}
+
 function hashToken(rawToken: string) {
   return crypto.createHash("sha256").update(rawToken).digest("hex");
 }
@@ -168,6 +251,11 @@ function isTaskAllowed(token: FlowAiApiTokenRecord, taskKey: string | null | und
 }
 
 async function getMonthlyUsageCount(apiKeyId: number) {
+  const cachedCount = readMonthlyUsageCache(apiKeyId);
+  if (cachedCount !== null) {
+    return cachedCount;
+  }
+
   const monthStart = new Date();
   monthStart.setUTCDate(1);
   monthStart.setUTCHours(0, 0, 0, 0);
@@ -183,7 +271,9 @@ async function getMonthlyUsageCount(apiKeyId: number) {
     throw new Error(result.error.message);
   }
 
-  return result.count || 0;
+  const count = result.count || 0;
+  writeMonthlyUsageCache(apiKeyId, count);
+  return count;
 }
 
 export async function listFlowAiApiTokensForUser(userId: number) {
@@ -274,6 +364,8 @@ export async function revokeFlowAiApiTokenForUser(input: {
     throw new Error(result.error.message);
   }
 
+  invalidateTokenLookupCacheById(input.tokenId);
+  monthlyUsageCache.delete(input.tokenId);
   return true;
 }
 
@@ -295,6 +387,14 @@ export async function touchFlowAiApiTokenUsageSafe(input: {
   tokenId: number;
   requestIp: string | null;
 }) {
+  const throttleKey = `${input.tokenId}:${input.requestIp || ""}`;
+  const lastTouchAt = lastTokenUsageTouchAt.get(throttleKey) || 0;
+  if (Date.now() - lastTouchAt < TOKEN_USAGE_TOUCH_TTL_MS) {
+    return;
+  }
+
+  lastTokenUsageTouchAt.set(throttleKey, Date.now());
+
   try {
     await touchFlowAiApiTokenUsage(input);
   } catch {
@@ -347,6 +447,8 @@ export async function recordFlowAiApiRequestEvent(input: {
   if (result.error) {
     throw new Error(result.error.message);
   }
+
+  bumpMonthlyUsageCache(input.apiKeyId || null);
 }
 
 export async function recordFlowAiApiRequestEventSafe(input: {
@@ -386,20 +488,29 @@ export async function authenticateFlowAiApiToken(
     };
   }
 
-  const supabase = getSupabaseAdminClientOrThrow();
-  const result = await supabase
-    .from("auth_user_api_keys")
-    .select(
-      "id, user_id, name, token_prefix, last_four, scopes, allowed_tasks, rate_limit_per_minute, monthly_quota, metadata, last_used_at, last_used_ip, expires_at, created_at, revoked_at",
-    )
-    .eq("key_hash", hashToken(rawToken))
-    .maybeSingle();
+  const keyHash = hashToken(rawToken);
+  let token = readTokenLookupCache(keyHash);
 
-  if (result.error) {
-    throw new Error(result.error.message);
+  if (!token) {
+    const supabase = getSupabaseAdminClientOrThrow();
+    const result = await supabase
+      .from("auth_user_api_keys")
+      .select(
+        "id, user_id, name, token_prefix, last_four, scopes, allowed_tasks, rate_limit_per_minute, monthly_quota, metadata, last_used_at, last_used_ip, expires_at, created_at, revoked_at",
+      )
+      .eq("key_hash", keyHash)
+      .maybeSingle();
+
+    if (result.error) {
+      throw new Error(result.error.message);
+    }
+
+    token = (result.data as FlowAiApiTokenRecord | null) || null;
+    if (token) {
+      writeTokenLookupCache(keyHash, token);
+    }
   }
 
-  const token = result.data as FlowAiApiTokenRecord | null;
   if (!token || token.revoked_at) {
     return {
       ok: false as const,

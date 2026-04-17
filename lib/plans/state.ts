@@ -81,7 +81,7 @@ const BASIC_PLAN_FIRST_PURCHASE_BONUS_DAYS = 7;
 type PaymentOrderPlanRecord = {
   id: number;
   user_id: number;
-  guild_id: string;
+  guild_id: string | null;
   payment_method?: string | null;
   plan_code?: string | null;
   plan_name?: string | null;
@@ -528,7 +528,7 @@ async function resolveOrderProviderPayload(order: PaymentOrderPlanRecord) {
 async function persistApprovedOrderBenefits(input: {
   orderId: number;
   userId: number;
-  guildId: string;
+  guildId: string | null;
   benefits: ApprovedOrderBenefits;
 }) {
   const supabase = getSupabaseAdminClientOrThrow();

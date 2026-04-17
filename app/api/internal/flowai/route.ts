@@ -87,7 +87,6 @@ function resolveAllowedTokens() {
       [
         process.env.FLOWAI_INTERNAL_API_TOKEN,
         process.env.CRON_SECRET,
-        process.env.OPENAI_API_KEY,
       ]
         .map(normalizeSecret)
         .filter(Boolean),
@@ -102,7 +101,6 @@ function resolveSigningSecrets() {
         process.env.FLOWAI_INTERNAL_SIGNING_SECRET,
         process.env.FLOWAI_INTERNAL_API_TOKEN,
         process.env.CRON_SECRET,
-        process.env.OPENAI_API_KEY,
       ]
         .map(normalizeSecret)
         .filter(Boolean),

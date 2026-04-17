@@ -30,7 +30,6 @@ export function hasFlowAiInternalTokenAuth(request: Request) {
       [
         process.env.FLOWAI_INTERNAL_API_TOKEN,
         process.env.CRON_SECRET,
-        process.env.OPENAI_API_KEY,
       ]
         .map(normalizeSecret)
         .filter(Boolean),

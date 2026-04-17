@@ -10,6 +10,7 @@ export const LICENSE_RENEWAL_WINDOW_MS =
   LICENSE_RENEWAL_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 const LICENSE_STATUS_CACHE_TTL_MS = 12_000;
 const LOCKED_GUILD_LICENSE_CACHE_TTL_MS = 12_000;
+const APPROVED_ORDERS_CACHE_TTL_MS = 10_000;
 
 type CacheEntry<TValue> = {
   expiresAtMs: number;
@@ -107,6 +108,8 @@ const lockedGuildLicenseInflight = new Map<
   string,
   Promise<LockedGuildLicenseRecord | null>
 >();
+const approvedOrdersByGuildCache = new Map<string, CacheEntry<unknown[]>>();
+const approvedOrdersByGuildInflight = new Map<string, Promise<unknown[]>>();
 
 function readCacheEntry<TValue>(
   cache: Map<string, CacheEntry<TValue>>,
@@ -136,10 +139,22 @@ function writeCacheEntry<TValue>(
 
 export function invalidateGuildLicenseCaches(guildId?: string) {
   if (typeof guildId === "string" && guildId.trim().length > 0) {
-    guildLicenseStatusCache.delete(guildId);
-    guildLicenseStatusInflight.delete(guildId);
-    lockedGuildLicenseCache.delete(guildId);
-    lockedGuildLicenseInflight.delete(guildId);
+    const normalizedGuildId = guildId.trim();
+    guildLicenseStatusCache.delete(normalizedGuildId);
+    guildLicenseStatusInflight.delete(normalizedGuildId);
+    lockedGuildLicenseCache.delete(normalizedGuildId);
+    lockedGuildLicenseInflight.delete(normalizedGuildId);
+    const approvedOrdersPrefix = `${normalizedGuildId}::`;
+    for (const key of Array.from(approvedOrdersByGuildCache.keys())) {
+      if (key.startsWith(approvedOrdersPrefix)) {
+        approvedOrdersByGuildCache.delete(key);
+      }
+    }
+    for (const key of Array.from(approvedOrdersByGuildInflight.keys())) {
+      if (key.startsWith(approvedOrdersPrefix)) {
+        approvedOrdersByGuildInflight.delete(key);
+      }
+    }
     return;
   }
 
@@ -147,6 +162,14 @@ export function invalidateGuildLicenseCaches(guildId?: string) {
   guildLicenseStatusInflight.clear();
   lockedGuildLicenseCache.clear();
   lockedGuildLicenseInflight.clear();
+  approvedOrdersByGuildCache.clear();
+  approvedOrdersByGuildInflight.clear();
+}
+
+function cloneApprovedOrders<TOrder extends LicenseApprovedOrderRecord>(
+  orders: TOrder[],
+) {
+  return JSON.parse(JSON.stringify(orders)) as TOrder[];
 }
 
 export function resolveLicenseBaseTimestamp(order: ApprovedOrderRecord) {
@@ -592,22 +615,54 @@ export function resolveRenewalPaymentDecision<
 export async function getApprovedOrdersForGuild<
   TOrder extends LicenseApprovedOrderRecord,
 >(guildId: string | null, selectColumns: string, limit = 120) {
-  const supabase = getSupabaseAdminClientOrThrow();
-  const result = await supabase
-    .from("payment_orders")
-    .select(selectColumns)
-    .eq("guild_id", guildId)
-    .eq("status", "approved")
-    .order("paid_at", { ascending: false, nullsFirst: false })
-    .order("created_at", { ascending: false })
-    .limit(limit)
-    .returns<TOrder[]>();
-
-  if (result.error) {
-    throw new Error(result.error.message);
+  const normalizedGuildId =
+    typeof guildId === "string" && guildId.trim().length > 0
+      ? guildId.trim()
+      : "__null__";
+  const cacheKey = `${normalizedGuildId}::${limit}::${selectColumns}`;
+  const cached = readCacheEntry(
+    approvedOrdersByGuildCache,
+    cacheKey,
+  ) as TOrder[] | null;
+  if (cached) {
+    return cloneApprovedOrders(cached);
   }
 
-  return result.data || [];
+  const inflight = approvedOrdersByGuildInflight.get(cacheKey);
+  if (inflight) {
+    return cloneApprovedOrders((await inflight) as TOrder[]);
+  }
+
+  const loadPromise = (async () => {
+    const supabase = getSupabaseAdminClientOrThrow();
+    const result = await supabase
+      .from("payment_orders")
+      .select(selectColumns)
+      .eq("guild_id", guildId)
+      .eq("status", "approved")
+      .order("paid_at", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false })
+      .limit(limit)
+      .returns<TOrder[]>();
+
+    if (result.error) {
+      throw new Error(result.error.message);
+    }
+
+    const data = result.data || [];
+    writeCacheEntry(
+      approvedOrdersByGuildCache,
+      cacheKey,
+      cloneApprovedOrders(data),
+      APPROVED_ORDERS_CACHE_TTL_MS,
+    );
+    return data;
+  })().finally(() => {
+    approvedOrdersByGuildInflight.delete(cacheKey);
+  });
+
+  approvedOrdersByGuildInflight.set(cacheKey, loadPromise);
+  return cloneApprovedOrders((await loadPromise) as TOrder[]);
 }
 
 export async function getLatestLicenseCoverageForGuild<

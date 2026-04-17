@@ -66,6 +66,49 @@ type CleanupSummary = {
   touchedSessionIds: string[];
 };
 
+type CleanupCacheEntry = {
+  expiresAt: number;
+  value: CleanupSummary;
+};
+
+const CLEANUP_RESULT_CACHE_TTL_MS = 60_000;
+const cleanupResultCache = new Map<string, CleanupCacheEntry>();
+const cleanupResultInflight = new Map<string, Promise<CleanupSummary>>();
+
+function cloneCleanupSummary(summary: CleanupSummary): CleanupSummary {
+  return {
+    cleanedGuildIds: [...summary.cleanedGuildIds],
+    expiredPendingOrderIds: [...summary.expiredPendingOrderIds],
+    removedGlobalGuildSettingsIds: [...summary.removedGlobalGuildSettingsIds],
+    removedPlanGuildIds: [...summary.removedPlanGuildIds],
+    touchedSessionIds: [...summary.touchedSessionIds],
+  };
+}
+
+function readCleanupCache(key: string) {
+  const cached = cleanupResultCache.get(key);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    cleanupResultCache.delete(key);
+    return null;
+  }
+  return cloneCleanupSummary(cached.value);
+}
+
+function writeCleanupCache(key: string, value: CleanupSummary) {
+  cleanupResultCache.set(key, {
+    value: cloneCleanupSummary(value),
+    expiresAt: Date.now() + CLEANUP_RESULT_CACHE_TTL_MS,
+  });
+}
+
+function buildCleanupCacheKey(input: {
+  userId: number;
+  guildId?: string | null;
+}) {
+  return `${input.userId}:${input.guildId?.trim() || "*"}`;
+}
+
 function resolveTimedOutSetupCutoffIso(nowMs = Date.now()) {
   return new Date(nowMs - UNPAID_SETUP_TIMEOUT_MS).toISOString();
 }
@@ -204,7 +247,7 @@ async function createPaymentOrderEventSafe(
   }
 }
 
-export async function cleanupExpiredUnpaidServerSetups(input: {
+async function runCleanupExpiredUnpaidServerSetups(input: {
   userId: number;
   guildId?: string | null;
   source?: string;
@@ -224,15 +267,6 @@ export async function cleanupExpiredUnpaidServerSetups(input: {
     .is("revoked_at", null)
     .gt("expires_at", nowIso);
 
-  const activeSessionsResult =
-    await activeSessionsQuery.returns<ActiveSessionCleanupRecord[]>();
-
-  if (activeSessionsResult.error) {
-    throw new Error(
-      `Erro ao carregar sessoes ativas para limpeza: ${activeSessionsResult.error.message}`,
-    );
-  }
-
   let latestUnpaidOrdersQuery = supabase
     .from("payment_orders")
     .select(
@@ -246,15 +280,6 @@ export async function cleanupExpiredUnpaidServerSetups(input: {
 
   if (input.guildId) {
     latestUnpaidOrdersQuery = latestUnpaidOrdersQuery.eq("guild_id", input.guildId);
-  }
-
-  const latestUnpaidOrdersResult =
-    await latestUnpaidOrdersQuery.returns<CleanupCandidateOrderRecord[]>();
-
-  if (latestUnpaidOrdersResult.error) {
-    throw new Error(
-      `Erro ao carregar tentativas nao pagas para limpeza: ${latestUnpaidOrdersResult.error.message}`,
-    );
   }
 
   let ticketSettingsActivityQuery = supabase
@@ -303,18 +328,34 @@ export async function cleanupExpiredUnpaidServerSetups(input: {
   }
 
   const [
+    activeSessionsResult,
+    latestUnpaidOrdersResult,
     ticketSettingsActivityResult,
     staffSettingsActivityResult,
     antiLinkSettingsActivityResult,
     autoRoleSettingsActivityResult,
     planSettingsActivityResult,
   ] = await Promise.all([
+    activeSessionsQuery.returns<ActiveSessionCleanupRecord[]>(),
+    latestUnpaidOrdersQuery.returns<CleanupCandidateOrderRecord[]>(),
     ticketSettingsActivityQuery.returns<GuildActivityRecord[]>(),
     staffSettingsActivityQuery.returns<GuildActivityRecord[]>(),
     antiLinkSettingsActivityQuery.returns<GuildActivityRecord[]>(),
     autoRoleSettingsActivityQuery.returns<GuildActivityRecord[]>(),
     planSettingsActivityQuery.returns<GuildActivityRecord[]>(),
   ]);
+
+  if (activeSessionsResult.error) {
+    throw new Error(
+      `Erro ao carregar sessoes ativas para limpeza: ${activeSessionsResult.error.message}`,
+    );
+  }
+
+  if (latestUnpaidOrdersResult.error) {
+    throw new Error(
+      `Erro ao carregar tentativas nao pagas para limpeza: ${latestUnpaidOrdersResult.error.message}`,
+    );
+  }
 
   if (ticketSettingsActivityResult.error) {
     throw new Error(
@@ -475,14 +516,16 @@ export async function cleanupExpiredUnpaidServerSetups(input: {
     .lt("created_at", cutoffIso)
     .is("checkout_link_invalidated_at", null);
 
-  for (const order of expiredPendingOrdersResult.data || []) {
-    await createPaymentOrderEventSafe(order.id, "setup_cleanup_expired", {
-      source,
-      guildId: order.guild_id,
-      orderNumber: order.order_number,
-      timeoutMinutes: UNPAID_SETUP_TIMEOUT_MINUTES,
-    });
-  }
+  await Promise.allSettled(
+    (expiredPendingOrdersResult.data || []).map((order) =>
+      createPaymentOrderEventSafe(order.id, "setup_cleanup_expired", {
+        source,
+        guildId: order.guild_id,
+        orderNumber: order.order_number,
+        timeoutMinutes: UNPAID_SETUP_TIMEOUT_MINUTES,
+      }),
+    ),
+  );
 
   const guildsWithAnyApprovedOrderResult = await supabase
     .from("payment_orders")
@@ -630,4 +673,33 @@ export async function cleanupExpiredUnpaidServerSetups(input: {
     removedPlanGuildIds: cleanupGuildIds,
     touchedSessionIds,
   };
+}
+
+export async function cleanupExpiredUnpaidServerSetups(input: {
+  userId: number;
+  guildId?: string | null;
+  source?: string;
+}): Promise<CleanupSummary> {
+  const cacheKey = buildCleanupCacheKey(input);
+  const cached = readCleanupCache(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const inflight = cleanupResultInflight.get(cacheKey);
+  if (inflight) {
+    return cloneCleanupSummary(await inflight);
+  }
+
+  const loadPromise = runCleanupExpiredUnpaidServerSetups(input)
+    .then((result) => {
+      writeCleanupCache(cacheKey, result);
+      return result;
+    })
+    .finally(() => {
+      cleanupResultInflight.delete(cacheKey);
+    });
+
+  cleanupResultInflight.set(cacheKey, loadPromise);
+  return cloneCleanupSummary(await loadPromise);
 }

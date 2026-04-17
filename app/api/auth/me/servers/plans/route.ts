@@ -35,6 +35,9 @@ import {
   resolvePlanPricing,
 } from "@/lib/plans/catalog";
 import {
+  getUserPlanFlowPointsBalance,
+  getUserPlanScheduledChange,
+  resolveFlowPointsBalanceAmount,
   resolvePlanChangePreview,
   type UserPlanScheduledChangeRecord,
 } from "@/lib/plans/change";
@@ -124,7 +127,7 @@ function shouldIncludePaymentMethods(value: string | null) {
   return normalized !== "0" && normalized !== "false" && normalized !== "no";
 }
 
-async function ensureGuildAccess(guildId: string) {
+async function ensureGuildAccess(guildId: string | null) {
   const sessionData = await resolveSessionAccessToken();
   if (!sessionData?.authSession) {
     return {
@@ -143,6 +146,15 @@ async function ensureGuildAccess(guildId: string) {
         { ok: false, message: "Token OAuth ausente na sessao." },
         { status: 401 },
       ),
+    };
+  }
+
+  if (!guildId) {
+    return {
+      ok: true as const,
+      context: {
+        sessionData,
+      },
     };
   }
 
@@ -534,13 +546,6 @@ export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const guildId = normalizeGuildId(url.searchParams.get("guildId"));
-    if (!guildId) {
-      return attachRequestId(NextResponse.json(
-        { ok: false, message: "Guild ID invalido." },
-        { status: 400 },
-      ), requestContext.requestId);
-    }
-
     const access = await ensureGuildAccess(guildId);
     if (!access.ok) return attachRequestId(access.response, requestContext.requestId);
 
@@ -553,18 +558,41 @@ export async function GET(request: Request) {
       url.searchParams.get("includePaymentMethods"),
     );
     const [selection, savedMethods] = await Promise.all([
-      resolveEffectivePlanSelection({
-        userId,
-        guildId,
-        preferredPlanCode: requestedPlanCode,
-        preferredBillingPeriodCode: requestedBillingPeriodCode,
-      }),
+      guildId
+        ? resolveEffectivePlanSelection({
+            userId,
+            guildId,
+            preferredPlanCode: requestedPlanCode,
+            preferredBillingPeriodCode: requestedBillingPeriodCode,
+          })
+        : Promise.all([
+            getUserPlanState(userId),
+            getBasicPlanAvailability(userId),
+            getUserPlanFlowPointsBalance(userId),
+            getUserPlanScheduledChange(userId),
+          ]).then(
+            ([
+              userPlanState,
+              basicPlanAvailability,
+              flowPointsBalanceRecord,
+              scheduledChange,
+            ]) => ({
+              plan: null,
+              guildSettings: null,
+              userPlanState,
+              basicPlanAvailability,
+              flowPointsBalance: resolveFlowPointsBalanceAmount(
+                flowPointsBalanceRecord,
+              ),
+              scheduledChange,
+            }),
+          ),
       includePaymentMethods
         ? getAvailableSavedMethodsForUser(userId)
         : Promise.resolve([] as SavedMethodSummary[]),
     ]);
-    const settings = selection.guildSettings;
-    const userPlanState = selection.userPlanState;
+    const settings = selection.guildSettings || null;
+    const userPlanState = selection.userPlanState || null;
     const basicPlanAvailability = selection.basicPlanAvailability;
 
     const recurringMethodId = settings?.recurring_method_id || null;
@@ -575,7 +603,7 @@ export async function GET(request: Request) {
 
     return attachRequestId(NextResponse.json({
       ok: true,
-      guildId,
+      guildId: guildId || null,
       plan: toPlanResponse({
         settings,
         userPlanState,
@@ -591,12 +619,16 @@ export async function GET(request: Request) {
       }),
     }), requestContext.requestId);
   } catch (error) {
+    const messageFallback =
+      new URL(request.url).searchParams.get("guildId")
+        ? "Erro ao carregar plano do servidor."
+        : "Erro ao carregar plano da conta.";
     return attachRequestId(NextResponse.json(
       {
         ok: false,
         message: sanitizeErrorMessage(
           error,
-          "Erro ao carregar plano do servidor.",
+          messageFallback,
         ),
       },
       { status: 500 },

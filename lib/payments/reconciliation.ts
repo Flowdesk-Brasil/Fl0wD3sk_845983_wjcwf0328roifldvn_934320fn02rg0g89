@@ -26,6 +26,7 @@ import {
   resolveLatestLicenseCoverageFromApprovedOrders,
   resolveRenewalPaymentDecision,
 } from "@/lib/payments/licenseStatus";
+import { invalidatePaymentOrderQueryCaches } from "@/lib/payments/orderQueryCache";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 export type ReconcilablePaymentStatus =
@@ -42,7 +43,7 @@ export type PaymentOrderReconciliationRecord = {
   id: number;
   order_number: number;
   user_id: number;
-  guild_id: string;
+  guild_id: string | null;
   payment_method: ReconcilablePaymentMethod | "trial";
   status: ReconcilablePaymentStatus;
   plan_code?: string | null;
@@ -155,10 +156,14 @@ async function createPaymentOrderEventSafe(
 }
 
 async function getLatestApprovedLicenseCoverageForGuild(
-  guildId: string,
+  guildId: string | null,
   excludedOrderId?: number,
 ) {
-  const approvedOrders = await getApprovedOrdersForGuild<PaymentOrderReconciliationRecord>(
+  if (!guildId) return null;
+
+  const approvedOrders = await getApprovedOrdersForGuild<
+    PaymentOrderReconciliationRecord & { guild_id: string }
+  >(
     guildId,
     PAYMENT_ORDER_RECONCILIATION_SELECT_COLUMNS,
   );
@@ -373,6 +378,12 @@ async function reconcilePaymentOrderWithFetchedProviderPayment(
         },
       );
 
+      invalidatePaymentOrderQueryCaches({
+        userId: refundedTimeoutOrderResult.data.user_id,
+        guildId: refundedTimeoutOrderResult.data.guild_id,
+        orderId: refundedTimeoutOrderResult.data.id,
+        orderNumber: refundedTimeoutOrderResult.data.order_number,
+      });
       invalidateGuildLicenseCaches();
       return {
         order: refundedTimeoutOrderResult.data,
@@ -454,6 +465,12 @@ async function reconcilePaymentOrderWithFetchedProviderPayment(
         previousApprovedOrderNumber: existingCoverage?.order.order_number || null,
       });
 
+      invalidatePaymentOrderQueryCaches({
+        userId: refundedOrderResult.data.user_id,
+        guildId: refundedOrderResult.data.guild_id,
+        orderId: refundedOrderResult.data.id,
+        orderNumber: refundedOrderResult.data.order_number,
+      });
       invalidateGuildLicenseCaches();
       return {
         order: refundedOrderResult.data,
@@ -556,6 +573,12 @@ async function reconcilePaymentOrderWithFetchedProviderPayment(
     await syncUserPlanStateFromOrder(updatedOrderResult.data);
   }
 
+  invalidatePaymentOrderQueryCaches({
+    userId: updatedOrderResult.data.user_id,
+    guildId: updatedOrderResult.data.guild_id,
+    orderId: updatedOrderResult.data.id,
+    orderNumber: updatedOrderResult.data.order_number,
+  });
   invalidateGuildLicenseCaches();
   return {
     order: updatedOrderResult.data,

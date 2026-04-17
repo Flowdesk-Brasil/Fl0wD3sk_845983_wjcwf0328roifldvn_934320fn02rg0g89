@@ -28,6 +28,17 @@ type RateLimitInput = {
   context: SecurityRequestContext;
 };
 
+type RateLimitDimensionField = "session_id" | "user_id" | "ip_fingerprint";
+
+type LocalRateLimitBucket = {
+  count: number;
+  resetAt: number;
+};
+
+const localRateLimitBuckets = new Map<string, LocalRateLimitBucket>();
+let localRateLimitLastCleanupAt = 0;
+const LOCAL_RATE_LIMIT_CLEANUP_INTERVAL_MS = 60_000;
+
 function extractClientIp(request: Request) {
   const forwardedFor = request.headers.get("x-forwarded-for");
   if (forwardedFor) {
@@ -149,7 +160,7 @@ export async function logSecurityAuditEventSafe(
 async function countAttemptsByDimension(input: {
   action: string;
   windowStartIso: string;
-  field: "session_id" | "user_id" | "ip_fingerprint";
+  field: RateLimitDimensionField;
   value: string | number | null;
 }) {
   if (input.value === null || input.value === undefined || input.value === "") {
@@ -172,43 +183,173 @@ async function countAttemptsByDimension(input: {
   return result.count || 0;
 }
 
+function cleanupLocalRateLimitBuckets(now: number) {
+  if (now - localRateLimitLastCleanupAt < LOCAL_RATE_LIMIT_CLEANUP_INTERVAL_MS) {
+    return;
+  }
+
+  for (const [key, bucket] of localRateLimitBuckets.entries()) {
+    if (bucket.resetAt <= now) {
+      localRateLimitBuckets.delete(key);
+    }
+  }
+
+  localRateLimitLastCleanupAt = now;
+}
+
+function buildLocalRateLimitBucketKey(
+  action: string,
+  field: RateLimitDimensionField,
+  value: string | number,
+) {
+  return `${action}:${field}:${String(value)}`;
+}
+
+function setLocalRateLimitCount(input: {
+  action: string;
+  field: RateLimitDimensionField;
+  value: string | number | null;
+  count: number;
+  windowMs: number;
+}) {
+  if (input.value === null || input.value === undefined || input.value === "") {
+    return;
+  }
+
+  const now = Date.now();
+  cleanupLocalRateLimitBuckets(now);
+
+  const bucketKey = buildLocalRateLimitBucketKey(
+    input.action,
+    input.field,
+    input.value,
+  );
+  const current = localRateLimitBuckets.get(bucketKey);
+
+  localRateLimitBuckets.set(bucketKey, {
+    count: Math.max(1, Math.trunc(input.count)),
+    resetAt:
+      current && current.resetAt > now ? current.resetAt : now + input.windowMs,
+  });
+}
+
+function incrementLocalRateLimitCount(input: {
+  action: string;
+  field: RateLimitDimensionField;
+  value: string | number | null;
+  windowMs: number;
+}) {
+  if (input.value === null || input.value === undefined || input.value === "") {
+    return 0;
+  }
+
+  const now = Date.now();
+  cleanupLocalRateLimitBuckets(now);
+
+  const bucketKey = buildLocalRateLimitBucketKey(
+    input.action,
+    input.field,
+    input.value,
+  );
+  const current = localRateLimitBuckets.get(bucketKey);
+
+  if (!current || current.resetAt <= now) {
+    localRateLimitBuckets.set(bucketKey, {
+      count: 1,
+      resetAt: now + input.windowMs,
+    });
+    return 1;
+  }
+
+  current.count += 1;
+  localRateLimitBuckets.set(bucketKey, current);
+  return current.count;
+}
+
 export async function enforceRequestRateLimit(input: RateLimitInput) {
   const windowStartIso = new Date(Date.now() - input.windowMs).toISOString();
+  const dimensions = [
+    {
+      key: "ip" as const,
+      field: "ip_fingerprint" as const,
+      value: input.context.ipFingerprint,
+    },
+    {
+      key: "session" as const,
+      field: "session_id" as const,
+      value: input.context.sessionId,
+    },
+    {
+      key: "user" as const,
+      field: "user_id" as const,
+      value: input.context.userId,
+    },
+  ];
 
-  const [ipCount, sessionCount, userCount] = await Promise.all([
-    countAttemptsByDimension({
+  const counts = {
+    ip: incrementLocalRateLimitCount({
       action: input.action,
-      windowStartIso,
       field: "ip_fingerprint",
       value: input.context.ipFingerprint,
+      windowMs: input.windowMs,
     }),
-    countAttemptsByDimension({
+    session: incrementLocalRateLimitCount({
       action: input.action,
-      windowStartIso,
       field: "session_id",
       value: input.context.sessionId,
+      windowMs: input.windowMs,
     }),
-    countAttemptsByDimension({
+    user: incrementLocalRateLimitCount({
       action: input.action,
-      windowStartIso,
       field: "user_id",
       value: input.context.userId,
+      windowMs: input.windowMs,
     }),
-  ]);
+  };
 
-  const blocked =
-    ipCount >= input.maxAttempts ||
-    sessionCount >= input.maxAttempts ||
-    userCount >= input.maxAttempts;
+  const exceededDimensions = dimensions.filter(
+    (dimension) =>
+      dimension.value !== null &&
+      dimension.value !== undefined &&
+      dimension.value !== "" &&
+      counts[dimension.key] >= input.maxAttempts,
+  );
+
+  let blocked = false;
+
+  if (exceededDimensions.length) {
+    await Promise.all(
+      exceededDimensions.map(async (dimension) => {
+        const confirmedCount = await countAttemptsByDimension({
+          action: input.action,
+          windowStartIso,
+          field: dimension.field,
+          value: dimension.value,
+        });
+
+        if (confirmedCount >= input.maxAttempts) {
+          blocked = true;
+          counts[dimension.key] = confirmedCount;
+          return;
+        }
+
+        const effectiveCount = confirmedCount + 1;
+        counts[dimension.key] = effectiveCount;
+        setLocalRateLimitCount({
+          action: input.action,
+          field: dimension.field,
+          value: dimension.value,
+          count: effectiveCount,
+          windowMs: input.windowMs,
+        });
+      }),
+    );
+  }
 
   return {
     ok: !blocked,
     retryAfterSeconds: Math.max(5, Math.ceil(input.windowMs / 1000 / 2)),
-    counts: {
-      ip: ipCount,
-      session: sessionCount,
-      user: userCount,
-    },
+    counts,
   };
 }
 

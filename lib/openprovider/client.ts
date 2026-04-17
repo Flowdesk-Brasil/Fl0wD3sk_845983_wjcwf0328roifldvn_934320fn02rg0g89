@@ -208,18 +208,26 @@ export class OpenProviderClient {
 
   private token = "";
   private tokenFetchedAt = 0;
+  private lastAuthErrorAt = 0;
+  private authFailureCount = 0;
   private loginPromise: Promise<string> | null = null;
 
   constructor() {
-    this.baseUrl = process.env.OPENPROVIDER_BASE_URL || "https://api.openprovider.eu/v1beta";
-    this.username = process.env.OPENPROVIDER_USERNAME?.trim() || "";
-    this.password = process.env.OPENPROVIDER_PASSWORD || "";
-    this.ip = process.env.OPENPROVIDER_IP?.trim() || "";
-    this.timeoutMs = Number(process.env.OPENPROVIDER_TIMEOUT_MS) || 10_000;
+    this.baseUrl = (process.env.OPENPROVIDER_BASE_URL || "https://api.openprovider.eu/v1beta").trim().replace(/\/$/, "");
+    this.username = (process.env.OPENPROVIDER_USERNAME || "").trim();
+    this.password = (process.env.OPENPROVIDER_PASSWORD || "").trim();
+    this.ip = (process.env.OPENPROVIDER_IP || "").trim();
+    this.timeoutMs = Number(process.env.OPENPROVIDER_TIMEOUT_MS) || 12_000;
 
     const failureThreshold = Number(process.env.OPENPROVIDER_CIRCUIT_BREAKER_FAILURE_THRESHOLD) || 8;
     const recoveryTimeoutMs = Number(process.env.OPENPROVIDER_CIRCUIT_BREAKER_RECOVERY_TIMEOUT_MS) || 45_000;
     this.circuitBreaker = new CircuitBreaker(failureThreshold, recoveryTimeoutMs);
+  }
+
+  private maskUsername(user: string) {
+    if (!user) return "empty";
+    if (user.length < 3) return "***";
+    return `${user.slice(0, 2)}***${user.slice(-1)}`;
   }
 
   private ensureConfigured() {
@@ -397,6 +405,14 @@ export class OpenProviderClient {
       return this.token;
     }
 
+    if (this.authFailureCount >= 5 && Date.now() - this.lastAuthErrorAt < 300_000) {
+      const remainingSec = Math.ceil((300_000 - (Date.now() - this.lastAuthErrorAt)) / 1000);
+      throw new OpenProviderRequestError(
+        `Autenticacao em cooldown devido a falhas persistentes. Tente novamente em ${remainingSec}s.`,
+        { status: 429 }
+      );
+    }
+
     if (this.loginPromise) {
       return this.loginPromise;
     }
@@ -407,32 +423,63 @@ export class OpenProviderClient {
         password: this.password,
       };
 
-      if (this.ip) payload.ip = this.ip;
+      const attemptLogin = async (useIp: boolean) => {
+        const currentPayload = { ...payload };
+        if (useIp && this.ip) currentPayload.ip = this.ip;
 
-      console.log(`[OpenProvider][${requestId}] Authenticating`);
+        const label = useIp && this.ip ? `with IP=${this.ip}` : "without IP";
+        console.log(`[OpenProvider][${requestId}] Authenticating ${label}`);
 
-      const response = await this.doRequest<AuthLoginResponseData>("auth/login", {
-        method: "POST",
-        body: JSON.stringify(payload),
-        requireAuth: false,
-        retryOnAuthFailure: false,
-        maxRetries: 1,
-        requestId,
-      });
+        try {
+          const response = await this.doRequest<AuthLoginResponseData>("auth/login", {
+            method: "POST",
+            body: JSON.stringify(currentPayload),
+            requireAuth: false,
+            retryOnAuthFailure: false,
+            maxRetries: 1, // small retry for login itself
+            requestId,
+          });
 
-      const token = response.data?.token?.trim();
-      if (!token) {
-        throw new OpenProviderRequestError(
-          "A Openprovider nao retornou token de autenticacao.",
-          { status: 502, details: response },
-        );
+          const token = response.data?.token?.trim();
+          if (!token) {
+            throw new OpenProviderRequestError("A Openprovider nao retornou token de autenticacao.", {
+              status: 502, details: response,
+            });
+          }
+          return token;
+        } catch (error) {
+          if (useIp && this.ip && isAuthError(error)) {
+            console.warn(`[OpenProvider][${requestId}] Auth failed with IP, falling back to IP-less login...`);
+            return null; // trigger fallback
+          }
+          throw error;
+        }
+      };
+
+      // Try with IP first if provided
+      let token = await attemptLogin(true);
+
+      // Fallback if IP login failed
+      if (!token && this.ip) {
+        token = await attemptLogin(false);
       }
 
-      console.log(`[OpenProvider][${requestId}] Authentication succeeded`);
+      if (!token) {
+        throw new OpenProviderRequestError("Falha critica na geracao de token OpenProvider.", { status: 401 });
+      }
+
+      console.log(`[OpenProvider][${requestId}] Authentication succeeded (User: ${this.maskUsername(this.username)}, PassLen: ${this.password.length})`);
       this.token = token;
       this.tokenFetchedAt = Date.now();
+      this.authFailureCount = 0; // reset on success
       return token;
-    })().finally(() => {
+    })().catch((err) => {
+      this.authFailureCount++;
+      this.lastAuthErrorAt = Date.now();
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[OpenProvider][${requestId}] FATAL Authentication Failure (${this.authFailureCount}/5): ${msg}`);
+      throw err;
+    }).finally(() => {
       this.loginPromise = null;
     });
 

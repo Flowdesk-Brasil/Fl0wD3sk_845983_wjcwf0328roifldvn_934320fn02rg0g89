@@ -41,10 +41,17 @@ import {
 } from "@/lib/payments/setupCleanup";
 import {
   getApprovedOrdersForGuild,
+  invalidateGuildLicenseCaches,
   resolveCoverageForApprovedOrder,
   resolveLatestLicenseCoverageFromApprovedOrders,
   resolveRenewalPaymentDecision,
 } from "@/lib/payments/licenseStatus";
+import {
+  getCachedLatestPaymentOrderForUserAndGuild,
+  getCachedLatestPendingDraftPaymentOrderForUserAndGuild,
+  getCachedPaymentOrderByCodeForGuild,
+  invalidatePaymentOrderQueryCaches,
+} from "@/lib/payments/orderQueryCache";
 import {
   type PlanPricingDefinition,
   resolvePlanPricing,
@@ -132,6 +139,29 @@ const PENDING_REUSE_WINDOW_MS = 25 * 60 * 1000;
 const ORDER_EXPIRATION_SAFETY_BUFFER_MS = 45 * 1000;
 const PAYMENT_ORDER_SELECT_COLUMNS =
   `id, order_number, guild_id, payment_method, status, amount, currency, plan_code, plan_name, plan_billing_cycle_days, plan_max_licensed_servers, plan_max_active_tickets, plan_max_automations, plan_max_monthly_actions, payer_name, payer_document, payer_document_type, provider_payment_id, provider_external_reference, provider_qr_code, provider_qr_base64, provider_ticket_url, provider_payload, provider_status, provider_status_detail, paid_at, expires_at, user_id, created_at, updated_at, ${PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS}`;
+
+function invalidatePaymentReadCachesForOrder(
+  order:
+    | Pick<PaymentOrderRecord, "id" | "order_number" | "user_id" | "guild_id">
+    | null
+    | undefined,
+) {
+  if (!order) return;
+  invalidatePaymentOrderQueryCaches({
+    userId: order.user_id,
+    guildId: order.guild_id,
+    orderId: order.id,
+    orderNumber: order.order_number,
+  });
+}
+
+function invalidateLicenseReadCachesForOrder(
+  order: Pick<PaymentOrderRecord, "guild_id"> | null | undefined,
+) {
+  if (order && typeof order.guild_id === "string" && order.guild_id.trim()) {
+    invalidateGuildLicenseCaches(order.guild_id);
+  }
+}
 
 function mergeProviderPayload(
   currentPayload: unknown,
@@ -480,7 +510,9 @@ async function confirmImmediatePixProviderPayment(
   fallbackPayment: MercadoPagoPaymentResponse,
 ) {
   try {
-    const confirmedPayment = await fetchMercadoPagoPaymentById(providerPaymentId);
+    const confirmedPayment = await fetchMercadoPagoPaymentById(providerPaymentId, {
+      forceFresh: true,
+    });
     return confirmedPayment || fallbackPayment;
   } catch {
     return fallbackPayment;
@@ -668,63 +700,32 @@ async function createPaymentOrderEventSafe(
 }
 
 async function getLatestOrderForUserAndGuild(userId: number, guildId: string | null) {
-  const supabase = getSupabaseAdminClientOrThrow();
-
-  const result = await supabase
-    .from("payment_orders")
-    .select(PAYMENT_ORDER_SELECT_COLUMNS)
-    .eq("user_id", userId)
-    .filter("guild_id", guildId === null ? "is" : "eq", guildId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle<PaymentOrderRecord>();
-
-  if (result.error) {
-    throw new Error(`Erro ao carregar pagamento: ${result.error.message}`);
-  }
-
-  return result.data || null;
+  return getCachedLatestPaymentOrderForUserAndGuild<PaymentOrderRecord>({
+    userId,
+    guildId,
+    selectColumns: PAYMENT_ORDER_SELECT_COLUMNS,
+  });
 }
 
 async function getLatestPendingDraftOrderForUserAndGuild(
   userId: number,
   guildId: string | null,
+  forceFresh = false,
 ) {
-  const supabase = getSupabaseAdminClientOrThrow();
-
-  const result = await supabase
-    .from("payment_orders")
-    .select(PAYMENT_ORDER_SELECT_COLUMNS)
-    .eq("user_id", userId)
-    .filter("guild_id", guildId === null ? "is" : "eq", guildId)
-    .eq("status", "pending")
-    .is("provider_payment_id", null)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle<PaymentOrderRecord>();
-
-  if (result.error) {
-    throw new Error(`Erro ao carregar rascunho pendente: ${result.error.message}`);
-  }
-
-  return result.data || null;
+  return getCachedLatestPendingDraftPaymentOrderForUserAndGuild<PaymentOrderRecord>({
+    userId,
+    guildId,
+    forceFresh,
+    selectColumns: PAYMENT_ORDER_SELECT_COLUMNS,
+  });
 }
 
 async function getOrderByCodeForGuild(guildId: string | null, orderCode: number) {
-  const supabase = getSupabaseAdminClientOrThrow();
-
-  const result = await supabase
-    .from("payment_orders")
-    .select(PAYMENT_ORDER_SELECT_COLUMNS)
-    .filter("guild_id", guildId === null ? "is" : "eq", guildId)
-    .eq("order_number", orderCode)
-    .maybeSingle<PaymentOrderRecord | null>();
-
-  if (result.error) {
-    throw new Error(`Erro ao carregar pedido por codigo: ${result.error.message}`);
-  }
-
-  return result.data || null;
+  return getCachedPaymentOrderByCodeForGuild<PaymentOrderRecord>({
+    guildId,
+    orderNumber: orderCode,
+    selectColumns: PAYMENT_ORDER_SELECT_COLUMNS,
+  });
 }
 
 async function getOrderByCodeForUserAndGuild(
@@ -878,6 +879,8 @@ async function reconcilePixOrderFromProvider(
         previousApprovedOrderNumber: existingCoverage?.order.order_number || null,
       });
 
+      invalidatePaymentReadCachesForOrder(refundedOrderResult.data);
+      invalidateLicenseReadCachesForOrder(refundedOrderResult.data);
       return refundedOrderResult.data;
     }
   }
@@ -941,6 +944,8 @@ async function reconcilePixOrderFromProvider(
     endToEndId: paymentIdentifiers.endToEndId,
   });
 
+  invalidatePaymentReadCachesForOrder(updatedOrderResult.data);
+  invalidateLicenseReadCachesForOrder(updatedOrderResult.data);
   return updatedOrderResult.data;
 }
 
@@ -995,6 +1000,7 @@ async function createDraftOrderForCheckout(input: {
       const existingDraftOrder = await getLatestPendingDraftOrderForUserAndGuild(
         input.userId,
         input.guildId,
+        true,
       );
 
       if (existingDraftOrder) {
@@ -1018,6 +1024,7 @@ async function createDraftOrderForCheckout(input: {
     precreated: true,
   });
 
+  invalidatePaymentReadCachesForOrder(createdOrderResult.data);
   return createdOrderResult.data;
 }
 
@@ -1084,6 +1091,7 @@ async function reuseDraftOrderForCheckout(input: {
     currency: input.currency,
   });
 
+  invalidatePaymentReadCachesForOrder(updatedOrderResult.data);
   return updatedOrderResult.data;
 }
 
@@ -1153,6 +1161,8 @@ async function finalizeCreditCoveredCheckoutOrder(input: {
 
   await syncUserPlanStateFromOrder(updatedOrderResult.data);
   clearPlanStateCacheForUser(input.order.user_id);
+  invalidatePaymentReadCachesForOrder(updatedOrderResult.data);
+  invalidateLicenseReadCachesForOrder(updatedOrderResult.data);
 
   return ensureCheckoutAccessTokenForOrder({
     order: updatedOrderResult.data,
@@ -1181,7 +1191,7 @@ export async function GET(request: Request) {
       );
     }
 
-    const guildId = guildIdFromQuery || sessionData.authSession.activeGuildId || null;
+    const guildId = guildIdFromQuery;
 
     const access = await ensureGuildAccess(guildId);
     if (!access.ok) {
@@ -1768,6 +1778,7 @@ export async function POST(request: Request) {
       }
 
       createdOrder = reusedOrderResult.data;
+      invalidatePaymentReadCachesForOrder(createdOrder);
 
       await createPaymentOrderEvent(createdOrder.id, "order_payment_started", {
         orderNumber: createdOrder.order_number,
@@ -1823,6 +1834,7 @@ export async function POST(request: Request) {
       }
 
       createdOrder = preparedOrderResult.data;
+      invalidatePaymentReadCachesForOrder(createdOrder);
     }
 
     if (amount <= 0) {
@@ -2002,6 +2014,11 @@ export async function POST(request: Request) {
         providerLastUpdatedAt: trustedTimestamps.lastUpdatedAt,
       });
 
+      invalidatePaymentReadCachesForOrder(updatedOrderResult.data);
+      if (updatedOrderResult.data.status === "approved") {
+        invalidateLicenseReadCachesForOrder(updatedOrderResult.data);
+      }
+
       await logSecurityAuditEventSafe(auditContext, {
         action: "payment_pix_post",
         outcome: "succeeded",
@@ -2120,6 +2137,11 @@ export async function POST(request: Request) {
               endToEndId: paymentIdentifiers.endToEndId,
             },
           );
+
+          invalidatePaymentReadCachesForOrder(recoveredOrder);
+          if (recoveredOrder.status === "approved") {
+            invalidateLicenseReadCachesForOrder(recoveredOrder);
+          }
         } catch {
           // Se nao conseguimos recuperar localmente e o pagamento ja estiver aprovado,
           // tentamos estornar para evitar cobranca sem vinculacao.
@@ -2178,6 +2200,8 @@ export async function POST(request: Request) {
           provider_status_detail: message,
         })
         .eq("id", createdOrder.id);
+
+      invalidatePaymentReadCachesForOrder(createdOrder);
 
       await createPaymentOrderEvent(createdOrder.id, "provider_payment_failed", {
         message,

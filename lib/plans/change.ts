@@ -276,7 +276,7 @@ export async function getUserPlanScheduledChange(userId: number) {
 
 export async function scheduleUserPlanDowngrade(input: {
   userId: number;
-  guildId: string;
+  guildId: string | null;
   currentPlanCode: PlanCode;
   currentBillingCycleDays: number;
   targetPlanCode: PlanCode;

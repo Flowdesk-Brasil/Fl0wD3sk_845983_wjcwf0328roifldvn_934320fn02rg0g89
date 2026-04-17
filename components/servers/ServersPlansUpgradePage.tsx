@@ -14,7 +14,7 @@ import {
   type PlanCode,
   type PlanPricingDefinition,
 } from "@/lib/plans/catalog";
-import { buildConfigCheckoutEntryHref } from "@/lib/plans/configRouting";
+import { buildPaymentCheckoutEntryHref } from "@/lib/payments/paymentRouting";
 
 type CurrentPlanSnapshot = {
   planCode: string;
@@ -180,14 +180,12 @@ function DiamondIcon() {
 function PlanCta({
   plan,
   currentPlan,
-  preferredGuildId,
   pendingKey,
   onStartNavigation,
   isInitialLoading,
 }: {
   plan: DisplayPlanDefinition;
   currentPlan: CurrentPlanSnapshot | null;
-  preferredGuildId: string | null;
   pendingKey: string | null;
   onStartNavigation: (key: string) => void;
   isInitialLoading?: boolean;
@@ -198,10 +196,7 @@ function PlanCta({
     fresh: "1",
     source: "servers-plans",
   });
-  if (preferredGuildId) {
-    checkoutParams.set("guild", preferredGuildId);
-  }
-  const href = buildConfigCheckoutEntryHref({
+  const href = buildPaymentCheckoutEntryHref({
     planCode: plan.code,
     billingPeriodCode: plan.billingPeriodCode,
     searchParams: checkoutParams,
@@ -238,7 +233,6 @@ function OfferPlanCard({
   delay,
   recommendedPlanCode,
   currentPlan,
-  preferredGuildId,
   pendingKey,
   onStartNavigation,
   compact = false,
@@ -249,7 +243,6 @@ function OfferPlanCard({
   delay?: number;
   recommendedPlanCode: PlanCode;
   currentPlan: CurrentPlanSnapshot | null;
-  preferredGuildId: string | null;
   pendingKey: string | null;
   onStartNavigation: (key: string) => void;
   compact?: boolean;
@@ -321,7 +314,6 @@ function OfferPlanCard({
         <PlanCta
           plan={plan}
           currentPlan={currentPlan}
-          preferredGuildId={preferredGuildId}
           pendingKey={pendingKey}
           onStartNavigation={onStartNavigation}
           isInitialLoading={isInitialLoading}
@@ -679,7 +671,7 @@ function PlanComparisonTable({ plans }: { plans: PlanPricingDefinition[] }) {
 
 export function ServersPlansUpgradePage({
   currentPlan,
-  preferredGuildId,
+  preferredGuildId: _preferredGuildId,
   showServerLimitBanner = false,
   basicPlanAvailable = true,
 }: Props) {
@@ -757,7 +749,6 @@ export function ServersPlansUpgradePage({
               delay={240 + index * 90}
               recommendedPlanCode={recommendedPlanCode}
               currentPlan={currentPlan}
-              preferredGuildId={preferredGuildId}
               pendingKey={pendingKey}
               onStartNavigation={setPendingKey}
               reveal

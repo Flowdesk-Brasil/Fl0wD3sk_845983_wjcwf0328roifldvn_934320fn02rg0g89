@@ -175,7 +175,12 @@ async function runWithConcurrencyLimit<TInput, TOutput>(
   const results: TOutput[] = new Array(items.length);
   let cursor = 0;
 
-  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async (item, runnerIndex) => {
+    // Small staggered start to prevent thundering herd auth requests
+    if (runnerIndex > 0) {
+      await new Promise((resolve) => setTimeout(resolve, runnerIndex * 150));
+    }
+
     while (cursor < items.length) {
       const currentIndex = cursor++;
       results[currentIndex] = await worker(items[currentIndex], currentIndex);
@@ -364,8 +369,16 @@ export async function checkDomains(
         if (onChunk) onChunk(results);
         return results;
       } catch (error) {
+        const isAuth = /Authentication\/Authorization Failed|code 196/i.test(
+          error instanceof Error ? error.message : String(error)
+        );
         const errMsg = error instanceof Error ? error.message : String(error);
         console.warn(`[checkDomains] Batch ${batchIndex} (${batch.length}) failed: ${errMsg}`);
+
+        // If auth failure, we shouldn't retry or continue with other batches in THIS request
+        if (isAuth) {
+          throw error; // Let it bubble up to stop searching
+        }
 
         // Circuit breaker open or maintenance — don't waste time, return unknown
         if (
