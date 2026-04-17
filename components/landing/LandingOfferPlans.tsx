@@ -7,12 +7,12 @@ import { LandingActionButton } from "@/components/landing/LandingActionButton";
 import { LandingReveal } from "@/components/landing/LandingReveal";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 import {
-  buildConfigCheckoutPath,
   getAllPlanPricingDefinitions,
   getAvailableBillingPeriodsForPlan,
   type PlanBillingPeriodCode,
   type PlanPricingDefinition,
 } from "@/lib/plans/catalog";
+import { buildConfigCheckoutEntryHref } from "@/lib/plans/configRouting";
 
 const PLAN_FEATURE_ICON_SOURCES = [
   "/cdn/icons/discord-icon.svg",
@@ -116,10 +116,13 @@ function PlanCta({
   isGlobalLoading: boolean;
   onStartLoading: (planCode: string) => void;
 }) {
-  const planHref = `${buildConfigCheckoutPath({
+  const planHref = buildConfigCheckoutEntryHref({
     planCode: plan.code,
     billingPeriodCode: plan.billingPeriodCode,
-  })}?fresh=1`;
+    searchParams: {
+      fresh: "1",
+    },
+  });
   const [isLocalLoading, setIsLocalLoading] = useState(false);
   const isCurrentPlan =
     !!accountPlanCode &&

@@ -7,7 +7,6 @@ import { LandingActionButton } from "@/components/landing/LandingActionButton";
 import { LandingReveal } from "@/components/landing/LandingReveal";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 import {
-  buildConfigCheckoutPath,
   getAllPlanPricingDefinitions,
   getAvailableBillingPeriodsForPlan,
   isPlanCode,
@@ -15,6 +14,7 @@ import {
   type PlanCode,
   type PlanPricingDefinition,
 } from "@/lib/plans/catalog";
+import { buildConfigCheckoutEntryHref } from "@/lib/plans/configRouting";
 
 type CurrentPlanSnapshot = {
   planCode: string;
@@ -201,10 +201,11 @@ function PlanCta({
   if (preferredGuildId) {
     checkoutParams.set("guild", preferredGuildId);
   }
-  const href = `${buildConfigCheckoutPath({
+  const href = buildConfigCheckoutEntryHref({
     planCode: plan.code,
     billingPeriodCode: plan.billingPeriodCode,
-  })}?${checkoutParams.toString()}#/payment`;
+    searchParams: checkoutParams,
+  });
 
   return (
     <LandingActionButton
@@ -690,7 +691,13 @@ export function ServersPlansUpgradePage({
   const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
-    setIsMounted(true);
+    const timeoutId = window.setTimeout(() => {
+      setIsMounted(true);
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
   }, []);
 
   const plans = useMemo(

@@ -1,6 +1,15 @@
 type ConfigSelectionPlanState = {
+  plan_code?: string | null;
   status: "inactive" | "trial" | "active" | "expired" | string | null;
   max_licensed_servers: number | null;
+};
+
+type ConfigRedirectBypassInput = {
+  userPlanState: ConfigSelectionPlanState | null | undefined;
+  targetPlanCode?: string | null;
+  searchParams?:
+    | URLSearchParams
+    | Record<string, string | null | undefined>;
 };
 
 function normalizeLicensedServerCount(value: number) {
@@ -59,4 +68,64 @@ export function shouldBlockConfigServerSelection(input: {
   });
 
   return licensedServersCount >= maxLicensedServers;
+}
+
+function readSearchParam(
+  input: ConfigRedirectBypassInput["searchParams"],
+  key: string,
+) {
+  if (!input) return null;
+
+  if (input instanceof URLSearchParams) {
+    const value = input.get(key);
+    return typeof value === "string" ? value : null;
+  }
+
+  const value = input[key];
+  return typeof value === "string" ? value : null;
+}
+
+function isTruthyQueryFlag(value: string | null) {
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
+export function shouldBypassConfigServerSelectionBlock(
+  input: ConfigRedirectBypassInput,
+) {
+  const source =
+    readSearchParam(input.searchParams, "source")?.trim().toLowerCase() || null;
+  const renew = isTruthyQueryFlag(readSearchParam(input.searchParams, "renew"));
+  const fresh = isTruthyQueryFlag(readSearchParam(input.searchParams, "fresh"));
+  const hasActivePlan = hasActiveConfigSelectionPlan(input.userPlanState);
+  const currentPlanCode =
+    typeof input.userPlanState?.plan_code === "string"
+      ? input.userPlanState.plan_code.trim().toLowerCase()
+      : null;
+  const targetPlanCode =
+    typeof input.targetPlanCode === "string"
+      ? input.targetPlanCode.trim().toLowerCase()
+      : null;
+
+  if (renew) return true;
+
+  if (
+    source === "servers-plans" ||
+    source === "downgrade-regularization"
+  ) {
+    return true;
+  }
+
+  if (
+    fresh &&
+    hasActivePlan &&
+    targetPlanCode &&
+    currentPlanCode &&
+    currentPlanCode !== targetPlanCode
+  ) {
+    return true;
+  }
+
+  return false;
 }

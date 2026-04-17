@@ -18,6 +18,10 @@ import {
   type PlanCode,
 } from "@/lib/plans/catalog";
 import { buildServersPlansPath } from "@/lib/plans/addServerFlow";
+import {
+  buildConfigUrlWithHashRoute,
+  normalizeConfigHashRoute,
+} from "@/lib/plans/configRouting";
 import { shouldBlockConfigServerSelection } from "@/lib/plans/configServerSelection";
 import type {
   ConfigDraft,
@@ -158,7 +162,11 @@ function resolveHashForStep(step: ConfigStep) {
 }
 
 function normalizeStepHash(hash: string) {
-  return hash.trim().toLowerCase().split("?")[0].replace(/\/+$/, "");
+  return normalizeConfigHashRoute(hash)
+    .trim()
+    .toLowerCase()
+    .split("?")[0]
+    .replace(/\/+$/, "");
 }
 
 function shouldForceFreshStart(url: URL) {
@@ -358,19 +366,6 @@ function setStepHash(step: ConfigStep) {
   if (normalizeStepHash(window.location.hash) !== normalizeStepHash(targetHash)) {
     window.location.hash = targetHash.replace(/^#/, "");
   }
-}
-
-function buildConfigUrlWithHashRoute(
-  pathname: string,
-  search: string,
-  hash: string,
-) {
-  const normalizedPathname =
-    hash.startsWith("#/") && pathname !== "/" && !pathname.endsWith("/")
-      ? `${pathname}/`
-      : pathname;
-
-  return `${normalizedPathname}${search}${hash}`;
 }
 
 function normalizePaymentStatusForQuery(status: string | null | undefined) {
@@ -623,9 +618,6 @@ export function ConfigFlow({
     async function loadConfigContext() {
       const initialUrl = new URL(window.location.href);
       const shouldForceFresh = shouldForceFreshStart(initialUrl);
-      const sourceValue =
-        initialUrl.searchParams.get("source")?.trim().toLowerCase() || null;
-      const isServersPlansSource = sourceValue === "servers-plans";
       setForceFreshCheckout(shouldForceFresh);
       const localContext = shouldForceFresh ? null : readLocalConfigContext();
       const initialHash = window.location.hash;
@@ -807,8 +799,6 @@ export function ConfigFlow({
   }, []);
 
   useEffect(() => {
-    let isMounted = true;
-
     async function loadManagedServerStatuses() {
       try {
         const response = await fetch("/api/auth/me/servers", {
@@ -833,10 +823,6 @@ export function ConfigFlow({
     }
 
     void loadManagedServerStatuses();
-
-    return () => {
-      isMounted = false;
-    };
   }, []);
 
   useEffect(() => {

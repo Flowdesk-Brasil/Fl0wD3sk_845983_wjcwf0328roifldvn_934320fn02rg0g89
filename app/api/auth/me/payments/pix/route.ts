@@ -21,6 +21,12 @@ import {
   toQrDataUri,
   type MercadoPagoPaymentResponse,
 } from "@/lib/payments/mercadoPago";
+import {
+  createStablePaymentIdempotencyKey,
+  extractMercadoPagoPaymentIdentifiers,
+  resolveNextPaymentOrderStatus,
+  resolveTrustedMercadoPagoPaymentTimestamps,
+} from "@/lib/payments/paymentIntegrity";
 import { resolveDiscountPricing } from "@/lib/payments/discountPricing";
 import {
   ensureCheckoutAccessTokenForOrder,
@@ -265,6 +271,14 @@ function parseTimestampMs(value: string | null | undefined) {
   if (!value) return null;
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function isUniqueConstraintError(error: { code?: string; message?: string } | null | undefined) {
+  return (
+    error?.code === "23505" ||
+    (typeof error?.message === "string" &&
+      error.message.toLowerCase().includes("duplicate key"))
+  );
 }
 
 async function resolveApprovedOrderExpiresAt(
@@ -672,6 +686,30 @@ async function getLatestOrderForUserAndGuild(userId: number, guildId: string | n
   return result.data || null;
 }
 
+async function getLatestPendingDraftOrderForUserAndGuild(
+  userId: number,
+  guildId: string | null,
+) {
+  const supabase = getSupabaseAdminClientOrThrow();
+
+  const result = await supabase
+    .from("payment_orders")
+    .select(PAYMENT_ORDER_SELECT_COLUMNS)
+    .eq("user_id", userId)
+    .filter("guild_id", guildId === null ? "is" : "eq", guildId)
+    .eq("status", "pending")
+    .is("provider_payment_id", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<PaymentOrderRecord>();
+
+  if (result.error) {
+    throw new Error(`Erro ao carregar rascunho pendente: ${result.error.message}`);
+  }
+
+  return result.data || null;
+}
+
 async function getOrderByCodeForGuild(guildId: string | null, orderCode: number) {
   const supabase = getSupabaseAdminClientOrThrow();
 
@@ -743,19 +781,27 @@ async function reconcilePixOrderFromProvider(
 
   const providerStatus = providerPayment.status || null;
   const providerStatusDetail = providerPayment.status_detail || null;
-  const resolvedStatus = resolvePaymentStatus(providerStatus);
+  const resolvedStatus = resolveNextPaymentOrderStatus(
+    order.status,
+    resolvePaymentStatus(providerStatus),
+  );
   const transactionData = providerPayment.point_of_interaction?.transaction_data;
-  const paidAt =
+  const paymentIdentifiers = extractMercadoPagoPaymentIdentifiers(providerPayment);
+  const trustedTimestamps = resolveTrustedMercadoPagoPaymentTimestamps({
+    providerPayment,
+    currentPaidAt: order.paid_at,
+    currentExpiresAt: order.expires_at,
+    resolvedStatus,
+  });
+  const paidAt = trustedTimestamps.paidAt;
+  const expiresAt =
     resolvedStatus === "approved"
-      ? providerPayment.date_approved || new Date().toISOString()
-      : null;
-      const expiresAt =
-        resolvedStatus === "approved"
-          ? await resolveApprovedOrderExpiresAt(order, paidAt)
-          : resolveUnpaidSetupEffectiveExpiresAt({
-              createdAt: order.created_at,
-              providerExpiresAt: providerPayment.date_of_expiration || null,
-            });
+      ? await resolveApprovedOrderExpiresAt(order, paidAt)
+      : trustedTimestamps.expiresAt ||
+        resolveUnpaidSetupEffectiveExpiresAt({
+          createdAt: order.created_at,
+          providerExpiresAt: providerPayment.date_of_expiration || null,
+        });
   const externalReference =
     providerPayment.external_reference || order.provider_external_reference || null;
 
@@ -807,6 +853,8 @@ async function reconcilePixOrderFromProvider(
               step: 4,
               reconciled_by: source,
               auto_refunded_duplicate: true,
+              payment_identifiers: paymentIdentifiers,
+              trusted_timestamps: trustedTimestamps,
               mercado_pago: providerPayment,
             }),
           },
@@ -864,6 +912,8 @@ async function reconcilePixOrderFromProvider(
           source: "flowdesk_checkout",
           step: 4,
           reconciled_by: source,
+          payment_identifiers: paymentIdentifiers,
+          trusted_timestamps: trustedTimestamps,
           mercado_pago: providerPayment,
         }),
       },
@@ -887,6 +937,8 @@ async function reconcilePixOrderFromProvider(
     providerStatus,
     providerStatusDetail,
     resolvedStatus,
+    txId: paymentIdentifiers.txId,
+    endToEndId: paymentIdentifiers.endToEndId,
   });
 
   return updatedOrderResult.data;
@@ -939,6 +991,23 @@ async function createDraftOrderForCheckout(input: {
     .single<PaymentOrderRecord>();
 
   if (createdOrderResult.error || !createdOrderResult.data) {
+    if (isUniqueConstraintError(createdOrderResult.error)) {
+      const existingDraftOrder = await getLatestPendingDraftOrderForUserAndGuild(
+        input.userId,
+        input.guildId,
+      );
+
+      if (existingDraftOrder) {
+        return reuseDraftOrderForCheckout({
+          order: existingDraftOrder,
+          amount: input.amount,
+          currency: input.currency,
+          plan: input.plan,
+          providerPayload: input.providerPayload,
+        });
+      }
+    }
+
     throw new Error(createdOrderResult.error?.message || "Falha ao iniciar pedido.");
   }
 
@@ -1788,6 +1857,16 @@ export async function POST(request: Request) {
     const externalReference = `flowdesk-order-${createdOrder.order_number}`;
     const resolvedPayerName = payerName as string;
     const resolvedPayerDocument = payerDocument as NonNullable<typeof payerDocument>;
+    const pixCreationIdempotencyKey = createStablePaymentIdempotencyKey({
+      namespace: "flowdesk-pix-create-order",
+      parts: [
+        createdOrder.order_number,
+        externalReference,
+        amount,
+        currency,
+        resolvedPayerDocument.normalized,
+      ],
+    });
 
     let createdProviderPayment: MercadoPagoPaymentResponse | null = null;
     try {
@@ -1834,6 +1913,7 @@ export async function POST(request: Request) {
             : {}),
         },
         dateOfExpiration: resolveUnpaidSetupExpiresAt(createdOrder.created_at),
+        idempotencyKey: pixCreationIdempotencyKey,
       });
       createdProviderPayment = mercadoPagoPayment;
 
@@ -1848,15 +1928,25 @@ export async function POST(request: Request) {
       const transactionData =
         confirmedMercadoPagoPayment.point_of_interaction?.transaction_data;
       const providerStatus = confirmedMercadoPagoPayment.status || null;
-      const resolvedStatus = resolvePaymentStatus(confirmedMercadoPagoPayment.status);
-      const paidAt =
-        resolvedStatus === "approved"
-          ? confirmedMercadoPagoPayment.date_approved || new Date().toISOString()
-          : null;
+      const resolvedStatus = resolveNextPaymentOrderStatus(
+        createdOrder.status,
+        resolvePaymentStatus(confirmedMercadoPagoPayment.status),
+      );
+      const paymentIdentifiers = extractMercadoPagoPaymentIdentifiers(
+        confirmedMercadoPagoPayment,
+      );
+      const trustedTimestamps = resolveTrustedMercadoPagoPaymentTimestamps({
+        providerPayment: confirmedMercadoPagoPayment,
+        currentPaidAt: createdOrder.paid_at,
+        currentExpiresAt: createdOrder.expires_at,
+        resolvedStatus,
+      });
+      const paidAt = trustedTimestamps.paidAt;
       const expiresAt =
         resolvedStatus === "approved"
           ? await resolveApprovedOrderExpiresAt(createdOrder, paidAt)
-          : resolveUnpaidSetupEffectiveExpiresAt({
+          : trustedTimestamps.expiresAt ||
+            resolveUnpaidSetupEffectiveExpiresAt({
               createdAt: createdOrder.created_at,
               providerExpiresAt:
                 confirmedMercadoPagoPayment.date_of_expiration || null,
@@ -1878,6 +1968,8 @@ export async function POST(request: Request) {
             source: "flowdesk_checkout",
             step: 4,
             mercado_pago: confirmedMercadoPagoPayment,
+            payment_identifiers: paymentIdentifiers,
+            trusted_timestamps: trustedTimestamps,
             pricing: pricingWithFlowPoints,
             ...transitionProviderPayload,
             plan: {
@@ -1905,6 +1997,9 @@ export async function POST(request: Request) {
         providerStatus,
         providerStatusDetail:
           confirmedMercadoPagoPayment.status_detail || null,
+        txId: paymentIdentifiers.txId,
+        endToEndId: paymentIdentifiers.endToEndId,
+        providerLastUpdatedAt: trustedTimestamps.lastUpdatedAt,
       });
 
       await logSecurityAuditEventSafe(auditContext, {
@@ -1950,17 +2045,27 @@ export async function POST(request: Request) {
         let recoveredOrder: PaymentOrderRecord | null = null;
         try {
           const providerStatus = createdProviderPayment?.status || null;
-          const resolvedStatus = resolvePaymentStatus(providerStatus);
+          const resolvedStatus = resolveNextPaymentOrderStatus(
+            createdOrder.status,
+            resolvePaymentStatus(providerStatus),
+          );
           const transactionData =
             createdProviderPayment?.point_of_interaction?.transaction_data;
-          const paidAt =
-            resolvedStatus === "approved"
-              ? createdProviderPayment?.date_approved || new Date().toISOString()
-              : null;
+          const paymentIdentifiers = extractMercadoPagoPaymentIdentifiers(
+            createdProviderPayment,
+          );
+          const trustedTimestamps = resolveTrustedMercadoPagoPaymentTimestamps({
+            providerPayment: createdProviderPayment,
+            currentPaidAt: createdOrder.paid_at,
+            currentExpiresAt: createdOrder.expires_at,
+            resolvedStatus,
+          });
+          const paidAt = trustedTimestamps.paidAt;
           const expiresAt =
             resolvedStatus === "approved"
               ? await resolveApprovedOrderExpiresAt(createdOrder, paidAt)
-              : resolveUnpaidSetupEffectiveExpiresAt({
+              : trustedTimestamps.expiresAt ||
+                resolveUnpaidSetupEffectiveExpiresAt({
                   createdAt: createdOrder.created_at,
                   providerExpiresAt:
                     createdProviderPayment?.date_of_expiration || null,
@@ -1983,6 +2088,8 @@ export async function POST(request: Request) {
                 step: 4,
                 recovery_after_error: true,
                 mercado_pago: createdProviderPayment,
+                payment_identifiers: paymentIdentifiers,
+                trusted_timestamps: trustedTimestamps,
                 pricing: pricingWithFlowPoints,
                 ...transitionProviderPayload,
               },
@@ -2009,6 +2116,8 @@ export async function POST(request: Request) {
               providerPaymentId,
               providerStatus,
               resolvedStatus,
+              txId: paymentIdentifiers.txId,
+              endToEndId: paymentIdentifiers.endToEndId,
             },
           );
         } catch {

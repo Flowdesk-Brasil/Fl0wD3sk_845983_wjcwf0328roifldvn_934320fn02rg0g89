@@ -5,20 +5,24 @@ import { buildLoginHref } from "@/lib/auth/paths";
 import { buildServersPlansPath } from "@/lib/plans/addServerFlow";
 import { buildAccountPlanUsageSnapshot } from "@/lib/plans/accountPlanUsage";
 import {
-  buildConfigCheckoutPath,
   normalizePlanBillingPeriodCode,
   normalizePlanCode,
   resolvePlanPricing,
 } from "@/lib/plans/catalog";
-import { shouldBlockConfigServerSelection } from "@/lib/plans/configServerSelection";
+import {
+  shouldBlockConfigServerSelection,
+  shouldBypassConfigServerSelectionBlock,
+} from "@/lib/plans/configServerSelection";
+import {
+  buildConfigCheckoutEntryHref,
+  buildConfigCheckoutSearchParams,
+  buildConfigUrlWithHashRoute,
+} from "@/lib/plans/configRouting";
 import { countPlanGuildsForUser } from "@/lib/plans/planGuilds";
 import { getUserPlanState } from "@/lib/plans/state";
 
 type ConfigPageProps = {
-  searchParams?: Promise<{
-    plan?: string | string[];
-    billing?: string | string[];
-  }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
 function takeFirstQueryValue(value: string | string[] | undefined) {
@@ -30,13 +34,18 @@ export default async function ConfigPage({ searchParams }: ConfigPageProps) {
   const query = searchParams ? await searchParams : {};
   const requestedPlan = takeFirstQueryValue(query.plan);
   const requestedBilling = takeFirstQueryValue(query.billing);
+  const forwardedSearchParams = buildConfigCheckoutSearchParams({
+    searchParams: query,
+    omitKeys: ["plan", "billing"],
+  });
   const requestedNextPath = requestedPlan
-    ? buildConfigCheckoutPath({
+    ? buildConfigCheckoutEntryHref({
         planCode: requestedPlan,
         billingPeriodCode: requestedBilling,
         fallbackPlanCode: "pro",
+        searchParams: forwardedSearchParams,
       })
-    : "/config";
+    : buildConfigUrlWithHashRoute("/config", forwardedSearchParams.toString());
   const user = await getCurrentUserFromSessionCookie({ fullContext: true });
 
   if (!user) {
@@ -59,6 +68,11 @@ export default async function ConfigPage({ searchParams }: ConfigPageProps) {
       userPlanState,
       licensedServersCount: usage.licensedServersCount,
       targetPlanMaxLicensedServers: defaultPlan.entitlements.maxLicensedServers,
+    })
+    && !shouldBypassConfigServerSelectionBlock({
+      userPlanState,
+      targetPlanCode: defaultPlan.code,
+      searchParams: query,
     })
   ) {
     redirect(buildServersPlansPath());

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { createStablePaymentIdempotencyKey } from "@/lib/payments/paymentIntegrity";
 
 type MercadoPagoPayerIdentification = {
   type: "CPF" | "CNPJ";
@@ -14,6 +15,7 @@ type CreatePixPaymentInput = {
   externalReference: string;
   metadata: Record<string, string>;
   dateOfExpiration?: string | null;
+  idempotencyKey?: string | null;
 };
 
 type CreateCardPaymentInput = {
@@ -102,6 +104,10 @@ export type MercadoPagoPaymentResponse = {
   external_reference?: string | null;
   metadata?: Record<string, unknown> | null;
   transaction_amount?: number;
+  transaction_details?: Record<string, unknown> | null;
+  payer?: Record<string, unknown> | null;
+  date_created?: string | null;
+  date_last_updated?: string | null;
   date_approved?: string | null;
   date_of_expiration?: string | null;
   point_of_interaction?: MercadoPagoPointOfInteraction | null;
@@ -364,7 +370,18 @@ export function toQrDataUri(qrBase64: string | null | undefined) {
 
 export async function createMercadoPagoPixPayment(input: CreatePixPaymentInput) {
   const accessToken = getMercadoPagoAccessTokenOrThrow();
-  const idempotencyKey = crypto.randomUUID();
+  const idempotencyKey =
+    input.idempotencyKey?.trim() ||
+    createStablePaymentIdempotencyKey({
+      namespace: "mercado-pago-pix-create",
+      parts: [
+        input.externalReference,
+        input.amount,
+        input.payerEmail,
+        input.payerIdentification.type,
+        input.payerIdentification.number,
+      ],
+    });
 
   const response = await fetch("https://api.mercadopago.com/v1/payments", {
     method: "POST",
@@ -670,7 +687,10 @@ export async function searchMercadoPagoPaymentsByExternalReference(
 
 export async function refundMercadoPagoPixPayment(paymentId: string | number) {
   const accessToken = getMercadoPagoAccessTokenOrThrow();
-  const idempotencyKey = crypto.randomUUID();
+  const idempotencyKey = createStablePaymentIdempotencyKey({
+    namespace: "mercado-pago-pix-refund",
+    parts: [String(paymentId)],
+  });
 
   const response = await fetch(
     `https://api.mercadopago.com/v1/payments/${encodeURIComponent(String(paymentId))}/refunds`,
@@ -709,7 +729,10 @@ export async function refundMercadoPagoPixPayment(paymentId: string | number) {
 
 export async function refundMercadoPagoCardPayment(paymentId: string | number) {
   const accessToken = getMercadoPagoCardAccessTokenOrThrow();
-  const idempotencyKey = crypto.randomUUID();
+  const idempotencyKey = createStablePaymentIdempotencyKey({
+    namespace: "mercado-pago-card-refund",
+    parts: [String(paymentId)],
+  });
 
   const response = await fetch(
     `https://api.mercadopago.com/v1/payments/${encodeURIComponent(String(paymentId))}/refunds`,

@@ -7,81 +7,50 @@ import {
   resolvePaymentStatus,
   type MercadoPagoPaymentResponse,
 } from "@/lib/payments/mercadoPago";
-import { resolvePaymentDiagnostic } from "@/lib/payments/paymentDiagnostics";
 import {
-  getApprovedOrdersForGuild,
-  invalidateGuildLicenseCaches,
-  resolveLatestLicenseCoverageFromApprovedOrders,
-  resolveRenewalPaymentDecision,
-} from "@/lib/payments/licenseStatus";
+  createStablePaymentIdempotencyKey,
+  extractMercadoPagoPaymentIdentifiers,
+  verifyMercadoPagoWebhookSignature,
+} from "@/lib/payments/paymentIntegrity";
 import {
-  isLockedByUnpaidSetupTimeout,
-  UNPAID_SETUP_TIMEOUT_REFUND_STATUS_DETAIL,
-} from "@/lib/payments/setupCleanup";
+  claimPaymentProviderEvent,
+  completePaymentProviderEvent,
+  failPaymentProviderEvent,
+} from "@/lib/payments/providerEventInbox";
 import {
-  resolveApprovedOrderLicenseExpiresAt,
-  syncUserPlanStateFromOrder,
-} from "@/lib/plans/state";
-import { orderTransitionAllowsImmediateApproval } from "@/lib/plans/change";
+  getPaymentOrderByOrderNumber,
+  getPaymentOrderByProviderPaymentId,
+  reconcilePaymentOrderWithProviderPayment,
+} from "@/lib/payments/reconciliation";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import {
   attachRequestId,
   createSecurityRequestContext,
+  extendSecurityRequestContext,
+  logSecurityAuditEventSafe,
 } from "@/lib/security/requestSecurity";
-import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
-type PaymentOrderRecord = {
-  id: number;
-  order_number: number;
-  user_id: number;
-  guild_id: string;
-  payment_method: "pix" | "card" | "trial";
-  status: string;
-  plan_code: string;
-  plan_name: string;
-  plan_billing_cycle_days: number;
-  plan_max_licensed_servers: number;
-  plan_max_active_tickets: number;
-  plan_max_automations: number;
-  plan_max_monthly_actions: number;
-  provider_payment_id: string | null;
-  provider_external_reference: string | null;
-  provider_status: string | null;
-  provider_status_detail: string | null;
-  provider_qr_code: string | null;
-  provider_qr_base64: string | null;
-  provider_ticket_url: string | null;
-  provider_payload: unknown;
-  paid_at: string | null;
-  expires_at: string | null;
-  created_at: string;
-};
+function parseJsonSafely(rawText: string) {
+  if (!rawText) return null;
 
-const PAYMENT_ORDER_SELECT_COLUMNS =
-  "id, order_number, user_id, guild_id, payment_method, status, plan_code, plan_name, plan_billing_cycle_days, plan_max_licensed_servers, plan_max_active_tickets, plan_max_automations, plan_max_monthly_actions, provider_payment_id, provider_external_reference, provider_status, provider_status_detail, provider_qr_code, provider_qr_base64, provider_ticket_url, provider_payload, paid_at, expires_at, created_at";
-
-function mergeProviderPayload(
-  currentPayload: unknown,
-  patch: Record<string, unknown>,
-) {
-  const basePayload =
-    currentPayload && typeof currentPayload === "object" && !Array.isArray(currentPayload)
-      ? currentPayload
-      : {};
-
-  return {
-    ...basePayload,
-    ...patch,
-  };
+  try {
+    return JSON.parse(rawText) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 function parsePaymentId(value: unknown) {
-  if (typeof value === "number") return Number.isFinite(value) ? String(value) : null;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? String(value) : null;
+  }
+
   if (typeof value === "string") {
     const trimmed = value.trim();
     return trimmed || null;
   }
+
   return null;
 }
 
@@ -93,9 +62,9 @@ function parseOrderNumber(value: unknown) {
   if (typeof value === "string") {
     const trimmed = value.trim();
     if (!/^\d{1,12}$/.test(trimmed)) return null;
+
     const numeric = Number(trimmed);
-    if (!Number.isInteger(numeric) || numeric <= 0) return null;
-    return numeric;
+    return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
   }
 
   return null;
@@ -110,42 +79,10 @@ function getMetadataOrderNumber(
 
 function getExternalReferenceOrderNumber(externalReference: string | null | undefined) {
   if (!externalReference) return null;
+
   const match = /^flowdesk-order-(\d+)$/i.exec(externalReference.trim());
   if (!match) return null;
   return parseOrderNumber(match[1]);
-}
-
-function resolveProviderPaymentMethodId(
-  providerPayment: MercadoPagoPaymentResponse | null | undefined,
-) {
-  if (!providerPayment) return null;
-  if (typeof providerPayment.payment_method_id === "string") {
-    const normalized = providerPayment.payment_method_id.trim().toLowerCase();
-    return normalized || null;
-  }
-  if (
-    providerPayment.point_of_interaction?.transaction_data?.qr_code ||
-    providerPayment.point_of_interaction?.transaction_data?.qr_code_base64
-  ) {
-    return "pix";
-  }
-  return null;
-}
-
-async function autoRefundProviderPayment(input: {
-  providerPaymentId: string;
-  providerPayment: MercadoPagoPaymentResponse;
-  orderPaymentMethod?: PaymentOrderRecord["payment_method"] | null;
-}) {
-  const providerMethodId = resolveProviderPaymentMethodId(input.providerPayment);
-  const isPixPayment =
-    providerMethodId === "pix" || input.orderPaymentMethod === "pix";
-
-  if (isPixPayment) {
-    return refundMercadoPagoPixPayment(input.providerPaymentId);
-  }
-
-  return refundMercadoPagoCardPayment(input.providerPaymentId);
 }
 
 function extractWebhookPaymentId(input: {
@@ -160,6 +97,7 @@ function extractWebhookPaymentId(input: {
   if (!input.body || typeof input.body !== "object") return null;
   const payload = input.body as Record<string, unknown>;
   const data = payload.data;
+
   if (data && typeof data === "object") {
     const dataId = parsePaymentId((data as Record<string, unknown>).id);
     if (dataId) return dataId;
@@ -168,303 +106,207 @@ function extractWebhookPaymentId(input: {
   return parsePaymentId(payload.id);
 }
 
-async function createPaymentOrderEventSafe(
-  paymentOrderId: number,
-  eventType: string,
-  eventPayload: Record<string, unknown>,
-) {
-  const supabase = getSupabaseAdminClientOrThrow();
-  await supabase.from("payment_order_events").insert({
-    payment_order_id: paymentOrderId,
-    event_type: eventType,
-    event_payload: eventPayload,
-  });
+function resolveWebhookEventType(url: URL, body: unknown) {
+  const bodyType =
+    body && typeof body === "object" && typeof (body as Record<string, unknown>).type === "string"
+      ? ((body as Record<string, unknown>).type as string).trim()
+      : "";
+  const queryType = url.searchParams.get("type")?.trim() || "";
+
+  return bodyType || queryType || "payment";
 }
 
-async function getOrderByProviderPaymentId(paymentId: string) {
-  const supabase = getSupabaseAdminClientOrThrow();
-  const result = await supabase
-    .from("payment_orders")
-    .select(PAYMENT_ORDER_SELECT_COLUMNS)
-    .eq("provider_payment_id", paymentId)
-    .maybeSingle<PaymentOrderRecord>();
+function resolveWebhookEventAction(url: URL, body: unknown) {
+  const bodyAction =
+    body && typeof body === "object" && typeof (body as Record<string, unknown>).action === "string"
+      ? ((body as Record<string, unknown>).action as string).trim()
+      : "";
+  const queryAction = url.searchParams.get("action")?.trim() || "";
+  const topicAction = url.searchParams.get("topic")?.trim() || "";
 
-  if (result.error) {
-    throw new Error(`Erro ao buscar pedido por provider_payment_id: ${result.error.message}`);
-  }
-
-  return result.data || null;
+  return bodyAction || queryAction || topicAction || "notification";
 }
 
-async function getOrderByOrderNumber(orderNumber: number) {
-  const supabase = getSupabaseAdminClientOrThrow();
-  const result = await supabase
-    .from("payment_orders")
-    .select(PAYMENT_ORDER_SELECT_COLUMNS)
-    .eq("order_number", orderNumber)
-    .maybeSingle<PaymentOrderRecord>();
-
-  if (result.error) {
-    throw new Error(`Erro ao buscar pedido por numero: ${result.error.message}`);
-  }
-
-  return result.data || null;
-}
-
-async function getLatestApprovedLicenseCoverageForGuild(
-  guildId: string,
-  excludedOrderId?: number,
-) {
-  const approvedOrders = await getApprovedOrdersForGuild<PaymentOrderRecord>(
-    guildId,
-    PAYMENT_ORDER_SELECT_COLUMNS,
-  );
-
-  const filteredOrders =
-    typeof excludedOrderId === "number"
-      ? approvedOrders.filter((order) => order.id !== excludedOrderId)
-      : approvedOrders;
-
-  return resolveLatestLicenseCoverageFromApprovedOrders(filteredOrders);
-}
-
-async function updateOrderFromProviderPayment(
-  order: PaymentOrderRecord,
-  providerPayment: MercadoPagoPaymentResponse,
-) {
-  const providerPaymentId = parsePaymentId(providerPayment.id);
-  if (!providerPaymentId) return order;
-
-  const providerStatus = providerPayment.status || null;
-  const providerStatusDetail = providerPayment.status_detail || null;
-  const resolvedStatus = resolvePaymentStatus(providerStatus);
-  const transactionData = providerPayment.point_of_interaction?.transaction_data;
-  const externalReference =
-    providerPayment.external_reference || order.provider_external_reference || null;
-  const paidAt =
-    resolvedStatus === "approved"
-      ? providerPayment.date_approved || new Date().toISOString()
-      : null;
-  const expiresAt =
-    resolvedStatus === "approved"
-      ? (
-          await resolveApprovedOrderLicenseExpiresAt({
-            order,
-            paidAtOverride: paidAt,
-          })
-        ).expiresAt
-      : providerPayment.date_of_expiration || null;
-  const diagnostic = resolvePaymentDiagnostic({
-    paymentMethod: order.payment_method,
-    status: resolvedStatus,
-    providerStatus,
-    providerStatusDetail,
-  });
-
-  if (resolvedStatus === "approved") {
-    if (isLockedByUnpaidSetupTimeout(order)) {
-      await autoRefundProviderPayment({
-        providerPaymentId,
-        providerPayment,
-        orderPaymentMethod: order.payment_method,
-      });
-
-      const supabase = getSupabaseAdminClientOrThrow();
-      const refundedTimeoutOrderResult = await supabase
-        .from("payment_orders")
-        .update({
-          status: "cancelled",
-          provider_status: "refunded",
-          provider_status_detail: UNPAID_SETUP_TIMEOUT_REFUND_STATUS_DETAIL,
-          provider_external_reference: externalReference,
-          provider_qr_code: transactionData?.qr_code || order.provider_qr_code,
-          provider_qr_base64:
-            transactionData?.qr_code_base64 || order.provider_qr_base64,
-          provider_ticket_url:
-            transactionData?.ticket_url || order.provider_ticket_url,
-          provider_payload: {
-            ...mergeProviderPayload(order.provider_payload, {
-              source: "mercado_pago_webhook",
-              auto_refunded_after_setup_timeout: true,
-              flowdesk_diagnostic: diagnostic,
-              mercado_pago: providerPayment,
-            }),
-          },
-          expires_at: expiresAt,
-        })
-        .eq("id", order.id)
-        .select(PAYMENT_ORDER_SELECT_COLUMNS)
-        .single<PaymentOrderRecord>();
-
-      if (refundedTimeoutOrderResult.error || !refundedTimeoutOrderResult.data) {
-        throw new Error(
-          refundedTimeoutOrderResult.error?.message ||
-            "Falha ao atualizar pedido pago apos timeout do onboarding.",
-        );
-      }
-
-      await createPaymentOrderEventSafe(
-        order.id,
-        "provider_payment_auto_refunded_after_setup_timeout",
-        {
-          source: "mercado_pago_webhook",
-          providerPaymentId,
-          reason: "approved_after_setup_timeout",
-        },
-      );
-
-      invalidateGuildLicenseCaches();
-      return refundedTimeoutOrderResult.data;
-    }
-
-    const existingCoverage = await getLatestApprovedLicenseCoverageForGuild(
-      order.guild_id,
-      order.id,
-    );
-    const paymentTimestampMs = paidAt ? Date.parse(paidAt) : Date.now();
-    const canBypassRenewalWindow = orderTransitionAllowsImmediateApproval(
-      order.provider_payload,
-    );
-    const renewalDecision = canBypassRenewalWindow
-      ? {
-          allowed: true as const,
-          reason: "immediate_upgrade" as const,
-          licenseStartsAtMs: Number.isFinite(paymentTimestampMs)
-            ? paymentTimestampMs
-            : Date.now(),
-        }
-      : resolveRenewalPaymentDecision(
-          existingCoverage,
-          Number.isFinite(paymentTimestampMs) ? paymentTimestampMs : Date.now(),
-        );
-    if (!renewalDecision.allowed) {
-      await autoRefundProviderPayment({
-        providerPaymentId,
-        providerPayment,
-        orderPaymentMethod: order.payment_method,
-      });
-
-      const supabase = getSupabaseAdminClientOrThrow();
-      const refundedOrderResult = await supabase
-        .from("payment_orders")
-        .update({
-          status: "cancelled",
-          provider_status: "refunded",
-          provider_status_detail: "auto_refund_duplicate_active_license",
-          provider_external_reference: externalReference,
-          provider_qr_code: transactionData?.qr_code || order.provider_qr_code,
-          provider_qr_base64:
-            transactionData?.qr_code_base64 || order.provider_qr_base64,
-          provider_ticket_url:
-            transactionData?.ticket_url || order.provider_ticket_url,
-          provider_payload: {
-            ...mergeProviderPayload(order.provider_payload, {
-              source: "mercado_pago_webhook",
-              auto_refunded_duplicate: true,
-              flowdesk_diagnostic: diagnostic,
-              mercado_pago: providerPayment,
-            }),
-          },
-          expires_at: expiresAt,
-        })
-        .eq("id", order.id)
-        .select(PAYMENT_ORDER_SELECT_COLUMNS)
-        .single<PaymentOrderRecord>();
-
-      if (refundedOrderResult.error || !refundedOrderResult.data) {
-        throw new Error(
-          refundedOrderResult.error?.message ||
-            "Falha ao atualizar estorno automatico por webhook.",
-        );
-      }
-
-      await createPaymentOrderEventSafe(order.id, "provider_payment_auto_refunded", {
-        source: "mercado_pago_webhook",
-        providerPaymentId,
-        reason: renewalDecision.reason,
-        previousApprovedOrderNumber: existingCoverage?.order.order_number || null,
-      });
-
-      invalidateGuildLicenseCaches();
-      return refundedOrderResult.data;
-    }
-  }
-
-  if (isLockedByUnpaidSetupTimeout(order)) {
-    return order;
-  }
-
-  const supabase = getSupabaseAdminClientOrThrow();
-  const updatedOrderResult = await supabase
-    .from("payment_orders")
-    .update({
-      status: resolvedStatus,
-      provider_payment_id: providerPaymentId,
-      provider_external_reference: externalReference,
-      provider_qr_code: transactionData?.qr_code || null,
-      provider_qr_base64: transactionData?.qr_code_base64 || null,
-      provider_ticket_url: transactionData?.ticket_url || null,
-      provider_status: providerStatus,
-      provider_status_detail: providerStatusDetail,
-      provider_payload: {
-        ...mergeProviderPayload(order.provider_payload, {
-          source: "mercado_pago_webhook",
-          flowdesk_diagnostic: diagnostic,
-          mercado_pago: providerPayment,
-        }),
-      },
-      paid_at: paidAt,
-      expires_at: expiresAt,
-    })
-    .eq("id", order.id)
-    .select(PAYMENT_ORDER_SELECT_COLUMNS)
-    .single<PaymentOrderRecord>();
-
-  if (updatedOrderResult.error || !updatedOrderResult.data) {
-    throw new Error(
-      updatedOrderResult.error?.message ||
-        "Falha ao atualizar pedido por webhook.",
-    );
-  }
-
-  await createPaymentOrderEventSafe(order.id, "provider_payment_reconciled", {
-    source: "mercado_pago_webhook",
-    providerPaymentId,
-    providerStatus,
-    providerStatusDetail,
-    resolvedStatus,
-    diagnosticCategory: diagnostic.category,
-  });
-
-  if (updatedOrderResult.data.status === "approved") {
-    await syncUserPlanStateFromOrder(updatedOrderResult.data);
-  }
-
-  invalidateGuildLicenseCaches();
-  return updatedOrderResult.data;
-}
-
-function validateWebhookToken(request: Request, url: URL) {
-  const expectedToken = process.env.MERCADO_PAGO_WEBHOOK_TOKEN?.trim() || "";
-  if (!expectedToken) {
-    return process.env.NODE_ENV !== "production";
-  }
-
-  const tokenFromQuery = url.searchParams.get("token")?.trim() || "";
-  const tokenFromHeader =
-    request.headers.get("x-webhook-token")?.trim() ||
-    request.headers.get("x-mercadopago-signature")?.trim() ||
-    "";
-
-  const candidates = [tokenFromQuery, tokenFromHeader].filter(Boolean);
-  return candidates.some((candidate) => secureTokenEquals(expectedToken, candidate));
+function resolveRelevantWebhookHeaders(request: Request) {
+  return {
+    "content-type": request.headers.get("content-type") || null,
+    "user-agent": request.headers.get("user-agent") || null,
+    "x-request-id": request.headers.get("x-request-id") || null,
+    "x-signature": request.headers.get("x-signature") || null,
+    "x-webhook-token-present": Boolean(request.headers.get("x-webhook-token")),
+  };
 }
 
 function secureTokenEquals(expected: string, received: string) {
   const expectedBuffer = Buffer.from(expected);
   const receivedBuffer = Buffer.from(received);
-  if (expectedBuffer.length !== receivedBuffer.length) return false;
+
+  if (expectedBuffer.length !== receivedBuffer.length) {
+    return false;
+  }
+
   return crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
+}
+
+function validateLegacyWebhookToken(request: Request, url: URL) {
+  const expectedToken = process.env.MERCADO_PAGO_WEBHOOK_TOKEN?.trim() || "";
+  if (!expectedToken) return false;
+
+  const tokenFromQuery = url.searchParams.get("token")?.trim() || "";
+  const tokenFromHeader = request.headers.get("x-webhook-token")?.trim() || "";
+  const candidates = [tokenFromQuery, tokenFromHeader].filter(Boolean);
+
+  return candidates.some((candidate) => secureTokenEquals(expectedToken, candidate));
+}
+
+function resolveWebhookSignatureSecret() {
+  return (
+    process.env.MERCADO_PAGO_WEBHOOK_SIGNATURE_SECRET?.trim() ||
+    process.env.MERCADO_PAGO_WEBHOOK_SECRET?.trim() ||
+    ""
+  );
+}
+
+function resolveWebhookSignatureMaxAgeSeconds() {
+  const rawValue =
+    process.env.MERCADO_PAGO_WEBHOOK_SIGNATURE_MAX_AGE_SECONDS?.trim() || "";
+  if (!rawValue) return null;
+
+  const numeric = Number(rawValue);
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  return Math.floor(numeric);
+}
+
+function resolveWebhookAuthorization(input: {
+  request: Request;
+  url: URL;
+  paymentId: string | null;
+}) {
+  const signatureSecret = resolveWebhookSignatureSecret();
+  const signatureVerification = signatureSecret
+    ? verifyMercadoPagoWebhookSignature({
+        secret: signatureSecret,
+        signatureHeader: input.request.headers.get("x-signature"),
+        requestId: input.request.headers.get("x-request-id"),
+        dataId:
+          input.url.searchParams.get("data.id") ||
+          input.url.searchParams.get("id") ||
+          input.paymentId,
+        maxAgeSeconds: resolveWebhookSignatureMaxAgeSeconds(),
+      })
+    : null;
+
+  if (signatureVerification?.ok) {
+    return {
+      ok: true as const,
+      mode: "signature" as const,
+      signatureVerified: true,
+      reason: signatureVerification.reason,
+      ageSeconds: signatureVerification.ageSeconds,
+    };
+  }
+
+  if (validateLegacyWebhookToken(input.request, input.url)) {
+    return {
+      ok: true as const,
+      mode: "token" as const,
+      signatureVerified: false,
+      reason: "legacy_token",
+      ageSeconds: signatureVerification?.ageSeconds ?? null,
+    };
+  }
+
+  const hasSecurityConfig = Boolean(
+    signatureSecret || process.env.MERCADO_PAGO_WEBHOOK_TOKEN?.trim(),
+  );
+
+  if (!hasSecurityConfig) {
+    if (process.env.NODE_ENV !== "production") {
+      return {
+        ok: true as const,
+        mode: "dev_unsecured" as const,
+        signatureVerified: false,
+        reason: "dev_unsecured",
+        ageSeconds: null,
+      };
+    }
+
+    return {
+      ok: false as const,
+      mode: "missing_config" as const,
+      signatureVerified: false,
+      reason: "missing_webhook_auth_config",
+      ageSeconds: null,
+    };
+  }
+
+  return {
+    ok: false as const,
+    mode: "unauthorized" as const,
+    signatureVerified: false,
+    reason: signatureVerification?.reason || "invalid_webhook_auth",
+    ageSeconds: signatureVerification?.ageSeconds ?? null,
+  };
+}
+
+function resolveProviderPaymentMethodId(
+  providerPayment: MercadoPagoPaymentResponse | null | undefined,
+) {
+  if (!providerPayment) return null;
+
+  if (typeof providerPayment.payment_method_id === "string") {
+    const normalized = providerPayment.payment_method_id.trim().toLowerCase();
+    if (normalized) return normalized;
+  }
+
+  if (
+    providerPayment.point_of_interaction?.transaction_data?.qr_code ||
+    providerPayment.point_of_interaction?.transaction_data?.qr_code_base64
+  ) {
+    return "pix";
+  }
+
+  return null;
+}
+
+async function autoRefundProviderPayment(input: {
+  providerPaymentId: string;
+  providerPayment: MercadoPagoPaymentResponse;
+  orderPaymentMethod?: "pix" | "card" | null;
+}) {
+  const providerMethodId = resolveProviderPaymentMethodId(input.providerPayment);
+  const isPixPayment =
+    providerMethodId === "pix" || input.orderPaymentMethod === "pix";
+
+  if (isPixPayment) {
+    return refundMercadoPagoPixPayment(input.providerPaymentId);
+  }
+
+  return refundMercadoPagoCardPayment(input.providerPaymentId);
+}
+
+function buildWebhookEventKey(input: {
+  paymentId: string | null;
+  eventType: string;
+  eventAction: string;
+  providerRequestId: string | null;
+  rawBody: string;
+  search: string;
+}) {
+  if (input.paymentId) {
+    return `mercado_pago:payment:${input.paymentId}:${input.eventType}:${input.eventAction}`;
+  }
+
+  return createStablePaymentIdempotencyKey({
+    namespace: "mercado-pago-webhook-event",
+    parts: [
+      input.eventType,
+      input.eventAction,
+      input.providerRequestId,
+      input.search,
+      input.rawBody,
+    ],
+  });
 }
 
 export async function POST(request: Request) {
@@ -475,45 +317,136 @@ export async function POST(request: Request) {
       requestContext.requestId,
     );
 
-  try {
-    const url = new URL(request.url);
-    if (
-      process.env.NODE_ENV === "production" &&
-      !process.env.MERCADO_PAGO_WEBHOOK_TOKEN?.trim()
-    ) {
+  const url = new URL(request.url);
+  const rawBody = await request.text();
+  const body = parseJsonSafely(rawBody);
+  const paymentId = extractWebhookPaymentId({ url, body });
+  const eventType = resolveWebhookEventType(url, body);
+  const eventAction = resolveWebhookEventAction(url, body);
+  const providerRequestId = request.headers.get("x-request-id")?.trim() || null;
+  const auth = resolveWebhookAuthorization({
+    request,
+    url,
+    paymentId,
+  });
+
+  if (!auth.ok) {
+    await logSecurityAuditEventSafe(requestContext, {
+      action: "payment_webhook_mercadopago",
+      outcome: "blocked",
+      metadata: {
+        paymentId,
+        eventType,
+        eventAction,
+        reason: auth.reason,
+      },
+    });
+
+    return respond(
+      {
+        ok: false,
+        message:
+          auth.mode === "missing_config"
+            ? "Webhook do Mercado Pago sem autenticacao configurada."
+            : "Webhook nao autorizado.",
+      },
+      { status: auth.mode === "missing_config" ? 503 : 401 },
+    );
+  }
+
+  const eventKey = buildWebhookEventKey({
+    paymentId,
+    eventType,
+    eventAction,
+    providerRequestId,
+    rawBody,
+    search: url.search,
+  });
+  const claimedEvent = await claimPaymentProviderEvent({
+    provider: "mercado_pago",
+    eventKey,
+    resourceType: eventType,
+    resourceId: paymentId,
+    eventAction,
+    signatureVerified: auth.signatureVerified,
+    requestId: providerRequestId || requestContext.requestId,
+    requestPath: url.pathname,
+    headers: resolveRelevantWebhookHeaders(request),
+    payload: body || { rawBody },
+    maxAttempts: 8,
+  });
+
+  if (!claimedEvent.ok) {
+    if (claimedEvent.mode === "duplicate_completed") {
+      return respond({
+        ok: true,
+        duplicate: true,
+        paymentId,
+      });
+    }
+
+    if (claimedEvent.mode === "already_processing") {
       return respond(
         {
-          ok: false,
-          message:
-            "Webhook do Mercado Pago desabilitado: token de seguranca nao configurado.",
+          ok: true,
+          processing: true,
+          paymentId,
         },
-        { status: 503 },
+        { status: 202 },
       );
     }
 
-    if (!validateWebhookToken(request, url)) {
-      return respond(
-        { ok: false, message: "Webhook nao autorizado." },
-        { status: 401 },
-      );
+    if (claimedEvent.mode === "dead_letter") {
+      return respond({
+        ok: true,
+        deadLetter: true,
+        paymentId,
+      });
     }
+  }
 
-    let body: unknown = null;
-    try {
-      body = (await request.json()) as unknown;
-    } catch {
-      body = null;
-    }
+  let auditContext = requestContext;
 
-    const paymentId = extractWebhookPaymentId({ url, body });
+  try {
     if (!paymentId) {
-      return respond({ ok: true, ignored: true });
+      const resultPayload = {
+        ignored: true,
+        reason: "missing_payment_id",
+      };
+
+      await completePaymentProviderEvent({
+        record: claimedEvent.record,
+        provider: "mercado_pago",
+        eventKey,
+        resultPayload,
+      });
+
+      await logSecurityAuditEventSafe(auditContext, {
+        action: "payment_webhook_mercadopago",
+        outcome: "succeeded",
+        metadata: resultPayload,
+      });
+
+      return respond({ ok: true, ...resultPayload });
     }
 
     const providerPayment = await fetchMercadoPagoPaymentById(paymentId);
     const providerPaymentId = parsePaymentId(providerPayment.id);
     if (!providerPaymentId) {
-      return respond({ ok: true, ignored: true });
+      const resultPayload = {
+        ignored: true,
+        paymentId,
+        reason: "provider_payment_without_id",
+      };
+
+      await completePaymentProviderEvent({
+        record: claimedEvent.record,
+        provider: "mercado_pago",
+        eventKey,
+        resultPayload,
+      });
+
+      return respond({ ok: true, ...resultPayload });
     }
 
     const resolvedStatus = resolvePaymentStatus(providerPayment.status);
@@ -522,15 +455,17 @@ export async function POST(request: Request) {
     );
     const metadataOrderNumber = getMetadataOrderNumber(providerPayment.metadata || null);
     const hintedOrderNumber = externalReferenceOrderNumber || metadataOrderNumber;
+    const paymentIdentifiers = extractMercadoPagoPaymentIdentifiers(providerPayment);
 
-    let order =
-      (await getOrderByProviderPaymentId(providerPaymentId)) ||
-      (hintedOrderNumber ? await getOrderByOrderNumber(hintedOrderNumber) : null);
+    const order =
+      (await getPaymentOrderByProviderPaymentId(providerPaymentId)) ||
+      (hintedOrderNumber ? await getPaymentOrderByOrderNumber(hintedOrderNumber) : null);
 
     if (!order) {
-      // Se pagamento aprovado pertence ao nosso fluxo mas nao foi vinculado,
-      // estornamos automaticamente para evitar cobranca sem registro.
-      if (resolvedStatus === "approved" && hintedOrderNumber) {
+      const shouldRefundOrphanApproved =
+        resolvedStatus === "approved" && Boolean(hintedOrderNumber);
+
+      if (shouldRefundOrphanApproved) {
         await autoRefundProviderPayment({
           providerPaymentId,
           providerPayment,
@@ -538,33 +473,104 @@ export async function POST(request: Request) {
         });
       }
 
-      return respond({
-        ok: true,
+      const resultPayload = {
         ignored: true,
         orphanPayment: true,
         paymentId: providerPaymentId,
+        resolvedStatus,
+        autoRefunded: shouldRefundOrphanApproved,
+        txId: paymentIdentifiers.txId,
+        endToEndId: paymentIdentifiers.endToEndId,
+      };
+
+      await completePaymentProviderEvent({
+        record: claimedEvent.record,
+        provider: "mercado_pago",
+        eventKey,
+        resultPayload,
       });
+
+      await logSecurityAuditEventSafe(auditContext, {
+        action: "payment_webhook_mercadopago",
+        outcome: "succeeded",
+        metadata: resultPayload,
+      });
+
+      return respond({ ok: true, ...resultPayload });
     }
 
-    order = await updateOrderFromProviderPayment(order, providerPayment);
-
-    return respond({
-      ok: true,
-      paymentId: providerPaymentId,
-      orderNumber: order.order_number,
-      status: order.status,
+    auditContext = extendSecurityRequestContext(requestContext, {
+      userId: order.user_id,
+      guildId: order.guild_id,
     });
+
+    const reconciled = await reconcilePaymentOrderWithProviderPayment(order, providerPayment, {
+      source: "mercado_pago_webhook",
+    });
+    const resultPayload = {
+      paymentId: providerPaymentId,
+      orderId: reconciled.order.id,
+      orderNumber: reconciled.order.order_number,
+      status: reconciled.order.status,
+      action: reconciled.action,
+      resolvedStatus,
+      txId: paymentIdentifiers.txId,
+      endToEndId: paymentIdentifiers.endToEndId,
+      authMode: auth.mode,
+    };
+
+    await completePaymentProviderEvent({
+      record: claimedEvent.record,
+      provider: "mercado_pago",
+      eventKey,
+      resultPayload,
+    });
+
+    await logSecurityAuditEventSafe(auditContext, {
+      action: "payment_webhook_mercadopago",
+      outcome: "succeeded",
+      metadata: resultPayload,
+    });
+
+    return respond({ ok: true, ...resultPayload });
   } catch (error) {
+    const sanitizedMessage = sanitizeErrorMessage(
+      error,
+      "Erro no webhook do Mercado Pago.",
+    );
+    const failedEvent = await failPaymentProviderEvent({
+      record: claimedEvent.record,
+      provider: "mercado_pago",
+      eventKey,
+      errorMessage: sanitizedMessage,
+      resultPayload: {
+        paymentId,
+        eventType,
+        eventAction,
+        requestId: requestContext.requestId,
+      },
+    });
+
+    await logSecurityAuditEventSafe(auditContext, {
+      action: "payment_webhook_mercadopago",
+      outcome: "failed",
+      metadata: {
+        paymentId,
+        eventType,
+        eventAction,
+        message: sanitizedMessage,
+        deadLetter: failedEvent.deadLetter,
+      },
+    });
+
     return respond(
       {
         ok: false,
-        message: sanitizeErrorMessage(
-          error,
-          "Erro no webhook do Mercado Pago.",
-        ),
+        message: sanitizedMessage,
         requestId: requestContext.requestId,
+        deadLetter: failedEvent.deadLetter,
       },
-      { status: 500 },
+      { status: failedEvent.deadLetter ? 200 : 500 },
     );
   }
 }

@@ -43,6 +43,7 @@ import {
   type PlanCode,
   type PlanPricingDefinition,
 } from "@/lib/plans/catalog";
+import { buildConfigUrlWithHashRoute } from "@/lib/plans/configRouting";
 
 type ConfigStepFourProps = {
   displayName: string;
@@ -758,19 +759,6 @@ function replaceCurrentPlanPath(
     "",
     buildConfigUrlWithHashRoute(nextPathname, url.search, url.hash),
   );
-}
-
-function buildConfigUrlWithHashRoute(
-  pathname: string,
-  search: string,
-  hash: string,
-) {
-  const normalizedPathname =
-    hash.startsWith("#/") && pathname !== "/" && !pathname.endsWith("/")
-      ? `${pathname}/`
-      : pathname;
-
-  return `${normalizedPathname}${search}${hash}`;
 }
 
 function readCachedOrderByGuild(guildId: string | null): PixOrder | null {

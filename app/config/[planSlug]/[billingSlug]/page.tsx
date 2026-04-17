@@ -5,12 +5,15 @@ import { buildServersPlansPath } from "@/lib/plans/addServerFlow";
 import { buildAccountPlanUsageSnapshot } from "@/lib/plans/accountPlanUsage";
 import { getCurrentUserFromSessionCookie } from "@/lib/auth/session";
 import {
-  buildConfigCheckoutPath,
   normalizePlanBillingPeriodCodeFromSlug,
   normalizePlanCodeFromSlug,
   resolvePlanPricing,
 } from "@/lib/plans/catalog";
-import { shouldBlockConfigServerSelection } from "@/lib/plans/configServerSelection";
+import {
+  shouldBlockConfigServerSelection,
+  shouldBypassConfigServerSelectionBlock,
+} from "@/lib/plans/configServerSelection";
+import { buildConfigCheckoutEntryHref } from "@/lib/plans/configRouting";
 import { countPlanGuildsForUser } from "@/lib/plans/planGuilds";
 import { getUserPlanState } from "@/lib/plans/state";
 
@@ -19,12 +22,15 @@ type ConfigPlanBillingPageProps = {
     planSlug: string;
     billingSlug: string;
   }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
 export default async function ConfigPlanBillingPage({
   params,
+  searchParams,
 }: ConfigPlanBillingPageProps) {
   const routeParams = await params;
+  const query = searchParams ? await searchParams : {};
   const initialPlanCode = normalizePlanCodeFromSlug(routeParams.planSlug, "pro");
   const initialBillingPeriodCode = normalizePlanBillingPeriodCodeFromSlug(
     routeParams.billingSlug,
@@ -34,9 +40,11 @@ export default async function ConfigPlanBillingPage({
     initialPlanCode,
     initialBillingPeriodCode,
   );
-  const canonicalPath = buildConfigCheckoutPath({
+  const canonicalPath = buildConfigCheckoutEntryHref({
     planCode: resolvedPricing.code,
     billingPeriodCode: resolvedPricing.billingPeriodCode,
+    searchParams: query,
+    omitSearchParamKeys: ["plan", "billing"],
   });
   const user = await getCurrentUserFromSessionCookie({ fullContext: true });
 
@@ -62,6 +70,11 @@ export default async function ConfigPlanBillingPage({
       userPlanState,
       licensedServersCount: usage.licensedServersCount,
       targetPlanMaxLicensedServers: resolvedPricing.entitlements.maxLicensedServers,
+    })
+    && !shouldBypassConfigServerSelectionBlock({
+      userPlanState,
+      targetPlanCode: resolvedPricing.code,
+      searchParams: query,
     })
   ) {
     redirect(buildServersPlansPath());

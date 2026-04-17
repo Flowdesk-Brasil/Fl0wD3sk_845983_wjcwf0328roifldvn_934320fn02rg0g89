@@ -5,6 +5,11 @@ import {
   resolvePaymentStatus,
   type MercadoPagoPaymentResponse,
 } from "@/lib/payments/mercadoPago";
+import {
+  extractMercadoPagoPaymentIdentifiers,
+  resolveNextPaymentOrderStatus,
+  resolveTrustedMercadoPagoPaymentTimestamps,
+} from "@/lib/payments/paymentIntegrity";
 import { resolvePaymentDiagnostic } from "@/lib/payments/paymentDiagnostics";
 import {
   isLockedByUnpaidSetupTimeout,
@@ -289,14 +294,21 @@ async function reconcilePaymentOrderWithFetchedProviderPayment(
 
   const providerStatus = providerPayment.status || null;
   const providerStatusDetail = providerPayment.status_detail || null;
-  const resolvedStatus = resolvePaymentStatus(providerStatus) as ReconcilablePaymentStatus;
+  const resolvedStatus = resolveNextPaymentOrderStatus(
+    order.status,
+    resolvePaymentStatus(providerStatus) as ReconcilablePaymentStatus,
+  ) as ReconcilablePaymentStatus;
   const transactionData = providerPayment.point_of_interaction?.transaction_data;
+  const paymentIdentifiers = extractMercadoPagoPaymentIdentifiers(providerPayment);
+  const trustedTimestamps = resolveTrustedMercadoPagoPaymentTimestamps({
+    providerPayment,
+    currentPaidAt: order.paid_at,
+    currentExpiresAt: order.expires_at,
+    resolvedStatus,
+  });
   const externalReference =
     providerPayment.external_reference || order.provider_external_reference || null;
-  const paidAt =
-    resolvedStatus === "approved"
-      ? providerPayment.date_approved || order.paid_at || new Date().toISOString()
-      : null;
+  const paidAt = trustedTimestamps.paidAt;
   const expiresAt =
     resolvedStatus === "approved"
       ? (
@@ -305,7 +317,7 @@ async function reconcilePaymentOrderWithFetchedProviderPayment(
             paidAtOverride: paidAt,
           })
         ).expiresAt
-      : providerPayment.date_of_expiration || null;
+      : trustedTimestamps.expiresAt;
 
   if (resolvedStatus === "approved") {
     if (isLockedByUnpaidSetupTimeout(order)) {
@@ -333,6 +345,8 @@ async function reconcilePaymentOrderWithFetchedProviderPayment(
               source,
               reconciled_by: source,
               auto_refunded_after_setup_timeout: true,
+              payment_identifiers: paymentIdentifiers,
+              trusted_timestamps: trustedTimestamps,
               mercado_pago: providerPayment,
             }),
           },
@@ -415,6 +429,8 @@ async function reconcilePaymentOrderWithFetchedProviderPayment(
               source,
               reconciled_by: source,
               auto_refunded_duplicate: true,
+              payment_identifiers: paymentIdentifiers,
+              trusted_timestamps: trustedTimestamps,
               mercado_pago: providerPayment,
             }),
           },
@@ -505,6 +521,8 @@ async function reconcilePaymentOrderWithFetchedProviderPayment(
           source,
           reconciled_by: source,
           flowdesk_diagnostic: diagnostic,
+          payment_identifiers: paymentIdentifiers,
+          trusted_timestamps: trustedTimestamps,
           mercado_pago: providerPayment,
         }),
       },
@@ -529,6 +547,9 @@ async function reconcilePaymentOrderWithFetchedProviderPayment(
     providerStatusDetail,
     resolvedStatus,
     diagnosticCategory: diagnostic.category,
+    txId: paymentIdentifiers.txId,
+    endToEndId: paymentIdentifiers.endToEndId,
+    providerLastUpdatedAt: trustedTimestamps.lastUpdatedAt,
   });
 
   if (updatedOrderResult.data.status === "approved") {

@@ -2,12 +2,12 @@ import { NextResponse } from "next/server";
 import { resolveSessionAccessToken } from "@/lib/auth/discordGuildAccess";
 import { getUserPlanScheduledChange } from "@/lib/plans/change";
 import {
-  buildConfigCheckoutPath,
   isPlanBillingPeriodCode,
   isPlanCode,
   type PlanBillingPeriodCode,
   type PlanCode,
 } from "@/lib/plans/catalog";
+import { buildConfigCheckoutEntryHref } from "@/lib/plans/configRouting";
 import {
   ensureDowngradeEnforcementForUser,
   getDowngradeEnforcementSummaryForUser,
@@ -44,18 +44,15 @@ function buildDowngradeCheckoutPath(input: {
   targetBillingPeriodCode: PlanBillingPeriodCode;
   preferredGuildId: string | null;
 }) {
-  const basePath = buildConfigCheckoutPath({
+  return buildConfigCheckoutEntryHref({
     planCode: input.targetPlanCode,
     billingPeriodCode: input.targetBillingPeriodCode,
+    searchParams: {
+      fresh: "1",
+      source: "downgrade-regularization",
+      guild: input.preferredGuildId,
+    },
   });
-  const params = new URLSearchParams({
-    fresh: "1",
-    source: "downgrade-regularization",
-  });
-  if (input.preferredGuildId) {
-    params.set("guild", input.preferredGuildId);
-  }
-  return `${basePath}?${params.toString()}#/payment`;
 }
 
 export async function POST(request: Request) {
