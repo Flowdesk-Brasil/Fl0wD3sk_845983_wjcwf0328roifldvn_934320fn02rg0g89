@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  authConfig,
   getOAuthModeCookieName,
   getOAuthNextPathCookieName,
   getOAuthRedirectUriCookieName,
@@ -9,7 +8,7 @@ import {
 } from "@/lib/auth/config";
 import {
   clearSharedAuthCookie,
-  setSharedAuthCookie,
+  setSharedSessionCookie,
 } from "@/lib/auth/cookies";
 import { exchangeCodeForToken, fetchDiscordUser } from "@/lib/auth/discord";
 import { buildLoginHref, type LoginIntentMode } from "@/lib/auth/paths";
@@ -221,13 +220,7 @@ export async function handleDiscordAuthCallback(request: NextRequest) {
     );
     const response = redirectWithLocation(successLocation);
 
-    setSharedAuthCookie(request, response, authConfig.sessionCookieName, session.sessionToken, {
-      httpOnly: true,
-      sameSite: "lax",
-      maxAge: authConfig.sessionTtlHours * 60 * 60,
-      path: "/",
-      priority: "high",
-    });
+    setSharedSessionCookie(request, response, session.sessionToken);
 
     clearOAuthCookies(request, response);
     const authenticatedContext = extendSecurityRequestContext(

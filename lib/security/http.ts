@@ -1,21 +1,11 @@
 import { NextResponse } from "next/server";
+import { areHostsWithinSameFirstPartySite } from "@/lib/routing/subdomains";
 
 export function isSameOriginRequest(request: Request) {
   const requestUrl = new URL(request.url);
   const originHeader = request.headers.get("origin");
-
-  if (originHeader) {
-    try {
-      const originUrl = new URL(originHeader);
-      if (originUrl.host !== requestUrl.host) {
-        return false;
-      }
-    } catch {
-      return false;
-    }
-  }
-
   const secFetchSite = request.headers.get("sec-fetch-site");
+
   if (
     secFetchSite &&
     secFetchSite !== "same-origin" &&
@@ -23,6 +13,25 @@ export function isSameOriginRequest(request: Request) {
     secFetchSite !== "none"
   ) {
     return false;
+  }
+
+  if (originHeader) {
+    try {
+      const originUrl = new URL(originHeader);
+      if (originUrl.origin === requestUrl.origin) {
+        return true;
+      }
+
+      if (originUrl.protocol !== requestUrl.protocol) {
+        return false;
+      }
+
+      if (!areHostsWithinSameFirstPartySite(originUrl.host, requestUrl.host)) {
+        return false;
+      }
+    } catch {
+      return false;
+    }
   }
 
   return true;

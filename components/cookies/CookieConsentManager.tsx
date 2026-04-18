@@ -6,13 +6,11 @@ import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  buildCookieConsentDocumentCookie,
   buildCookieConsentPreferences,
-  COOKIE_CONSENT_COOKIE_NAME,
-  COOKIE_CONSENT_MAX_AGE_SECONDS,
   type CookieConsentPreferences,
   parseCookieConsent,
   REQUIRED_ONLY_COOKIE_CONSENT,
-  serializeCookieConsent,
 } from "@/lib/cookies/consent";
 import { PRIVACY_PATH, TERMS_PATH } from "@/lib/legal/content";
 import { useBodyScrollLock } from "@/lib/ui/useBodyScrollLock";
@@ -143,13 +141,10 @@ export function CookieConsentManager({
   }, [pathname]);
 
   const persistConsent = useCallback((nextConsent: CookieConsentPreferences) => {
-    const serialized = serializeCookieConsent(nextConsent);
-    const secureAttribute =
-      typeof window !== "undefined" && window.location.protocol === "https:"
-        ? "; Secure"
-        : "";
-
-    document.cookie = `${COOKIE_CONSENT_COOKIE_NAME}=${serialized}; Path=/; Max-Age=${COOKIE_CONSENT_MAX_AGE_SECONDS}; SameSite=Lax; Priority=Low${secureAttribute}`;
+    document.cookie = buildCookieConsentDocumentCookie(nextConsent, {
+      hostname: window.location.hostname,
+      secure: window.location.protocol === "https:",
+    });
 
     setConsent(nextConsent);
     setDraftConsent(nextConsent);

@@ -7,7 +7,12 @@ import {
   getOAuthRedirectUriCookieName,
   getOAuthStateCookieName,
 } from "@/lib/auth/config";
-import { clearSharedAuthCookie } from "@/lib/auth/cookies";
+import {
+  clearSharedAuthCookie,
+  clearSharedSessionCookie,
+  clearSharedTrustedDeviceCookie,
+  getSharedAuthCookieProofName,
+} from "@/lib/auth/cookies";
 import {
   extractAuditErrorMessage,
   sanitizeErrorMessage,
@@ -25,7 +30,6 @@ import { revokeCurrentSessionFromCookie } from "@/lib/auth/session";
 
 /** Cookies de sessao/OAuth que devem ser limpos no logout. */
 const AUTH_COOKIE_NAMES = [
-  authConfig.sessionCookieName,
   getOAuthStateCookieName("discord"),
   getOAuthRedirectUriCookieName("discord"),
   getOAuthNextPathCookieName("discord"),
@@ -34,6 +38,17 @@ const AUTH_COOKIE_NAMES = [
   getOAuthRedirectUriCookieName("google"),
   getOAuthNextPathCookieName("google"),
   getOAuthModeCookieName("google"),
+  getOAuthStateCookieName("microsoft"),
+  getOAuthRedirectUriCookieName("microsoft"),
+  getOAuthNextPathCookieName("microsoft"),
+  getOAuthModeCookieName("microsoft"),
+] as const;
+
+const VERIFIED_AUTH_COOKIE_NAMES = [
+  authConfig.sessionCookieName,
+  getSharedAuthCookieProofName(authConfig.sessionCookieName),
+  authConfig.rememberedDeviceCookieName,
+  getSharedAuthCookieProofName(authConfig.rememberedDeviceCookieName),
 ] as const;
 
 export async function POST(request: Request) {
@@ -52,6 +67,12 @@ export async function POST(request: Request) {
     // Apagar todos os cookies de auth da resposta e do cookie store do servidor.
     const cookieStore = await cookies();
     const response = NextResponse.json({ ok: true });
+    for (const name of VERIFIED_AUTH_COOKIE_NAMES) {
+      try { cookieStore.delete(name); } catch { /* noop */ }
+    }
+    clearSharedSessionCookie(request, response);
+    clearSharedTrustedDeviceCookie(request, response);
+
     for (const name of AUTH_COOKIE_NAMES) {
       // Remove do store do Next.js (server-side)
       try { cookieStore.delete(name); } catch { /* noop */ }

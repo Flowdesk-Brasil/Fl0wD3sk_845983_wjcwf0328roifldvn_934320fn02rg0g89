@@ -4,8 +4,9 @@ import {
   normalizeInternalNextPath,
 } from "@/lib/auth/config";
 import {
-  clearSharedAuthCookie,
-  setSharedAuthCookie,
+  clearSharedTrustedDeviceCookie,
+  getSharedAuthCookieProofName,
+  setSharedSessionCookie,
 } from "@/lib/auth/cookies";
 import {
   authenticateEmailPasswordAndIssueOtp,
@@ -96,6 +97,10 @@ export async function POST(request: NextRequest) {
       userAgent: request.headers.get("user-agent"),
       trustedDeviceToken:
         request.cookies.get(authConfig.rememberedDeviceCookieName)?.value || null,
+      trustedDeviceProof:
+        request.cookies.get(
+          getSharedAuthCookieProofName(authConfig.rememberedDeviceCookieName),
+        )?.value || null,
     });
 
     await logSecurityAuditEventSafe(requestContext, {
@@ -122,11 +127,7 @@ export async function POST(request: NextRequest) {
     );
 
     if (result.clearTrustedDeviceCookie) {
-      clearSharedAuthCookie(request, response, authConfig.rememberedDeviceCookieName, {
-        httpOnly: true,
-        sameSite: "lax",
-        priority: "high",
-      });
+      clearSharedTrustedDeviceCookie(request, response);
     }
 
     if (result.nextStep === "session") {
@@ -136,13 +137,7 @@ export async function POST(request: NextRequest) {
         userAgent: request.headers.get("user-agent"),
       });
 
-      setSharedAuthCookie(request, response, authConfig.sessionCookieName, session.sessionToken, {
-        httpOnly: true,
-        sameSite: "lax",
-        maxAge: authConfig.sessionTtlHours * 60 * 60,
-        path: "/",
-        priority: "high",
-      });
+      setSharedSessionCookie(request, response, session.sessionToken);
     }
 
     return attachRequestId(response, requestContext.requestId);

@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { authConfig } from "@/lib/auth/config";
+import { validateSharedAuthCookieIntegrity } from "@/lib/auth/cookies";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 type TrustedDeviceRow = {
@@ -96,12 +97,26 @@ export async function issueTrustedEmailDevice(input: {
 export async function validateTrustedEmailDevice(input: {
   userId: number;
   token: string | null;
+  tokenProof?: string | null;
   userAgent: string | null;
 }): Promise<TrustedDeviceValidationResult> {
   if (!input.token || !isPlausibleTrustedDeviceToken(input.token)) {
     return {
       ok: false,
       shouldClearCookie: Boolean(input.token),
+    };
+  }
+
+  if (
+    validateSharedAuthCookieIntegrity(
+      authConfig.rememberedDeviceCookieName,
+      input.token,
+      input.tokenProof ?? null,
+    ) === "invalid"
+  ) {
+    return {
+      ok: false,
+      shouldClearCookie: true,
     };
   }
 

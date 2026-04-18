@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  authConfig,
   normalizeInternalNextPath,
 } from "@/lib/auth/config";
-import { setSharedAuthCookie } from "@/lib/auth/cookies";
+import {
+  setSharedSessionCookie,
+  setSharedTrustedDeviceCookie,
+} from "@/lib/auth/cookies";
 import { createEmailSession, verifyEmailLoginOtp } from "@/lib/auth/emailAuth";
 import { EmailOtpError } from "@/lib/auth/emailOtp";
 import { issueTrustedEmailDevice } from "@/lib/auth/trustedDevice";
@@ -102,13 +104,7 @@ export async function POST(request: NextRequest) {
       }),
     );
 
-    setSharedAuthCookie(request, response, authConfig.sessionCookieName, session.sessionToken, {
-      httpOnly: true,
-      sameSite: "lax",
-      maxAge: authConfig.sessionTtlHours * 60 * 60,
-      path: "/",
-      priority: "high",
-    });
+    setSharedSessionCookie(request, response, session.sessionToken);
 
     if (rememberSession) {
       const trustedDevice = await issueTrustedEmailDevice({
@@ -116,19 +112,7 @@ export async function POST(request: NextRequest) {
         userAgent: request.headers.get("user-agent"),
       });
 
-      setSharedAuthCookie(
-        request,
-        response,
-        authConfig.rememberedDeviceCookieName,
-        trustedDevice.token,
-        {
-          httpOnly: true,
-          sameSite: "lax",
-          maxAge: authConfig.rememberedDeviceDays * 24 * 60 * 60,
-          path: "/",
-          priority: "high",
-        },
-      );
+      setSharedTrustedDeviceCookie(request, response, trustedDevice.token);
     }
 
     await logSecurityAuditEventSafe(authenticatedContext, {

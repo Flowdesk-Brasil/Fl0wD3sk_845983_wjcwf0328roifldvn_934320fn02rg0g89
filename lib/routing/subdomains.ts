@@ -9,6 +9,7 @@ type RequestLike = Pick<Request, "headers" | "url">;
 
 type CanonicalHostConfig = {
   subdomain: string | null;
+  legacySubdomains?: string[];
 };
 
 type WorkspaceAreaConfig = {
@@ -42,7 +43,8 @@ const CANONICAL_HOST_CONFIG: Record<CanonicalHost, CanonicalHostConfig> = {
     subdomain: null,
   },
   login: {
-    subdomain: "login",
+    subdomain: "account",
+    legacySubdomains: ["login"],
   },
   status: {
     subdomain: "status",
@@ -452,6 +454,25 @@ export function resolveHostRuntimeContext(hostname: string, port = ""): RuntimeC
   };
 }
 
+export function areHostsWithinSameFirstPartySite(
+  leftHost: string,
+  rightHost: string,
+) {
+  const left = parseHost(leftHost);
+  const right = parseHost(rightHost);
+  const leftRuntime = resolveHostRuntimeContext(left.hostname, left.port);
+  const rightRuntime = resolveHostRuntimeContext(right.hostname, right.port);
+
+  if (leftRuntime.mode === "isolated" || rightRuntime.mode === "isolated") {
+    return false;
+  }
+
+  return (
+    leftRuntime.mode === rightRuntime.mode &&
+    leftRuntime.baseDomain === rightRuntime.baseDomain
+  );
+}
+
 export function detectCanonicalHostFromHostname(hostname: string) {
   const { hostname: normalizedHostname } = parseHost(hostname);
   const runtime = resolveHostRuntimeContext(normalizedHostname);
@@ -469,11 +490,15 @@ export function detectCanonicalHostFromHostname(hostname: string) {
   }
 
   for (const host of Object.keys(CANONICAL_HOST_CONFIG) as CanonicalHost[]) {
-    const subdomain = CANONICAL_HOST_CONFIG[host].subdomain;
-    if (!subdomain) continue;
+    const { subdomain, legacySubdomains = [] } = CANONICAL_HOST_CONFIG[host];
+    const hostnames = [subdomain, ...legacySubdomains].filter(Boolean);
 
-    const candidateHostname = `${subdomain}.${runtime.baseDomain}`;
-    if (normalizedHostname === candidateHostname) {
+    if (
+      hostnames.some(
+        (candidateSubdomain) =>
+          normalizedHostname === `${candidateSubdomain}.${runtime.baseDomain}`,
+      )
+    ) {
       return host;
     }
   }

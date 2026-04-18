@@ -101,6 +101,7 @@ export async function authenticateEmailPasswordAndIssueOtp(input: {
   ipAddress: string | null;
   userAgent: string | null;
   trustedDeviceToken?: string | null;
+  trustedDeviceProof?: string | null;
 }) {
   const start = await resolveEmailAuthStart(input.email);
   let user = start.user;
@@ -148,6 +149,7 @@ export async function authenticateEmailPasswordAndIssueOtp(input: {
   const trustedDeviceValidation = await validateTrustedEmailDevice({
     userId: user.id,
     token: input.trustedDeviceToken || null,
+    tokenProof: input.trustedDeviceProof || null,
     userAgent: input.userAgent,
   });
 

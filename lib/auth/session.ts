@@ -11,6 +11,10 @@ import {
   sanitizeConfigDraft,
 } from "@/lib/auth/configContext";
 import {
+  getSharedAuthCookieProofName,
+  validateSharedAuthCookieIntegrity,
+} from "@/lib/auth/cookies";
+import {
   buildEmailDisplayName,
   buildEmailUsername,
   normalizeAuthEmail,
@@ -761,8 +765,20 @@ export async function getCurrentAuthSessionFromCookie(
 ): Promise<CurrentAuthSession | null> {
   const cookieStore = await cookies();
   const sessionCookie = cookieStore.get(authConfig.sessionCookieName)?.value;
+  const sessionProofCookie = cookieStore.get(
+    getSharedAuthCookieProofName(authConfig.sessionCookieName),
+  )?.value;
 
   if (!sessionCookie) return null;
+  if (
+    validateSharedAuthCookieIntegrity(
+      authConfig.sessionCookieName,
+      sessionCookie,
+      sessionProofCookie,
+    ) === "invalid"
+  ) {
+    return null;
+  }
 
   const sessionTokenHash = hashToken(sessionCookie);
   const supabase = getSupabaseAdminClientOrThrow();

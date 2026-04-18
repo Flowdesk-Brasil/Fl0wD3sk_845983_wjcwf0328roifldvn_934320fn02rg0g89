@@ -7,12 +7,14 @@ import {
 import {
   buildCanonicalUrlFromInternalPath,
   buildCanonicalWorkspaceUrl,
+  detectCanonicalHostFromRequest,
   detectWorkspaceAreaFromPath,
   detectWorkspaceAreaFromRequestHost,
   getRequestOrigin,
   getWorkspaceAreaExternalPath,
   getWorkspaceAreaInternalPath,
   isCanonicalPublicPath,
+  resolveCanonicalHostOrigin,
   resolveAuthOrigin,
 } from "@/lib/routing/subdomains";
 
@@ -140,6 +142,32 @@ function getCurrentRequestLocation(request: NextRequest) {
   return `${getRequestOrigin(request)}${request.nextUrl.pathname}${request.nextUrl.search}`;
 }
 
+function maybeBuildCanonicalHostRedirect(
+  request: NextRequest,
+  requestId: string,
+  csp: string,
+) {
+  const canonicalHost = detectCanonicalHostFromRequest(request);
+  if (!canonicalHost) {
+    return null;
+  }
+
+  const targetOrigin = resolveCanonicalHostOrigin(request, canonicalHost);
+  const currentOrigin = getRequestOrigin(request);
+
+  if (!targetOrigin || targetOrigin === currentOrigin) {
+    return null;
+  }
+
+  return buildRedirectResponse(
+    request,
+    requestId,
+    csp,
+    `${targetOrigin}${request.nextUrl.pathname}${request.nextUrl.search}`,
+    308,
+  );
+}
+
 function maybeBuildCanonicalAuthRedirect(
   request: NextRequest,
   requestId: string,
@@ -258,6 +286,15 @@ export function proxy(request: NextRequest) {
   const csp = buildContentSecurityPolicy({
     isDevelopment: process.env.NODE_ENV !== "production",
   });
+
+  const canonicalHostRedirectResponse = maybeBuildCanonicalHostRedirect(
+    request,
+    requestId,
+    csp,
+  );
+  if (canonicalHostRedirectResponse) {
+    return canonicalHostRedirectResponse;
+  }
 
   const authRedirectResponse = maybeBuildCanonicalAuthRedirect(
     request,
