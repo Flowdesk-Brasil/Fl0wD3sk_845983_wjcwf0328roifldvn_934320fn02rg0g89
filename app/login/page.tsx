@@ -36,6 +36,16 @@ function resolveLoginErrorMessage(
       return loginMode === "link"
         ? "Nao foi possivel vincular sua conta Discord agora. Tente novamente."
         : "Nao foi possivel entrar com Discord agora. Tente novamente.";
+    case "google_invalid_state":
+      return "Sua autenticacao com Google expirou ou ficou invalida. Tente novamente.";
+    case "google_conflict":
+      return "Esta conta Google ja esta vinculada a outra conta Flowdesk.";
+    case "google_unverified_email":
+      return "Sua conta Google precisa ter um email verificado para continuar.";
+    case "google_not_configured":
+      return "O login com Google ainda nao esta configurado neste ambiente.";
+    case "google_auth_failed":
+      return "Nao foi possivel entrar com Google agora. Tente novamente.";
     default:
       return null;
   }

@@ -7,6 +7,7 @@ import {
 import { normalizeAuthEmail } from "@/lib/auth/email";
 import { createLoginOtpChallenge, resendLoginOtpChallenge, verifyLoginOtpChallenge } from "@/lib/auth/emailOtp";
 import { hashPassword, validatePasswordPolicy, verifyPassword } from "@/lib/auth/password";
+import { validateTrustedEmailDevice } from "@/lib/auth/trustedDevice";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 type PasswordCredentialRow = {
@@ -66,6 +67,7 @@ export async function resolveEmailAuthStart(email: string): Promise<{
   email: string;
   user: AuthUserRecord | null;
   nextStep: EmailAuthNextStep;
+  hasGoogleLinked?: boolean;
 }> {
   const normalizedEmail = normalizeAuthEmail(email);
   if (!normalizedEmail) {
@@ -78,6 +80,7 @@ export async function resolveEmailAuthStart(email: string): Promise<{
       email: normalizedEmail,
       user: null,
       nextStep: "set_password",
+      hasGoogleLinked: false,
     };
   }
 
@@ -86,6 +89,7 @@ export async function resolveEmailAuthStart(email: string): Promise<{
     email: normalizedEmail,
     user,
     nextStep: credential ? "password" : "set_password",
+    hasGoogleLinked: Boolean(user.google_user_id),
   };
 }
 
@@ -95,9 +99,11 @@ export async function authenticateEmailPasswordAndIssueOtp(input: {
   confirmPassword?: string | null;
   ipAddress: string | null;
   userAgent: string | null;
+  trustedDeviceToken?: string | null;
 }) {
   const start = await resolveEmailAuthStart(input.email);
   let user = start.user;
+  let clearTrustedDeviceCookie = false;
 
   if (start.nextStep === "password") {
     if (!user) {
@@ -138,6 +144,24 @@ export async function authenticateEmailPasswordAndIssueOtp(input: {
     throw new Error("Nao foi possivel identificar o email desta conta.");
   }
 
+  const trustedDeviceValidation = await validateTrustedEmailDevice({
+    userId: user.id,
+    token: input.trustedDeviceToken || null,
+    userAgent: input.userAgent,
+  });
+
+  clearTrustedDeviceCookie = trustedDeviceValidation.shouldClearCookie;
+
+  if (trustedDeviceValidation.ok) {
+    return {
+      nextStep: "session" as const,
+      passwordStep: start.nextStep,
+      userId: user.id,
+      maskedEmail: user.email,
+      clearTrustedDeviceCookie,
+    };
+  }
+
   const challenge = await createLoginOtpChallenge({
     userId: user.id,
     email: user.email,
@@ -148,10 +172,12 @@ export async function authenticateEmailPasswordAndIssueOtp(input: {
   return {
     nextStep: "otp" as const,
     passwordStep: start.nextStep,
+    userId: user.id,
     challengeId: challenge.challengeId,
     maskedEmail: challenge.maskedEmail,
     expiresAt: challenge.expiresAt,
     resendAvailableAt: challenge.resendAvailableAt,
+    clearTrustedDeviceCookie,
   };
 }
 

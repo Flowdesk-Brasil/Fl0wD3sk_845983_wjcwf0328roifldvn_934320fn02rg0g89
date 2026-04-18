@@ -1,5 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { authenticateEmailPasswordAndIssueOtp } from "@/lib/auth/emailAuth";
+import {
+  authConfig,
+  normalizeInternalNextPath,
+} from "@/lib/auth/config";
+import {
+  clearSharedAuthCookie,
+  setSharedAuthCookie,
+} from "@/lib/auth/cookies";
+import {
+  authenticateEmailPasswordAndIssueOtp,
+  createEmailSession,
+} from "@/lib/auth/emailAuth";
 import { applyNoStoreHeaders, ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -72,6 +83,10 @@ export async function POST(request: NextRequest) {
       typeof payload.confirmPassword === "string"
         ? payload.confirmPassword
         : null;
+    const nextPath =
+      payload && typeof payload === "object" && typeof payload.next === "string"
+        ? normalizeInternalNextPath(payload.next)
+        : null;
 
     const result = await authenticateEmailPasswordAndIssueOtp({
       email,
@@ -79,6 +94,8 @@ export async function POST(request: NextRequest) {
       confirmPassword,
       ipAddress: extractClientIp(request),
       userAgent: request.headers.get("user-agent"),
+      trustedDeviceToken:
+        request.cookies.get(authConfig.rememberedDeviceCookieName)?.value || null,
     });
 
     await logSecurityAuditEventSafe(requestContext, {
@@ -90,20 +107,46 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    return attachRequestId(
-      applyNoStoreHeaders(
-        NextResponse.json({
-          ok: true,
-          nextStep: result.nextStep,
-          passwordStep: result.passwordStep,
-          challengeId: result.challengeId,
-          maskedEmail: result.maskedEmail,
-          expiresAt: result.expiresAt,
-          resendAvailableAt: result.resendAvailableAt,
-        }),
-      ),
-      requestContext.requestId,
+    const response = applyNoStoreHeaders(
+      NextResponse.json({
+        ok: true,
+        nextStep: result.nextStep,
+        passwordStep: result.passwordStep,
+        userId: result.userId,
+        challengeId: "challengeId" in result ? result.challengeId : undefined,
+        maskedEmail: result.maskedEmail,
+        expiresAt: "expiresAt" in result ? result.expiresAt : undefined,
+        resendAvailableAt:
+          "resendAvailableAt" in result ? result.resendAvailableAt : undefined,
+        redirectTo: result.nextStep === "session" ? nextPath || "/dashboard" : undefined,
+      }),
     );
+
+    if (result.clearTrustedDeviceCookie) {
+      clearSharedAuthCookie(request, response, authConfig.rememberedDeviceCookieName, {
+        httpOnly: true,
+        sameSite: "lax",
+        priority: "high",
+      });
+    }
+
+    if (result.nextStep === "session") {
+      const session = await createEmailSession({
+        userId: result.userId,
+        ipAddress: extractClientIp(request),
+        userAgent: request.headers.get("user-agent"),
+      });
+
+      setSharedAuthCookie(request, response, authConfig.sessionCookieName, session.sessionToken, {
+        httpOnly: true,
+        sameSite: "lax",
+        maxAge: authConfig.sessionTtlHours * 60 * 60,
+        path: "/",
+        priority: "high",
+      });
+    }
+
+    return attachRequestId(response, requestContext.requestId);
   } catch (error) {
     const message =
       error instanceof Error

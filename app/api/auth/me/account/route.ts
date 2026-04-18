@@ -14,10 +14,15 @@ export async function DELETE() {
   const { error } = await supabase
     .from("auth_users")
     .update({
+      discord_user_id: null,
+      google_user_id: null,
       display_name: "Deleted User",
       username: "deleted",
       avatar: null,
       email: null,
+      email_normalized: null,
+      email_verified_at: null,
+      last_auth_method: null,
       raw_user: {}
     })
     .eq("id", sessionData.authSession.user.id);

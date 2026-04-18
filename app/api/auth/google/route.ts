@@ -4,14 +4,15 @@ import {
   getOAuthNextPathCookieName,
   getOAuthRedirectUriCookieName,
   getOAuthStateCookieName,
+  isGoogleAuthConfigured,
   normalizeInternalNextPath,
-  resolveDiscordRedirectUri,
+  resolveGoogleRedirectUri,
 } from "@/lib/auth/config";
 import {
   clearSharedAuthCookie,
   setSharedAuthCookie,
 } from "@/lib/auth/cookies";
-import { buildDiscordAuthorizeUrl } from "@/lib/auth/discord";
+import { buildGoogleAuthorizeUrl } from "@/lib/auth/google";
 import { createOAuthState } from "@/lib/auth/session";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import {
@@ -24,7 +25,7 @@ import {
 export async function GET(request: NextRequest) {
   const requestContext = createSecurityRequestContext(request);
   const rateLimit = await enforceRequestRateLimit({
-    action: "auth_discord_start",
+    action: "auth_google_start",
     windowMs: 10 * 60 * 1000,
     maxAttempts: 18,
     context: requestContext,
@@ -32,7 +33,7 @@ export async function GET(request: NextRequest) {
 
   if (!rateLimit.ok) {
     await logSecurityAuditEventSafe(requestContext, {
-      action: "auth_discord_start",
+      action: "auth_google_start",
       outcome: "blocked",
       metadata: {
         reason: "rate_limit",
@@ -48,22 +49,30 @@ export async function GET(request: NextRequest) {
   }
 
   await logSecurityAuditEventSafe(requestContext, {
-    action: "auth_discord_start",
+    action: "auth_google_start",
     outcome: "started",
   });
 
+  if (!isGoogleAuthConfigured()) {
+    return attachRequestId(
+      applyNoStoreHeaders(
+        NextResponse.redirect(new URL("/login?error=google_not_configured", request.url), 302),
+      ),
+      requestContext.requestId,
+    );
+  }
+
   const state = createOAuthState();
-  const redirectUri = resolveDiscordRedirectUri(request);
+  const redirectUri = resolveGoogleRedirectUri(request);
   const requestedNextPath = normalizeInternalNextPath(
     request.nextUrl.searchParams.get("next"),
   );
   const requestedMode =
     request.nextUrl.searchParams.get("mode") === "link" ? "link" : "login";
-  const discordAuthUrl = buildDiscordAuthorizeUrl(state, redirectUri);
+  const googleAuthUrl = buildGoogleAuthorizeUrl(state, redirectUri);
+  const response = NextResponse.redirect(googleAuthUrl, 302);
 
-  const response = NextResponse.redirect(discordAuthUrl, 302);
-
-  setSharedAuthCookie(request, response, getOAuthStateCookieName("discord"), state, {
+  setSharedAuthCookie(request, response, getOAuthStateCookieName("google"), state, {
     httpOnly: true,
     sameSite: "lax",
     maxAge: 60 * 10,
@@ -74,7 +83,7 @@ export async function GET(request: NextRequest) {
   setSharedAuthCookie(
     request,
     response,
-    getOAuthRedirectUriCookieName("discord"),
+    getOAuthRedirectUriCookieName("google"),
     redirectUri,
     {
       httpOnly: true,
@@ -89,7 +98,7 @@ export async function GET(request: NextRequest) {
     setSharedAuthCookie(
       request,
       response,
-      getOAuthNextPathCookieName("discord"),
+      getOAuthNextPathCookieName("google"),
       requestedNextPath,
       {
         httpOnly: true,
@@ -100,7 +109,7 @@ export async function GET(request: NextRequest) {
       },
     );
   } else {
-    clearSharedAuthCookie(request, response, getOAuthNextPathCookieName("discord"), {
+    clearSharedAuthCookie(request, response, getOAuthNextPathCookieName("google"), {
       httpOnly: true,
       sameSite: "lax",
       priority: "high",
@@ -110,7 +119,7 @@ export async function GET(request: NextRequest) {
   setSharedAuthCookie(
     request,
     response,
-    getOAuthModeCookieName("discord"),
+    getOAuthModeCookieName("google"),
     requestedMode,
     {
       httpOnly: true,
@@ -122,7 +131,7 @@ export async function GET(request: NextRequest) {
   );
 
   await logSecurityAuditEventSafe(requestContext, {
-    action: "auth_discord_start",
+    action: "auth_google_start",
     outcome: "succeeded",
     metadata: {
       redirectUri,

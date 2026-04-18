@@ -28,6 +28,7 @@ import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { useAccountStatus } from "@/hooks/useAccountData";
 
 import { type AccountTab, ACCOUNT_TABS, validateTab } from "@/lib/account/tabs";
+import { buildBrowserRoutingTargetFromInternalPath } from "@/lib/routing/subdomains";
 export { validateTab };
 export type { AccountTab };
 
@@ -192,17 +193,25 @@ export function AccountWorkspace({
   }, []);
 
   const prefetchTab = useCallback((tab: AccountTab) => {
-    router.prefetch(buildTabHref(tab));
+    const target = buildBrowserRoutingTargetFromInternalPath(buildTabHref(tab));
+    if (!target.sameOrigin) return;
+    router.prefetch(target.path);
   }, [buildTabHref, router]);
 
   const navigateToTab = useCallback((tab: AccountTab) => {
     setIsProfileMenuOpen(false);
     const href = buildTabHref(tab);
-    if (normalizeComparablePath(pathname) !== normalizeComparablePath(href)) {
+    const target = buildBrowserRoutingTargetFromInternalPath(href);
+    if (normalizeComparablePath(pathname) !== normalizeComparablePath(target.path)) {
       setPendingTab(tab);
+      if (!target.sameOrigin) {
+        window.location.assign(target.href);
+        return;
+      }
+
       prefetchTab(tab);
       startSidebarNavigationTransition(() => {
-        router.push(href, { scroll: false });
+        router.push(target.path, { scroll: false });
       });
     }
   }, [buildTabHref, pathname, prefetchTab, router, startSidebarNavigationTransition]);
@@ -215,8 +224,14 @@ export function AccountWorkspace({
     ACCOUNT_TABS.forEach((tab) => {
       prefetchTab(tab);
     });
-    router.prefetch("/servers");
-    router.prefetch("/dashboard");
+    const serversTarget = buildBrowserRoutingTargetFromInternalPath("/servers");
+    const dashboardTarget = buildBrowserRoutingTargetFromInternalPath("/dashboard");
+    if (serversTarget.sameOrigin) {
+      router.prefetch(serversTarget.path);
+    }
+    if (dashboardTarget.sameOrigin) {
+      router.prefetch(dashboardTarget.path);
+    }
   }, [prefetchTab, router]);
 
   useEffect(() => {
@@ -241,7 +256,11 @@ export function AccountWorkspace({
       } catch {
         // noop
       }
-      window.location.replace("/login");
+      window.location.replace(
+        buildBrowserRoutingTargetFromInternalPath("/login", {
+          fallbackArea: "account",
+        }).href,
+      );
     }
   }
 
@@ -464,12 +483,27 @@ export function AccountWorkspace({
               <div className="space-y-[8px]">
                 <button
                   type="button"
-                  onMouseEnter={() => router.prefetch("/servers")}
-                  onFocus={() => router.prefetch("/servers")}
+                  onMouseEnter={() => {
+                    const target = buildBrowserRoutingTargetFromInternalPath("/servers");
+                    if (target.sameOrigin) {
+                      router.prefetch(target.path);
+                    }
+                  }}
+                  onFocus={() => {
+                    const target = buildBrowserRoutingTargetFromInternalPath("/servers");
+                    if (target.sameOrigin) {
+                      router.prefetch(target.path);
+                    }
+                  }}
                   onClick={() => {
                     setIsProfileMenuOpen(false);
+                    const target = buildBrowserRoutingTargetFromInternalPath("/servers");
+                    if (!target.sameOrigin) {
+                      window.location.assign(target.href);
+                      return;
+                    }
                     startSidebarNavigationTransition(() => {
-                      router.push("/servers", { scroll: false });
+                      router.push(target.path, { scroll: false });
                     });
                   }}
                   className="flex w-full items-center gap-[12px] rounded-[16px] border border-[#171717] bg-[#0D0D0D] px-[12px] py-[12px] text-left text-[#D8D8D8] transition-colors hover:border-[#222222] hover:bg-[#111111]"

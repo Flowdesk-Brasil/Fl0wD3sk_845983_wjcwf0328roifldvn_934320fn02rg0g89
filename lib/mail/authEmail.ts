@@ -35,48 +35,38 @@ function escapeHtml(value: string) {
     .replace(/'/g, "&#39;");
 }
 
-function renderOtpCodeSlots(code: string) {
-  const characters = Array.from(code.trim().toUpperCase());
-  const compact = characters.length > 4;
-  const cellWidth = compact ? 44 : 58;
-  const cellHeight = compact ? 50 : 64;
-  const fontSize = compact ? 24 : 30;
-  const gapWidth = compact ? 8 : 10;
+function renderOtpCodeField(code: string) {
+  const normalizedCode = escapeHtml(code.trim().toUpperCase());
+  const compact = normalizedCode.length > 4;
+  const fontSize = compact ? 26 : 30;
+  const letterSpacing = compact ? "0.24em" : "0.32em";
 
-  return characters
-    .map((character, index) => {
-      const slot = `
-        <td
-          align="center"
-          valign="middle"
-          width="${cellWidth}"
-          height="${cellHeight}"
-          style="
-            width:${cellWidth}px;
-            height:${cellHeight}px;
-            border:1px solid #D7E0EB;
-            border-radius:16px;
-            background-color:#F8FAFC;
-            color:#0F172A;
-            font-family:'SFMono-Regular','Roboto Mono','Menlo','Consolas','Liberation Mono',monospace;
-            font-size:${fontSize}px;
-            line-height:${cellHeight}px;
-            font-weight:700;
-            letter-spacing:0.08em;
-            text-align:center;
-          "
-        >
-          ${escapeHtml(character)}
-        </td>
-      `;
-
-      if (index === characters.length - 1) {
-        return slot;
-      }
-
-      return `${slot}<td width="${gapWidth}" style="width:${gapWidth}px;font-size:0;line-height:0;">&nbsp;</td>`;
-    })
-    .join("");
+  return `
+    <div
+      style="
+        width:100%;
+        max-width:320px;
+        margin:0 auto;
+        padding:18px 20px;
+        border:1px solid #D7E0EB;
+        border-radius:20px;
+        background-color:#F8FAFC;
+        color:#0F172A;
+        font-family:'SFMono-Regular','Roboto Mono','Menlo','Consolas','Liberation Mono',monospace;
+        font-size:${fontSize}px;
+        line-height:1.2;
+        font-weight:700;
+        letter-spacing:${letterSpacing};
+        text-align:center;
+        white-space:nowrap;
+        user-select:all;
+        -webkit-user-select:all;
+        box-sizing:border-box;
+      "
+    >
+      ${normalizedCode}
+    </div>
+  `;
 }
 
 function maskEmailAddress(email: string) {
@@ -192,7 +182,7 @@ function buildLoginOtpEmailHtml(input: {
   const safeExpiresLabel = escapeHtml(input.expiresLabel);
   const safeMaskedRecipient = escapeHtml(input.maskedRecipient);
   const safeRequestedAtLabel = escapeHtml(input.requestedAtLabel);
-  const slotMarkup = renderOtpCodeSlots(input.code);
+  const codeFieldMarkup = renderOtpCodeField(input.code);
 
   return `
     <!doctype html>
@@ -296,31 +286,10 @@ function buildLoginOtpEmailHtml(input: {
                       style="width:100%;border-collapse:collapse;"
                     >
                       <tr>
-                        <td style="height:6px;background-color:#111827;font-size:0;line-height:0;">&nbsp;</td>
-                      </tr>
-                      <tr>
                         <td style="padding:36px 40px 14px 40px;">
-                          <span
-                            style="
-                              display:inline-block;
-                              padding:8px 12px;
-                              border:1px solid #DCE5F0;
-                              border-radius:999px;
-                              background-color:#F4F7FB;
-                              font-family:Arial,Helvetica,sans-serif;
-                              font-size:11px;
-                              line-height:14px;
-                              font-weight:700;
-                              letter-spacing:0.14em;
-                              text-transform:uppercase;
-                              color:#334155;
-                            "
-                          >
-                            Verificacao de acesso
-                          </span>
                           <h1
                             style="
-                              margin:18px 0 0 0;
+                              margin:0;
                               font-family:Arial,Helvetica,sans-serif;
                               font-size:34px;
                               line-height:1.12;
@@ -352,10 +321,12 @@ function buildLoginOtpEmailHtml(input: {
                             cellspacing="0"
                             border="0"
                             align="center"
-                            style="margin:0 auto;border-collapse:separate;"
+                            style="width:100%;margin:0 auto;border-collapse:separate;"
                           >
                             <tr>
-                              ${slotMarkup}
+                              <td align="center">
+                                ${codeFieldMarkup}
+                              </td>
                             </tr>
                           </table>
                         </td>
@@ -521,7 +492,6 @@ function buildLoginOtpEmailHtml(input: {
                               border-collapse:separate;
                               background-color:#F9FBFF;
                               border:1px solid #E4EAF3;
-                              border-left:4px solid #111827;
                               border-radius:18px;
                             "
                           >

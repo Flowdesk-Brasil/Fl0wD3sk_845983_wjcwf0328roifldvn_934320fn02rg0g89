@@ -1,8 +1,21 @@
 import type { NextRequest } from "next/server";
+import {
+  buildCanonicalUrlFromInternalPath,
+  getRequestHostname,
+  resolveAuthOrigin,
+  resolveHostRuntimeContext,
+} from "@/lib/routing/subdomains";
 
-const DEFAULT_PRODUCTION_APP_URL = "https://www.flwdesk.com";
-const DEFAULT_PRODUCTION_REDIRECT_URI = `${DEFAULT_PRODUCTION_APP_URL}/api/auth/discord/callback`;
-const LEGACY_PRODUCTION_HOSTS = new Set(["flowdeskbot.vercel.app", "flwdesk.com"]);
+const DEFAULT_PRODUCTION_AUTH_ORIGIN = "https://account.flwdesk.com";
+const DEFAULT_LOCAL_AUTH_ORIGIN = "http://account.localhost:3000";
+const LEGACY_PRODUCTION_HOSTS = new Set([
+  "flowdeskbot.vercel.app",
+  "flwdesk.com",
+  "www.flwdesk.com",
+]);
+const OAUTH_PROVIDER_COOKIE_PREFIX = "flowdesk_oauth";
+
+export type OAuthProvider = "discord" | "google";
 
 function requireEnv(name: string) {
   const value = process.env[name];
@@ -19,38 +32,63 @@ function parseSessionHours() {
   return Number.isFinite(value) && value > 0 ? value : 168;
 }
 
-function resolveDefaultProdRedirectUri() {
-  const explicitAppUrl =
-    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
-    process.env.APP_URL?.trim() ||
-    process.env.SITE_URL?.trim() ||
-    "";
-
-  if (explicitAppUrl) {
-    try {
-      return new URL("/api/auth/discord/callback", explicitAppUrl).toString();
-    } catch {
-      // Ignore invalid configured URLs and fall through to safe default.
-    }
-  }
-
-  return DEFAULT_PRODUCTION_REDIRECT_URI;
+function parseRememberDeviceDays() {
+  const value = Number(process.env.AUTH_EMAIL_REMEMBER_DEVICE_DAYS || "30");
+  return Number.isFinite(value) && value >= 1 && value <= 90 ? Math.trunc(value) : 30;
 }
 
-function normalizeProdRedirectUri(value: string) {
+function normalizeConfiguredOrigin(value: string, fallback: string) {
   try {
     const parsed = new URL(value);
     const normalizedHostname = parsed.hostname.toLowerCase();
 
     if (LEGACY_PRODUCTION_HOSTS.has(normalizedHostname)) {
-      parsed.hostname = "www.flwdesk.com";
+      parsed.hostname = new URL(fallback).hostname;
       parsed.protocol = "https:";
     }
 
-    return parsed.toString();
+    return parsed.toString().replace(/\/+$/, "");
   } catch {
-    return DEFAULT_PRODUCTION_REDIRECT_URI;
+    return fallback;
   }
+}
+
+function resolveDefaultProductionAuthOrigin() {
+  const explicitOrigin =
+    process.env.AUTH_APP_URL?.trim() ||
+    process.env.APP_ACCOUNT_URL?.trim() ||
+    process.env.NEXT_PUBLIC_ACCOUNT_URL?.trim() ||
+    "";
+
+  if (explicitOrigin) {
+    return normalizeConfiguredOrigin(explicitOrigin, DEFAULT_PRODUCTION_AUTH_ORIGIN);
+  }
+
+  return normalizeConfiguredOrigin(
+    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
+      process.env.APP_URL?.trim() ||
+      process.env.SITE_URL?.trim() ||
+      DEFAULT_PRODUCTION_AUTH_ORIGIN,
+    DEFAULT_PRODUCTION_AUTH_ORIGIN,
+  ).replace("https://www.flwdesk.com", DEFAULT_PRODUCTION_AUTH_ORIGIN);
+}
+
+function resolveDefaultLocalAuthOrigin() {
+  const explicitOrigin =
+    process.env.AUTH_APP_URL_LOCAL?.trim() ||
+    process.env.APP_ACCOUNT_URL_LOCAL?.trim() ||
+    process.env.NEXT_PUBLIC_ACCOUNT_URL_LOCAL?.trim() ||
+    "";
+
+  if (explicitOrigin) {
+    return normalizeConfiguredOrigin(explicitOrigin, DEFAULT_LOCAL_AUTH_ORIGIN);
+  }
+
+  return normalizeConfiguredOrigin(DEFAULT_LOCAL_AUTH_ORIGIN, DEFAULT_LOCAL_AUTH_ORIGIN);
+}
+
+function buildDefaultRedirectUri(origin: string, pathname: string) {
+  return new URL(pathname, origin).toString();
 }
 
 export const authConfig = {
@@ -58,33 +96,104 @@ export const authConfig = {
   discordClientSecret: requireEnv("DISCORD_CLIENT_SECRET"),
   discordRedirectUriLocal:
     process.env.DISCORD_REDIRECT_URI_LOCAL ||
-    "http://localhost:3000/api/auth/discord/callback",
-  discordRedirectUriProd: normalizeProdRedirectUri(
-    process.env.DISCORD_REDIRECT_URI_PROD || resolveDefaultProdRedirectUri(),
-  ),
+    buildDefaultRedirectUri(
+      resolveDefaultLocalAuthOrigin(),
+      "/api/auth/discord/callback",
+    ),
+  discordRedirectUriProd:
+    process.env.DISCORD_REDIRECT_URI_PROD ||
+    buildDefaultRedirectUri(
+      resolveDefaultProductionAuthOrigin(),
+      "/api/auth/discord/callback",
+    ),
+  googleClientId: process.env.GOOGLE_CLIENT_ID?.trim() || null,
+  googleClientSecret: process.env.GOOGLE_CLIENT_SECRET?.trim() || null,
+  googleRedirectUriLocal:
+    process.env.GOOGLE_REDIRECT_URI_LOCAL ||
+    buildDefaultRedirectUri(
+      resolveDefaultLocalAuthOrigin(),
+      "/api/auth/google/callback",
+    ),
+  googleRedirectUriProd:
+    process.env.GOOGLE_REDIRECT_URI_PROD ||
+    buildDefaultRedirectUri(
+      resolveDefaultProductionAuthOrigin(),
+      "/api/auth/google/callback",
+    ),
   loginSuccessBasePath: process.env.LOGIN_SUCCESS_BASE_PATH || "/dashboard",
   loginSuccessHashPath: process.env.LOGIN_SUCCESS_HASH_PATH || "",
-  oauthStateCookieName: "flowdesk_oauth_state",
-  oauthRedirectUriCookieName: "flowdesk_oauth_redirect_uri",
-  oauthNextPathCookieName: "flowdesk_oauth_next_path",
-  oauthModeCookieName: "flowdesk_oauth_mode",
   sessionCookieName: "flowdesk_auth_session",
+  rememberedDeviceCookieName: "flowdesk_auth_trusted_device",
   sessionTtlHours: parseSessionHours(),
+  rememberedDeviceDays: parseRememberDeviceDays(),
 };
 
-function isLocalHostname(hostname: string) {
-  return hostname === "localhost" || hostname === "127.0.0.1";
+function resolveRequestScopedRedirectUri(
+  request: NextRequest,
+  callbackPathname: string,
+  fallbackRedirectUri: string,
+) {
+  const runtime = resolveHostRuntimeContext(getRequestHostname(request));
+
+  if (runtime.mode === "local") {
+    return fallbackRedirectUri;
+  }
+
+  if (runtime.mode === "production") {
+    return fallbackRedirectUri;
+  }
+
+  return new URL(callbackPathname, resolveAuthOrigin(request)).toString();
 }
 
 export function resolveDiscordRedirectUri(request: NextRequest) {
-  const hostname = request.nextUrl.hostname;
-  return isLocalHostname(hostname)
-    ? authConfig.discordRedirectUriLocal
-    : authConfig.discordRedirectUriProd;
+  return resolveRequestScopedRedirectUri(
+    request,
+    "/api/auth/discord/callback",
+    authConfig.discordRedirectUriLocal &&
+      resolveHostRuntimeContext(getRequestHostname(request)).mode === "local"
+      ? authConfig.discordRedirectUriLocal
+      : authConfig.discordRedirectUriProd,
+  );
+}
+
+export function resolveGoogleRedirectUri(request: NextRequest) {
+  return resolveRequestScopedRedirectUri(
+    request,
+    "/api/auth/google/callback",
+    authConfig.googleRedirectUriLocal &&
+      resolveHostRuntimeContext(getRequestHostname(request)).mode === "local"
+      ? authConfig.googleRedirectUriLocal
+      : authConfig.googleRedirectUriProd,
+  );
 }
 
 export function isSecureRequest(request: NextRequest) {
   return request.nextUrl.protocol === "https:";
+}
+
+export function isGoogleAuthConfigured() {
+  return Boolean(authConfig.googleClientId && authConfig.googleClientSecret);
+}
+
+function buildOAuthCookieName(provider: OAuthProvider, suffix: string) {
+  return `${OAUTH_PROVIDER_COOKIE_PREFIX}_${provider}_${suffix}`;
+}
+
+export function getOAuthStateCookieName(provider: OAuthProvider) {
+  return buildOAuthCookieName(provider, "state");
+}
+
+export function getOAuthRedirectUriCookieName(provider: OAuthProvider) {
+  return buildOAuthCookieName(provider, "redirect_uri");
+}
+
+export function getOAuthNextPathCookieName(provider: OAuthProvider) {
+  return buildOAuthCookieName(provider, "next_path");
+}
+
+export function getOAuthModeCookieName(provider: OAuthProvider) {
+  return buildOAuthCookieName(provider, "mode");
 }
 
 function normalizeBasePath(path: string) {
@@ -117,4 +226,10 @@ export function buildLoginSuccessLocation(origin: string) {
 
   const basePathWithSlash = basePath.endsWith("/") ? basePath : `${basePath}/`;
   return `${origin}${basePathWithSlash}#${hashPath}`;
+}
+
+export function buildCanonicalLoginSuccessLocation(request: NextRequest) {
+  return buildCanonicalUrlFromInternalPath(request, authConfig.loginSuccessBasePath, {
+    fallbackArea: "public",
+  });
 }

@@ -33,6 +33,7 @@ import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { getDashboardViewById, resolveDashboardViewFromPathname, type DashboardViewId } from "@/lib/dashboard/navigation";
 import { buildDiscordAuthStartHref, buildLoginHref } from "@/lib/auth/paths";
 import type { ManagedServer } from "@/lib/servers/managedServers";
+import { buildBrowserRoutingTargetFromInternalPath } from "@/lib/routing/subdomains";
 import {
   readCachedManagedServers,
   readManagedServersMemoryCache,
@@ -739,7 +740,9 @@ export function DashboardWorkspace({
 
   const prefetchRoute = useCallback(
     (href: string) => {
-      void router.prefetch(href);
+      const target = buildBrowserRoutingTargetFromInternalPath(href);
+      if (!target.sameOrigin) return;
+      void router.prefetch(target.path);
     },
     [router],
   );
@@ -821,17 +824,23 @@ export function DashboardWorkspace({
     (href: string, nextViewId?: DashboardViewId | null) => {
       setIsTeamMenuOpen(false);
       setIsProfileMenuOpen(false);
+      const target = buildBrowserRoutingTargetFromInternalPath(href);
       const comparableCurrentPath = normalizeComparablePath(pathname);
-      const comparableNextPath = normalizeComparablePath(href);
+      const comparableNextPath = normalizeComparablePath(target.path);
       if (comparableCurrentPath === comparableNextPath) return;
 
       if (nextViewId) {
         setPendingViewId(nextViewId);
       }
 
+      if (!target.sameOrigin) {
+        window.location.assign(target.href);
+        return;
+      }
+
       prefetchRoute(href);
       startSidebarNavigationTransition(() => {
-        router.push(href, { scroll: false });
+        router.push(target.path, { scroll: false });
       });
     },
     [pathname, prefetchRoute, router, startSidebarNavigationTransition],
@@ -840,7 +849,12 @@ export function DashboardWorkspace({
   const handleNavigateItem = useCallback(
     (item: DashboardSidebarItem) => {
       if (item.href === "/servers" && !currentAccount.discordUserId) {
-        window.location.assign(buildLoginHref("/servers", "link"));
+        window.location.assign(
+          buildBrowserRoutingTargetFromInternalPath(
+            buildLoginHref("/servers", "link"),
+            { fallbackArea: "account" },
+          ).href,
+        );
         return;
       }
 

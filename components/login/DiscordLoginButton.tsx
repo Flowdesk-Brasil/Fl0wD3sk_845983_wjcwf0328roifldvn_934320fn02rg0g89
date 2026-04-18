@@ -22,7 +22,7 @@ export function DiscordLoginButton({
 
     window.setTimeout(() => {
       window.location.assign(href);
-    }, 1200);
+    }, 400);
   }
 
   return (

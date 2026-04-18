@@ -2,17 +2,20 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { buildBrowserRoutingTargetFromInternalPath } from "@/lib/routing/subdomains";
 
 export function RoutePrefetcher() {
   const router = useRouter();
 
   useEffect(() => {
-    router.prefetch("/dashboard");
-    router.prefetch("/dashboard/");
-    router.prefetch("/servers");
-    router.prefetch("/servers/");
-    router.prefetch("/account");
-    router.prefetch("/account/");
+    ["/dashboard", "/dashboard/", "/servers", "/servers/", "/account", "/account/"].forEach(
+      (href) => {
+        const target = buildBrowserRoutingTargetFromInternalPath(href);
+        if (target.sameOrigin) {
+          router.prefetch(target.path);
+        }
+      },
+    );
   }, [router]);
 
   return null;

@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   authConfig,
-  isSecureRequest,
   normalizeInternalNextPath,
 } from "@/lib/auth/config";
+import { setSharedAuthCookie } from "@/lib/auth/cookies";
 import { createEmailSession, verifyEmailLoginOtp } from "@/lib/auth/emailAuth";
 import { EmailOtpError } from "@/lib/auth/emailOtp";
+import { issueTrustedEmailDevice } from "@/lib/auth/trustedDevice";
 import { applyNoStoreHeaders, ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -77,6 +78,12 @@ export async function POST(request: NextRequest) {
       payload && typeof payload === "object" && typeof payload.next === "string"
         ? normalizeInternalNextPath(payload.next)
         : null;
+    const rememberSession =
+      payload &&
+      typeof payload === "object" &&
+      typeof payload.rememberSession === "boolean"
+        ? payload.rememberSession
+        : false;
 
     const verification = await verifyEmailLoginOtp(challengeId, code);
     const authenticatedContext = extendSecurityRequestContext(requestContext, {
@@ -95,14 +102,34 @@ export async function POST(request: NextRequest) {
       }),
     );
 
-    response.cookies.set(authConfig.sessionCookieName, session.sessionToken, {
+    setSharedAuthCookie(request, response, authConfig.sessionCookieName, session.sessionToken, {
       httpOnly: true,
       sameSite: "lax",
-      secure: isSecureRequest(request),
       maxAge: authConfig.sessionTtlHours * 60 * 60,
       path: "/",
       priority: "high",
     });
+
+    if (rememberSession) {
+      const trustedDevice = await issueTrustedEmailDevice({
+        userId: verification.userId,
+        userAgent: request.headers.get("user-agent"),
+      });
+
+      setSharedAuthCookie(
+        request,
+        response,
+        authConfig.rememberedDeviceCookieName,
+        trustedDevice.token,
+        {
+          httpOnly: true,
+          sameSite: "lax",
+          maxAge: authConfig.rememberedDeviceDays * 24 * 60 * 60,
+          path: "/",
+          priority: "high",
+        },
+      );
+    }
 
     await logSecurityAuditEventSafe(authenticatedContext, {
       action: "auth_email_otp_verify",

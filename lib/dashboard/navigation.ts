@@ -116,9 +116,9 @@ export function resolveDashboardViewFromPathname(pathname: string) {
     .replace(/^\/+|\/+$/g, "");
 
   const segments = normalizedPath.split("/").filter(Boolean);
-  if (segments[0] !== "dashboard") {
-    return null;
+  if (segments[0] === "dashboard") {
+    return resolveDashboardViewFromSlug(segments.slice(1));
   }
 
-  return resolveDashboardViewFromSlug(segments.slice(1));
+  return resolveDashboardViewFromSlug(segments);
 }

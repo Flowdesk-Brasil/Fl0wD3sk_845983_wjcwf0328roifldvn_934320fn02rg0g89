@@ -77,6 +77,7 @@ export async function POST(request: NextRequest) {
           nextStep: start.nextStep,
           hasExistingAccount: Boolean(start.user),
           hasDiscordLinked: Boolean(start.user?.discord_user_id),
+          hasGoogleLinked: Boolean(start.user?.google_user_id),
         }),
       ),
       requestContext.requestId,

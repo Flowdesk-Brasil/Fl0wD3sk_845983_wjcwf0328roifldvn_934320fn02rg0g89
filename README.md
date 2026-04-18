@@ -14,7 +14,23 @@ pnpm dev
 bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open the local hosts below to validate the subdomain routing:
+
+- `http://localhost:3000` for the public site
+- `http://fdesk.localhost:3000` for `/dashboard`
+- `http://servers.localhost:3000` for `/servers`
+- `http://account.localhost:3000` for `/account` and auth callbacks
+- `http://status.localhost:3000` for `/status`
+
+The auth cookies are shared between the Flowdesk subdomains when you use `*.localhost` locally or `*.flwdesk.com` in production.
+
+Production host mapping:
+
+- `https://www.flwdesk.com` keeps the public site
+- `https://fdesk.flwdesk.com` serves the dashboard workspace
+- `https://servers.flwdesk.com` serves the servers workspace
+- `https://account.flwdesk.com` serves account/auth
+- `https://status.flwdesk.com` serves the status page
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 

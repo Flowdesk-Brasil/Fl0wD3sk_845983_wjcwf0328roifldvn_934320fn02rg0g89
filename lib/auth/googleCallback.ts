@@ -5,16 +5,17 @@ import {
   getOAuthNextPathCookieName,
   getOAuthRedirectUriCookieName,
   getOAuthStateCookieName,
+  isGoogleAuthConfigured,
   normalizeInternalNextPath,
 } from "@/lib/auth/config";
 import {
   clearSharedAuthCookie,
   setSharedAuthCookie,
 } from "@/lib/auth/cookies";
-import { exchangeCodeForToken, fetchDiscordUser } from "@/lib/auth/discord";
+import { exchangeGoogleCodeForToken, fetchGoogleUser } from "@/lib/auth/google";
 import { buildLoginHref, type LoginIntentMode } from "@/lib/auth/paths";
 import {
-  createUserSessionFromDiscordUser,
+  createUserSessionFromGoogleUser,
   getCurrentAuthSessionFromCookie,
 } from "@/lib/auth/session";
 import { buildCanonicalUrlFromInternalPath } from "@/lib/routing/subdomains";
@@ -34,7 +35,7 @@ function extractClientIp(request: NextRequest) {
 }
 
 function clearOAuthCookies(request: NextRequest, response: NextResponse) {
-  clearSharedAuthCookie(request, response, getOAuthStateCookieName("discord"), {
+  clearSharedAuthCookie(request, response, getOAuthStateCookieName("google"), {
     httpOnly: true,
     sameSite: "lax",
     priority: "high",
@@ -42,7 +43,7 @@ function clearOAuthCookies(request: NextRequest, response: NextResponse) {
   clearSharedAuthCookie(
     request,
     response,
-    getOAuthRedirectUriCookieName("discord"),
+    getOAuthRedirectUriCookieName("google"),
     {
       httpOnly: true,
       sameSite: "lax",
@@ -52,14 +53,14 @@ function clearOAuthCookies(request: NextRequest, response: NextResponse) {
   clearSharedAuthCookie(
     request,
     response,
-    getOAuthNextPathCookieName("discord"),
+    getOAuthNextPathCookieName("google"),
     {
       httpOnly: true,
       sameSite: "lax",
       priority: "high",
     },
   );
-  clearSharedAuthCookie(request, response, getOAuthModeCookieName("discord"), {
+  clearSharedAuthCookie(request, response, getOAuthModeCookieName("google"), {
     httpOnly: true,
     sameSite: "lax",
     priority: "high",
@@ -99,33 +100,41 @@ function buildLoginRedirectLocation(
   return loginUrl.toString();
 }
 
-function resolveDiscordAuthErrorCode(error: unknown) {
-  const message =
-    error instanceof Error ? error.message.toLowerCase() : "";
+function resolveGoogleAuthErrorCode(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
 
   if (
-    message.includes("ja esta vinculada a outra conta") ||
-    message.includes("ja esta vinculado a outro discord") ||
-    message.includes("email desta conta ja esta vinculado")
+    message.includes("ja esta vinculada a outra conta flowdesk") ||
+    message.includes("ja esta vinculada a outra conta google") ||
+    message.includes("ja esta vinculado a outra conta google") ||
+    message.includes("email desta conta ja esta vinculado a outra conta google")
   ) {
-    return "discord_conflict";
+    return "google_conflict";
   }
 
-  return "discord_auth_failed";
+  if (message.includes("email verificado")) {
+    return "google_unverified_email";
+  }
+
+  if (message.includes("nao esta configurado")) {
+    return "google_not_configured";
+  }
+
+  return "google_auth_failed";
 }
 
-export async function handleDiscordAuthCallback(request: NextRequest) {
+export async function handleGoogleAuthCallback(request: NextRequest) {
   const initialRequestContext = createSecurityRequestContext(request);
   const nextPathCookie = normalizeInternalNextPath(
-    request.cookies.get(getOAuthNextPathCookieName("discord"))?.value,
+    request.cookies.get(getOAuthNextPathCookieName("google"))?.value,
   );
   const oauthModeCookie =
-    request.cookies.get(getOAuthModeCookieName("discord"))?.value === "link"
+    request.cookies.get(getOAuthModeCookieName("google"))?.value === "link"
       ? "link"
       : "login";
 
   const rateLimit = await enforceRequestRateLimit({
-    action: "auth_discord_callback",
+    action: "auth_google_callback",
     windowMs: 10 * 60 * 1000,
     maxAttempts: 24,
     context: initialRequestContext,
@@ -133,7 +142,7 @@ export async function handleDiscordAuthCallback(request: NextRequest) {
 
   if (!rateLimit.ok) {
     await logSecurityAuditEventSafe(initialRequestContext, {
-      action: "auth_discord_callback",
+      action: "auth_google_callback",
       outcome: "blocked",
       metadata: {
         reason: "rate_limit",
@@ -154,15 +163,27 @@ export async function handleDiscordAuthCallback(request: NextRequest) {
   }
 
   await logSecurityAuditEventSafe(initialRequestContext, {
-    action: "auth_discord_callback",
+    action: "auth_google_callback",
     outcome: "started",
   });
 
+  if (!isGoogleAuthConfigured()) {
+    const response = redirectWithLocation(
+      buildLoginRedirectLocation(request, {
+        nextPath: nextPathCookie,
+        mode: oauthModeCookie,
+        error: "google_not_configured",
+      }),
+    );
+    clearOAuthCookies(request, response);
+    return attachRequestId(response, initialRequestContext.requestId);
+  }
+
   const code = request.nextUrl.searchParams.get("code");
   const state = request.nextUrl.searchParams.get("state");
-  const stateCookie = request.cookies.get(getOAuthStateCookieName("discord"))?.value;
+  const stateCookie = request.cookies.get(getOAuthStateCookieName("google"))?.value;
   const redirectUriCookie = request.cookies.get(
-    getOAuthRedirectUriCookieName("discord"),
+    getOAuthRedirectUriCookieName("google"),
   )?.value;
 
   if (!code || !state || !stateCookie || !redirectUriCookie || state !== stateCookie) {
@@ -170,12 +191,12 @@ export async function handleDiscordAuthCallback(request: NextRequest) {
       buildLoginRedirectLocation(request, {
         nextPath: nextPathCookie,
         mode: oauthModeCookie,
-        error: "discord_invalid_state",
+        error: "google_invalid_state",
       }),
     );
     clearOAuthCookies(request, response);
     await logSecurityAuditEventSafe(initialRequestContext, {
-      action: "auth_discord_callback",
+      action: "auth_google_callback",
       outcome: "failed",
       metadata: {
         reason: "invalid_oauth_state_or_code",
@@ -189,26 +210,16 @@ export async function handleDiscordAuthCallback(request: NextRequest) {
       oauthModeCookie === "link"
         ? await getCurrentAuthSessionFromCookie()
         : null;
-    const tokenPayload = await exchangeCodeForToken({
+    const tokenPayload = await exchangeGoogleCodeForToken({
       code,
       redirectUri: redirectUriCookie,
     });
-
-    const discordUser = await fetchDiscordUser(tokenPayload.access_token);
-    const discordTokenExpiresAt = new Date(
-      Date.now() + tokenPayload.expires_in * 1000,
-    ).toISOString();
-
-    const { user, session } = await createUserSessionFromDiscordUser(
-      discordUser,
+    const googleUser = await fetchGoogleUser(tokenPayload.access_token);
+    const { user, session } = await createUserSessionFromGoogleUser(
+      googleUser,
       {
         ipAddress: extractClientIp(request),
         userAgent: request.headers.get("user-agent"),
-      },
-      {
-        discordAccessToken: tokenPayload.access_token,
-        discordRefreshToken: tokenPayload.refresh_token || null,
-        discordTokenExpiresAt,
       },
       {
         currentUserId: currentSession?.user.id ?? null,
@@ -237,7 +248,7 @@ export async function handleDiscordAuthCallback(request: NextRequest) {
       },
     );
     await logSecurityAuditEventSafe(authenticatedContext, {
-      action: "auth_discord_callback",
+      action: "auth_google_callback",
       outcome: "succeeded",
       metadata: {
         redirectTo: successLocation,
@@ -250,12 +261,12 @@ export async function handleDiscordAuthCallback(request: NextRequest) {
       buildLoginRedirectLocation(request, {
         nextPath: nextPathCookie,
         mode: oauthModeCookie,
-        error: resolveDiscordAuthErrorCode(error),
+        error: resolveGoogleAuthErrorCode(error),
       }),
     );
     clearOAuthCookies(request, response);
     await logSecurityAuditEventSafe(initialRequestContext, {
-      action: "auth_discord_callback",
+      action: "auth_google_callback",
       outcome: "failed",
       metadata: {
         reason: "oauth_exchange_failed",

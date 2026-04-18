@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { cookies } from "next/headers";
 import type { DiscordGuild, DiscordUser } from "@/lib/auth/discord";
+import type { GoogleUser } from "@/lib/auth/google";
 import { authConfig } from "@/lib/auth/config";
 import type { ConfigDraft, ConfigStep } from "@/lib/auth/configContext";
 import {
@@ -20,7 +21,7 @@ type CreateSessionContext = {
   userAgent: string | null;
 };
 
-type AuthMethod = "discord" | "email";
+type AuthMethod = "discord" | "email" | "google";
 
 type SessionTokens = {
   authMethod?: AuthMethod;
@@ -32,6 +33,7 @@ type SessionTokens = {
 export type AuthUserRecord = {
   id: number;
   discord_user_id: string | null;
+  google_user_id: string | null;
   username: string;
   global_name: string | null;
   display_name: string;
@@ -39,6 +41,7 @@ export type AuthUserRecord = {
   email: string | null;
   email_normalized: string | null;
   email_verified_at: string | null;
+  locale: string | null;
 };
 
 type AuthSessionRecord = {
@@ -111,14 +114,14 @@ function parseDiscordGuildsCache(cache: unknown): DiscordGuild[] | null {
 }
 
 async function selectAuthUserBy(
-  column: "id" | "discord_user_id" | "email_normalized",
+  column: "id" | "discord_user_id" | "google_user_id" | "email_normalized",
   value: number | string,
 ) {
   const supabase = getSupabaseAdminClientOrThrow();
   const result = await supabase
     .from("auth_users")
     .select(
-      "id, discord_user_id, username, global_name, display_name, avatar, email, email_normalized, email_verified_at",
+      "id, discord_user_id, google_user_id, username, global_name, display_name, avatar, email, email_normalized, email_verified_at, locale",
     )
     .eq(column, value)
     .maybeSingle<AuthUserRecord>();
@@ -138,6 +141,10 @@ export async function findAuthUserByDiscordUserId(discordUserId: string) {
   return selectAuthUserBy("discord_user_id", discordUserId);
 }
 
+export async function findAuthUserByGoogleUserId(googleUserId: string) {
+  return selectAuthUserBy("google_user_id", googleUserId);
+}
+
 export async function findAuthUserByEmail(email: string) {
   const normalizedEmail = normalizeAuthEmail(email);
   if (!normalizedEmail) return null;
@@ -152,6 +159,7 @@ function buildEmailUserPayload(email: string, emailVerifiedAt: string | null) {
 
   return {
     discord_user_id: null,
+    google_user_id: null,
     username: buildEmailUsername(normalizedEmail),
     global_name: null,
     display_name: buildEmailDisplayName(normalizedEmail),
@@ -162,6 +170,11 @@ function buildEmailUserPayload(email: string, emailVerifiedAt: string | null) {
     locale: null,
     raw_user: {
       source: "email",
+      providers: {
+        email: {
+          email: normalizedEmail,
+        },
+      },
     },
   };
 }
@@ -190,7 +203,7 @@ export async function createEmailAuthUser(input: {
       ),
     )
     .select(
-      "id, discord_user_id, username, global_name, display_name, avatar, email, email_normalized, email_verified_at",
+      "id, discord_user_id, google_user_id, username, global_name, display_name, avatar, email, email_normalized, email_verified_at, locale",
     )
     .single<AuthUserRecord>();
 
@@ -229,7 +242,12 @@ async function saveDiscordUserToAuthUser(
         ? existingLinkedUser?.email_verified_at || new Date().toISOString()
         : existingLinkedUser?.email_verified_at || null,
     locale: discordUser.locale || null,
-    raw_user: discordUser,
+    raw_user: {
+      source: "discord",
+      providers: {
+        discord: discordUser,
+      },
+    },
   };
 
   const supabase = getSupabaseAdminClientOrThrow();
@@ -240,7 +258,7 @@ async function saveDiscordUserToAuthUser(
       .update(payload)
       .eq("id", linkToUserId)
       .select(
-        "id, discord_user_id, username, global_name, display_name, avatar, email, email_normalized, email_verified_at",
+        "id, discord_user_id, google_user_id, username, global_name, display_name, avatar, email, email_normalized, email_verified_at, locale",
       )
       .single<AuthUserRecord>();
 
@@ -255,7 +273,7 @@ async function saveDiscordUserToAuthUser(
     .from("auth_users")
     .upsert(payload, { onConflict: "discord_user_id" })
     .select(
-      "id, discord_user_id, username, global_name, display_name, avatar, email, email_normalized, email_verified_at",
+      "id, discord_user_id, google_user_id, username, global_name, display_name, avatar, email, email_normalized, email_verified_at, locale",
     )
     .single<AuthUserRecord>();
 
@@ -323,6 +341,137 @@ export async function resolveAuthUserForDiscordLogin(
   }
 
   return saveDiscordUserToAuthUser(discordUser);
+}
+
+async function saveGoogleUserToAuthUser(
+  googleUser: GoogleUser,
+  linkToUserId?: number | null,
+) {
+  const normalizedEmail = normalizeAuthEmail(googleUser.email);
+  if (!normalizedEmail || !googleUser.email_verified) {
+    throw new Error("Sua conta Google precisa ter um email verificado para entrar.");
+  }
+
+  const existingLinkedUser =
+    typeof linkToUserId === "number" ? await findAuthUserById(linkToUserId) : null;
+  const preserveExistingIdentity = Boolean(existingLinkedUser?.discord_user_id);
+
+  const payload = {
+    google_user_id: googleUser.sub,
+    username: existingLinkedUser?.username || buildEmailUsername(normalizedEmail),
+    global_name:
+      preserveExistingIdentity
+        ? existingLinkedUser?.global_name || null
+        : existingLinkedUser?.global_name || googleUser.given_name || null,
+    display_name:
+      preserveExistingIdentity
+        ? existingLinkedUser?.display_name || buildEmailDisplayName(normalizedEmail)
+        : googleUser.name?.trim() ||
+          existingLinkedUser?.display_name ||
+          buildEmailDisplayName(normalizedEmail),
+    avatar: existingLinkedUser?.avatar || null,
+    email: normalizedEmail,
+    email_normalized: normalizedEmail,
+    email_verified_at:
+      existingLinkedUser?.email_verified_at || new Date().toISOString(),
+    locale:
+      preserveExistingIdentity
+        ? existingLinkedUser?.locale || googleUser.locale || null
+        : googleUser.locale || existingLinkedUser?.locale || null,
+    raw_user: {
+      source: "google",
+      providers: {
+        google: googleUser,
+      },
+    },
+  };
+
+  const supabase = getSupabaseAdminClientOrThrow();
+
+  if (typeof linkToUserId === "number") {
+    const result = await supabase
+      .from("auth_users")
+      .update(payload)
+      .eq("id", linkToUserId)
+      .select(
+        "id, discord_user_id, google_user_id, username, global_name, display_name, avatar, email, email_normalized, email_verified_at, locale",
+      )
+      .single<AuthUserRecord>();
+
+    if (result.error) {
+      throw new Error(`Erro ao vincular usuario Google: ${result.error.message}`);
+    }
+
+    return result.data;
+  }
+
+  const result = await supabase
+    .from("auth_users")
+    .upsert(payload, { onConflict: "google_user_id" })
+    .select(
+      "id, discord_user_id, google_user_id, username, global_name, display_name, avatar, email, email_normalized, email_verified_at, locale",
+    )
+    .single<AuthUserRecord>();
+
+  if (result.error) {
+    const byEmail = await findAuthUserByEmail(normalizedEmail);
+    if (byEmail && (!byEmail.google_user_id || byEmail.google_user_id === googleUser.sub)) {
+      return saveGoogleUserToAuthUser(googleUser, byEmail.id);
+    }
+
+    throw new Error(`Erro ao salvar usuario Google no Supabase: ${result.error.message}`);
+  }
+
+  return result.data;
+}
+
+export async function resolveAuthUserForGoogleLogin(
+  googleUser: GoogleUser,
+  input?: {
+    currentUserId?: number | null;
+  },
+) {
+  const normalizedEmail = normalizeAuthEmail(googleUser.email);
+  if (!normalizedEmail || !googleUser.email_verified) {
+    throw new Error("Sua conta Google nao retornou um email verificado.");
+  }
+
+  const existingByGoogle = await findAuthUserByGoogleUserId(googleUser.sub);
+
+  if (typeof input?.currentUserId === "number") {
+    const currentUser = await findAuthUserById(input.currentUserId);
+    if (!currentUser) {
+      throw new Error("Sua sessao atual nao foi encontrada para concluir a vinculacao.");
+    }
+
+    if (existingByGoogle && existingByGoogle.id !== currentUser.id) {
+      throw new Error("Esta conta Google ja esta vinculada a outra conta Flowdesk.");
+    }
+
+    if (currentUser.google_user_id && currentUser.google_user_id !== googleUser.sub) {
+      throw new Error("Sua conta Flowdesk ja esta vinculada a outra conta Google.");
+    }
+
+    return saveGoogleUserToAuthUser(googleUser, currentUser.id);
+  }
+
+  if (existingByGoogle) {
+    return saveGoogleUserToAuthUser(googleUser, existingByGoogle.id);
+  }
+
+  const existingByEmail = await findAuthUserByEmail(normalizedEmail);
+  if (existingByEmail) {
+    if (
+      existingByEmail.google_user_id &&
+      existingByEmail.google_user_id !== googleUser.sub
+    ) {
+      throw new Error("O email desta conta ja esta vinculado a outra conta Google.");
+    }
+
+    return saveGoogleUserToAuthUser(googleUser, existingByEmail.id);
+  }
+
+  return saveGoogleUserToAuthUser(googleUser);
 }
 
 async function createSession(
@@ -403,6 +552,29 @@ export async function createUserSessionFromDiscordUser(
   };
 }
 
+export async function createUserSessionFromGoogleUser(
+  googleUser: GoogleUser,
+  context: CreateSessionContext,
+  options?: {
+    currentUserId?: number | null;
+  },
+) {
+  const user = await resolveAuthUserForGoogleLogin(googleUser, {
+    currentUserId: options?.currentUserId ?? null,
+  });
+  const session = await createSession(user.id, context, {
+    authMethod: "google",
+    discordAccessToken: null,
+    discordRefreshToken: null,
+    discordTokenExpiresAt: null,
+  });
+
+  return {
+    user,
+    session,
+  };
+}
+
 export type GetAuthSessionOptions = {
   fullContext?: boolean;
 };
@@ -420,8 +592,8 @@ export async function getCurrentAuthSessionFromCookie(
   const nowIso = new Date().toISOString();
 
   const selectColumns = options.fullContext
-    ? "id, discord_access_token, discord_refresh_token, discord_token_expires_at, active_guild_id, discord_guilds_cache, discord_guilds_cached_at, config_current_step, config_draft, config_context_updated_at, user:auth_users(id, discord_user_id, username, global_name, display_name, avatar, email, email_normalized, email_verified_at)"
-    : "id, discord_access_token, discord_refresh_token, discord_token_expires_at, active_guild_id, discord_guilds_cached_at, config_current_step, config_context_updated_at, user:auth_users(id, discord_user_id, username, global_name, display_name, avatar, email, email_normalized, email_verified_at)";
+    ? "id, discord_access_token, discord_refresh_token, discord_token_expires_at, active_guild_id, discord_guilds_cache, discord_guilds_cached_at, config_current_step, config_draft, config_context_updated_at, user:auth_users(id, discord_user_id, google_user_id, username, global_name, display_name, avatar, email, email_normalized, email_verified_at, locale)"
+    : "id, discord_access_token, discord_refresh_token, discord_token_expires_at, active_guild_id, discord_guilds_cached_at, config_current_step, config_context_updated_at, user:auth_users(id, discord_user_id, google_user_id, username, global_name, display_name, avatar, email, email_normalized, email_verified_at, locale)";
 
   const result = await supabase
     .from("auth_sessions")

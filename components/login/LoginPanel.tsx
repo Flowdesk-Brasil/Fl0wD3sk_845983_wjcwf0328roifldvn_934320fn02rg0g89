@@ -5,10 +5,15 @@ import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { DiscordLoginButton } from "@/components/login/DiscordLoginButton";
+import { GoogleLoginButton } from "@/components/login/GoogleLoginButton";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { LandingReveal } from "@/components/landing/LandingReveal";
 import { normalizeAuthEmail } from "@/lib/auth/email";
-import { buildDiscordAuthStartHref, type LoginIntentMode } from "@/lib/auth/paths";
+import {
+  buildDiscordAuthStartHref,
+  buildGoogleAuthStartHref,
+  type LoginIntentMode,
+} from "@/lib/auth/paths";
 import { PRIVACY_PATH, TERMS_PATH } from "@/lib/legal/content";
 
 type LoginPanelProps = {
@@ -28,17 +33,19 @@ type EmailStartResponse = {
   maskedEmail?: string;
   nextStep?: "password" | "set_password";
   hasDiscordLinked?: boolean;
+  hasGoogleLinked?: boolean;
 };
 
 type EmailPasswordResponse = {
   ok: boolean;
   message?: string;
-  nextStep?: "otp";
+  nextStep?: "otp" | "session";
   passwordStep?: "password" | "set_password";
   challengeId?: string;
   maskedEmail?: string;
   expiresAt?: string;
   resendAvailableAt?: string;
+  redirectTo?: string;
 };
 
 type EmailOtpResponse = {
@@ -60,7 +67,7 @@ function WhiteActionButton({
   loading,
   disabled,
   onClick,
-  hideLabelWhenLoading = false,
+  hideLabelWhenLoading = true,
 }: {
   label: string;
   loading?: boolean;
@@ -140,10 +147,15 @@ export function LoginPanel({
   const [isSubmittingPassword, setIsSubmittingPassword] = useState(false);
   const [isSubmittingOtp, setIsSubmittingOtp] = useState(false);
   const [isResendingOtp, setIsResendingOtp] = useState(false);
+  const [rememberSession, setRememberSession] = useState(false);
   const otpInputRefs = useRef<Array<HTMLInputElement | null>>([]);
 
   const discordHref = useMemo(
     () => buildDiscordAuthStartHref(nextPath, loginMode === "link" ? "link" : "login"),
+    [loginMode, nextPath],
+  );
+  const googleHref = useMemo(
+    () => buildGoogleAuthStartHref(nextPath, loginMode === "link" ? "link" : "login"),
     [loginMode, nextPath],
   );
   const isEmailValid = useMemo(() => Boolean(normalizeAuthEmail(email)), [email]);
@@ -314,7 +326,7 @@ export function LoginPanel({
       setStage("password");
       setInfoMessage(
         payload.nextStep === "set_password"
-          ? payload.hasDiscordLinked
+          ? payload.hasDiscordLinked || payload.hasGoogleLinked
             ? "Encontramos sua conta Flowdesk. Crie uma senha para acessar tambem por email."
             : "Este sera o primeiro acesso desta conta por email. Crie sua senha para continuar."
           : null,
@@ -348,11 +360,23 @@ export function LoginPanel({
           email,
           password,
           confirmPassword: passwordStep === "set_password" ? confirmPassword : undefined,
+          next: nextPath,
         }),
       });
       const payload = (await response.json()) as EmailPasswordResponse;
 
       if (!response.ok || !payload.ok || !payload.challengeId || !payload.nextStep) {
+        if (payload.nextStep !== "session") {
+          throw new Error(payload.message || "Nao foi possivel validar sua senha.");
+        }
+      }
+
+      if (payload.nextStep === "session" && payload.redirectTo) {
+        window.location.replace(payload.redirectTo);
+        return;
+      }
+
+      if (!payload.challengeId || !payload.nextStep) {
         throw new Error(payload.message || "Nao foi possivel validar sua senha.");
       }
 
@@ -391,6 +415,7 @@ export function LoginPanel({
           challengeId,
           code: otpCode,
           next: nextPath,
+          rememberSession,
         }),
       });
       const payload = (await response.json()) as EmailOtpResponse;
@@ -482,7 +507,6 @@ export function LoginPanel({
           label="Continuar"
           loading={isSubmittingEmail}
           disabled={!isEmailValid}
-          hideLabelWhenLoading
           onClick={() => {
             void handleEmailContinue();
           }}
@@ -491,7 +515,8 @@ export function LoginPanel({
 
       <PanelDivider />
 
-      <div className="mt-[20px]">
+      <div className="mt-[20px] space-y-[12px]">
+        <GoogleLoginButton href={googleHref} />
         <DiscordLoginButton href={discordHref} />
       </div>
     </>
@@ -602,6 +627,41 @@ export function LoginPanel({
             );
           })}
         </div>
+
+        <label className="flex cursor-pointer items-start gap-[12px] rounded-[18px] border border-[rgba(255,255,255,0.06)] bg-[#090909] px-[16px] py-[14px] text-left transition-[border-color,background-color,box-shadow] duration-200 hover:border-[rgba(255,255,255,0.1)] hover:bg-[#0C0C0C]">
+          <span className="relative mt-[2px] flex h-[18px] w-[18px] shrink-0 items-center justify-center">
+            <input
+              type="checkbox"
+              checked={rememberSession}
+              onChange={(event) => {
+                setRememberSession(event.currentTarget.checked);
+              }}
+              className="peer absolute inset-0 cursor-pointer appearance-none rounded-[6px] border border-[rgba(255,255,255,0.12)] bg-[#050505] transition-colors duration-200 checked:border-[rgba(255,255,255,0.2)] checked:bg-white"
+            />
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 16 16"
+              className="pointer-events-none relative z-10 h-[12px] w-[12px] text-black opacity-0 transition-opacity duration-150 peer-checked:opacity-100"
+            >
+              <path
+                d="M4 8.3 6.4 10.7 12 5.1"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+          <span className="block">
+            <span className="block text-[14px] font-medium text-[#F1F1F1]">
+              Salvar sessao por 30 dias
+            </span>
+            <span className="mt-[4px] block text-[12px] leading-[1.6] text-[#7E7E7E]">
+              Neste dispositivo, o login por email pode pular uma nova verificacao durante esse periodo.
+            </span>
+          </span>
+        </label>
 
         <WhiteActionButton
           label="Confirmar codigo"
