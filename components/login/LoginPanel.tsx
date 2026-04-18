@@ -22,7 +22,6 @@ import {
 } from "@/lib/auth/passwordPolicy";
 import { isLikelyEmbeddedAuthBrowser } from "@/lib/auth/oauthBrowser";
 import { PRIVACY_PATH, TERMS_PATH } from "@/lib/legal/content";
-import { buildBrowserRoutingTargetFromInternalPath } from "@/lib/routing/subdomains";
 
 type LoginPanelProps = {
   nextPath?: string | null;
@@ -143,9 +142,6 @@ export function LoginPanel({
 }: LoginPanelProps) {
   const termsUrl = process.env.NEXT_PUBLIC_TERMS_URL || TERMS_PATH;
   const privacyUrl = process.env.NEXT_PUBLIC_PRIVACY_URL || PRIVACY_PATH;
-  const [homeHref, setHomeHref] = useState(
-    process.env.NEXT_PUBLIC_APP_URL?.trim() || "/",
-  );
   const [stage, setStage] = useState<LoginStage>("chooser");
   const [email, setEmail] = useState("");
   const [maskedEmail, setMaskedEmail] = useState("");
@@ -165,7 +161,6 @@ export function LoginPanel({
   const [isResendingOtp, setIsResendingOtp] = useState(false);
   const [rememberSession, setRememberSession] = useState(false);
   const [isEmbeddedAuthBrowser, setIsEmbeddedAuthBrowser] = useState(false);
-  const [brandWordmarkUnavailable, setBrandWordmarkUnavailable] = useState(false);
   const otpInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const resolvedOtpLength = useMemo(
     () => Math.min(8, Math.max(6, Math.trunc(emailOtpLength || 6))),
@@ -214,14 +209,6 @@ export function LoginPanel({
 
   useEffect(() => {
     setIsEmbeddedAuthBrowser(isLikelyEmbeddedAuthBrowser(window.navigator.userAgent));
-  }, []);
-
-  useEffect(() => {
-    const target = buildBrowserRoutingTargetFromInternalPath("/", {
-      fallbackArea: "public",
-    });
-
-    setHomeHref(target.sameOrigin ? target.path : target.href);
   }, []);
 
   useEffect(() => {
@@ -854,58 +841,20 @@ export function LoginPanel({
           />
           <div className="relative z-10">
             <LandingReveal delay={170}>
-              <div className="mx-auto flex w-fit justify-center">
-                <a
-                  href={homeHref}
-                  className="group inline-flex items-center gap-[14px] rounded-[24px] border border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.02)] px-[14px] py-[14px] text-left transition-[border-color,background-color,transform] duration-200 hover:border-[rgba(255,255,255,0.11)] hover:bg-[rgba(255,255,255,0.03)] hover:translate-y-[-1px]"
-                  aria-label="Voltar para a pagina inicial da Flowdesk"
-                >
-                  <span className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[18px] border border-[rgba(255,255,255,0.08)] bg-[linear-gradient(180deg,rgba(255,255,255,0.05)_0%,rgba(255,255,255,0.02)_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
-                    <span className="relative block h-[28px] w-[28px]">
-                      <Image
-                        src="/cdn/logos/logotipo_.svg"
-                        alt=""
-                        fill
-                        sizes="28px"
-                        className="object-contain"
-                        priority
-                        unoptimized
-                      />
-                    </span>
-                  </span>
-
-                  <span className="min-w-0">
-                    <span className="block text-[10px] font-semibold tracking-[0.24em] text-[#777777] uppercase">
-                      Flowdesk Account
-                    </span>
-
-                    {brandWordmarkUnavailable ? (
-                      <span className="mt-[6px] block text-[31px] leading-none font-normal tracking-[-0.06em] text-[#F3F3F3] sm:text-[34px]">
-                        Flowdesk
-                      </span>
-                    ) : (
-                      <span className="relative mt-[7px] block h-[34px] w-[170px] sm:w-[184px]">
-                        <Image
-                          src="/cdn/logos/logo.png"
-                          alt="Flowdesk"
-                          fill
-                          sizes="(min-width: 640px) 184px, 170px"
-                          className="object-contain object-left"
-                          priority
-                          unoptimized
-                          onError={() => {
-                            setBrandWordmarkUnavailable(true);
-                          }}
-                        />
-                      </span>
-                    )}
-
-                    <span className="mt-[6px] block text-[12px] leading-none text-[#8D8D8D]">
-                      Acesso seguro ao painel
-                    </span>
-                  </span>
-                </a>
-              </div>
+              <Link
+                href="/"
+                className="relative mx-auto block h-[36px] w-[182px]"
+                aria-label="Voltar para a pagina inicial da Flowdesk"
+              >
+                <Image
+                  src="/cdn/logos/logo.png"
+                  alt="Flowdesk"
+                  fill
+                  sizes="182px"
+                  className="object-contain object-center"
+                  priority
+                />
+              </Link>
             </LandingReveal>
 
             <LandingReveal delay={240}>
