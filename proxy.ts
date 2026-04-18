@@ -19,6 +19,23 @@ import {
 } from "@/lib/routing/subdomains";
 
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const STATIC_PUBLIC_ASSET_PREFIXES = ["/cdn/", "/icons/"] as const;
+const STATIC_PUBLIC_ROOT_FILE_PATTERN =
+  /^\/[^/]+\.(?:png|jpe?g|gif|webp|svg|ico|txt|xml|json|webmanifest|woff2?|ttf|otf)$/i;
+
+function isStaticPublicAssetPath(pathname: string) {
+  if (pathname === "/ads.txt") {
+    return true;
+  }
+
+  if (
+    STATIC_PUBLIC_ASSET_PREFIXES.some((prefix) => pathname.startsWith(prefix))
+  ) {
+    return true;
+  }
+
+  return STATIC_PUBLIC_ROOT_FILE_PATTERN.test(pathname);
+}
 
 function isSensitiveApiPath(pathname: string) {
   return (
@@ -239,6 +256,10 @@ function maybeBuildCanonicalWorkspaceRedirect(
   }
 
   if (!hostArea) {
+    return null;
+  }
+
+  if (isStaticPublicAssetPath(pathname)) {
     return null;
   }
 
