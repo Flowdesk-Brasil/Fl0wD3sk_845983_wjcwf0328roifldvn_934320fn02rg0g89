@@ -17,6 +17,7 @@ import {
   createMercadoPagoPixPayment,
   fetchMercadoPagoPaymentById,
   refundMercadoPagoPixPayment,
+  resolveMercadoPagoPixEnvironment,
   resolvePaymentStatus,
   toQrDataUri,
   type MercadoPagoPaymentResponse,
@@ -490,6 +491,14 @@ function resolveFriendlyPixProviderErrorMessage(message: string) {
 
   const normalizedMessage = message.toLowerCase();
   if (
+    resolveMercadoPagoPixEnvironment() === "test" &&
+    (normalizedMessage.includes("internal_error") ||
+      normalizedMessage.includes("invalid_credentials"))
+  ) {
+    return "O Mercado Pago nao aceitou gerar PIX com esta credencial de teste neste ambiente. Nao houve cobranca. Para PIX, configure uma credencial compativel exclusiva para esse fluxo ou siga com cartao de teste.";
+  }
+
+  if (
     normalizedMessage.includes("mercado pago") ||
     normalizedMessage.includes("payment") ||
     normalizedMessage.includes("pix")
@@ -677,16 +686,6 @@ export async function ensureGuildAccess(guildId: string | null) {
     };
   }
 
-  if (!sessionData.accessToken) {
-    return {
-      ok: false as const,
-      response: NextResponse.json(
-        { ok: false, message: "Token OAuth ausente na sessao." },
-        { status: 401 },
-      ),
-    };
-  }
-
   if (!guildId) {
     return {
       ok: true as const,
@@ -702,6 +701,33 @@ export async function ensureGuildAccess(guildId: string | null) {
       context: {
         sessionData,
       },
+    };
+  }
+
+  if (!sessionData.accessToken) {
+    const hasTeamAccessWithoutToken = await hasAcceptedTeamAccessToGuild(
+      {
+        authSession: sessionData.authSession,
+        accessToken: "",
+      },
+      guildId,
+    );
+
+    if (hasTeamAccessWithoutToken) {
+      return {
+        ok: true as const,
+        context: {
+          sessionData,
+        },
+      };
+    }
+
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        { ok: false, message: "Token OAuth ausente na sessao." },
+        { status: 401 },
+      ),
     };
   }
 
@@ -2038,6 +2064,9 @@ export async function POST(request: Request) {
     let createdProviderPayment: MercadoPagoPaymentResponse | null = null;
     try {
       const payerEmail =
+        (resolveMercadoPagoPixEnvironment() === "test"
+          ? "test@testuser.com"
+          : null) ||
         normalizePayerEmail(user.email) ||
         `${
           user.discord_user_id ? `discord-${user.discord_user_id}` : `user-${user.id}`

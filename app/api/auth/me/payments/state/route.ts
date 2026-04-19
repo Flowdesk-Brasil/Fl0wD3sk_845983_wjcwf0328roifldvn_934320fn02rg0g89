@@ -256,24 +256,41 @@ async function ensureGuildAccess(guildId: string) {
     };
   }
 
-  if (!sessionData.accessToken) {
-    return {
-      ok: false as const,
-      response: applyNoStoreHeaders(
-        NextResponse.json(
-        { ok: false, message: "Token OAuth ausente na sessao." },
-        { status: 401 },
-      ),
-      ),
-    };
-  }
-
   if (sessionData.authSession.activeGuildId === guildId) {
     return {
       ok: true as const,
       context: {
         sessionData,
       },
+    };
+  }
+
+  if (!sessionData.accessToken) {
+    const hasTeamAccessWithoutToken = await hasAcceptedTeamAccessToGuild(
+      {
+        authSession: sessionData.authSession,
+        accessToken: "",
+      },
+      guildId,
+    );
+
+    if (hasTeamAccessWithoutToken) {
+      return {
+        ok: true as const,
+        context: {
+          sessionData,
+        },
+      };
+    }
+
+    return {
+      ok: false as const,
+      response: applyNoStoreHeaders(
+        NextResponse.json(
+        { ok: false, message: "Token OAuth ausente na sessao." },
+        { status: 401 },
+        ),
+      ),
     };
   }
 

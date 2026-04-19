@@ -281,12 +281,8 @@ function resolvePreferredMercadoPagoToken(candidates: Array<string | null>) {
 
 function resolveMercadoPagoAccessToken() {
   return resolvePreferredMercadoPagoToken([
+    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_PIX_TEST_ACCESS_TOKEN),
     normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_TEST_ACCESS_TOKEN),
-    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_CARD_TEST_ACCESS_TOKEN),
-    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_CARD_ACCESS_TOKEN),
-    normalizeMercadoPagoEnvValue(
-      process.env.MERCADO_PAGO_CARD_PRODUCTION_ACCESS_TOKEN,
-    ),
     normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_ACCESS_TOKEN),
   ]);
 }
@@ -325,6 +321,12 @@ function getMercadoPagoCardAccessTokenOrThrow() {
 
 export function resolveMercadoPagoCardEnvironment() {
   const token = resolveMercadoPagoCardAccessToken() || "";
+
+  return token.startsWith("TEST-") ? "test" : "production";
+}
+
+export function resolveMercadoPagoPixEnvironment() {
+  const token = resolveMercadoPagoAccessToken() || "";
 
   return token.startsWith("TEST-") ? "test" : "production";
 }
