@@ -20,18 +20,22 @@ export type SharedAuthCookieIntegrityStatus = "valid" | "legacy" | "invalid";
 
 const SHARED_AUTH_COOKIE_PROOF_VERSION = "v1";
 
-function buildSharedCookieOptions(
+function buildSharedCookieOptionVariants(
   request: RequestLike,
   options: SharedAuthCookieOptions,
 ) {
-  const domain = resolveCookieDomainForRequest(request);
-
-  return {
+  const baseOptions = {
     ...options,
     path: options.path || "/",
     secure: getRequestProtocol(request) === "https",
-    ...(domain ? { domain } : {}),
   };
+  const domain = resolveCookieDomainForRequest(request);
+
+  if (!domain) {
+    return [baseOptions];
+  }
+
+  return [baseOptions, { ...baseOptions, domain }];
 }
 
 function resolveSharedAuthCookieSecret() {
@@ -94,7 +98,9 @@ export function setSharedAuthCookie(
   value: string,
   options: SharedAuthCookieOptions,
 ) {
-  response.cookies.set(name, value, buildSharedCookieOptions(request, options));
+  for (const cookieOptions of buildSharedCookieOptionVariants(request, options)) {
+    response.cookies.set(name, value, cookieOptions);
+  }
 }
 
 export function clearSharedAuthCookie(
@@ -104,11 +110,13 @@ export function clearSharedAuthCookie(
   options: SharedAuthCookieOptions = {},
 ) {
   response.cookies.delete(name);
-  response.cookies.set(name, "", {
-    ...buildSharedCookieOptions(request, options),
-    expires: new Date(0),
-    maxAge: 0,
-  });
+  for (const cookieOptions of buildSharedCookieOptionVariants(request, options)) {
+    response.cookies.set(name, "", {
+      ...cookieOptions,
+      expires: new Date(0),
+      maxAge: 0,
+    });
+  }
 }
 
 export function validateSharedAuthCookieIntegrity(

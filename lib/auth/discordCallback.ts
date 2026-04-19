@@ -12,6 +12,7 @@ import {
 } from "@/lib/auth/cookies";
 import { exchangeCodeForToken, fetchDiscordUser } from "@/lib/auth/discord";
 import { buildLoginRedirectResponse } from "@/lib/auth/loginFlash";
+import { buildAuthOriginRedirectResponse } from "@/lib/auth/requestOrigin";
 import {
   createUserSessionFromDiscordUser,
   getCurrentAuthSessionFromCookie,
@@ -92,6 +93,11 @@ function resolveDiscordAuthErrorCode(error: unknown) {
 }
 
 export async function handleDiscordAuthCallback(request: NextRequest) {
+  const originRedirectResponse = buildAuthOriginRedirectResponse(request);
+  if (originRedirectResponse) {
+    return originRedirectResponse;
+  }
+
   const initialRequestContext = createSecurityRequestContext(request);
   const nextPathCookie = normalizeInternalNextPath(
     request.cookies.get(getOAuthNextPathCookieName("discord"))?.value,

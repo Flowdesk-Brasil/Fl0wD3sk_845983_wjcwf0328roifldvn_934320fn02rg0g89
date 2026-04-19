@@ -12,6 +12,7 @@ import {
   setSharedAuthCookie,
 } from "@/lib/auth/cookies";
 import { buildLoginRedirectResponse } from "@/lib/auth/loginFlash";
+import { buildAuthOriginRedirectResponse } from "@/lib/auth/requestOrigin";
 import { buildDiscordAuthorizeUrl } from "@/lib/auth/discord";
 import { createOAuthState } from "@/lib/auth/session";
 import { applyNoStoreHeaders } from "@/lib/security/http";
@@ -23,6 +24,11 @@ import {
 } from "@/lib/security/requestSecurity";
 
 export async function GET(request: NextRequest) {
+  const originRedirectResponse = buildAuthOriginRedirectResponse(request);
+  if (originRedirectResponse) {
+    return originRedirectResponse;
+  }
+
   const requestContext = createSecurityRequestContext(request);
   const requestedNextPath = normalizeInternalNextPath(
     request.nextUrl.searchParams.get("next"),

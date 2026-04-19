@@ -13,6 +13,7 @@ import {
 } from "@/lib/auth/cookies";
 import { exchangeMicrosoftCodeForToken, fetchMicrosoftUser } from "@/lib/auth/microsoft";
 import { buildLoginRedirectResponse } from "@/lib/auth/loginFlash";
+import { buildAuthOriginRedirectResponse } from "@/lib/auth/requestOrigin";
 import {
   createUserSessionFromMicrosoftUser,
   getCurrentAuthSessionFromCookie,
@@ -101,6 +102,11 @@ function resolveMicrosoftAuthErrorCode(error: unknown) {
 }
 
 export async function handleMicrosoftAuthCallback(request: NextRequest) {
+  const originRedirectResponse = buildAuthOriginRedirectResponse(request);
+  if (originRedirectResponse) {
+    return originRedirectResponse;
+  }
+
   const initialRequestContext = createSecurityRequestContext(request);
   const nextPathCookie = normalizeInternalNextPath(
     request.cookies.get(getOAuthNextPathCookieName("microsoft"))?.value,

@@ -13,6 +13,7 @@ import {
   setSharedAuthCookie,
 } from "@/lib/auth/cookies";
 import { buildLoginRedirectResponse } from "@/lib/auth/loginFlash";
+import { buildAuthOriginRedirectResponse } from "@/lib/auth/requestOrigin";
 import { isLikelyEmbeddedAuthBrowser } from "@/lib/auth/oauthBrowser";
 import { buildGoogleAuthorizeUrl } from "@/lib/auth/google";
 import { createOAuthState } from "@/lib/auth/session";
@@ -25,6 +26,11 @@ import {
 } from "@/lib/security/requestSecurity";
 
 export async function GET(request: NextRequest) {
+  const originRedirectResponse = buildAuthOriginRedirectResponse(request);
+  if (originRedirectResponse) {
+    return originRedirectResponse;
+  }
+
   const requestContext = createSecurityRequestContext(request);
   const requestedNextPath = normalizeInternalNextPath(
     request.nextUrl.searchParams.get("next"),

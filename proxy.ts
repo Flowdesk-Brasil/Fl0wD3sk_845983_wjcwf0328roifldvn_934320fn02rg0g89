@@ -54,6 +54,25 @@ function isSensitiveApiPath(pathname: string) {
   );
 }
 
+function isOAuthHandshakePath(pathname: string) {
+  return (
+    pathname === "/api/auth/google" ||
+    pathname === "/api/auth/google/" ||
+    pathname === "/api/auth/discord" ||
+    pathname === "/api/auth/discord/" ||
+    pathname === "/api/auth/microsoft" ||
+    pathname === "/api/auth/microsoft/" ||
+    pathname === "/api/auth/google/callback" ||
+    pathname === "/api/auth/google/callback/" ||
+    pathname === "/api/auth/discord/callback" ||
+    pathname === "/api/auth/discord/callback/" ||
+    pathname === "/api/auth/discord-callback" ||
+    pathname === "/api/auth/discord-callback/" ||
+    pathname === "/api/auth/microsoft/callback" ||
+    pathname === "/api/auth/microsoft/callback/"
+  );
+}
+
 function requiresSameOriginProtection(pathname: string, method: string) {
   if (!MUTATION_METHODS.has(method.toUpperCase())) {
     return false;
@@ -357,6 +376,7 @@ export function proxy(request: NextRequest) {
     request.headers.get("x-request-id")?.trim() || crypto.randomUUID();
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-request-id", requestId);
+  const isOAuthHandshakeRequest = isOAuthHandshakePath(request.nextUrl.pathname);
   const loginErrorFlash = decodeLoginErrorFlashPayload(
     request.cookies.get(LOGIN_ERROR_FLASH_COOKIE_NAME)?.value,
   );
@@ -372,22 +392,24 @@ export function proxy(request: NextRequest) {
     isDevelopment: process.env.NODE_ENV !== "production",
   });
 
-  const canonicalHostRedirectResponse = maybeBuildCanonicalHostRedirect(
-    request,
-    requestId,
-    csp,
-  );
-  if (canonicalHostRedirectResponse) {
-    return canonicalHostRedirectResponse;
-  }
+  if (!isOAuthHandshakeRequest) {
+    const canonicalHostRedirectResponse = maybeBuildCanonicalHostRedirect(
+      request,
+      requestId,
+      csp,
+    );
+    if (canonicalHostRedirectResponse) {
+      return canonicalHostRedirectResponse;
+    }
 
-  const authRedirectResponse = maybeBuildCanonicalAuthRedirect(
-    request,
-    requestId,
-    csp,
-  );
-  if (authRedirectResponse) {
-    return authRedirectResponse;
+    const authRedirectResponse = maybeBuildCanonicalAuthRedirect(
+      request,
+      requestId,
+      csp,
+    );
+    if (authRedirectResponse) {
+      return authRedirectResponse;
+    }
   }
 
   const loginErrorFlashRedirectResponse = maybeBuildLoginErrorFlashRedirect(
@@ -399,14 +421,16 @@ export function proxy(request: NextRequest) {
     return loginErrorFlashRedirectResponse;
   }
 
-  const workspaceRedirectResponse = maybeBuildCanonicalWorkspaceRedirect(
-    request,
-    requestHeaders,
-    requestId,
-    csp,
-  );
-  if (workspaceRedirectResponse) {
-    return workspaceRedirectResponse;
+  if (!isOAuthHandshakeRequest) {
+    const workspaceRedirectResponse = maybeBuildCanonicalWorkspaceRedirect(
+      request,
+      requestHeaders,
+      requestId,
+      csp,
+    );
+    if (workspaceRedirectResponse) {
+      return workspaceRedirectResponse;
+    }
   }
 
   if (

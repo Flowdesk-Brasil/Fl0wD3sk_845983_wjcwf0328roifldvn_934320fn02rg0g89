@@ -13,6 +13,7 @@ import {
 } from "@/lib/auth/cookies";
 import { exchangeGoogleCodeForToken, fetchGoogleUser } from "@/lib/auth/google";
 import { buildLoginRedirectResponse } from "@/lib/auth/loginFlash";
+import { buildAuthOriginRedirectResponse } from "@/lib/auth/requestOrigin";
 import {
   createUserSessionFromGoogleUser,
   getCurrentAuthSessionFromCookie,
@@ -101,6 +102,11 @@ function resolveGoogleAuthErrorCode(error: unknown) {
 }
 
 export async function handleGoogleAuthCallback(request: NextRequest) {
+  const originRedirectResponse = buildAuthOriginRedirectResponse(request);
+  if (originRedirectResponse) {
+    return originRedirectResponse;
+  }
+
   const initialRequestContext = createSecurityRequestContext(request);
   const nextPathCookie = normalizeInternalNextPath(
     request.cookies.get(getOAuthNextPathCookieName("google"))?.value,
