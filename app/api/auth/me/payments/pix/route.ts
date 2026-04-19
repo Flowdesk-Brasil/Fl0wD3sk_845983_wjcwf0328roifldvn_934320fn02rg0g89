@@ -105,7 +105,7 @@ type CreatePixPaymentBody = {
   forceNew?: unknown;
 };
 
-type PaymentOrderRecord = {
+export type PaymentOrderRecord = {
   id: number;
   order_number: number;
   guild_id: string;
@@ -151,10 +151,10 @@ const DEFAULT_PIX_CURRENCY = "BRL";
 const PENDING_REUSE_WINDOW_MS = 25 * 60 * 1000;
 const ORDER_EXPIRATION_SAFETY_BUFFER_MS = 45 * 1000;
 const PAYMENT_ROUTE_COALESCE_TTL_MS = 1500;
-const PAYMENT_ORDER_SELECT_COLUMNS =
+export const PAYMENT_ORDER_SELECT_COLUMNS =
   `id, order_number, guild_id, payment_method, status, amount, currency, plan_code, plan_name, plan_billing_cycle_days, plan_max_licensed_servers, plan_max_active_tickets, plan_max_automations, plan_max_monthly_actions, payer_name, payer_document, payer_document_type, provider_payment_id, provider_external_reference, provider_qr_code, provider_qr_base64, provider_ticket_url, provider_payload, provider_status, provider_status_detail, paid_at, expires_at, user_id, created_at, updated_at, ${PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS}`;
 
-function invalidatePaymentReadCachesForOrder(
+export function invalidatePaymentReadCachesForOrder(
   order:
     | Pick<PaymentOrderRecord, "id" | "order_number" | "user_id" | "guild_id">
     | null
@@ -201,7 +201,7 @@ function isProviderDocumentErrorMessage(message: string) {
   );
 }
 
-function normalizeGuildId(value: unknown) {
+export function normalizeGuildId(value: unknown) {
   if (typeof value !== "string") return null;
   const guildId = value.trim();
   return isGuildId(guildId) ? guildId : null;
@@ -224,7 +224,7 @@ function normalizePayerName(value: unknown) {
   return name;
 }
 
-function normalizePayerEmail(value: unknown) {
+export function normalizePayerEmail(value: unknown) {
   if (typeof value !== "string") return null;
   const email = value.trim().toLowerCase();
   if (!email || email.length > 254) return null;
@@ -245,7 +245,7 @@ function normalizePayerDocument(value: unknown) {
   };
 }
 
-function parseForceNewFlag(value: unknown) {
+export function parseForceNewFlag(value: unknown) {
   if (value === true) return true;
   if (value === false || value === null || value === undefined) return false;
   if (typeof value === "number") return value === 1;
@@ -336,7 +336,7 @@ function buildPixMutationCoalescingKey(input: {
   });
 }
 
-function resolveFlowPointsGrantedFromSubtotal(input: {
+export function resolveFlowPointsGrantedFromSubtotal(input: {
   planChange: PlanChangePreview;
   discountedSubtotalAmount: number;
 }) {
@@ -420,7 +420,7 @@ function isExpirationRelatedProviderErrorMessage(message: string) {
   );
 }
 
-function isOrderExpiredOrExpiringSoon(
+export function isOrderExpiredOrExpiringSoon(
   order: Pick<
     PaymentOrderRecord,
     "status" | "provider_status" | "provider_status_detail" | "expires_at" | "created_at"
@@ -453,7 +453,7 @@ function isOrderExpiredOrExpiringSoon(
   return expiresAtMs <= Date.now() + Math.max(0, bufferMs);
 }
 
-function canReuseDraftCheckoutOrder(order: PaymentOrderRecord) {
+export function canReuseDraftCheckoutOrder(order: PaymentOrderRecord) {
   return (
     order.status === "pending" &&
     !order.provider_payment_id &&
@@ -530,7 +530,7 @@ async function resolveCheckoutPlanWithoutGuild(input: {
 }
 
 
-async function resolveCheckoutPlanForGuild(input: {
+export async function resolveCheckoutPlanForGuild(input: {
   userId: number;
   guildId: string | null;
   requestedPlanCode?: unknown;
@@ -566,7 +566,7 @@ async function resolveCheckoutPlanForGuild(input: {
   };
 }
 
-function buildCheckoutTransitionProviderPayload(input: {
+export function buildCheckoutTransitionProviderPayload(input: {
   planChange: PlanChangePreview;
   flowPointsApplied: number;
   flowPointsGranted?: number;
@@ -596,7 +596,7 @@ async function confirmImmediatePixProviderPayment(
   }
 }
 
-function doesOrderMatchCheckoutPlan(
+export function doesOrderMatchCheckoutPlan(
   order: Pick<PaymentOrderRecord, "plan_code" | "plan_billing_cycle_days" | "amount" | "currency">,
   checkoutPlan: {
     plan: PlanPricingDefinition;
@@ -612,7 +612,7 @@ function doesOrderMatchCheckoutPlan(
   );
 }
 
-function toApiOrder(
+export function toApiOrder(
   record: PaymentOrderRecord,
   checkoutAccessToken: string | null = null,
 ) {
@@ -665,7 +665,7 @@ function normalizeCheckoutToken(value: unknown) {
   return normalized || null;
 }
 
-async function ensureGuildAccess(guildId: string | null) {
+export async function ensureGuildAccess(guildId: string | null) {
   const sessionData = await resolveSessionAccessToken();
   if (!sessionData?.authSession) {
     return {
@@ -747,7 +747,7 @@ async function ensureGuildAccess(guildId: string | null) {
   };
 }
 
-async function createPaymentOrderEvent(
+export async function createPaymentOrderEvent(
   paymentOrderId: number,
   eventType: string,
   eventPayload: PaymentOrderEventPayload,
@@ -764,7 +764,7 @@ async function createPaymentOrderEvent(
   }
 }
 
-async function createPaymentOrderEventSafe(
+export async function createPaymentOrderEventSafe(
   paymentOrderId: number,
   eventType: string,
   eventPayload: PaymentOrderEventPayload,
@@ -776,7 +776,7 @@ async function createPaymentOrderEventSafe(
   }
 }
 
-async function getLatestOrderForUserAndGuild(userId: number, guildId: string | null) {
+export async function getLatestOrderForUserAndGuild(userId: number, guildId: string | null) {
   return getCachedLatestPaymentOrderForUserAndGuild<PaymentOrderRecord>({
     userId,
     guildId,
@@ -805,7 +805,7 @@ async function getOrderByCodeForGuild(guildId: string | null, orderCode: number)
   });
 }
 
-async function getOrderByCodeForUserAndGuild(
+export async function getOrderByCodeForUserAndGuild(
   userId: number,
   guildId: string | null,
   orderCode: number,
@@ -819,7 +819,7 @@ async function getOrderByCodeForUserAndGuild(
   return { order, foreignOwner: false };
 }
 
-async function getLatestApprovedLicenseCoverageForGuild(
+export async function getLatestApprovedLicenseCoverageForGuild(
   guildId: string | null,
   excludedOrderId?: number,
 ) {
@@ -1026,14 +1026,16 @@ async function reconcilePixOrderFromProvider(
   return updatedOrderResult.data;
 }
 
-async function createDraftOrderForCheckout(input: {
+export async function createDraftOrderForCheckout(input: {
   userId: number;
   guildId: string | null;
   amount: number;
   currency: string;
   plan: PlanPricingDefinition;
+  paymentMethod?: PaymentOrderRecord["payment_method"];
   providerPayload?: Record<string, unknown>;
 }) {
+  const paymentMethod = input.paymentMethod || "pix";
   return runCoalescedPaymentRequest<PaymentOrderRecord>({
     key: createStablePaymentIdempotencyKey({
       namespace: "flowdesk-payment-draft-create",
@@ -1056,7 +1058,7 @@ async function createDraftOrderForCheckout(input: {
         .insert({
           user_id: input.userId,
           guild_id: input.guildId,
-          payment_method: "pix",
+          payment_method: paymentMethod,
           status: "pending",
           amount: input.amount,
           currency: input.currency,
@@ -1122,13 +1124,15 @@ async function createDraftOrderForCheckout(input: {
   });
 }
 
-async function reuseDraftOrderForCheckout(input: {
+export async function reuseDraftOrderForCheckout(input: {
   order: PaymentOrderRecord;
   amount: number;
   currency: string;
   plan: PlanPricingDefinition;
+  paymentMethod?: PaymentOrderRecord["payment_method"];
   providerPayload?: Record<string, unknown>;
 }) {
+  const paymentMethod = input.paymentMethod || "pix";
   return runCoalescedPaymentRequest<PaymentOrderRecord>({
     key: createStablePaymentIdempotencyKey({
       namespace: "flowdesk-payment-draft-reuse",
@@ -1148,7 +1152,7 @@ async function reuseDraftOrderForCheckout(input: {
       const updatedOrderResult = await supabase
         .from("payment_orders")
         .update({
-          payment_method: "pix",
+          payment_method: paymentMethod,
           status: "pending",
           amount: input.amount,
           currency: input.currency,

@@ -21,7 +21,7 @@ import {
   getApprovedOrdersForGuild,
   resolveLatestLicenseCoverageFromApprovedOrders,
 } from "@/lib/payments/licenseStatus";
-import { areCardPaymentsEnabled } from "@/lib/payments/cardAvailability";
+import { areHostedCardCheckoutsEnabled } from "@/lib/payments/cardAvailability";
 import {
   getCachedLatestPaymentOrderForUserAndGuild,
   invalidatePaymentOrderQueryCaches,
@@ -338,7 +338,7 @@ async function getLatestUserOrderForGuild(userId: number, guildId: string) {
 
 export async function GET(request: Request) {
   const requestContext = createSecurityRequestContext(request);
-  const cardPaymentsEnabled = areCardPaymentsEnabled();
+  const cardPaymentsEnabled = areHostedCardCheckoutsEnabled();
   const respond = (body: unknown, init?: ResponseInit) =>
     attachRequestId(
       applyNoStoreHeaders(NextResponse.json(body, init)),

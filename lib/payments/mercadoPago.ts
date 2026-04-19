@@ -261,11 +261,34 @@ function normalizeMercadoPagoIsoDate(value: string | null | undefined) {
   return new Date(timestamp).toISOString();
 }
 
-function resolveMercadoPagoAccessToken() {
-  const token = process.env.MERCADO_PAGO_TEST_ACCESS_TOKEN || process.env.MERCADO_PAGO_ACCESS_TOKEN;
-  if (typeof token !== "string") return null;
-  const normalized = token.trim();
+function normalizeMercadoPagoEnvValue(value: string | undefined) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
   return normalized || null;
+}
+
+function resolvePreferredMercadoPagoToken(candidates: Array<string | null>) {
+  const normalizedCandidates = candidates.filter(Boolean) as string[];
+  if (normalizedCandidates.length === 0) {
+    return null;
+  }
+
+  return (
+    normalizedCandidates.find((token) => token.startsWith("TEST-")) ||
+    normalizedCandidates[0]
+  );
+}
+
+function resolveMercadoPagoAccessToken() {
+  return resolvePreferredMercadoPagoToken([
+    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_TEST_ACCESS_TOKEN),
+    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_CARD_TEST_ACCESS_TOKEN),
+    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_CARD_ACCESS_TOKEN),
+    normalizeMercadoPagoEnvValue(
+      process.env.MERCADO_PAGO_CARD_PRODUCTION_ACCESS_TOKEN,
+    ),
+    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_ACCESS_TOKEN),
+  ]);
 }
 
 function getMercadoPagoAccessTokenOrThrow() {
@@ -278,21 +301,15 @@ function getMercadoPagoAccessTokenOrThrow() {
 }
 
 function resolveMercadoPagoCardAccessToken() {
-  const candidates = [
-    process.env.MERCADO_PAGO_CARD_TEST_ACCESS_TOKEN,
-    process.env.MERCADO_PAGO_CARD_ACCESS_TOKEN,
-    process.env.MERCADO_PAGO_CARD_PRODUCTION_ACCESS_TOKEN,
-    process.env.MERCADO_PAGO_ACCESS_TOKEN,
-  ]
-    .map((token) => (typeof token === "string" ? token.trim() : ""))
-    .filter(Boolean);
-
-  if (candidates.length === 0) {
-    return null;
-  }
-
-  // Prefer test tokens if available for sandbox mode
-  return candidates.find((token) => token.startsWith("TEST-")) || candidates[0];
+  return resolvePreferredMercadoPagoToken([
+    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_CARD_TEST_ACCESS_TOKEN),
+    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_CARD_ACCESS_TOKEN),
+    normalizeMercadoPagoEnvValue(
+      process.env.MERCADO_PAGO_CARD_PRODUCTION_ACCESS_TOKEN,
+    ),
+    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_TEST_ACCESS_TOKEN),
+    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_ACCESS_TOKEN),
+  ]);
 }
 
 function getMercadoPagoCardAccessTokenOrThrow() {
@@ -310,6 +327,40 @@ export function resolveMercadoPagoCardEnvironment() {
   const token = resolveMercadoPagoCardAccessToken() || "";
 
   return token.startsWith("TEST-") ? "test" : "production";
+}
+
+export function resolveMercadoPagoCardPayerEmail(preferredEmail?: string | null) {
+  const normalizedPreferredEmail = normalizeMercadoPagoEnvValue(
+    preferredEmail || undefined,
+  );
+
+  if (resolveMercadoPagoCardEnvironment() !== "test") {
+    return normalizedPreferredEmail;
+  }
+
+  return (
+    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_CARD_TEST_PAYER_EMAIL) ||
+    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_TEST_PAYER_EMAIL) ||
+    "test@testuser.com"
+  );
+}
+
+export function resolveMercadoPagoHostedCheckoutUrl(
+  preference: MercadoPagoCheckoutPreferenceResponse | null | undefined,
+) {
+  if (!preference) return null;
+
+  const preferredUrl =
+    resolveMercadoPagoCardEnvironment() === "test"
+      ? preference.sandbox_init_point || preference.init_point || null
+      : preference.init_point || preference.sandbox_init_point || null;
+
+  if (typeof preferredUrl !== "string") {
+    return null;
+  }
+
+  const normalizedUrl = preferredUrl.trim();
+  return normalizedUrl || null;
 }
 
 function resolveMercadoPagoFetchTokens(preferCardToken: boolean) {

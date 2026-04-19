@@ -900,16 +900,16 @@ function formatCooldownMessage(seconds: number | null | undefined) {
 
 function resolveCardPublicKey() {
   const candidates = [
+    process.env.NEXT_PUBLIC_MERCADO_PAGO_CARD_TEST_PUBLIC_KEY || null,
     process.env.NEXT_PUBLIC_MERCADO_PAGO_CARD_PUBLIC_KEY || null,
     process.env.NEXT_PUBLIC_MERCADO_PAGO_CARD_PRODUCTION_PUBLIC_KEY || null,
     process.env.NEXT_PUBLIC_MERCADO_PAGO_PUBLIC_KEY || null,
-    process.env.NEXT_PUBLIC_MERCADO_PAGO_CARD_TEST_PUBLIC_KEY || null,
   ]
     .map((value) => (typeof value === "string" ? value.trim() : ""))
     .filter(Boolean);
 
   const key =
-    candidates.find((value) => !value.startsWith("TEST-")) ||
+    candidates.find((value) => value.startsWith("TEST-")) ||
     candidates[0] ||
     null;
   if (!key) return null;

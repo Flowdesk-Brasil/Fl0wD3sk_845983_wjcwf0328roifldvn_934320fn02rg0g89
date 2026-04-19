@@ -24,7 +24,7 @@ import {
   type PaymentDiagnosticCategory,
 } from "@/lib/payments/paymentDiagnostics";
 import {
-  areCardPaymentsEnabled,
+  areHostedCardCheckoutsEnabled,
   CARD_PAYMENTS_COMING_SOON_BADGE,
   CARD_PAYMENTS_DISABLED_MESSAGE,
 } from "@/lib/payments/cardAvailability";
@@ -3045,7 +3045,7 @@ export function ConfigStepFour({
   onDraftChange,
   onApproved,
 }: ConfigStepFourProps) {
-  const cardPaymentsEnabled = areCardPaymentsEnabled();
+  const cardPaymentsEnabled = areHostedCardCheckoutsEnabled();
   const initialStepFourDraft = useMemo(
     () =>
       buildStepFourDraft(
