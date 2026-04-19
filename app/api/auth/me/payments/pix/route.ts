@@ -15,7 +15,6 @@ import {
   createMercadoPagoPixPayment,
   fetchMercadoPagoPaymentById,
   refundMercadoPagoPixPayment,
-  resolveMercadoPagoPixEnvironment,
   resolveMercadoPagoPixPayerEmail,
   resolvePaymentStatus,
   toQrDataUri,
@@ -490,11 +489,29 @@ function resolveFriendlyPixProviderErrorMessage(message: string) {
 
   const normalizedMessage = message.toLowerCase();
   if (
-    resolveMercadoPagoPixEnvironment() === "test" &&
-    (normalizedMessage.includes("internal_error") ||
-      normalizedMessage.includes("invalid_credentials"))
+    normalizedMessage.includes("invalid_credentials") ||
+    normalizedMessage.includes("unauthorized") ||
+    normalizedMessage.includes("access token") ||
+    normalizedMessage.includes("credential")
   ) {
-    return "O Mercado Pago nao aceitou gerar o PIX com a credencial de teste configurada neste ambiente. Nao houve cobranca. Revise a credencial de teste e a chave Pix vinculada a ela.";
+    return "O Mercado Pago recusou a autenticacao da cobranca PIX. Revise a credencial de producao e a chave Pix ativa nessa conta. Nao houve cobranca.";
+  }
+
+  if (
+    normalizedMessage.includes("tempo limite") ||
+    normalizedMessage.includes("timeout") ||
+    normalizedMessage.includes("falha de rede") ||
+    normalizedMessage.includes("internal_error") ||
+    normalizedMessage.includes("temporarily_unavailable")
+  ) {
+    return "O Mercado Pago ficou indisponivel durante a geracao do PIX. Tente novamente em instantes. Nenhuma cobranca foi concluida.";
+  }
+
+  if (
+    normalizedMessage.includes("rate_limit") ||
+    normalizedMessage.includes("too many requests")
+  ) {
+    return "O Mercado Pago limitou temporariamente novas tentativas de PIX. Aguarde alguns segundos e tente novamente.";
   }
 
   if (

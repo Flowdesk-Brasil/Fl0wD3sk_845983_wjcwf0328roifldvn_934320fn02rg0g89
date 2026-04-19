@@ -155,7 +155,30 @@ type CacheEntry<TValue> = {
   value: TValue;
 };
 
+type MercadoPagoEnvironment = "production" | "test";
+
+type MercadoPagoJsonRequestOptions = {
+  method?: string;
+  accessToken: string;
+  headers?: Record<string, string>;
+  body?: string;
+  errorMessage: string;
+  allowRetry?: boolean;
+  timeoutMs?: number | null;
+};
+
+type MercadoPagoJsonResponse<TPayload> = {
+  response: Response;
+  payload: TPayload;
+};
+
 const PAYMENT_LOOKUP_CACHE_TTL_MS = 4_000;
+const MERCADO_PAGO_API_BASE_URL = "https://api.mercadopago.com";
+const MERCADO_PAGO_DEFAULT_TIMEOUT_MS = 20_000;
+const MERCADO_PAGO_DEFAULT_RETRY_COUNT = 1;
+const MERCADO_PAGO_RETRYABLE_STATUS_CODES = new Set([
+  408, 409, 423, 425, 429, 500, 502, 503, 504,
+]);
 const paymentByIdCache = new Map<string, CacheEntry<MercadoPagoPaymentResponse>>();
 const paymentByIdInflight = new Map<string, Promise<MercadoPagoPaymentResponse>>();
 const paymentSearchCache = new Map<
@@ -267,25 +290,138 @@ function normalizeMercadoPagoEnvValue(value: string | undefined) {
   return normalized || null;
 }
 
-function resolvePreferredMercadoPagoToken(candidates: Array<string | null>) {
-  const normalizedCandidates = candidates.filter(Boolean) as string[];
-  if (normalizedCandidates.length === 0) {
-    return null;
+function normalizeMercadoPagoEnvironmentValue(
+  value: string | null | undefined,
+): MercadoPagoEnvironment | null {
+  const normalized = normalizeMercadoPagoEnvValue(value || undefined)?.toLowerCase();
+  if (!normalized) return null;
+
+  if (
+    normalized === "production" ||
+    normalized === "prod" ||
+    normalized === "live"
+  ) {
+    return "production";
   }
 
-  return (
-    normalizedCandidates.find((token) => token.startsWith("TEST-")) ||
-    normalizedCandidates[0]
-  );
+  if (
+    normalized === "test" ||
+    normalized === "tests" ||
+    normalized === "sandbox" ||
+    normalized === "homolog"
+  ) {
+    return "test";
+  }
+
+  return null;
 }
 
-function resolveMercadoPagoAccessToken() {
-  return resolvePreferredMercadoPagoToken([
+function resolveMercadoPagoRetryCount() {
+  const rawValue = normalizeMercadoPagoEnvValue(
+    process.env.MERCADO_PAGO_HTTP_RETRY_COUNT ||
+      process.env.MERCADO_PAGO_RETRY_COUNT,
+  );
+  if (!rawValue) {
+    return MERCADO_PAGO_DEFAULT_RETRY_COUNT;
+  }
+  const parsed = Number(rawValue);
+  if (!Number.isInteger(parsed)) {
+    return MERCADO_PAGO_DEFAULT_RETRY_COUNT;
+  }
+
+  return Math.max(0, Math.min(parsed, 3));
+}
+
+function resolveMercadoPagoTimeoutMs() {
+  const rawValue = normalizeMercadoPagoEnvValue(
+    process.env.MERCADO_PAGO_HTTP_TIMEOUT_MS ||
+      process.env.MERCADO_PAGO_TIMEOUT_MS,
+  );
+  if (!rawValue) {
+    return MERCADO_PAGO_DEFAULT_TIMEOUT_MS;
+  }
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed)) {
+    return MERCADO_PAGO_DEFAULT_TIMEOUT_MS;
+  }
+
+  return Math.max(5_000, Math.min(Math.trunc(parsed), 60_000));
+}
+
+function resolveMercadoPagoEnvironmentPreference(
+  values: Array<string | null | undefined>,
+) {
+  for (const value of values) {
+    const resolved = normalizeMercadoPagoEnvironmentValue(value);
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  return "production" as const;
+}
+
+function uniqueMercadoPagoTokens(candidates: Array<string | null>) {
+  return Array.from(new Set(candidates.filter(Boolean))) as string[];
+}
+
+function resolveMercadoPagoPixCandidateTokens() {
+  const preferredEnvironment = resolveMercadoPagoEnvironmentPreference([
+    process.env.MERCADO_PAGO_PIX_ENVIRONMENT,
+    process.env.MERCADO_PAGO_ENVIRONMENT,
+    process.env.NEXT_PUBLIC_MERCADO_PAGO_ENVIRONMENT,
+  ]);
+  const productionCandidates = [
+    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_PIX_ACCESS_TOKEN),
+    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_ACCESS_TOKEN),
+    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_PRODUCTION_ACCESS_TOKEN),
+  ];
+  const testCandidates = [
     normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_PIX_TEST_ACCESS_TOKEN),
     normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_TEST_ACCESS_TOKEN),
     normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_CARD_TEST_ACCESS_TOKEN),
-    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_ACCESS_TOKEN),
+  ];
+
+  return uniqueMercadoPagoTokens(
+    preferredEnvironment === "test"
+      ? [...testCandidates, ...productionCandidates]
+      : [...productionCandidates, ...testCandidates],
+  );
+}
+
+function resolveMercadoPagoCardCandidateTokens() {
+  const preferredEnvironment = resolveMercadoPagoEnvironmentPreference([
+    process.env.MERCADO_PAGO_CARD_ENVIRONMENT,
+    process.env.MERCADO_PAGO_ENVIRONMENT,
+    process.env.NEXT_PUBLIC_MERCADO_PAGO_ENVIRONMENT,
   ]);
+  const productionCandidates = [
+    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_CARD_ACCESS_TOKEN),
+    normalizeMercadoPagoEnvValue(
+      process.env.MERCADO_PAGO_CARD_PRODUCTION_ACCESS_TOKEN,
+    ),
+    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_ACCESS_TOKEN),
+  ];
+  const testCandidates = [
+    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_CARD_TEST_ACCESS_TOKEN),
+    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_TEST_ACCESS_TOKEN),
+  ];
+
+  return uniqueMercadoPagoTokens(
+    preferredEnvironment === "test"
+      ? [...testCandidates, ...productionCandidates]
+      : [...productionCandidates, ...testCandidates],
+  );
+}
+
+function inferMercadoPagoEnvironmentFromToken(
+  token: string | null | undefined,
+): MercadoPagoEnvironment {
+  return token?.startsWith("TEST-") ? "test" : "production";
+}
+
+function resolveMercadoPagoAccessToken() {
+  return resolveMercadoPagoPixCandidateTokens()[0] || null;
 }
 
 function getMercadoPagoAccessTokenOrThrow() {
@@ -298,15 +434,7 @@ function getMercadoPagoAccessTokenOrThrow() {
 }
 
 function resolveMercadoPagoCardAccessToken() {
-  return resolvePreferredMercadoPagoToken([
-    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_CARD_TEST_ACCESS_TOKEN),
-    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_CARD_ACCESS_TOKEN),
-    normalizeMercadoPagoEnvValue(
-      process.env.MERCADO_PAGO_CARD_PRODUCTION_ACCESS_TOKEN,
-    ),
-    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_TEST_ACCESS_TOKEN),
-    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_ACCESS_TOKEN),
-  ]);
+  return resolveMercadoPagoCardCandidateTokens()[0] || null;
 }
 
 function getMercadoPagoCardAccessTokenOrThrow() {
@@ -321,15 +449,23 @@ function getMercadoPagoCardAccessTokenOrThrow() {
 }
 
 export function resolveMercadoPagoCardEnvironment() {
-  const token = resolveMercadoPagoCardAccessToken() || "";
+  const configuredEnvironment = normalizeMercadoPagoEnvironmentValue(
+    process.env.MERCADO_PAGO_CARD_ENVIRONMENT ||
+      process.env.MERCADO_PAGO_ENVIRONMENT ||
+      process.env.NEXT_PUBLIC_MERCADO_PAGO_ENVIRONMENT,
+  );
 
-  return token.startsWith("TEST-") ? "test" : "production";
+  return configuredEnvironment || inferMercadoPagoEnvironmentFromToken(resolveMercadoPagoCardAccessToken());
 }
 
 export function resolveMercadoPagoPixEnvironment() {
-  const token = resolveMercadoPagoAccessToken() || "";
+  const configuredEnvironment = normalizeMercadoPagoEnvironmentValue(
+    process.env.MERCADO_PAGO_PIX_ENVIRONMENT ||
+      process.env.MERCADO_PAGO_ENVIRONMENT ||
+      process.env.NEXT_PUBLIC_MERCADO_PAGO_ENVIRONMENT,
+  );
 
-  return token.startsWith("TEST-") ? "test" : "production";
+  return configuredEnvironment || inferMercadoPagoEnvironmentFromToken(resolveMercadoPagoAccessToken());
 }
 
 export function resolveMercadoPagoPixPayerEmail(preferredEmail?: string | null) {
@@ -383,14 +519,15 @@ export function resolveMercadoPagoHostedCheckoutUrl(
 }
 
 function resolveMercadoPagoFetchTokens(preferCardToken: boolean) {
-  const primary = preferCardToken
-    ? resolveMercadoPagoCardAccessToken()
-    : resolveMercadoPagoAccessToken();
-  const secondary = preferCardToken
-    ? resolveMercadoPagoAccessToken()
-    : resolveMercadoPagoCardAccessToken();
-
-  return Array.from(new Set([primary, secondary].filter(Boolean))) as string[];
+  return preferCardToken
+    ? uniqueMercadoPagoTokens([
+        ...resolveMercadoPagoCardCandidateTokens(),
+        ...resolveMercadoPagoPixCandidateTokens(),
+      ])
+    : uniqueMercadoPagoTokens([
+        ...resolveMercadoPagoPixCandidateTokens(),
+        ...resolveMercadoPagoCardCandidateTokens(),
+      ]);
 }
 
 function buildRequestBody(input: CreatePixPaymentInput) {
@@ -469,6 +606,11 @@ function splitPayerName(value: string): PayerNameParts {
 }
 
 function parseMercadoPagoErrorMessage(payload: unknown) {
+  if (typeof payload === "string") {
+    const normalized = payload.trim();
+    return normalized || null;
+  }
+
   if (!payload || typeof payload !== "object") {
     return null;
   }
@@ -479,6 +621,21 @@ function parseMercadoPagoErrorMessage(payload: unknown) {
     return message.trim();
   }
 
+  const details = data.details;
+  if (typeof details === "string" && details.trim()) {
+    return details.trim();
+  }
+
+  const description = data.description;
+  if (typeof description === "string" && description.trim()) {
+    return description.trim();
+  }
+
+  const error = data.error;
+  if (typeof error === "string" && error.trim()) {
+    return error.trim();
+  }
+
   const cause = data.cause;
   if (Array.isArray(cause) && cause.length > 0) {
     const firstCause = cause[0];
@@ -486,6 +643,31 @@ function parseMercadoPagoErrorMessage(payload: unknown) {
       const description = (firstCause as Record<string, unknown>).description;
       if (typeof description === "string" && description.trim()) {
         return description.trim();
+      }
+    }
+  }
+
+  return null;
+}
+
+function parseMercadoPagoErrorCode(payload: unknown) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const data = payload as Record<string, unknown>;
+  const directCode = data.error ?? data.code;
+  if (typeof directCode === "string" && directCode.trim()) {
+    return directCode.trim().toLowerCase();
+  }
+
+  const cause = data.cause;
+  if (Array.isArray(cause) && cause.length > 0) {
+    const firstCause = cause[0];
+    if (firstCause && typeof firstCause === "object") {
+      const causeCode = (firstCause as Record<string, unknown>).code;
+      if (typeof causeCode === "string" && causeCode.trim()) {
+        return causeCode.trim().toLowerCase();
       }
     }
   }
@@ -506,6 +688,150 @@ async function readMercadoPagoPayload(response: Response) {
   }
 
   return payload;
+}
+
+function buildMercadoPagoUrl(pathOrUrl: string) {
+  if (/^https?:\/\//i.test(pathOrUrl)) {
+    return pathOrUrl;
+  }
+
+  return `${MERCADO_PAGO_API_BASE_URL}${pathOrUrl.startsWith("/") ? "" : "/"}${pathOrUrl}`;
+}
+
+function isMercadoPagoRetryableResponse(statusCode: number, payload: unknown) {
+  if (MERCADO_PAGO_RETRYABLE_STATUS_CODES.has(statusCode)) {
+    return true;
+  }
+
+  const errorCode = parseMercadoPagoErrorCode(payload);
+  if (!errorCode) {
+    return false;
+  }
+
+  return (
+    errorCode.includes("internal_error") ||
+    errorCode.includes("rate_limit") ||
+    errorCode.includes("timeout") ||
+    errorCode.includes("temporarily_unavailable")
+  );
+}
+
+function isMercadoPagoRetryableNetworkError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return (
+    error.name === "AbortError" ||
+    error.name === "TimeoutError" ||
+    error instanceof TypeError
+  );
+}
+
+function resolveMercadoPagoTransportErrorMessage(
+  error: unknown,
+  fallbackMessage: string,
+) {
+  if (!(error instanceof Error)) {
+    return fallbackMessage;
+  }
+
+  if (error.name === "AbortError" || error.name === "TimeoutError") {
+    return "Tempo limite ao comunicar com o Mercado Pago.";
+  }
+
+  if (error instanceof TypeError) {
+    return "Falha de rede ao comunicar com o Mercado Pago.";
+  }
+
+  return fallbackMessage;
+}
+
+function sleepMercadoPago(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+class MercadoPagoRequestError extends Error {
+  statusCode: number | null;
+
+  constructor(providerMessage: string, statusCode?: number | null) {
+    super(`Mercado Pago: ${providerMessage}`);
+    this.name = "MercadoPagoRequestError";
+    this.statusCode = statusCode ?? null;
+  }
+}
+
+async function fetchMercadoPagoJson<TPayload>(
+  pathOrUrl: string,
+  options: MercadoPagoJsonRequestOptions,
+): Promise<MercadoPagoJsonResponse<TPayload>> {
+  const maxAttempts = options.allowRetry ? resolveMercadoPagoRetryCount() + 1 : 1;
+  let lastProviderMessage = options.errorMessage;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      () => controller.abort(),
+      options.timeoutMs ?? resolveMercadoPagoTimeoutMs(),
+    );
+
+    try {
+      const response = await fetch(buildMercadoPagoUrl(pathOrUrl), {
+        method: options.method || "GET",
+        headers: {
+          Authorization: `Bearer ${options.accessToken}`,
+          ...(options.headers || {}),
+        },
+        body: options.body,
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      const payload = (await readMercadoPagoPayload(response)) as TPayload;
+
+      if (response.ok) {
+        return {
+          response,
+          payload,
+        };
+      }
+
+      lastProviderMessage =
+        parseMercadoPagoErrorMessage(payload) || options.errorMessage;
+
+      if (
+        attempt < maxAttempts &&
+        isMercadoPagoRetryableResponse(response.status, payload)
+      ) {
+        await sleepMercadoPago(Math.min(250 * 2 ** (attempt - 1), 1_500));
+        continue;
+      }
+
+      throw new MercadoPagoRequestError(lastProviderMessage, response.status);
+    } catch (error) {
+      if (error instanceof MercadoPagoRequestError) {
+        throw error;
+      }
+
+      lastProviderMessage = resolveMercadoPagoTransportErrorMessage(
+        error,
+        options.errorMessage,
+      );
+
+      if (
+        attempt < maxAttempts &&
+        isMercadoPagoRetryableNetworkError(error)
+      ) {
+        await sleepMercadoPago(Math.min(250 * 2 ** (attempt - 1), 1_500));
+        continue;
+      }
+
+      throw new MercadoPagoRequestError(lastProviderMessage);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  throw new MercadoPagoRequestError(lastProviderMessage);
 }
 
 export function resolvePaymentStatus(status: string | null | undefined) {
@@ -557,36 +883,22 @@ export async function createMercadoPagoPixPayment(input: CreatePixPaymentInput) 
       ],
     });
 
-  const response = await fetch("https://api.mercadopago.com/v1/payments", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
-      "X-Idempotency-Key": idempotencyKey,
+  const { payload } = await fetchMercadoPagoJson<MercadoPagoPaymentResponse>(
+    "/v1/payments",
+    {
+      method: "POST",
+      accessToken,
+      headers: {
+        "Content-Type": "application/json",
+        "X-Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify(buildRequestBody(input)),
+      errorMessage: "Falha ao criar pagamento PIX.",
+      allowRetry: true,
     },
-    body: JSON.stringify(buildRequestBody(input)),
-    cache: "no-store",
-  });
+  );
 
-  const rawText = await response.text();
-  let payload: unknown = null;
-
-  if (rawText) {
-    try {
-      payload = JSON.parse(rawText) as unknown;
-    } catch {
-      payload = rawText;
-    }
-  }
-
-  if (!response.ok) {
-    const providerMessage =
-      parseMercadoPagoErrorMessage(payload) || "Falha ao criar pagamento PIX.";
-
-    throw new Error(`Mercado Pago: ${providerMessage}`);
-  }
-
-  return payload as MercadoPagoPaymentResponse;
+  return payload;
 }
 
 export async function createMercadoPagoCardPayment(input: CreateCardPaymentInput) {
@@ -603,33 +915,19 @@ export async function createMercadoPagoCardPayment(input: CreateCardPaymentInput
     headers["X-meli-session-id"] = deviceSessionId;
   }
 
-  const response = await fetch("https://api.mercadopago.com/v1/payments", {
-    method: "POST",
-    headers,
-    body: JSON.stringify(buildCardRequestBody(input)),
-    cache: "no-store",
-  });
+  const { payload } = await fetchMercadoPagoJson<MercadoPagoPaymentResponse>(
+    "/v1/payments",
+    {
+      method: "POST",
+      accessToken,
+      headers,
+      body: JSON.stringify(buildCardRequestBody(input)),
+      errorMessage: "Falha ao criar pagamento com cartao.",
+      allowRetry: true,
+    },
+  );
 
-  const rawText = await response.text();
-  let payload: unknown = null;
-
-  if (rawText) {
-    try {
-      payload = JSON.parse(rawText) as unknown;
-    } catch {
-      payload = rawText;
-    }
-  }
-
-  if (!response.ok) {
-    const providerMessage =
-      parseMercadoPagoErrorMessage(payload) ||
-      "Falha ao criar pagamento com cartao.";
-
-    throw new Error(`Mercado Pago: ${providerMessage}`);
-  }
-
-  return payload as MercadoPagoPaymentResponse;
+  return payload;
 }
 
 export async function createMercadoPagoCardCheckoutPreference(
@@ -644,111 +942,91 @@ export async function createMercadoPagoCardCheckoutPreference(
   const expirationDateFrom = new Date().toISOString();
   const expirationDateTo = normalizeMercadoPagoIsoDate(input.expiresAt);
 
-  const response = await fetch("https://api.mercadopago.com/checkout/preferences", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
-      "X-Idempotency-Key": idempotencyKey,
-    },
-    body: JSON.stringify({
-      items: [
-        {
-          id: input.externalReference,
-          title: input.title,
-          description: input.description || input.title,
-          category_id: "services",
-          quantity: 1,
-          currency_id: input.currency,
-          unit_price: input.amount,
+  const { payload } =
+    await fetchMercadoPagoJson<MercadoPagoCheckoutPreferenceResponse>(
+      "/checkout/preferences",
+      {
+        method: "POST",
+        accessToken,
+        headers: {
+          "Content-Type": "application/json",
+          "X-Idempotency-Key": idempotencyKey,
         },
-      ],
-      payer:
-        input.payerEmail || hasPayerName
-          ? {
-              email: input.payerEmail || undefined,
-              name: hasPayerName ? payerName.firstName : undefined,
-              surname: hasPayerName ? payerName.lastName || undefined : undefined,
-            }
-          : undefined,
-      back_urls: {
-        success: input.successUrl,
-        pending: input.pendingUrl,
-        failure: input.failureUrl,
+        body: JSON.stringify({
+          items: [
+            {
+              id: input.externalReference,
+              title: input.title,
+              description: input.description || input.title,
+              category_id: "services",
+              quantity: 1,
+              currency_id: input.currency,
+              unit_price: input.amount,
+            },
+          ],
+          payer:
+            input.payerEmail || hasPayerName
+              ? {
+                  email: input.payerEmail || undefined,
+                  name: hasPayerName ? payerName.firstName : undefined,
+                  surname: hasPayerName
+                    ? payerName.lastName || undefined
+                    : undefined,
+                }
+              : undefined,
+          back_urls: {
+            success: input.successUrl,
+            pending: input.pendingUrl,
+            failure: input.failureUrl,
+          },
+          auto_return: "approved",
+          expires: Boolean(expirationDateTo),
+          expiration_date_from: expirationDateTo
+            ? expirationDateFrom
+            : undefined,
+          expiration_date_to: expirationDateTo || undefined,
+          external_reference: input.externalReference,
+          metadata: input.metadata,
+          notification_url: input.notificationUrl,
+          statement_descriptor: input.statementDescriptor || undefined,
+          payment_methods: {
+            excluded_payment_types: [
+              { id: "ticket" },
+              { id: "atm" },
+              { id: "bank_transfer" },
+            ],
+            installments: 1,
+            default_installments: 1,
+          },
+        }),
+        errorMessage: "Falha ao preparar checkout redirecionado com cartao.",
+        allowRetry: true,
       },
-      auto_return: "approved",
-      expires: Boolean(expirationDateTo),
-      expiration_date_from: expirationDateTo ? expirationDateFrom : undefined,
-      expiration_date_to: expirationDateTo || undefined,
-      external_reference: input.externalReference,
-      metadata: input.metadata,
-      notification_url: input.notificationUrl,
-      statement_descriptor: input.statementDescriptor || undefined,
-      payment_methods: {
-        excluded_payment_types: [
-          { id: "ticket" },
-          { id: "atm" },
-          { id: "bank_transfer" },
-        ],
-        installments: 1,
-        default_installments: 1,
-      },
-    }),
-    cache: "no-store",
-  });
+    );
 
-  const payload = await readMercadoPagoPayload(response);
-
-  if (!response.ok) {
-    const providerMessage =
-      parseMercadoPagoErrorMessage(payload) ||
-      "Falha ao preparar checkout redirecionado com cartao.";
-
-    throw new Error(`Mercado Pago: ${providerMessage}`);
-  }
-
-  return payload as MercadoPagoCheckoutPreferenceResponse;
+  return payload;
 }
 
 export async function cancelMercadoPagoCardPayment(paymentId: string | number) {
   const accessToken = getMercadoPagoCardAccessTokenOrThrow();
 
-  const response = await fetch(
-    `https://api.mercadopago.com/v1/payments/${encodeURIComponent(String(paymentId))}`,
+  const { payload } = await fetchMercadoPagoJson<MercadoPagoPaymentResponse>(
+    `/v1/payments/${encodeURIComponent(String(paymentId))}`,
     {
       method: "PUT",
+      accessToken,
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify({
         status: "cancelled",
       }),
-      cache: "no-store",
+      errorMessage: "Falha ao cancelar validacao do cartao.",
     },
   );
 
-  const rawText = await response.text();
-  let payload: unknown = null;
-
-  if (rawText) {
-    try {
-      payload = JSON.parse(rawText) as unknown;
-    } catch {
-      payload = rawText;
-    }
-  }
-
-  if (!response.ok) {
-    const providerMessage =
-      parseMercadoPagoErrorMessage(payload) ||
-      "Falha ao cancelar validacao do cartao.";
-
-    throw new Error(`Mercado Pago: ${providerMessage}`);
-  }
-
   invalidateMercadoPagoPaymentLookupCache({ paymentId });
-  return payload as MercadoPagoPaymentResponse;
+  return payload;
 }
 
 export async function fetchMercadoPagoPaymentById(
@@ -787,37 +1065,26 @@ export async function fetchMercadoPagoPaymentById(
       "Falha ao consultar pagamento no Mercado Pago.";
 
     for (const token of candidateTokens) {
-      const response = await fetch(
-        `https://api.mercadopago.com/v1/payments/${encodeURIComponent(String(paymentId))}`,
-        {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
+      try {
+        const { payload } = await fetchMercadoPagoJson<MercadoPagoPaymentResponse>(
+          `/v1/payments/${encodeURIComponent(String(paymentId))}`,
+          {
+            method: "GET",
+            accessToken: token,
+            errorMessage: "Falha ao consultar pagamento no Mercado Pago.",
+            allowRetry: true,
           },
-          cache: "no-store",
-        },
-      );
-
-      const rawText = await response.text();
-      let payload: unknown = null;
-
-      if (rawText) {
-        try {
-          payload = JSON.parse(rawText) as unknown;
-        } catch {
-          payload = rawText;
-        }
-      }
-
-      if (response.ok) {
-        const resolved = payload as MercadoPagoPaymentResponse;
+        );
+        const resolved = payload;
         storeMercadoPagoPaymentLookupCache(resolved, useCardToken);
         return resolved;
+      } catch (error) {
+        lastProviderMessage =
+          error instanceof Error
+            ? error.message.replace(/^Mercado Pago:\s*/i, "").trim() ||
+              lastProviderMessage
+            : lastProviderMessage;
       }
-
-      lastProviderMessage =
-        parseMercadoPagoErrorMessage(payload) ||
-        "Falha ao consultar pagamento no Mercado Pago.";
     }
 
     throw new Error(`Mercado Pago: ${lastProviderMessage}`);
@@ -879,20 +1146,17 @@ export async function searchMercadoPagoPaymentsByExternalReference(
         limit: "10",
       });
 
-      const response = await fetch(
-        `https://api.mercadopago.com/v1/payments/search?${params.toString()}`,
-        {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-          cache: "no-store",
-        },
-      );
-
-      const payload = await readMercadoPagoPayload(response);
-
-      if (response.ok) {
+      try {
+        const { payload } =
+          await fetchMercadoPagoJson<MercadoPagoPaymentSearchResponse>(
+            `/v1/payments/search?${params.toString()}`,
+            {
+              method: "GET",
+              accessToken: token,
+              errorMessage: "Falha ao consultar pagamentos no Mercado Pago.",
+              allowRetry: true,
+            },
+          );
         const results = Array.isArray(
           (payload as MercadoPagoPaymentSearchResponse | null)?.results,
         )
@@ -905,11 +1169,13 @@ export async function searchMercadoPagoPaymentsByExternalReference(
           storeMercadoPagoPaymentLookupCache(payment, useCardToken);
         }
         return results;
+      } catch (error) {
+        lastProviderMessage =
+          error instanceof Error
+            ? error.message.replace(/^Mercado Pago:\s*/i, "").trim() ||
+              lastProviderMessage
+            : lastProviderMessage;
       }
-
-      lastProviderMessage =
-        parseMercadoPagoErrorMessage(payload) ||
-        "Falha ao consultar pagamentos no Mercado Pago.";
     }
 
     throw new Error(`Mercado Pago: ${lastProviderMessage}`);
@@ -928,37 +1194,20 @@ export async function refundMercadoPagoPixPayment(paymentId: string | number) {
     parts: [String(paymentId)],
   });
 
-  const response = await fetch(
-    `https://api.mercadopago.com/v1/payments/${encodeURIComponent(String(paymentId))}/refunds`,
+  const { payload } = await fetchMercadoPagoJson<unknown>(
+    `/v1/payments/${encodeURIComponent(String(paymentId))}/refunds`,
     {
       method: "POST",
+      accessToken,
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
         "X-Idempotency-Key": idempotencyKey,
       },
       body: JSON.stringify({}),
-      cache: "no-store",
+      errorMessage: "Falha ao estornar pagamento PIX no Mercado Pago.",
+      allowRetry: true,
     },
   );
-
-  const rawText = await response.text();
-  let payload: unknown = null;
-
-  if (rawText) {
-    try {
-      payload = JSON.parse(rawText) as unknown;
-    } catch {
-      payload = rawText;
-    }
-  }
-
-  if (!response.ok) {
-    const providerMessage =
-      parseMercadoPagoErrorMessage(payload) ||
-      "Falha ao estornar pagamento PIX no Mercado Pago.";
-    throw new Error(`Mercado Pago: ${providerMessage}`);
-  }
 
   invalidateMercadoPagoPaymentLookupCache({ paymentId });
   return payload;
@@ -971,36 +1220,18 @@ export async function refundMercadoPagoCardPayment(paymentId: string | number) {
     parts: [String(paymentId)],
   });
 
-  const response = await fetch(
-    `https://api.mercadopago.com/v1/payments/${encodeURIComponent(String(paymentId))}/refunds`,
+  const { payload } = await fetchMercadoPagoJson<unknown>(
+    `/v1/payments/${encodeURIComponent(String(paymentId))}/refunds`,
     {
       method: "POST",
+      accessToken,
       headers: {
         "X-Idempotency-Key": idempotencyKey,
-        Authorization: `Bearer ${accessToken}`,
       },
-      cache: "no-store",
+      errorMessage: "Falha ao estornar validacao do cartao.",
+      allowRetry: true,
     },
   );
-
-  const rawText = await response.text();
-  let payload: unknown = null;
-
-  if (rawText) {
-    try {
-      payload = JSON.parse(rawText) as unknown;
-    } catch {
-      payload = rawText;
-    }
-  }
-
-  if (!response.ok) {
-    const providerMessage =
-      parseMercadoPagoErrorMessage(payload) ||
-      "Falha ao estornar validacao do cartao.";
-
-    throw new Error(`Mercado Pago: ${providerMessage}`);
-  }
 
   invalidateMercadoPagoPaymentLookupCache({ paymentId });
   return payload;
@@ -1010,25 +1241,16 @@ export async function searchMercadoPagoCustomerByEmail(email: string) {
   const accessToken = getMercadoPagoCardAccessTokenOrThrow();
   const normalizedEmail = email.trim().toLowerCase();
 
-  const response = await fetch(
-    `https://api.mercadopago.com/v1/customers/search?email=${encodeURIComponent(normalizedEmail)}`,
-    {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
+  const { payload } =
+    await fetchMercadoPagoJson<MercadoPagoCustomerSearchResponse>(
+      `/v1/customers/search?email=${encodeURIComponent(normalizedEmail)}`,
+      {
+        method: "GET",
+        accessToken,
+        errorMessage: "Falha ao buscar cliente no Mercado Pago.",
+        allowRetry: true,
       },
-      cache: "no-store",
-    },
-  );
-
-  const payload = await readMercadoPagoPayload(response);
-
-  if (!response.ok) {
-    const providerMessage =
-      parseMercadoPagoErrorMessage(payload) ||
-      "Falha ao buscar cliente no Mercado Pago.";
-    throw new Error(`Mercado Pago: ${providerMessage}`);
-  }
+    );
 
   const results = Array.isArray(
     (payload as MercadoPagoCustomerSearchResponse | null)?.results,
@@ -1051,31 +1273,26 @@ export async function createMercadoPagoCustomer(input: {
       ? input.idempotencyKey.trim()
       : crypto.randomUUID();
 
-  const response = await fetch("https://api.mercadopago.com/v1/customers", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
-      "X-Idempotency-Key": idempotencyKey,
+  const { payload } = await fetchMercadoPagoJson<MercadoPagoCustomerResponse>(
+    "/v1/customers",
+    {
+      method: "POST",
+      accessToken,
+      headers: {
+        "Content-Type": "application/json",
+        "X-Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify({
+        email: input.email.trim().toLowerCase(),
+        first_name: input.firstName,
+        last_name: input.lastName || undefined,
+      }),
+      errorMessage: "Falha ao criar cliente no Mercado Pago.",
+      allowRetry: true,
     },
-    body: JSON.stringify({
-      email: input.email.trim().toLowerCase(),
-      first_name: input.firstName,
-      last_name: input.lastName || undefined,
-    }),
-    cache: "no-store",
-  });
+  );
 
-  const payload = await readMercadoPagoPayload(response);
-
-  if (!response.ok) {
-    const providerMessage =
-      parseMercadoPagoErrorMessage(payload) ||
-      "Falha ao criar cliente no Mercado Pago.";
-    throw new Error(`Mercado Pago: ${providerMessage}`);
-  }
-
-  return payload as MercadoPagoCustomerResponse;
+  return payload;
 }
 
 export async function createMercadoPagoCustomerCard(input: {
@@ -1089,32 +1306,25 @@ export async function createMercadoPagoCustomerCard(input: {
       ? input.idempotencyKey.trim()
       : crypto.randomUUID();
 
-  const response = await fetch(
-    `https://api.mercadopago.com/v1/customers/${encodeURIComponent(String(input.customerId))}/cards`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
-        "X-Idempotency-Key": idempotencyKey,
+  const { payload } =
+    await fetchMercadoPagoJson<MercadoPagoCustomerCardResponse>(
+      `/v1/customers/${encodeURIComponent(String(input.customerId))}/cards`,
+      {
+        method: "POST",
+        accessToken,
+        headers: {
+          "Content-Type": "application/json",
+          "X-Idempotency-Key": idempotencyKey,
+        },
+        body: JSON.stringify({
+          token: input.token,
+        }),
+        errorMessage: "Falha ao salvar cartao no cofre seguro do Mercado Pago.",
+        allowRetry: true,
       },
-      body: JSON.stringify({
-        token: input.token,
-      }),
-      cache: "no-store",
-    },
-  );
+    );
 
-  const payload = await readMercadoPagoPayload(response);
-
-  if (!response.ok) {
-    const providerMessage =
-      parseMercadoPagoErrorMessage(payload) ||
-      "Falha ao salvar cartao no cofre seguro do Mercado Pago.";
-    throw new Error(`Mercado Pago: ${providerMessage}`);
-  }
-
-  return payload as MercadoPagoCustomerCardResponse;
+  return payload;
 }
 
 export async function deleteMercadoPagoCustomerCard(input: {
@@ -1123,25 +1333,14 @@ export async function deleteMercadoPagoCustomerCard(input: {
 }) {
   const accessToken = getMercadoPagoCardAccessTokenOrThrow();
 
-  const response = await fetch(
-    `https://api.mercadopago.com/v1/customers/${encodeURIComponent(String(input.customerId))}/cards/${encodeURIComponent(String(input.cardId))}`,
+  const { payload } = await fetchMercadoPagoJson<unknown>(
+    `/v1/customers/${encodeURIComponent(String(input.customerId))}/cards/${encodeURIComponent(String(input.cardId))}`,
     {
       method: "DELETE",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-      cache: "no-store",
+      accessToken,
+      errorMessage: "Falha ao remover cartao salvo do Mercado Pago.",
     },
   );
-
-  const payload = await readMercadoPagoPayload(response);
-
-  if (!response.ok) {
-    const providerMessage =
-      parseMercadoPagoErrorMessage(payload) ||
-      "Falha ao remover cartao salvo do Mercado Pago.";
-    throw new Error(`Mercado Pago: ${providerMessage}`);
-  }
 
   return payload;
 }

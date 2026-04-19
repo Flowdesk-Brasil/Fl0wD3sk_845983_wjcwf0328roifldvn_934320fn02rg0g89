@@ -1421,19 +1421,23 @@ function formatCooldownMessage(seconds: number | null | undefined) {
 }
 
 function resolveCardPublicKey() {
-  const candidates = [
-    process.env.NEXT_PUBLIC_MERCADO_PAGO_CARD_TEST_PUBLIC_KEY || null,
+  const productionCandidates = [
     process.env.NEXT_PUBLIC_MERCADO_PAGO_CARD_PUBLIC_KEY || null,
     process.env.NEXT_PUBLIC_MERCADO_PAGO_CARD_PRODUCTION_PUBLIC_KEY || null,
     process.env.NEXT_PUBLIC_MERCADO_PAGO_PUBLIC_KEY || null,
   ]
     .map((value) => (typeof value === "string" ? value.trim() : ""))
     .filter(Boolean);
+  const testCandidates = [
+    process.env.NEXT_PUBLIC_MERCADO_PAGO_CARD_TEST_PUBLIC_KEY || null,
+  ]
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .filter(Boolean);
 
-  // Favor test keys for sandbox mode as requested
   const key =
-    candidates.find((value) => value.startsWith("TEST-")) ||
-    candidates[0] ||
+    productionCandidates.find((value) => value.startsWith("APP_USR-")) ||
+    productionCandidates[0] ||
+    testCandidates[0] ||
     null;
   if (!key) return null;
   if (!key.startsWith("APP_USR-") && !key.startsWith("TEST-")) {

@@ -24,12 +24,12 @@ export function areHostedCardCheckoutsEnabled() {
   }
 
   return Boolean(
-    normalizeConfiguredValue(process.env.NEXT_PUBLIC_MERCADO_PAGO_CARD_TEST_PUBLIC_KEY) ||
-      normalizeConfiguredValue(process.env.NEXT_PUBLIC_MERCADO_PAGO_CARD_PUBLIC_KEY) ||
+    normalizeConfiguredValue(process.env.NEXT_PUBLIC_MERCADO_PAGO_CARD_PUBLIC_KEY) ||
       normalizeConfiguredValue(
         process.env.NEXT_PUBLIC_MERCADO_PAGO_CARD_PRODUCTION_PUBLIC_KEY,
       ) ||
-      normalizeConfiguredValue(process.env.NEXT_PUBLIC_MERCADO_PAGO_PUBLIC_KEY),
+      normalizeConfiguredValue(process.env.NEXT_PUBLIC_MERCADO_PAGO_PUBLIC_KEY) ||
+      normalizeConfiguredValue(process.env.NEXT_PUBLIC_MERCADO_PAGO_CARD_TEST_PUBLIC_KEY),
   );
 }
 
