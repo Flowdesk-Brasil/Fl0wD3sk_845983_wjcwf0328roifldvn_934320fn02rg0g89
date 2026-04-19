@@ -76,9 +76,14 @@ import {
   sanitizeErrorMessage,
 } from "@/lib/security/errors";
 import {
+  resolveDatabaseFailureMessage,
+  resolveDatabaseFailureStatus,
+} from "@/lib/security/databaseAvailability";
+import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
 } from "@/lib/security/http";
+import { runCoalescedRouteResponse } from "@/lib/security/routeCoalescing";
 import {
   attachRequestId,
   createSecurityRequestContext,
@@ -1571,9 +1576,12 @@ export async function GET(request: Request) {
     return respond(
       {
         ok: false,
-        message: sanitizeErrorMessage(error, "Erro ao carregar pagamento PIX."),
+        message: resolveDatabaseFailureMessage(
+          error,
+          sanitizeErrorMessage(error, "Erro ao carregar pagamento PIX."),
+        ),
       },
-      { status: 500 },
+      { status: resolveDatabaseFailureStatus(error) },
     );
   }
 }
@@ -1623,47 +1631,66 @@ export async function POST(request: Request) {
       userId: access.context.sessionData.authSession.user.id,
       guildId,
     });
-
-    const rateLimit = await enforceRequestRateLimit({
-      action: "payment_pix_post",
-      windowMs: 10 * 60 * 1000,
-      maxAttempts: 10,
-      context: auditContext,
-    });
-    if (!rateLimit.ok) {
-      await logSecurityAuditEventSafe(auditContext, {
-        action: "payment_pix_post",
-        outcome: "blocked",
-        metadata: {
-          reason: "rate_limit",
-          retryAfterSeconds: rateLimit.retryAfterSeconds,
-        },
-      });
-      const response = respond(
-        {
-          ok: false,
-          message:
-            "Muitas tentativas de gerar PIX em pouco tempo. Aguarde alguns instantes.",
-        },
-        { status: 429 },
-      );
-      response.headers.set("Retry-After", String(rateLimit.retryAfterSeconds));
-      return response;
-    }
-
-    await logSecurityAuditEventSafe(auditContext, {
-      action: "payment_pix_post",
-      outcome: "started",
+    const mutationKey = createStablePaymentIdempotencyKey({
+      namespace: "payment-pix-post-route",
+      parts: [
+        access.context.sessionData.authSession.user.id,
+        guildId || "__account__",
+        typeof body.planCode === "string" ? body.planCode : "",
+        typeof body.billingPeriodCode === "string" ? body.billingPeriodCode : "",
+        requestedPayerName || "",
+        requestedPayerDocument?.normalized || "",
+        typeof body.couponCode === "string" ? body.couponCode : "",
+        typeof body.giftCardCode === "string" ? body.giftCardCode : "",
+        forceNew,
+      ],
     });
 
-    const user = access.context.sessionData.authSession.user;
-    if (guildId) {
-      await cleanupExpiredUnpaidServerSetups({
-        userId: user.id,
-        guildId,
-        source: "payment_pix_post",
-      });
-    }
+    return await runCoalescedRouteResponse({
+      key: mutationKey,
+      ttlMs: PAYMENT_ROUTE_COALESCE_TTL_MS,
+      producer: async () => {
+
+        const rateLimit = await enforceRequestRateLimit({
+          action: "payment_pix_post",
+          windowMs: 10 * 60 * 1000,
+          maxAttempts: 10,
+          context: auditContext,
+        });
+        if (!rateLimit.ok) {
+          await logSecurityAuditEventSafe(auditContext, {
+            action: "payment_pix_post",
+            outcome: "blocked",
+            metadata: {
+              reason: "rate_limit",
+              retryAfterSeconds: rateLimit.retryAfterSeconds,
+            },
+          });
+          const response = respond(
+            {
+              ok: false,
+              message:
+                "Muitas tentativas de gerar PIX em pouco tempo. Aguarde alguns instantes.",
+            },
+            { status: 429 },
+          );
+          response.headers.set("Retry-After", String(rateLimit.retryAfterSeconds));
+          return response;
+        }
+
+        await logSecurityAuditEventSafe(auditContext, {
+          action: "payment_pix_post",
+          outcome: "started",
+        });
+
+        const user = access.context.sessionData.authSession.user;
+        if (guildId) {
+          await cleanupExpiredUnpaidServerSetups({
+            userId: user.id,
+            guildId,
+            source: "payment_pix_post",
+          });
+        }
 
     const checkoutPlan = await resolveCheckoutPlanForGuild({
       userId: user.id,
@@ -2340,11 +2367,13 @@ export async function POST(request: Request) {
       const friendlyMessage = resolveFriendlyPixProviderErrorMessage(message);
       const responseStatus = isProviderDocumentErrorMessage(message) ? 400 : 503;
 
-      return respond(
-        { ok: false, message: friendlyMessage },
-        { status: responseStatus },
-      );
-    }
+          return respond(
+            { ok: false, message: friendlyMessage },
+            { status: responseStatus },
+          );
+        }
+      },
+    });
   } catch (error) {
     await logSecurityAuditEventSafe(auditContext, {
       action: "payment_pix_post",
@@ -2356,9 +2385,12 @@ export async function POST(request: Request) {
     return respond(
       {
         ok: false,
-        message: sanitizeErrorMessage(error, "Erro ao criar pagamento PIX."),
+        message: resolveDatabaseFailureMessage(
+          error,
+          sanitizeErrorMessage(error, "Erro ao criar pagamento PIX."),
+        ),
       },
-      { status: 500 },
+      { status: resolveDatabaseFailureStatus(error) },
     );
   }
 }

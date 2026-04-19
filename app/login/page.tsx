@@ -123,7 +123,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const currentUser = await getCurrentUserFromSessionCookie();
 
   if (loginMode === "link" && currentUser?.discord_user_id) {
-    redirect(nextPath || "/servers");
+    redirect(nextPath || "/dashboard");
   }
 
   return (

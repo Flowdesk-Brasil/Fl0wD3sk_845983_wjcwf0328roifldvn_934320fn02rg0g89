@@ -8,6 +8,7 @@ import { LandingLogoLoop } from "@/components/landing/LandingLogoLoop";
 import { LandingOfferPlans } from "@/components/landing/LandingOfferPlans";
 import { LandingReveal } from "@/components/landing/LandingReveal";
 import { LandingServerUsageRow } from "@/components/landing/LandingServerUsageRow";
+import { ButtonLoader } from "@/components/login/ButtonLoader";
 
 const FEATURE_DIVIDER_POSITIONS = [
   { left: "5.1601%" },
@@ -38,7 +39,30 @@ const CONTACT_HREF = "https://discord.gg/ddXtHhvvrx";
 const DOCUMENTATION_HREF =
   process.env.NEXT_PUBLIC_DOCUMENTATION_URL || "/terms";
 
-export function LandingHero() {
+type LandingServiceState = "loading" | "ready" | "degraded";
+
+function renderCheckoutActionLabel(
+  serviceState: LandingServiceState,
+  readyLabel: string,
+) {
+  if (serviceState === "loading") {
+    return <ButtonLoader size={18} colorClassName="text-white" />;
+  }
+
+  if (serviceState === "degraded") {
+    return "Indisponivel";
+  }
+
+  return readyLabel;
+}
+
+export function LandingHero({
+  serviceState = "loading",
+}: {
+  serviceState?: LandingServiceState;
+}) {
+  const isCheckoutReady = serviceState === "ready";
+
   return (
     <section className="w-full">
       <div className="mx-auto mt-[35px] w-full max-w-[1582px] px-[20px] md:px-6 lg:px-8 xl:px-10 2xl:px-[20px]">
@@ -88,11 +112,12 @@ export function LandingHero() {
 
               <LandingReveal delay={490}>
                 <LandingActionButton
-                  href="/config?fresh=1"
+                  href={isCheckoutReady ? "/config?fresh=1" : undefined}
                   variant="blue"
+                  disabled={!isCheckoutReady}
                   className="mt-[20px] h-[42px] min-w-[156px] rounded-[12px] px-[24px] text-[16px]"
                 >
-                  Comecar hoje
+                  {renderCheckoutActionLabel(serviceState, "Comecar hoje")}
                 </LandingActionButton>
               </LandingReveal>
             </div>
@@ -276,11 +301,12 @@ export function LandingHero() {
                   </p>
 
                   <LandingActionButton
-                    href="/config?fresh=1"
+                    href={isCheckoutReady ? "/config?fresh=1" : undefined}
                     variant="blue"
+                    disabled={!isCheckoutReady}
                     className="mt-[20px] h-[42px] min-w-[156px] rounded-[12px] px-[24px] text-[16px]"
                   >
-                    Comecar hoje
+                    {renderCheckoutActionLabel(serviceState, "Comecar hoje")}
                   </LandingActionButton>
                 </div>
               </LandingReveal>
@@ -357,11 +383,12 @@ export function LandingHero() {
 
               <LandingReveal delay={1700}>
                 <LandingActionButton
-                  href="/config?fresh=1"
+                  href={isCheckoutReady ? "/config?fresh=1" : undefined}
                   variant="blue"
+                  disabled={!isCheckoutReady}
                   className="mt-[20px] h-[42px] min-w-[170px] rounded-[12px] px-[24px] text-[16px]"
                 >
-                  Comecar agora
+                  {renderCheckoutActionLabel(serviceState, "Comecar agora")}
                 </LandingActionButton>
               </LandingReveal>
             </div>
@@ -378,7 +405,7 @@ export function LandingHero() {
               </h2>
             </LandingReveal>
 
-            <LandingOfferPlans />
+            <LandingOfferPlans serviceState={serviceState} />
           </div>
 
           <div className="mx-auto mt-[88px] flex w-full max-w-[1320px] flex-col items-center text-center">
@@ -480,11 +507,12 @@ export function LandingHero() {
                   Escolha um plano
                 </LandingActionButton>
                 <LandingActionButton
-                  href="/config?fresh=1"
+                  href={isCheckoutReady ? "/config?fresh=1" : undefined}
                   variant="blue"
+                  disabled={!isCheckoutReady}
                   className="h-[46px] rounded-[12px] px-6 text-[16px]"
                 >
-                  Comece gratuitamente
+                  {renderCheckoutActionLabel(serviceState, "Comece gratuitamente")}
                 </LandingActionButton>
               </div>
             </LandingReveal>

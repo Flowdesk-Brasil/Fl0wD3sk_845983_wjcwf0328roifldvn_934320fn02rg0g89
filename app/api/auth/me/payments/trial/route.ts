@@ -24,8 +24,16 @@ import {
   syncUserPlanStateFromOrder,
 } from "@/lib/plans/state";
 import { resolvePlanCycleExpirationIso } from "@/lib/plans/cycle";
+import {
+  resolveDatabaseFailureMessage,
+  resolveDatabaseFailureStatus,
+} from "@/lib/security/databaseAvailability";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { applyNoStoreHeaders, ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
+import {
+  createCoalescedRouteKey,
+  runCoalescedRouteResponse,
+} from "@/lib/security/routeCoalescing";
 import {
   attachRequestId,
   createSecurityRequestContext,
@@ -70,6 +78,7 @@ type PaymentOrderRecord = {
 
 const PAYMENT_ORDER_SELECT_COLUMNS =
   `id, order_number, guild_id, user_id, payment_method, status, amount, currency, plan_code, plan_name, plan_billing_cycle_days, plan_max_licensed_servers, plan_max_active_tickets, plan_max_automations, plan_max_monthly_actions, provider_status, provider_status_detail, paid_at, expires_at, created_at, updated_at, ${PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS}`;
+const TRIAL_ROUTE_COALESCE_TTL_MS = 2_500;
 
 function normalizeGuildId(value: unknown) {
   if (typeof value !== "string") return null;
@@ -285,231 +294,247 @@ export async function POST(request: Request) {
       userId: user.id,
       guildId,
     });
-    const rateLimit = await enforceRequestRateLimit({
-      action: "payment_trial_post",
-      windowMs: 10 * 60 * 1000,
-      maxAttempts: 10,
-      context: auditContext,
-    });
-    if (!rateLimit.ok) {
-      await logSecurityAuditEventSafe(auditContext, {
-        action: "payment_trial_post",
-        outcome: "blocked",
-        metadata: {
-          reason: "rate_limit",
-          retryAfterSeconds: rateLimit.retryAfterSeconds,
-        },
-      });
-
-      const response = respond(
-        {
-          ok: false,
-          message:
-            "Muitas tentativas de ativacao em pouco tempo. Aguarde alguns instantes e tente novamente.",
-        },
-        { status: 429 },
-      );
-      response.headers.set("Retry-After", String(rateLimit.retryAfterSeconds));
-      return response;
-    }
-
-    await logSecurityAuditEventSafe(auditContext, {
-      action: "payment_trial_post",
-      outcome: "started",
+    const mutationKey = createCoalescedRouteKey({
+      namespace: "payment-trial-post",
+      parts: [
+        user.id,
+        guildId || "__account__",
+        typeof body.planCode === "string" ? body.planCode : "",
+        typeof body.billingPeriodCode === "string" ? body.billingPeriodCode : "",
+      ],
     });
 
-    if (guildId) {
-      await cleanupExpiredUnpaidServerSetups({
-        userId: user.id,
-        guildId,
-        source: "payment_trial_post",
-      });
-    }
-
-    const basicPlanAvailability = await getBasicPlanAvailability(user.id);
-    if (!basicPlanAvailability.isAvailable) {
-      return respond(
-        {
-          ok: false,
-          message:
-            basicPlanAvailability.unavailableMessage ||
-            "O plano gratuito ja nao esta disponivel nesta conta.",
-        },
-        { status: 403 },
-      );
-    }
-
-    const checkoutPlan = await resolveEffectivePlanSelection({
-      userId: user.id,
-      guildId,
-      preferredPlanCode: body.planCode,
-      preferredBillingPeriodCode: body.billingPeriodCode,
-    });
-
-    if (!checkoutPlan.plan.isTrial) {
-      return respond(
-        {
-          ok: false,
-          message: "Este endpoint so ativa o plano gratuito.",
-        },
-        { status: 400 },
-      );
-    }
-
-    const latestCoverage = await getLatestApprovedLicenseCoverageForGuild(guildId);
-    const renewalDecision = resolveRenewalPaymentDecision(latestCoverage);
-    if (latestCoverage && !renewalDecision.allowed) {
-      const activeLicenseLink =
-        latestCoverage.order.user_id === user.id
-          ? await ensureCheckoutAccessTokenForOrder({
-              order: latestCoverage.order,
-              forceRotate: false,
-              invalidateOtherOrders: false,
-            })
-          : null;
-
-      return respond({
-        ok: true,
-        blockedByActiveLicense: true,
-        licenseActive: true,
-        licenseExpiresAt: latestCoverage.licenseExpiresAt,
-        order: toApiOrder(
-          latestCoverage.order,
-          activeLicenseLink?.checkoutAccessToken || null,
-        ),
-      });
-    }
-
-    const latestUserOrder = await getLatestUserOrderForGuild(user.id, guildId);
-    if (
-      latestUserOrder &&
-      latestUserOrder.status === "approved" &&
-      latestUserOrder.plan_code === checkoutPlan.plan.code
-    ) {
-      const securedExistingOrder = await ensureCheckoutAccessTokenForOrder({
-        order: latestUserOrder,
-        forceRotate: false,
-        invalidateOtherOrders: false,
-      });
-
-      return respond({
-        ok: true,
-        reused: true,
-        licenseActive: true,
-        licenseExpiresAt: latestUserOrder.expires_at,
-        order: toApiOrder(
-          securedExistingOrder.order,
-          securedExistingOrder.checkoutAccessToken,
-        ),
-      });
-    }
-
-    const supabase = getSupabaseAdminClientOrThrow();
-    const nowIso = new Date().toISOString();
-    const expiresAt =
-      resolvePlanCycleExpirationIso({
-        baseTimestamp: nowIso,
-        billingCycleDays: checkoutPlan.plan.billingCycleDays,
-      }) || nowIso;
-
-    const createdOrderResult = await supabase
-      .from("payment_orders")
-      .insert({
-        user_id: user.id,
-        guild_id: guildId,
-        payment_method: "trial",
-        status: "approved",
-        amount: 0,
-        currency: checkoutPlan.plan.currency,
-        plan_code: checkoutPlan.plan.code,
-        plan_name: checkoutPlan.plan.name,
-        plan_billing_cycle_days: checkoutPlan.plan.billingCycleDays,
-        plan_max_licensed_servers: checkoutPlan.plan.entitlements.maxLicensedServers,
-        plan_max_active_tickets: checkoutPlan.plan.entitlements.maxActiveTickets,
-        plan_max_automations: checkoutPlan.plan.entitlements.maxAutomations,
-        plan_max_monthly_actions: checkoutPlan.plan.entitlements.maxMonthlyActions,
-        provider: "flowdesk",
-        provider_status: "approved",
-        provider_status_detail: "free_trial_activated",
-        provider_payload: {
-          source: "flowdesk_trial_checkout",
-          step: 4,
-          pricing: {
-            baseAmount: 0,
-            subtotalAmount: 0,
-            totalAmount: 0,
-            currency: checkoutPlan.plan.currency,
-            coupon: null,
-            giftCard: null,
-          },
-          plan: {
-            code: checkoutPlan.plan.code,
-            name: checkoutPlan.plan.name,
-            billingCycleDays: checkoutPlan.plan.billingCycleDays,
-            entitlements: {
-              ...checkoutPlan.plan.entitlements,
+    return await runCoalescedRouteResponse({
+      key: mutationKey,
+      ttlMs: TRIAL_ROUTE_COALESCE_TTL_MS,
+      producer: async () => {
+        const rateLimit = await enforceRequestRateLimit({
+          action: "payment_trial_post",
+          windowMs: 10 * 60 * 1000,
+          maxAttempts: 10,
+          context: auditContext,
+        });
+        if (!rateLimit.ok) {
+          await logSecurityAuditEventSafe(auditContext, {
+            action: "payment_trial_post",
+            outcome: "blocked",
+            metadata: {
+              reason: "rate_limit",
+              retryAfterSeconds: rateLimit.retryAfterSeconds,
             },
+          });
+
+          const response = respond(
+            {
+              ok: false,
+              message:
+                "Muitas tentativas de ativacao em pouco tempo. Aguarde alguns instantes e tente novamente.",
+            },
+            { status: 429 },
+          );
+          response.headers.set("Retry-After", String(rateLimit.retryAfterSeconds));
+          return response;
+        }
+
+        await logSecurityAuditEventSafe(auditContext, {
+          action: "payment_trial_post",
+          outcome: "started",
+        });
+
+        if (guildId) {
+          await cleanupExpiredUnpaidServerSetups({
+            userId: user.id,
+            guildId,
+            source: "payment_trial_post",
+          });
+        }
+
+        const basicPlanAvailability = await getBasicPlanAvailability(user.id);
+        if (!basicPlanAvailability.isAvailable) {
+          return respond(
+            {
+              ok: false,
+              message:
+                basicPlanAvailability.unavailableMessage ||
+                "O plano gratuito ja nao esta disponivel nesta conta.",
+            },
+            { status: 403 },
+          );
+        }
+
+        const checkoutPlan = await resolveEffectivePlanSelection({
+          userId: user.id,
+          guildId,
+          preferredPlanCode: body.planCode,
+          preferredBillingPeriodCode: body.billingPeriodCode,
+        });
+
+        if (!checkoutPlan.plan.isTrial) {
+          return respond(
+            {
+              ok: false,
+              message: "Este endpoint so ativa o plano gratuito.",
+            },
+            { status: 400 },
+          );
+        }
+
+        const latestCoverage = await getLatestApprovedLicenseCoverageForGuild(guildId);
+        const renewalDecision = resolveRenewalPaymentDecision(latestCoverage);
+        if (latestCoverage && !renewalDecision.allowed) {
+          const activeLicenseLink =
+            latestCoverage.order.user_id === user.id
+              ? await ensureCheckoutAccessTokenForOrder({
+                  order: latestCoverage.order,
+                  forceRotate: false,
+                  invalidateOtherOrders: false,
+                })
+              : null;
+
+          return respond({
+            ok: true,
+            blockedByActiveLicense: true,
+            licenseActive: true,
+            licenseExpiresAt: latestCoverage.licenseExpiresAt,
+            order: toApiOrder(
+              latestCoverage.order,
+              activeLicenseLink?.checkoutAccessToken || null,
+            ),
+          });
+        }
+
+        const latestUserOrder = await getLatestUserOrderForGuild(user.id, guildId);
+        if (
+          latestUserOrder &&
+          latestUserOrder.status === "approved" &&
+          latestUserOrder.plan_code === checkoutPlan.plan.code
+        ) {
+          const securedExistingOrder = await ensureCheckoutAccessTokenForOrder({
+            order: latestUserOrder,
+            forceRotate: false,
+            invalidateOtherOrders: false,
+          });
+
+          return respond({
+            ok: true,
+            reused: true,
+            licenseActive: true,
+            licenseExpiresAt: latestUserOrder.expires_at,
+            order: toApiOrder(
+              securedExistingOrder.order,
+              securedExistingOrder.checkoutAccessToken,
+            ),
+          });
+        }
+
+        const supabase = getSupabaseAdminClientOrThrow();
+        const nowIso = new Date().toISOString();
+        const expiresAt =
+          resolvePlanCycleExpirationIso({
+            baseTimestamp: nowIso,
+            billingCycleDays: checkoutPlan.plan.billingCycleDays,
+          }) || nowIso;
+
+        const createdOrderResult = await supabase
+          .from("payment_orders")
+          .insert({
+            user_id: user.id,
+            guild_id: guildId,
+            payment_method: "trial",
+            status: "approved",
+            amount: 0,
+            currency: checkoutPlan.plan.currency,
+            plan_code: checkoutPlan.plan.code,
+            plan_name: checkoutPlan.plan.name,
+            plan_billing_cycle_days: checkoutPlan.plan.billingCycleDays,
+            plan_max_licensed_servers: checkoutPlan.plan.entitlements.maxLicensedServers,
+            plan_max_active_tickets: checkoutPlan.plan.entitlements.maxActiveTickets,
+            plan_max_automations: checkoutPlan.plan.entitlements.maxAutomations,
+            plan_max_monthly_actions: checkoutPlan.plan.entitlements.maxMonthlyActions,
+            provider: "flowdesk",
+            provider_status: "approved",
+            provider_status_detail: "free_trial_activated",
+            provider_payload: {
+              source: "flowdesk_trial_checkout",
+              step: 4,
+              pricing: {
+                baseAmount: 0,
+                subtotalAmount: 0,
+                totalAmount: 0,
+                currency: checkoutPlan.plan.currency,
+                coupon: null,
+                giftCard: null,
+              },
+              plan: {
+                code: checkoutPlan.plan.code,
+                name: checkoutPlan.plan.name,
+                billingCycleDays: checkoutPlan.plan.billingCycleDays,
+                entitlements: {
+                  ...checkoutPlan.plan.entitlements,
+                },
+              },
+              trial: true,
+            },
+            paid_at: nowIso,
+            expires_at: expiresAt,
+          })
+          .select(PAYMENT_ORDER_SELECT_COLUMNS)
+          .single<PaymentOrderRecord>();
+
+        if (createdOrderResult.error || !createdOrderResult.data) {
+          throw new Error(
+            createdOrderResult.error?.message || "Falha ao ativar o plano gratuito.",
+          );
+        }
+
+        await createPaymentOrderEvent(createdOrderResult.data.id, "order_created", {
+          orderNumber: createdOrderResult.data.order_number,
+          guildId,
+          userId: user.id,
+          method: "trial",
+          source: "flowdesk_trial_checkout",
+        });
+
+        await createPaymentOrderEvent(
+          createdOrderResult.data.id,
+          "provider_payment_created",
+          {
+            providerStatus: "approved",
+            providerStatusDetail: "free_trial_activated",
+            source: "flowdesk_trial_checkout",
           },
-          trial: true,
-        },
-        paid_at: nowIso,
-        expires_at: expiresAt,
-      })
-      .select(PAYMENT_ORDER_SELECT_COLUMNS)
-      .single<PaymentOrderRecord>();
+        );
 
-    if (createdOrderResult.error || !createdOrderResult.data) {
-      throw new Error(
-        createdOrderResult.error?.message || "Falha ao ativar o plano gratuito.",
-      );
-    }
+        const securedOrder = await ensureCheckoutAccessTokenForOrder({
+          order: createdOrderResult.data,
+          forceRotate: true,
+          invalidateOtherOrders: true,
+        });
 
-    await createPaymentOrderEvent(createdOrderResult.data.id, "order_created", {
-      orderNumber: createdOrderResult.data.order_number,
-      guildId,
-      userId: user.id,
-      method: "trial",
-      source: "flowdesk_trial_checkout",
-    });
+        await syncUserPlanStateFromOrder(securedOrder.order);
+        clearPlanStateCacheForUser(user.id);
 
-    await createPaymentOrderEvent(
-      createdOrderResult.data.id,
-      "provider_payment_created",
-      {
-        providerStatus: "approved",
-        providerStatusDetail: "free_trial_activated",
-        source: "flowdesk_trial_checkout",
+        await logSecurityAuditEventSafe(auditContext, {
+          action: "payment_trial_post",
+          outcome: "succeeded",
+          metadata: {
+            guildId,
+            orderNumber: securedOrder.order.order_number,
+          },
+        });
+
+        return respond({
+          ok: true,
+          reused: false,
+          trialActivated: true,
+          licenseActive: true,
+          licenseExpiresAt: expiresAt,
+          order: toApiOrder(
+            securedOrder.order,
+            securedOrder.checkoutAccessToken,
+          ),
+        });
       },
-    );
-
-    const securedOrder = await ensureCheckoutAccessTokenForOrder({
-      order: createdOrderResult.data,
-      forceRotate: true,
-      invalidateOtherOrders: true,
-    });
-
-    await syncUserPlanStateFromOrder(securedOrder.order);
-    clearPlanStateCacheForUser(user.id);
-
-    await logSecurityAuditEventSafe(auditContext, {
-      action: "payment_trial_post",
-      outcome: "succeeded",
-      metadata: {
-        guildId,
-        orderNumber: securedOrder.order.order_number,
-      },
-    });
-
-    return respond({
-      ok: true,
-      reused: false,
-      trialActivated: true,
-      licenseActive: true,
-      licenseExpiresAt: expiresAt,
-      order: toApiOrder(
-        securedOrder.order,
-        securedOrder.checkoutAccessToken,
-      ),
     });
   } catch (error) {
     await logSecurityAuditEventSafe(auditContext, {
@@ -526,12 +551,15 @@ export async function POST(request: Request) {
     return respond(
       {
         ok: false,
-        message: sanitizeErrorMessage(
+        message: resolveDatabaseFailureMessage(
           error,
-          "Falha ao ativar o plano gratuito.",
+          sanitizeErrorMessage(
+            error,
+            "Falha ao ativar o plano gratuito.",
+          ),
         ),
       },
-      { status: 500 },
+      { status: resolveDatabaseFailureStatus(error) },
     );
   }
 }

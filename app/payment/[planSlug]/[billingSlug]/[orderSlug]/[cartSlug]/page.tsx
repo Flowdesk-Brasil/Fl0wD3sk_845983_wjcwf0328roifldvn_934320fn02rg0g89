@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
+import { AppMaintenanceScreen } from "@/components/common/AppMaintenanceScreen";
 import { AccountPaymentCheckout } from "@/components/payment/AccountPaymentCheckout";
 import { buildLoginHref } from "@/lib/auth/paths";
-import { getCurrentUserFromSessionCookie } from "@/lib/auth/session";
+import { getCurrentUserFromSessionCookieSafe } from "@/lib/auth/session";
 import {
   normalizePlanBillingPeriodCodeFromSlug,
   normalizePlanCodeFromSlug,
@@ -46,7 +47,23 @@ export default async function PaymentPlanOrderPage({
   const currentPathname =
     `/payment/${routeParams.planSlug}/${routeParams.billingSlug}` +
     `/${routeParams.orderSlug}/${routeParams.cartSlug}`;
-  const user = await getCurrentUserFromSessionCookie({ fullContext: true });
+  const sessionResult = await getCurrentUserFromSessionCookieSafe({
+    fullContext: true,
+  });
+
+  if (sessionResult.degraded) {
+    return (
+      <AppMaintenanceScreen
+        badgeLabel="Checkout protegido"
+        title="Checkout temporariamente indisponivel"
+        description="Estamos restabelecendo a conexao com a base antes de continuar com seu pagamento. Tente novamente em instantes."
+        refreshLabel="Tentar novamente"
+        fallbackHref="/"
+      />
+    );
+  }
+
+  const user = sessionResult.user;
 
   if (!user) {
     redirect(buildLoginHref(canonicalHref));

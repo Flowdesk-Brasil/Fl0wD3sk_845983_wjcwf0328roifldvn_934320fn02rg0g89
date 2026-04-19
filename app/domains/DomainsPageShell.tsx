@@ -25,7 +25,7 @@ export async function DomainsPageShell({ initialMode = "register" }: { initialMo
     ? {
         username: user.username,
         avatarUrl: buildDiscordAvatarUrl(user.discord_user_id, user.avatar),
-        href: "/servers",
+        href: "/dashboard",
       }
     : null;
 

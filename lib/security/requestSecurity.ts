@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { NextResponse } from "next/server";
+import { isDatabaseAvailabilityError } from "@/lib/security/databaseAvailability";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 export type SecurityRequestContext = {
@@ -320,28 +321,42 @@ export async function enforceRequestRateLimit(input: RateLimitInput) {
   if (exceededDimensions.length) {
     await Promise.all(
       exceededDimensions.map(async (dimension) => {
-        const confirmedCount = await countAttemptsByDimension({
-          action: input.action,
-          windowStartIso,
-          field: dimension.field,
-          value: dimension.value,
-        });
+        try {
+          const confirmedCount = await countAttemptsByDimension({
+            action: input.action,
+            windowStartIso,
+            field: dimension.field,
+            value: dimension.value,
+          });
 
-        if (confirmedCount >= input.maxAttempts) {
+          if (confirmedCount >= input.maxAttempts) {
+            blocked = true;
+            counts[dimension.key] = confirmedCount;
+            return;
+          }
+
+          const effectiveCount = confirmedCount + 1;
+          counts[dimension.key] = effectiveCount;
+          setLocalRateLimitCount({
+            action: input.action,
+            field: dimension.field,
+            value: dimension.value,
+            count: effectiveCount,
+            windowMs: input.windowMs,
+          });
+        } catch (error) {
+          if (!isDatabaseAvailabilityError(error)) {
+            throw error;
+          }
+
+          // Em modo degradado protegemos a rota usando o contador local para evitar
+          // avalanche de tentativas enquanto o Supabase se recupera.
           blocked = true;
-          counts[dimension.key] = confirmedCount;
-          return;
+          counts[dimension.key] = Math.max(
+            counts[dimension.key],
+            input.maxAttempts,
+          );
         }
-
-        const effectiveCount = confirmedCount + 1;
-        counts[dimension.key] = effectiveCount;
-        setLocalRateLimitCount({
-          action: input.action,
-          field: dimension.field,
-          value: dimension.value,
-          count: effectiveCount,
-          windowMs: input.windowMs,
-        });
       }),
     );
   }

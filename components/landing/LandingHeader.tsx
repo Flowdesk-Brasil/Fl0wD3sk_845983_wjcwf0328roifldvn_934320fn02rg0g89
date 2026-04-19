@@ -9,6 +9,7 @@ import { usePathname } from "next/navigation";
 import { LandingActionButton } from "@/components/landing/LandingActionButton";
 import { LandingGlowTag } from "@/components/landing/LandingGlowTag";
 import { LandingReveal } from "@/components/landing/LandingReveal";
+import { ButtonLoader } from "@/components/login/ButtonLoader";
 
 type NavigationItem = {
   label: string;
@@ -24,6 +25,7 @@ type LandingHeaderAuthenticatedUser = {
 
 type LandingHeaderProps = {
   authenticatedUser?: LandingHeaderAuthenticatedUser | null;
+  serviceState?: "loading" | "ready" | "degraded";
 };
 
 type DesktopMenuIconName =
@@ -461,7 +463,7 @@ function HeaderAccountButton({
 
   return (
     <LandingActionButton
-      href={user.href || "/servers"}
+      href={user.href || "/dashboard"}
       variant={variant}
       className={className}
     >
@@ -492,11 +494,38 @@ function HeaderAccountButton({
   );
 }
 
-export function LandingHeader({ authenticatedUser = null }: LandingHeaderProps = {}) {
+export function LandingHeader({
+  authenticatedUser = null,
+  serviceState = "loading",
+}: LandingHeaderProps = {}) {
   const pathname = usePathname();
   const isAffiliatesPage = pathname ? pathname.startsWith("/affiliates") : false;
-  const dashboardHref = isAffiliatesPage ? "/affiliates/dashboard" : "/servers";
+  const dashboardHref = isAffiliatesPage ? "/affiliates/dashboard" : "/dashboard";
   const loginHref = isAffiliatesPage ? "/login?next=/affiliates/dashboard" : "/login";
+  const isServiceReady = serviceState === "ready";
+  const isServiceLoading = serviceState === "loading";
+  const areGuestAuthActionsDisabled = !authenticatedUser && !isServiceReady;
+  const darkGuestActionLabel = isServiceLoading ? (
+    <ButtonLoader size={18} colorClassName="text-[#B7B7B7]" />
+  ) : serviceState === "degraded" ? (
+    "Indisponivel"
+  ) : (
+    "Login"
+  );
+  const lightGuestActionLabel = isServiceLoading ? (
+    <ButtonLoader size={18} colorClassName="text-[#2B2B2B]" />
+  ) : serviceState === "degraded" ? (
+    "Indisponivel"
+  ) : (
+    "Sign Up"
+  );
+  const mobileGuestActionLabel = isServiceLoading ? (
+    <ButtonLoader size={18} colorClassName="text-[#2B2B2B]" />
+  ) : serviceState === "degraded" ? (
+    "Indisponivel"
+  ) : (
+    "Login"
+  );
 
 
   const documentationHref =
@@ -649,7 +678,7 @@ export function LandingHeader({ authenticatedUser = null }: LandingHeaderProps =
       ],
       sideTitle: "PRODUTO",
       sideLinks: [
-        { label: "Painel principal", href: "/config?fresh=1" },
+        { label: "Painel principal", href: "/dashboard" },
         { label: "Planos empresariais", href: "/#plans" },
         { label: "Documentacao", href: documentationHref },
         { label: "Privacidade", href: "/privacy" },
@@ -1327,13 +1356,21 @@ export function LandingHeader({ authenticatedUser = null }: LandingHeaderProps =
                   ) : (
                     <>
                       <LandingReveal delay={570}>
-                        <LandingActionButton href={loginHref} variant="dark">
-                          Login
+                        <LandingActionButton
+                          href={loginHref}
+                          variant="dark"
+                          disabled={areGuestAuthActionsDisabled}
+                        >
+                          {darkGuestActionLabel}
                         </LandingActionButton>
                       </LandingReveal>
                       <LandingReveal delay={640}>
-                        <LandingActionButton href={loginHref} variant="light">
-                          Sign Up
+                        <LandingActionButton
+                          href={loginHref}
+                          variant="light"
+                          disabled={areGuestAuthActionsDisabled}
+                        >
+                          {lightGuestActionLabel}
                         </LandingActionButton>
                       </LandingReveal>
                     </>
@@ -1363,9 +1400,10 @@ export function LandingHeader({ authenticatedUser = null }: LandingHeaderProps =
                     <LandingActionButton
                       href={loginHref}
                       variant="light"
+                      disabled={areGuestAuthActionsDisabled}
                       className="h-[40px] px-4 text-[14px] sm:h-[46px] sm:px-6 sm:text-[16px]"
                     >
-                      Sign Up
+                      {lightGuestActionLabel}
                     </LandingActionButton>
                   )}
                 </LandingReveal>
@@ -1470,9 +1508,10 @@ export function LandingHeader({ authenticatedUser = null }: LandingHeaderProps =
                     href={loginHref}
                     onClick={closeMenu}
                     variant="light"
+                    disabled={areGuestAuthActionsDisabled}
                     className="h-[52px] w-full rounded-[12px] px-6 text-[18px]"
                   >
-                    Login
+                    {mobileGuestActionLabel}
                   </LandingActionButton>
                 )}
               </LandingReveal>

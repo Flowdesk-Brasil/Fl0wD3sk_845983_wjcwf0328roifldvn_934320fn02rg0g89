@@ -573,6 +573,7 @@ export function DiscordLinkPageClient({
       : state.phase === "syncing"
         ? state.description
         : state.description;
+  const shouldRenderSwitchAccountAction = state.phase !== "success";
   const accountDisplayName = authenticatedUser?.displayName || "Sua conta";
   const accountSubtitle = authenticatedUser
     ? `@${authenticatedUser.username}`
@@ -707,20 +708,29 @@ export function DiscordLinkPageClient({
                   {state.phase === "syncing" && state.helperHref && state.helperLabel ? <a href={state.helperHref} target="_blank" rel="noreferrer" className="mt-5 inline-flex h-[48px] w-full items-center justify-center rounded-[14px] border border-[#1A1A1A] bg-[#0B0B0B] px-5 text-[14px] font-medium text-[#E2E2E2] transition-colors hover:border-[#2A2A2A] hover:bg-[#111111]">{state.helperLabel}</a> : null}
                 </>
               )}
+
+              {shouldRenderSwitchAccountAction ? (
+                <button
+                  type="button"
+                  onClick={() => { void handleLogout(); }}
+                  disabled={isLoggingOut}
+                  className="mt-4 inline-flex h-[46px] w-full items-center justify-center rounded-[14px] border border-[#1A1A1A] bg-transparent px-5 text-[14px] font-medium text-[#A7A7A7] transition-colors hover:border-[#2A2A2A] hover:text-[#F3F3F3] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isLoggingOut ? (
+                    <span className="inline-flex items-center gap-3">
+                      <ButtonLoader size={16} colorClassName="text-[#F3F3F3]" />
+                      Saindo para trocar de conta
+                    </span>
+                  ) : (
+                    "Sair e entrar com outra conta"
+                  )}
+                </button>
+              ) : null}
             </div>
 
             <p className="mx-auto mt-[26px] max-w-[460px] text-center text-[12px] leading-[1.8] text-[#7B7B7B]">
               Ao continuar, voce concorda com nossos <Link href={footerLinks.termsUrl} className="text-[#CACACA] transition-colors hover:text-white">Termos</Link> e a nossa <Link href={footerLinks.privacyUrl} className="text-[#CACACA] transition-colors hover:text-white">Politica de Privacidade</Link>.
             </p>
-
-            <button
-              type="button"
-              onClick={() => { void handleLogout(); }}
-              disabled={isLoggingOut}
-              className="mx-auto mt-[16px] inline-flex h-[40px] items-center justify-center rounded-full px-[14px] text-[13px] font-medium text-[#9A9A9A] transition-colors hover:text-[#F3F3F3] disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isLoggingOut ? "Saindo..." : "Trocar conta"}
-            </button>
           </div>
         </div>
       </section>

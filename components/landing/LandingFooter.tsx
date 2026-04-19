@@ -33,31 +33,31 @@ const FOOTER_GROUPS: FooterGroup[] = [
   {
     title: "Automacao",
     links: [
-      { label: "Tickets", href: "#" },
-      { label: "Fluxos", href: "#" },
+      { label: "Tickets", href: "/servers" },
+      { label: "Fluxos", href: "/dashboard" },
       { label: "Respostas automaticas", href: "#" },
-      { label: "Plugins", href: "#" },
-      { label: "Logs", href: "#" },
+      { label: "Plugins", href: "/dashboard" },
+      { label: "Logs", href: "/servers" },
     ],
   },
   {
     title: "Atendimento",
     links: [
-      { label: "Dashboard", href: "#" },
+      { label: "Dashboard", href: "/dashboard" },
       { label: "Moderação", href: "#" },
-      { label: "Equipes", href: "#" },
+      { label: "Equipes", href: "/account/teams" },
       { label: "Filas", href: "#" },
-      { label: "Organizacao", href: "#" },
+      { label: "Organizacao", href: "/account" },
     ],
   },
   {
     title: "Pagamentos",
     links: [
-      { label: "Assinaturas", href: "#" },
+      { label: "Assinaturas", href: "/dashboard/billing/subscriptions" },
       { label: "Cargos automaticos", href: "#" },
-      { label: "PIX", href: "#" },
-      { label: "Cartao", href: "#" },
-      { label: "Renovacao", href: "#" },
+      { label: "PIX", href: "/payment/pro/monthly" },
+      { label: "Cartao", href: "/payment/pro/monthly" },
+      { label: "Renovacao", href: "/dashboard/billing/payment-history" },
     ],
   },
   {
@@ -65,9 +65,9 @@ const FOOTER_GROUPS: FooterGroup[] = [
     links: [
       { label: "Privacidade", href: "/privacy" },
       { label: "Termos", href: "/terms" },
-      { label: "Protecao da conta", href: "#" },
-      { label: "Confiabilidade", href: "#" },
-      { label: "Operacao estavel", href: "#" },
+      { label: "Protecao da conta", href: "/account/status" },
+      { label: "Confiabilidade", href: "/status" },
+      { label: "Operacao estavel", href: "/status" },
     ],
   },
   {
@@ -77,7 +77,7 @@ const FOOTER_GROUPS: FooterGroup[] = [
       { label: "Perguntas frequentes", href: "#" },
       { label: "Integracoes", href: "#" },
       { label: "Planos empresariais", href: "#" },
-      { label: "Atualizacoes", href: "#" },
+      { label: "Atualizacoes", href: "/status" },
     ],
   },
   {
@@ -86,8 +86,8 @@ const FOOTER_GROUPS: FooterGroup[] = [
       { label: "Login", href: "/login" },
       { label: "Configuracao", href: "/config?fresh=1" },
       { label: "Vincular Discord", href: "/discord/link" },
-      { label: "Painel web", href: "#" },
-      { label: "Deploy", href: "#" },
+      { label: "Painel web", href: "/dashboard" },
+      { label: "Deploy", href: "/dashboard/hosting" },
     ],
   },
   {
@@ -116,8 +116,8 @@ const FOOTER_GROUPS: FooterGroup[] = [
       { label: "Discord", href: DISCORD_HREF },
       { label: "Contato", href: DISCORD_HREF },
       { label: "Suporte", href: DISCORD_HREF },
-      { label: "Atualizacoes", href: "#" },
-      { label: "Feedback", href: "#" },
+      { label: "Atualizacoes", href: "/status" },
+      { label: "Feedback", href: DISCORD_HREF },
     ],
   },
 ];

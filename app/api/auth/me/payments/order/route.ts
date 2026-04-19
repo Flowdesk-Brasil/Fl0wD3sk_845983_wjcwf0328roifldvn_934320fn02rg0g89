@@ -37,6 +37,10 @@ import {
   extractAuditErrorMessage,
   sanitizeErrorMessage,
 } from "@/lib/security/errors";
+import {
+  resolveDatabaseFailureMessage,
+  resolveDatabaseFailureStatus,
+} from "@/lib/security/databaseAvailability";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -727,12 +731,15 @@ export async function GET(request: Request) {
     return respond(
       {
         ok: false,
-        message: sanitizeErrorMessage(
+        message: resolveDatabaseFailureMessage(
           error,
-          "Erro ao carregar pedido de pagamento.",
+          sanitizeErrorMessage(
+            error,
+            "Erro ao carregar pedido de pagamento.",
+          ),
         ),
       },
-      { status: 500 },
+      { status: resolveDatabaseFailureStatus(error) },
     );
   }
 }

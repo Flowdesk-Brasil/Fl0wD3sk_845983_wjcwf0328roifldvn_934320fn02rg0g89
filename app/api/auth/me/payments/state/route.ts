@@ -31,6 +31,10 @@ import {
   extractAuditErrorMessage,
   sanitizeErrorMessage,
 } from "@/lib/security/errors";
+import {
+  resolveDatabaseFailureMessage,
+  resolveDatabaseFailureStatus,
+} from "@/lib/security/databaseAvailability";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -539,12 +543,15 @@ export async function GET(request: Request) {
     return respond(
       {
         ok: false,
-        message: sanitizeErrorMessage(
+        message: resolveDatabaseFailureMessage(
           error,
-          "Erro ao consultar estado de pagamento do servidor.",
+          sanitizeErrorMessage(
+            error,
+            "Erro ao consultar estado de pagamento do servidor.",
+          ),
         ),
       },
-      { status: 500 },
+      { status: resolveDatabaseFailureStatus(error) },
     );
   }
 }
