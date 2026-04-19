@@ -23,8 +23,7 @@ type NotificationItem = {
   durationMs: number;
   createdAt: number;
   updatedAt: number;
-  fingerprint: string;
-  occurrences: number;
+  shouldAnimateEnter: boolean;
 };
 
 type NotificationPayload = {
@@ -67,13 +66,22 @@ const MAX_VISIBLE_NOTIFICATIONS = 3;
 const MAX_BUFFERED_NOTIFICATIONS = 36;
 const DEFAULT_NOTIFICATION_DURATION_MS = 5200;
 const MINIMUM_RESUME_DURATION_MS = 180;
-const DUPLICATE_MERGE_WINDOW_MS = 2800;
+const INITIAL_NOTIFICATION_ANIMATION_DELAY_MS = 640;
+const NOTIFICATION_EFFECT_DEDUPE_WINDOW_MS = 1400;
 const EXPANDED_STACK_GAP_PX = 12;
 const COLLAPSED_STACK_SCALE_STEP = 0.04;
 const COLLAPSED_STACK_TOP_PADDING_PX = 38;
 const COMPACT_STACK_CARD_HEIGHT_PX = 92;
+const STACK_SPRING_TRANSITION = {
+  type: "spring" as const,
+  stiffness: 340,
+  damping: 30,
+  mass: 0.78,
+};
+const STACK_EASE = [0.22, 1, 0.36, 1] as const;
 
 const NotificationContext = createContext<NotificationApi | null>(null);
+const recentNotificationEffectFingerprints = new Map<string, number>();
 
 function createNotificationId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -101,6 +109,32 @@ function createNotificationFingerprint(input: {
   ].join("::");
 }
 
+function pruneRecentNotificationEffectFingerprints(now: number) {
+  recentNotificationEffectFingerprints.forEach((expiresAt, fingerprint) => {
+    if (expiresAt <= now) {
+      recentNotificationEffectFingerprints.delete(fingerprint);
+    }
+  });
+}
+
+function shouldSkipRecentNotificationEffectFingerprint(
+  fingerprint: string,
+  now: number,
+) {
+  pruneRecentNotificationEffectFingerprints(now);
+
+  const expiresAt = recentNotificationEffectFingerprints.get(fingerprint) || 0;
+  if (expiresAt > now) {
+    return true;
+  }
+
+  recentNotificationEffectFingerprints.set(
+    fingerprint,
+    now + NOTIFICATION_EFFECT_DEDUPE_WINDOW_MS,
+  );
+  return false;
+}
+
 function getCollapsedStackLiftPx(stackDepth: number) {
   if (stackDepth <= 0) {
     return 0;
@@ -125,7 +159,6 @@ function resolveToneClasses(tone: NotificationTone) {
       iconWrapperClassName: "border-[#204225] bg-[#0D130E] text-[#B8F2AE]",
       titleClassName: "text-[#DDF8D8]",
       messageClassName: "text-[#A9D2A2]",
-      badgeClassName: "border-[#204225] bg-[#101610] text-[#B8F2AE]",
       closeButtonClassName:
         "text-[#87C67E] hover:border-[#204225] hover:bg-[#101610] hover:text-[#DDF8D8]",
       progressClassName:
@@ -140,7 +173,6 @@ function resolveToneClasses(tone: NotificationTone) {
       iconWrapperClassName: "border-[#412020] bg-[#130D0D] text-[#FFB4B4]",
       titleClassName: "text-[#FFD5D5]",
       messageClassName: "text-[#D4A5A5]",
-      badgeClassName: "border-[#412020] bg-[#171010] text-[#FFB4B4]",
       closeButtonClassName:
         "text-[#D18D8D] hover:border-[#412020] hover:bg-[#171010] hover:text-[#FFD5D5]",
       progressClassName:
@@ -154,7 +186,6 @@ function resolveToneClasses(tone: NotificationTone) {
     iconWrapperClassName: "border-[#1F1F1F] bg-[#101010] text-[#F2F2F2]",
     titleClassName: "text-[#F2F2F2]",
     messageClassName: "text-[#B8B8B8]",
-    badgeClassName: "border-[#262626] bg-[#101010] text-[#E5E5E5]",
     closeButtonClassName:
       "text-[#8E8E8E] hover:border-[#232323] hover:bg-[#111111] hover:text-[#F2F2F2]",
     progressClassName:
@@ -178,20 +209,27 @@ function NotificationCard({
   const isCollapsedSecondary = !expanded && stackDepth > 0;
   const collapsedScale = Math.max(0.9, 1 - stackDepth * COLLAPSED_STACK_SCALE_STEP);
   const collapsedTopOffset = COLLAPSED_STACK_TOP_PADDING_PX - getCollapsedStackLiftPx(stackDepth);
-  const compactLineClamp = item.title || item.occurrences > 1 ? 2 : 3;
+  const compactLineClamp = item.title ? 2 : 3;
+  const showCloseButton = expanded || stackDepth === 0;
 
   return (
     <motion.div
-      layout
-      initial={{
-        opacity: 0,
-        y: 26,
-        scale: 0.97,
-      }}
+      layout="position"
+      initial={
+        item.shouldAnimateEnter
+          ? {
+              opacity: 0,
+              y: 26,
+              scale: 0.97,
+            }
+          : false
+      }
       animate={{
         opacity: expanded ? 1 : Math.max(0.62, 1 - stackDepth * 0.13),
         y: 0,
         scale: expanded ? 1 : collapsedScale,
+        top: isCollapsedSecondary ? collapsedTopOffset : 0,
+        marginTop: expanded && stackDepth > 0 ? EXPANDED_STACK_GAP_PX : 0,
       }}
       exit={{
         opacity: 0,
@@ -199,29 +237,20 @@ function NotificationCard({
         scale: 0.92,
       }}
       transition={{
-        layout: {
-          duration: 0.28,
-          ease: [0.22, 1, 0.36, 1],
-        },
+        layout: STACK_SPRING_TRANSITION,
         opacity: {
-          duration: 0.2,
-          ease: [0.22, 1, 0.36, 1],
+          duration: 0.22,
+          ease: STACK_EASE,
         },
-        y: {
-          duration: 0.24,
-          ease: [0.22, 1, 0.36, 1],
-        },
-        scale: {
-          duration: 0.24,
-          ease: [0.22, 1, 0.36, 1],
-        },
+        y: STACK_SPRING_TRANSITION,
+        scale: STACK_SPRING_TRANSITION,
+        top: STACK_SPRING_TRANSITION,
+        marginTop: STACK_SPRING_TRANSITION,
       }}
       style={{
         zIndex: 260 - stackDepth,
         position: isCollapsedSecondary ? "absolute" : "relative",
         insetInline: isCollapsedSecondary ? 0 : undefined,
-        top: isCollapsedSecondary ? collapsedTopOffset : undefined,
-        marginTop: expanded && stackDepth > 0 ? EXPANDED_STACK_GAP_PX : 0,
         transformOrigin: "top right",
         pointerEvents: isCollapsedSecondary ? "none" : "auto",
       }}
@@ -256,7 +285,11 @@ function NotificationCard({
           className={`pointer-events-none absolute inset-x-[18px] bottom-[1px] h-[2px] rounded-full bg-gradient-to-r ${toneClasses.progressClassName}`}
         />
 
-        <div className="relative z-10 flex h-full items-start gap-[14px] px-[16px] py-[16px] pr-[56px]">
+        <div
+          className={`relative z-10 flex h-full items-start gap-[14px] px-[16px] py-[16px] ${
+            showCloseButton ? "pr-[56px]" : "pr-[18px]"
+          }`}
+        >
           <span
             className={`mt-[1px] flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-[13px] border ${toneClasses.iconWrapperClassName}`}
             aria-hidden="true"
@@ -265,30 +298,18 @@ function NotificationCard({
           </span>
 
           <div className="min-w-0 flex-1">
-            {item.title || item.occurrences > 1 ? (
+            {item.title ? (
               <div className="flex min-w-0 items-center gap-[8px] pr-[8px]">
-                {item.title ? (
-                  <p
-                    className={`truncate text-[14px] font-semibold tracking-[-0.02em] ${toneClasses.titleClassName}`}
-                  >
-                    {item.title}
-                  </p>
-                ) : null}
-
-                {item.occurrences > 1 ? (
-                  <span
-                    className={`inline-flex shrink-0 items-center rounded-full border px-[8px] py-[2px] text-[10px] font-semibold tracking-[0.04em] ${toneClasses.badgeClassName}`}
-                  >
-                    {item.occurrences}x
-                  </span>
-                ) : null}
+                <p
+                  className={`truncate text-[14px] font-semibold tracking-[-0.02em] ${toneClasses.titleClassName}`}
+                >
+                  {item.title}
+                </p>
               </div>
             ) : null}
 
             <p
-              className={`${
-                item.title || item.occurrences > 1 ? "mt-[4px] text-[13px]" : "text-[14px]"
-              } leading-[1.55] tracking-[-0.01em] ${toneClasses.messageClassName}`}
+              className={`${item.title ? "mt-[4px] text-[13px]" : "text-[14px]"} leading-[1.55] tracking-[-0.01em] ${toneClasses.messageClassName}`}
               style={
                 isCollapsedSecondary
                   ? {
@@ -304,14 +325,16 @@ function NotificationCard({
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={() => onDismiss(item.id)}
-            className={`absolute right-[14px] top-[14px] inline-flex h-[30px] w-[30px] items-center justify-center rounded-[10px] border border-transparent transition-colors ${toneClasses.closeButtonClassName}`}
-            aria-label="Fechar notificacao"
-          >
-            <X className="h-[15px] w-[15px]" strokeWidth={2.1} />
-          </button>
+          {showCloseButton ? (
+            <button
+              type="button"
+              onClick={() => onDismiss(item.id)}
+              className={`absolute right-[14px] top-[14px] inline-flex h-[30px] w-[30px] items-center justify-center rounded-[10px] border border-transparent transition-colors ${toneClasses.closeButtonClassName}`}
+              aria-label="Fechar notificacao"
+            >
+              <X className="h-[15px] w-[15px]" strokeWidth={2.1} />
+            </button>
+          ) : null}
         </div>
       </div>
     </motion.div>
@@ -320,21 +343,21 @@ function NotificationCard({
 
 export function NotificationsProvider({ children }: NotificationsProviderProps) {
   const [visibleItems, setVisibleItems] = useState<NotificationItem[]>([]);
-  const [, setQueuedItems] = useState<NotificationItem[]>([]);
   const [isExpanded, setIsExpanded] = useState(false);
   const [forceExpanded, setForceExpanded] = useState(false);
   const trayRef = useRef<HTMLDivElement | null>(null);
   const visibleItemsRef = useRef<NotificationItem[]>([]);
   const queuedItemsRef = useRef<NotificationItem[]>([]);
   const dismissTimerMapRef = useRef<Map<string, DismissTimerMeta>>(new Map());
-  const recentFingerprintCooldownRef = useRef<Map<string, number>>(new Map());
   const dismissRef = useRef<(id: string) => void>(() => {});
+  const forceExpandedRef = useRef(false);
+  const expandedRef = useRef(false);
+  const [providerMountedAt] = useState(() => Date.now());
 
   const syncCollections = useCallback((collections: NotificationCollections) => {
     visibleItemsRef.current = collections.visible;
     queuedItemsRef.current = collections.queued;
     setVisibleItems(collections.visible);
-    setQueuedItems(collections.queued);
     return collections;
   }, []);
 
@@ -360,42 +383,12 @@ export function NotificationsProvider({ children }: NotificationsProviderProps) 
     dismissTimerMapRef.current.delete(id);
   }, []);
 
-  const pruneRecentFingerprintCooldowns = useCallback((now: number) => {
-    recentFingerprintCooldownRef.current.forEach((expiresAt, fingerprint) => {
-      if (expiresAt <= now) {
-        recentFingerprintCooldownRef.current.delete(fingerprint);
-      }
-    });
+  const resolveVisibleItemDuration = useCallback((id: string) => {
+    return (
+      visibleItemsRef.current.find((item) => item.id === id)?.durationMs ??
+      DEFAULT_NOTIFICATION_DURATION_MS
+    );
   }, []);
-
-  const rememberRecentFingerprint = useCallback(
-    (fingerprint: string) => {
-      if (!fingerprint) {
-        return;
-      }
-
-      const now = Date.now();
-      pruneRecentFingerprintCooldowns(now);
-      recentFingerprintCooldownRef.current.set(
-        fingerprint,
-        now + DUPLICATE_MERGE_WINDOW_MS,
-      );
-    },
-    [pruneRecentFingerprintCooldowns],
-  );
-
-  const isFingerprintCoolingDown = useCallback(
-    (fingerprint: string, now: number) => {
-      if (!fingerprint) {
-        return false;
-      }
-
-      pruneRecentFingerprintCooldowns(now);
-      const expiresAt = recentFingerprintCooldownRef.current.get(fingerprint) || 0;
-      return expiresAt > now;
-    },
-    [pruneRecentFingerprintCooldowns],
-  );
 
   const setPausedDismissTimer = useCallback(
     (id: string, delayMs: number) => {
@@ -439,12 +432,7 @@ export function NotificationsProvider({ children }: NotificationsProviderProps) 
       clearDismissTimer(id);
 
       const promotedItems: NotificationItem[] = [];
-      let dismissedFingerprint: string | null = null;
       updateCollections((current) => {
-        dismissedFingerprint =
-          current.visible.find((item) => item.id === id)?.fingerprint ||
-          current.queued.find((item) => item.id === id)?.fingerprint ||
-          null;
         const nextVisible = current.visible.filter((item) => item.id !== id);
         const removedVisibleItem = nextVisible.length !== current.visible.length;
         const nextQueued = current.queued.filter((item) => item.id !== id);
@@ -470,12 +458,8 @@ export function NotificationsProvider({ children }: NotificationsProviderProps) 
         };
       });
 
-      if (dismissedFingerprint) {
-        rememberRecentFingerprint(dismissedFingerprint);
-      }
-
       promotedItems.forEach((item) => {
-        if (isExpanded) {
+        if (expandedRef.current) {
           setPausedDismissTimer(item.id, item.durationMs);
           return;
         }
@@ -485,8 +469,6 @@ export function NotificationsProvider({ children }: NotificationsProviderProps) 
     },
     [
       clearDismissTimer,
-      isExpanded,
-      rememberRecentFingerprint,
       scheduleDismiss,
       setPausedDismissTimer,
       updateCollections,
@@ -497,7 +479,12 @@ export function NotificationsProvider({ children }: NotificationsProviderProps) 
     dismissRef.current = dismiss;
   }, [dismiss]);
 
-  const pauseAllDismissTimers = useCallback(() => {
+  useEffect(() => {
+    forceExpandedRef.current = forceExpanded;
+    expandedRef.current = forceExpanded || isExpanded;
+  }, [forceExpanded, isExpanded]);
+
+  const pauseAllDismissTimers = useCallback((resetToFullDuration = false) => {
     dismissTimerMapRef.current.forEach((meta, id) => {
       if (meta.timeoutId === null) {
         return;
@@ -505,13 +492,17 @@ export function NotificationsProvider({ children }: NotificationsProviderProps) 
 
       window.clearTimeout(meta.timeoutId);
       const elapsedMs = Date.now() - meta.startedAt;
+      const remainingMs = resetToFullDuration
+        ? resolveVisibleItemDuration(id)
+        : Math.max(MINIMUM_RESUME_DURATION_MS, meta.remainingMs - elapsedMs);
+
       dismissTimerMapRef.current.set(id, {
         timeoutId: null,
         startedAt: Date.now(),
-        remainingMs: Math.max(MINIMUM_RESUME_DURATION_MS, meta.remainingMs - elapsedMs),
+        remainingMs,
       });
     });
-  }, []);
+  }, [resolveVisibleItemDuration]);
 
   const resumeAllDismissTimers = useCallback(() => {
     dismissTimerMapRef.current.forEach((meta, id) => {
@@ -522,6 +513,24 @@ export function NotificationsProvider({ children }: NotificationsProviderProps) 
       scheduleDismiss(id, meta.remainingMs);
     });
   }, [scheduleDismiss]);
+
+  const expandTray = useCallback(() => {
+    pauseAllDismissTimers(true);
+    expandedRef.current = true;
+    setIsExpanded(true);
+  }, [pauseAllDismissTimers]);
+
+  const collapseTray = useCallback(() => {
+    if (forceExpandedRef.current) {
+      expandedRef.current = true;
+      setIsExpanded(false);
+      return;
+    }
+
+    resumeAllDismissTimers();
+    expandedRef.current = false;
+    setIsExpanded(false);
+  }, [resumeAllDismissTimers]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -543,6 +552,8 @@ export function NotificationsProvider({ children }: NotificationsProviderProps) 
     mediaQuery.addListener(syncExpandedMode);
     return () => mediaQuery.removeListener(syncExpandedMode);
   }, []);
+
+  const expanded = forceExpanded || isExpanded;
 
   useEffect(() => {
     if (isExpanded) {
@@ -580,78 +591,14 @@ export function NotificationsProvider({ children }: NotificationsProviderProps) 
         MINIMUM_RESUME_DURATION_MS,
         Math.trunc(payload.durationMs || DEFAULT_NOTIFICATION_DURATION_MS),
       );
-      const fingerprint = createNotificationFingerprint({
-        tone,
-        title,
-        message,
-      });
       const now = Date.now();
-
-      if (isFingerprintCoolingDown(fingerprint, now)) {
-        return "";
-      }
 
       let targetId = "";
       let targetDelayMs = durationMs;
       let shouldRunVisibleTimer = false;
       const droppedIds: string[] = [];
-      const droppedFingerprints: string[] = [];
 
       updateCollections((current) => {
-        const duplicateVisible = current.visible.find(
-          (item) => item.fingerprint === fingerprint,
-        );
-
-        if (duplicateVisible) {
-          const updatedItem: NotificationItem = {
-            ...duplicateVisible,
-            tone,
-            title,
-            message,
-            durationMs: Math.max(duplicateVisible.durationMs, durationMs),
-            updatedAt: now,
-            occurrences: duplicateVisible.occurrences + 1,
-          };
-
-          targetId = updatedItem.id;
-          targetDelayMs = updatedItem.durationMs;
-          shouldRunVisibleTimer = true;
-
-          return {
-            visible: [
-              updatedItem,
-              ...current.visible.filter((item) => item.id !== duplicateVisible.id),
-            ],
-            queued: current.queued,
-          };
-        }
-
-        const duplicateQueued = current.queued.find(
-          (item) => item.fingerprint === fingerprint,
-        );
-
-        if (duplicateQueued) {
-          const updatedItem: NotificationItem = {
-            ...duplicateQueued,
-            tone,
-            title,
-            message,
-            durationMs: Math.max(duplicateQueued.durationMs, durationMs),
-            updatedAt: now,
-            occurrences: duplicateQueued.occurrences + 1,
-          };
-
-          targetId = updatedItem.id;
-          targetDelayMs = updatedItem.durationMs;
-
-          return {
-            visible: current.visible,
-            queued: current.queued.map((item) =>
-              item.id === duplicateQueued.id ? updatedItem : item,
-            ),
-          };
-        }
-
         const item: NotificationItem = {
           id: createNotificationId(),
           tone,
@@ -660,8 +607,7 @@ export function NotificationsProvider({ children }: NotificationsProviderProps) 
           durationMs,
           createdAt: now,
           updatedAt: now,
-          fingerprint,
-          occurrences: 1,
+          shouldAnimateEnter: now - providerMountedAt > INITIAL_NOTIFICATION_ANIMATION_DELAY_MS,
         };
 
         targetId = item.id;
@@ -686,7 +632,6 @@ export function NotificationsProvider({ children }: NotificationsProviderProps) 
           }
 
           droppedIds.push(droppedItem.id);
-          droppedFingerprints.push(droppedItem.fingerprint);
         }
 
         return {
@@ -698,15 +643,12 @@ export function NotificationsProvider({ children }: NotificationsProviderProps) 
       droppedIds.forEach((id) => {
         clearDismissTimer(id);
       });
-      droppedFingerprints.forEach((itemFingerprint) => {
-        rememberRecentFingerprint(itemFingerprint);
-      });
 
       if (!targetId || !shouldRunVisibleTimer) {
         return targetId;
       }
 
-      if (isExpanded) {
+      if (expandedRef.current) {
         setPausedDismissTimer(targetId, targetDelayMs);
       } else {
         scheduleDismiss(targetId, targetDelayMs);
@@ -716,9 +658,7 @@ export function NotificationsProvider({ children }: NotificationsProviderProps) 
     },
     [
       clearDismissTimer,
-      isExpanded,
-      isFingerprintCoolingDown,
-      rememberRecentFingerprint,
+      providerMountedAt,
       scheduleDismiss,
       setPausedDismissTimer,
       updateCollections,
@@ -732,11 +672,9 @@ export function NotificationsProvider({ children }: NotificationsProviderProps) 
       }
     });
     dismissTimerMapRef.current.clear();
-    recentFingerprintCooldownRef.current.clear();
     visibleItemsRef.current = [];
     queuedItemsRef.current = [];
     setVisibleItems([]);
-    setQueuedItems([]);
   }, []);
 
   const api = useMemo<NotificationApi>(
@@ -769,7 +707,6 @@ export function NotificationsProvider({ children }: NotificationsProviderProps) 
     [clear, dismiss, notify],
   );
 
-  const expanded = forceExpanded || isExpanded;
   const renderedItems = visibleItems;
   const collapsedTrayHeight =
     renderedItems.length > 0
@@ -785,52 +722,40 @@ export function NotificationsProvider({ children }: NotificationsProviderProps) 
         <div
           ref={trayRef}
           className="pointer-events-auto flex w-full justify-end"
-          onMouseEnter={() => setIsExpanded(true)}
-          onMouseLeave={() => setIsExpanded(false)}
-          onFocusCapture={() => setIsExpanded(true)}
+          onMouseEnter={expandTray}
+          onMouseLeave={collapseTray}
+          onFocusCapture={expandTray}
           onBlurCapture={(event) => {
             const nextTarget = event.relatedTarget as Node | null;
             if (!trayRef.current?.contains(nextTarget)) {
-              setIsExpanded(false);
+              collapseTray();
             }
           }}
         >
           <div className="w-full">
-            {expanded ? (
-              <div className="flex w-full flex-col">
-                <AnimatePresence initial={false}>
-                  {renderedItems.map((item, index) => (
-                    <NotificationCard
-                      key={item.id}
-                      item={item}
-                      stackDepth={index}
-                      expanded
-                      onDismiss={dismiss}
-                    />
-                  ))}
-                </AnimatePresence>
-              </div>
-            ) : (
-              <div
-                className="relative w-full"
-                style={{
-                  paddingTop: renderedItems.length > 1 ? COLLAPSED_STACK_TOP_PADDING_PX : 0,
-                  minHeight: collapsedTrayHeight,
-                }}
-              >
-                <AnimatePresence initial={false}>
-                  {renderedItems.map((item, index) => (
-                    <NotificationCard
-                      key={item.id}
-                      item={item}
-                      stackDepth={index}
-                      expanded={false}
-                      onDismiss={dismiss}
-                    />
-                  ))}
-                </AnimatePresence>
-              </div>
-            )}
+            <motion.div
+              className="relative w-full"
+              animate={{
+                paddingTop: !expanded && renderedItems.length > 1 ? COLLAPSED_STACK_TOP_PADDING_PX : 0,
+                minHeight: expanded ? 0 : collapsedTrayHeight,
+              }}
+              transition={{
+                paddingTop: STACK_SPRING_TRANSITION,
+                minHeight: STACK_SPRING_TRANSITION,
+              }}
+            >
+              <AnimatePresence initial={false}>
+                {renderedItems.map((item, index) => (
+                  <NotificationCard
+                    key={item.id}
+                    item={item}
+                    stackDepth={index}
+                    expanded={expanded}
+                    onDismiss={dismiss}
+                  />
+                ))}
+              </AnimatePresence>
+            </motion.div>
           </div>
         </div>
       </div>
@@ -854,6 +779,7 @@ export function useNotificationEffect(
     title?: string | null;
     durationMs?: number;
     enabled?: boolean;
+    eventKey?: string | null;
   },
 ) {
   const notifications = useNotifications();
@@ -877,7 +803,9 @@ export function useNotificationEffect(
     const fingerprint = createNotificationFingerprint({
       tone,
       title: normalizedTitle,
-      message: normalizedMessage,
+      message: options?.eventKey?.trim()
+        ? `event:${options.eventKey.trim()}`
+        : normalizedMessage,
     });
 
     if (!enabled || previousFingerprintRef.current === fingerprint) {
@@ -885,6 +813,9 @@ export function useNotificationEffect(
     }
 
     previousFingerprintRef.current = fingerprint;
+    if (shouldSkipRecentNotificationEffectFingerprint(fingerprint, Date.now())) {
+      return;
+    }
 
     if (tone === "success") {
       notifications.success(normalizedMessage, {
@@ -912,6 +843,7 @@ export function useNotificationEffect(
     message,
     notifications,
     options?.durationMs,
+    options?.eventKey,
     options?.title,
     tone,
   ]);

@@ -1,12 +1,17 @@
 import { LoginPanel } from "@/components/login/LoginPanel";
 import { LandingFrameLines } from "@/components/landing/LandingFrameLines";
 import {
+  LOGIN_ERROR_FLASH_HEADER_NAME,
+  decodeLoginErrorFlashPayload,
+} from "@/lib/auth/loginFlash";
+import {
   getConfiguredEmailOtpLength,
   isGoogleAuthConfigured,
   isMicrosoftAuthConfigured,
   normalizeInternalNextPath,
 } from "@/lib/auth/config";
 import { getCurrentUserFromSessionCookie } from "@/lib/auth/session";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 type LoginPageProps = {
@@ -72,10 +77,15 @@ function resolveLoginErrorMessage(
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
   const query = searchParams ? await searchParams : {};
+  const requestHeaders = await headers();
   const nextPath = normalizeInternalNextPath(takeFirstQueryValue(query.next));
   const loginMode = takeFirstQueryValue(query.mode) === "link" ? "link" : "login";
+  const loginErrorFlash = decodeLoginErrorFlashPayload(
+    requestHeaders.get(LOGIN_ERROR_FLASH_HEADER_NAME),
+  );
+  const errorCode = loginErrorFlash?.code || takeFirstQueryValue(query.error);
   const initialErrorMessage = resolveLoginErrorMessage(
-    takeFirstQueryValue(query.error),
+    errorCode,
     loginMode,
   );
   const googleEnabled = isGoogleAuthConfigured();
@@ -103,6 +113,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
               nextPath={nextPath}
               loginMode={loginMode}
               initialErrorMessage={initialErrorMessage}
+              initialErrorEventKey={loginErrorFlash?.id || errorCode}
               googleEnabled={googleEnabled}
               microsoftEnabled={microsoftEnabled}
               emailOtpLength={emailOtpLength}

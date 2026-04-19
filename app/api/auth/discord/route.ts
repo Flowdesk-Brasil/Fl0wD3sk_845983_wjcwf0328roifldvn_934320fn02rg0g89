@@ -11,6 +11,7 @@ import {
   clearSharedAuthCookie,
   setSharedAuthCookie,
 } from "@/lib/auth/cookies";
+import { buildLoginRedirectResponse } from "@/lib/auth/loginFlash";
 import { buildDiscordAuthorizeUrl } from "@/lib/auth/discord";
 import { createOAuthState } from "@/lib/auth/session";
 import { applyNoStoreHeaders } from "@/lib/security/http";
@@ -23,6 +24,11 @@ import {
 
 export async function GET(request: NextRequest) {
   const requestContext = createSecurityRequestContext(request);
+  const requestedNextPath = normalizeInternalNextPath(
+    request.nextUrl.searchParams.get("next"),
+  );
+  const requestedMode =
+    request.nextUrl.searchParams.get("mode") === "link" ? "link" : "login";
   const rateLimit = await enforceRequestRateLimit({
     action: "auth_discord_start",
     windowMs: 10 * 60 * 1000,
@@ -40,9 +46,11 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    const response = applyNoStoreHeaders(
-      NextResponse.redirect(new URL("/login?error=slow_down", request.url), 302),
-    );
+    const response = buildLoginRedirectResponse(request, {
+      nextPath: requestedNextPath,
+      mode: requestedMode,
+      error: "slow_down",
+    });
     response.headers.set("Retry-After", String(rateLimit.retryAfterSeconds));
     return attachRequestId(response, requestContext.requestId);
   }
@@ -54,11 +62,6 @@ export async function GET(request: NextRequest) {
 
   const state = createOAuthState();
   const redirectUri = resolveDiscordRedirectUri(request);
-  const requestedNextPath = normalizeInternalNextPath(
-    request.nextUrl.searchParams.get("next"),
-  );
-  const requestedMode =
-    request.nextUrl.searchParams.get("mode") === "link" ? "link" : "login";
   const discordAuthUrl = buildDiscordAuthorizeUrl(state, redirectUri);
 
   const response = NextResponse.redirect(discordAuthUrl, 302);

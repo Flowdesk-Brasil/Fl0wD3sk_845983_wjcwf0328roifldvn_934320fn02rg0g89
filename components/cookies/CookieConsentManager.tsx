@@ -141,9 +141,32 @@ export function CookieConsentManager({
   }, [pathname]);
 
   const persistConsent = useCallback((nextConsent: CookieConsentPreferences) => {
-    document.cookie = buildCookieConsentDocumentCookie(nextConsent, {
+    const cookieInput = {
       hostname: window.location.hostname,
       secure: window.location.protocol === "https:",
+    };
+
+    // Host-only fallback keeps the current subdomain working even if a browser
+    // rejects the wider domain cookie in local setups.
+    document.cookie = buildCookieConsentDocumentCookie(nextConsent, {
+      ...cookieInput,
+      includeDomain: false,
+    });
+    document.cookie = buildCookieConsentDocumentCookie(nextConsent, cookieInput);
+
+    void fetch("/api/cookies/consent", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      credentials: "same-origin",
+      body: JSON.stringify({
+        preferences: nextConsent.preferences,
+        analytics: nextConsent.analytics,
+        marketing: nextConsent.marketing,
+      }),
+    }).catch(() => {
+      // The client-side fallback above already persisted the choice locally.
     });
 
     setConsent(nextConsent);

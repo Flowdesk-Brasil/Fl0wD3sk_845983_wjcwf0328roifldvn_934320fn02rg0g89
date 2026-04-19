@@ -149,11 +149,7 @@ function resolveRequestScopedRedirectUri(
 ) {
   const runtime = resolveHostRuntimeContext(getRequestHostname(request));
 
-  if (runtime.mode === "local") {
-    return fallbackRedirectUri;
-  }
-
-  if (runtime.mode === "production") {
+  if (runtime.mode === "isolated") {
     return fallbackRedirectUri;
   }
 

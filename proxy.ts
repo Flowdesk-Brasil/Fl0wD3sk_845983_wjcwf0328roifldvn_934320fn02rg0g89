@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  LOGIN_ERROR_FLASH_COOKIE_NAME,
+  LOGIN_ERROR_FLASH_HEADER_NAME,
+  decodeLoginErrorFlashPayload,
+  encodeLoginErrorFlashPayload,
+  type LoginErrorFlashPayload,
+} from "@/lib/auth/loginFlash";
+import {
   applyStandardSecurityHeaders,
   buildContentSecurityPolicy,
   isSameOriginRequest,
@@ -228,6 +235,53 @@ function maybeBuildCanonicalAuthRedirect(
   return null;
 }
 
+function maybeBuildLoginErrorFlashRedirect(
+  request: NextRequest,
+  requestId: string,
+  csp: string,
+) {
+  const pathname = request.nextUrl.pathname;
+  if (pathname !== "/login" && pathname !== "/login/") {
+    return null;
+  }
+
+  const errorCode = request.nextUrl.searchParams.get("error")?.trim();
+  if (!errorCode) {
+    return null;
+  }
+
+  const redirectUrl = request.nextUrl.clone();
+  redirectUrl.searchParams.delete("error");
+
+  const response = buildRedirectResponse(
+    request,
+    requestId,
+    csp,
+    redirectUrl.toString(),
+  );
+
+  const payload: LoginErrorFlashPayload = {
+    id: crypto.randomUUID(),
+    code: errorCode,
+    createdAt: Date.now(),
+  };
+
+  response.cookies.set(
+    LOGIN_ERROR_FLASH_COOKIE_NAME,
+    encodeLoginErrorFlashPayload(payload),
+    {
+      path: "/",
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 60,
+    },
+  );
+
+  response.headers.set("Cache-Control", "private, no-store");
+  return response;
+}
+
 function maybeBuildCanonicalWorkspaceRedirect(
   request: NextRequest,
   requestHeaders: Headers,
@@ -303,6 +357,16 @@ export function proxy(request: NextRequest) {
     request.headers.get("x-request-id")?.trim() || crypto.randomUUID();
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-request-id", requestId);
+  const loginErrorFlash = decodeLoginErrorFlashPayload(
+    request.cookies.get(LOGIN_ERROR_FLASH_COOKIE_NAME)?.value,
+  );
+
+  if (loginErrorFlash) {
+    requestHeaders.set(
+      LOGIN_ERROR_FLASH_HEADER_NAME,
+      encodeLoginErrorFlashPayload(loginErrorFlash),
+    );
+  }
 
   const csp = buildContentSecurityPolicy({
     isDevelopment: process.env.NODE_ENV !== "production",
@@ -324,6 +388,15 @@ export function proxy(request: NextRequest) {
   );
   if (authRedirectResponse) {
     return authRedirectResponse;
+  }
+
+  const loginErrorFlashRedirectResponse = maybeBuildLoginErrorFlashRedirect(
+    request,
+    requestId,
+    csp,
+  );
+  if (loginErrorFlashRedirectResponse) {
+    return loginErrorFlashRedirectResponse;
   }
 
   const workspaceRedirectResponse = maybeBuildCanonicalWorkspaceRedirect(
@@ -370,6 +443,11 @@ export function proxy(request: NextRequest) {
 
   if (isSensitiveApiPath(request.nextUrl.pathname)) {
     applySensitiveApiHeaders(response);
+  }
+
+  if (loginErrorFlash) {
+    response.cookies.delete(LOGIN_ERROR_FLASH_COOKIE_NAME);
+    response.headers.set("Cache-Control", "private, no-store");
   }
 
   return response;

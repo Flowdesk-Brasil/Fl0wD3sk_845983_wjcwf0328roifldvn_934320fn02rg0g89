@@ -129,11 +129,15 @@ export function buildCookieConsentDocumentCookie(
   input?: {
     hostname?: string | null;
     secure?: boolean;
+    includeDomain?: boolean;
   },
 ) {
   const serialized =
     typeof value === "string" ? value : serializeCookieConsent(value);
-  const domain = resolveCookieConsentDomain(input?.hostname);
+  const domain =
+    input?.includeDomain === false
+      ? null
+      : resolveCookieConsentDomain(input?.hostname);
   const domainAttribute = domain ? `; Domain=${domain}` : "";
   const secureAttribute = input?.secure ? "; Secure" : "";
 

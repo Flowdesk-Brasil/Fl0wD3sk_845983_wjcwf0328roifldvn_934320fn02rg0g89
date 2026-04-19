@@ -11,7 +11,7 @@ import {
   setSharedSessionCookie,
 } from "@/lib/auth/cookies";
 import { exchangeCodeForToken, fetchDiscordUser } from "@/lib/auth/discord";
-import { buildLoginHref, type LoginIntentMode } from "@/lib/auth/paths";
+import { buildLoginRedirectResponse } from "@/lib/auth/loginFlash";
 import {
   createUserSessionFromDiscordUser,
   getCurrentAuthSessionFromCookie,
@@ -76,28 +76,6 @@ function redirectWithLocation(location: string) {
   );
 }
 
-function buildLoginRedirectLocation(
-  request: NextRequest,
-  input: {
-    nextPath?: string | null;
-    mode?: LoginIntentMode;
-    error?: string | null;
-  } = {},
-) {
-  const loginPath = buildLoginHref(input.nextPath, input.mode ?? "login");
-  const loginUrl = new URL(
-    buildCanonicalUrlFromInternalPath(request, loginPath, {
-      fallbackArea: "account",
-    }),
-  );
-
-  if (input.error) {
-    loginUrl.searchParams.set("error", input.error);
-  }
-
-  return loginUrl.toString();
-}
-
 function resolveDiscordAuthErrorCode(error: unknown) {
   const message =
     error instanceof Error ? error.message.toLowerCase() : "";
@@ -140,13 +118,11 @@ export async function handleDiscordAuthCallback(request: NextRequest) {
       },
     });
 
-    const response = redirectWithLocation(
-      buildLoginRedirectLocation(request, {
+    const response = buildLoginRedirectResponse(request, {
         nextPath: nextPathCookie,
         mode: oauthModeCookie,
         error: "slow_down",
-      }),
-    );
+      });
     response.headers.set("Retry-After", String(rateLimit.retryAfterSeconds));
     clearOAuthCookies(request, response);
     return attachRequestId(response, initialRequestContext.requestId);
@@ -165,13 +141,11 @@ export async function handleDiscordAuthCallback(request: NextRequest) {
   )?.value;
 
   if (!code || !state || !stateCookie || !redirectUriCookie || state !== stateCookie) {
-    const response = redirectWithLocation(
-      buildLoginRedirectLocation(request, {
+    const response = buildLoginRedirectResponse(request, {
         nextPath: nextPathCookie,
         mode: oauthModeCookie,
         error: "discord_invalid_state",
-      }),
-    );
+      });
     clearOAuthCookies(request, response);
     await logSecurityAuditEventSafe(initialRequestContext, {
       action: "auth_discord_callback",
@@ -239,13 +213,11 @@ export async function handleDiscordAuthCallback(request: NextRequest) {
     });
     return attachRequestId(response, initialRequestContext.requestId);
   } catch (error) {
-    const response = redirectWithLocation(
-      buildLoginRedirectLocation(request, {
+    const response = buildLoginRedirectResponse(request, {
         nextPath: nextPathCookie,
         mode: oauthModeCookie,
         error: resolveDiscordAuthErrorCode(error),
-      }),
-    );
+      });
     clearOAuthCookies(request, response);
     await logSecurityAuditEventSafe(initialRequestContext, {
       action: "auth_discord_callback",

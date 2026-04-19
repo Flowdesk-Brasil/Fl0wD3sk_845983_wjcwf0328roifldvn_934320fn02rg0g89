@@ -22,12 +22,16 @@ import {
 } from "@/lib/auth/passwordPolicy";
 import { isLikelyEmbeddedAuthBrowser } from "@/lib/auth/oauthBrowser";
 import { PRIVACY_PATH, TERMS_PATH } from "@/lib/legal/content";
-import { useNotifications } from "@/components/notifications/NotificationsProvider";
+import {
+  useNotificationEffect,
+  useNotifications,
+} from "@/components/notifications/NotificationsProvider";
 
 type LoginPanelProps = {
   nextPath?: string | null;
   loginMode?: LoginIntentMode;
   initialErrorMessage?: string | null;
+  initialErrorEventKey?: string | null;
   googleEnabled?: boolean;
   microsoftEnabled?: boolean;
   emailOtpLength?: number;
@@ -144,6 +148,7 @@ export function LoginPanel({
   nextPath = null,
   loginMode = "login",
   initialErrorMessage = null,
+  initialErrorEventKey = null,
   googleEnabled = false,
   microsoftEnabled = false,
   emailOtpLength = 6,
@@ -250,6 +255,13 @@ export function LoginPanel({
       ? getPasswordCooldownLabel(passwordCooldownRemainingMs)
       : "Continuar";
 
+  useNotificationEffect(initialErrorMessage, {
+    tone: "error",
+    title: "Falha no login",
+    durationMs: 6200,
+    eventKey: initialErrorEventKey,
+  });
+
   useEffect(() => {
     setIsEmbeddedAuthBrowser(isLikelyEmbeddedAuthBrowser(window.navigator.userAgent));
   }, []);
@@ -296,11 +308,7 @@ export function LoginPanel({
     }
 
     setErrorMessage(initialErrorMessage);
-    notifications.error(initialErrorMessage, {
-      title: "Falha no login",
-      durationMs: 6200,
-    });
-  }, [initialErrorMessage, notifications]);
+  }, [initialErrorMessage]);
 
   useEffect(() => {
     if (stage !== "otp") {
