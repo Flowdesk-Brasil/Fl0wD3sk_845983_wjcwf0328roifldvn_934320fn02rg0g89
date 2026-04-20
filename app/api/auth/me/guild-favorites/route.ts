@@ -15,12 +15,13 @@ import {
   extendSecurityRequestContext,
   logSecurityAuditEventSafe,
 } from "@/lib/security/requestSecurity";
+import {
+  FlowSecureDtoError,
+  flowSecureDto,
+  parseFlowSecureDto,
+} from "@/lib/security/flowSecure";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { getAcceptedTeamGuildIdsForUser } from "@/lib/teams/userTeams";
-
-type GuildFavoritesPayload = {
-  favoriteGuildIds?: unknown;
-};
 
 type SessionData = NonNullable<Awaited<ReturnType<typeof resolveSessionAccessToken>>>;
 
@@ -187,13 +188,28 @@ export async function PUT(request: Request) {
       return response;
     }
 
-    let body: GuildFavoritesPayload = {};
+    let body: { favoriteGuildIds?: string[] };
 
     try {
-      body = (await request.json()) as GuildFavoritesPayload;
-    } catch {
+      body = parseFlowSecureDto(
+        await request.json().catch(() => ({})),
+        {
+          favoriteGuildIds: flowSecureDto.optional(
+            flowSecureDto.array(flowSecureDto.discordSnowflake(), {
+              maxLength: MAX_FAVORITE_GUILDS,
+            }),
+          ),
+        },
+        {
+          rejectUnknown: true,
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof FlowSecureDtoError)) {
+        throw error;
+      }
       return respond(
-        { ok: false, message: "Payload JSON invalido." },
+        { ok: false, message: error.issues[0] || error.message },
         { status: 400 },
       );
     }

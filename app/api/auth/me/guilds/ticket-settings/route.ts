@@ -35,6 +35,11 @@ import {
   normalizeTicketAiSettings,
 } from "@/lib/servers/ticketAiSettings";
 import {
+  FlowSecureDtoError,
+  flowSecureDto,
+  parseFlowSecureDto,
+} from "@/lib/security/flowSecure";
+import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
 } from "@/lib/security/http";
@@ -49,30 +54,20 @@ const PANEL_BUTTON_LABEL_MAX_LENGTH = 40;
 const AI_COMPANY_NAME_MAX_LENGTH = 100;
 const AI_COMPANY_BIO_MAX_LENGTH = 1000;
 const AI_RULES_MAX_LENGTH = 4000;
-const AI_ALLOWED_TONES = ["formal", "friendly"];
+const AI_ALLOWED_TONES = ["formal", "friendly"] as const;
 const TICKET_SETTINGS_SELECT_BASE =
   "enabled, menu_channel_id, tickets_category_id, logs_created_channel_id, logs_closed_channel_id, panel_layout, panel_title, panel_description, panel_button_label, ai_rules, updated_at";
 const TICKET_SETTINGS_SELECT_WITH_DEDICATED_AI = `${TICKET_SETTINGS_SELECT_BASE}, ai_enabled, ai_company_name, ai_company_bio, ai_tone`;
 const TICKET_SETTINGS_RETURNING_SELECT_BASE = `guild_id, ${TICKET_SETTINGS_SELECT_BASE}`;
 const TICKET_SETTINGS_RETURNING_SELECT_WITH_DEDICATED_AI = `guild_id, ${TICKET_SETTINGS_SELECT_WITH_DEDICATED_AI}`;
 
-type TicketSettingsBody = {
-  guildId?: unknown;
-  enabled?: unknown;
-  menuChannelId?: unknown;
-  ticketsCategoryId?: unknown;
-  logsCreatedChannelId?: unknown;
-  logsClosedChannelId?: unknown;
-  panelLayout?: unknown;
-  panelTitle?: unknown;
-  panelDescription?: unknown;
-  panelButtonLabel?: unknown;
-  aiRules?: unknown;
-  aiEnabled?: unknown;
-  aiCompanyName?: unknown;
-  aiCompanyBio?: unknown;
-  aiTone?: unknown;
-};
+const OPTIONAL_DISCORD_SNOWFLAKE_TEXT = flowSecureDto.string({
+  maxLength: 20,
+  pattern: /^(?:\d{17,20})?$/,
+  allowEmpty: true,
+  disallowAngleBrackets: true,
+  rejectThreatPatterns: false,
+});
 
 function getTrimmedId(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -434,26 +429,113 @@ export async function POST(request: Request) {
   let diagnostic = createServerSaveDiagnosticContext("ticket_settings");
 
   try {
-    let body: TicketSettingsBody = {};
+    let body: {
+      guildId: string;
+      enabled?: boolean;
+      menuChannelId?: string | null;
+      ticketsCategoryId?: string | null;
+      logsCreatedChannelId?: string | null;
+      logsClosedChannelId?: string | null;
+      panelLayout?: Record<string, unknown>[];
+      panelTitle?: string;
+      panelDescription?: string;
+      panelButtonLabel?: string;
+      aiRules?: string;
+      aiEnabled?: boolean;
+      aiCompanyName?: string;
+      aiCompanyBio?: string;
+      aiTone?: (typeof AI_ALLOWED_TONES)[number];
+    };
     try {
-      body = (await request.json()) as TicketSettingsBody;
-    } catch {
+      body = parseFlowSecureDto(
+        await request.json().catch(() => ({})),
+        {
+          guildId: flowSecureDto.discordSnowflake(),
+          enabled: flowSecureDto.optional(flowSecureDto.boolean()),
+          menuChannelId: flowSecureDto.optional(
+            flowSecureDto.nullable(OPTIONAL_DISCORD_SNOWFLAKE_TEXT),
+          ),
+          ticketsCategoryId: flowSecureDto.optional(
+            flowSecureDto.nullable(OPTIONAL_DISCORD_SNOWFLAKE_TEXT),
+          ),
+          logsCreatedChannelId: flowSecureDto.optional(
+            flowSecureDto.nullable(OPTIONAL_DISCORD_SNOWFLAKE_TEXT),
+          ),
+          logsClosedChannelId: flowSecureDto.optional(
+            flowSecureDto.nullable(OPTIONAL_DISCORD_SNOWFLAKE_TEXT),
+          ),
+          panelLayout: flowSecureDto.optional(
+            flowSecureDto.array(flowSecureDto.record()),
+          ),
+          panelTitle: flowSecureDto.optional(
+            flowSecureDto.string({
+              allowEmpty: true,
+              maxLength: PANEL_TITLE_MAX_LENGTH,
+              disallowAngleBrackets: false,
+            }),
+          ),
+          panelDescription: flowSecureDto.optional(
+            flowSecureDto.string({
+              allowEmpty: true,
+              maxLength: PANEL_DESCRIPTION_MAX_LENGTH,
+              disallowAngleBrackets: false,
+            }),
+          ),
+          panelButtonLabel: flowSecureDto.optional(
+            flowSecureDto.string({
+              allowEmpty: true,
+              maxLength: PANEL_BUTTON_LABEL_MAX_LENGTH,
+              disallowAngleBrackets: false,
+            }),
+          ),
+          aiRules: flowSecureDto.optional(
+            flowSecureDto.string({
+              allowEmpty: true,
+              maxLength: AI_RULES_MAX_LENGTH,
+              disallowAngleBrackets: false,
+            }),
+          ),
+          aiEnabled: flowSecureDto.optional(flowSecureDto.boolean()),
+          aiCompanyName: flowSecureDto.optional(
+            flowSecureDto.string({
+              allowEmpty: true,
+              maxLength: AI_COMPANY_NAME_MAX_LENGTH,
+              disallowAngleBrackets: false,
+            }),
+          ),
+          aiCompanyBio: flowSecureDto.optional(
+            flowSecureDto.string({
+              allowEmpty: true,
+              maxLength: AI_COMPANY_BIO_MAX_LENGTH,
+              disallowAngleBrackets: false,
+            }),
+          ),
+          aiTone: flowSecureDto.optional(flowSecureDto.enum(AI_ALLOWED_TONES)),
+        },
+        {
+          rejectUnknown: true,
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof FlowSecureDtoError)) {
+        throw error;
+      }
       recordServerSaveDiagnostic({
         context: diagnostic,
         outcome: "payload_invalid",
         httpStatus: 400,
-        detail: "Payload JSON invalido.",
+        detail: error.issues[0] || error.message,
       });
       return applyNoStoreHeaders(
         NextResponse.json(
-        { ok: false, message: "Payload JSON invalido." },
+        { ok: false, message: error.issues[0] || error.message },
         { status: 400 },
         ),
       );
     }
 
-    const guildId = getTrimmedId(body.guildId);
-    const enabled = typeof body.enabled === "boolean" ? body.enabled : true;
+    const guildId = body.guildId;
+    const enabled = body.enabled ?? true;
     const menuChannelId = getTrimmedId(body.menuChannelId);
     const ticketsCategoryId = getTrimmedId(body.ticketsCategoryId);
     const logsCreatedChannelId = getTrimmedId(body.logsCreatedChannelId);
@@ -461,15 +543,14 @@ export async function POST(request: Request) {
     const aiRules = typeof body.aiRules === "string"
       ? body.aiRules.trim().slice(0, AI_RULES_MAX_LENGTH)
       : "";
-    const aiEnabled = typeof body.aiEnabled === "boolean" ? body.aiEnabled : false;
+    const aiEnabled = body.aiEnabled ?? false;
     const aiCompanyName = typeof body.aiCompanyName === "string"
       ? body.aiCompanyName.trim().slice(0, AI_COMPANY_NAME_MAX_LENGTH)
       : "";
     const aiCompanyBio = typeof body.aiCompanyBio === "string"
       ? body.aiCompanyBio.trim().slice(0, AI_COMPANY_BIO_MAX_LENGTH)
       : "";
-    const aiToneRaw = typeof body.aiTone === "string" ? body.aiTone.trim().toLowerCase() : "formal";
-    const aiTone = AI_ALLOWED_TONES.includes(aiToneRaw) ? aiToneRaw : "formal";
+    const aiTone = body.aiTone || "formal";
     const panelLayout = normalizeTicketPanelLayout(body.panelLayout, {
       panelTitle: getTrimmedText(body.panelTitle),
       panelDescription: getTrimmedText(body.panelDescription),

@@ -7,6 +7,11 @@ import {
 } from "@/lib/flowai/jobs";
 import { recordFlowAiApiRequestEventSafe } from "@/lib/flowai/tokens";
 import { runFlowAiJson, runFlowAiText } from "@/lib/flowai/service";
+import {
+  FlowSecureDtoError,
+  flowSecureDto,
+  parseFlowSecureDto,
+} from "@/lib/security/flowSecure";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -51,12 +56,30 @@ export async function POST(request: Request) {
       );
     }
 
-    const body = (await request.json().catch(() => null)) as
-      | Record<string, unknown>
-      | null;
-    const batchSize = resolveBatchSize(request, body);
+    const body = parseFlowSecureDto(
+      await request.json().catch(() => ({})),
+      {
+        batchSize: flowSecureDto.optional(
+          flowSecureDto.number({
+            integer: true,
+            min: 1,
+            max: 10,
+          }),
+        ),
+        workerId: flowSecureDto.optional(
+          flowSecureDto.string({
+            maxLength: 120,
+            disallowAngleBrackets: true,
+          }),
+        ),
+      },
+      {
+        rejectUnknown: true,
+      },
+    );
+    const batchSize = body.batchSize ?? resolveBatchSize(request, null);
     const workerId =
-      String(body?.workerId || "").trim().slice(0, 120) ||
+      body.workerId ||
       `flowai-worker:${requestContext.requestId}`;
 
     const jobs = await claimPendingFlowAiJobs({
@@ -231,16 +254,19 @@ export async function POST(request: Request) {
       requestContext.requestId,
     );
   } catch (error) {
+    const statusCode = error instanceof FlowSecureDtoError ? 400 : 500;
     return respond(
       {
         ok: false,
         message:
-          error instanceof Error
+          error instanceof FlowSecureDtoError
+            ? error.issues[0] || error.message
+            : error instanceof Error
             ? error.message
             : "Falha no worker interno do FlowAI.",
       },
       requestContext.requestId,
-      { status: 500 },
+      { status: statusCode },
     );
   }
 }

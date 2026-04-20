@@ -15,11 +15,12 @@ import {
 } from "@/lib/plans/downgradeEnforcement";
 import { getUserPlanState } from "@/lib/plans/state";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
+import {
+  FlowSecureDtoError,
+  flowSecureDto,
+  parseFlowSecureDto,
+} from "@/lib/security/flowSecure";
 import { ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
-
-type DowngradeSelectionBody = {
-  selectedGuildIds?: unknown;
-};
 
 function normalizeGuildId(value: unknown) {
   if (typeof value !== "string") return null;
@@ -68,12 +69,25 @@ export async function POST(request: Request) {
       );
     }
 
-    let body: DowngradeSelectionBody = {};
+    let body: { selectedGuildIds?: string[] };
     try {
-      body = (await request.json()) as DowngradeSelectionBody;
-    } catch {
+      body = parseFlowSecureDto(
+        await request.json().catch(() => ({})),
+        {
+          selectedGuildIds: flowSecureDto.optional(
+            flowSecureDto.array(flowSecureDto.discordSnowflake()),
+          ),
+        },
+        {
+          rejectUnknown: true,
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof FlowSecureDtoError)) {
+        throw error;
+      }
       return NextResponse.json(
-        { ok: false, message: "Payload JSON invalido." },
+        { ok: false, message: error.issues[0] || error.message },
         { status: 400 },
       );
     }

@@ -16,6 +16,11 @@ import {
   extractAuditErrorMessage,
   sanitizeErrorMessage,
 } from "@/lib/security/errors";
+import {
+  FlowSecureDtoError,
+  flowSecureDto,
+  parseFlowSecureDto,
+} from "@/lib/security/flowSecure";
 import { hasActivePaidConfigPlan } from "@/lib/plans/configAccess";
 import { getUserPlanState } from "@/lib/plans/state";
 import {
@@ -31,12 +36,6 @@ import {
 } from "@/lib/security/requestSecurity";
 import { cleanupExpiredUnpaidServerSetups } from "@/lib/payments/setupCleanup";
 import { getLockedGuildLicenseByGuildId } from "@/lib/payments/licenseStatus";
-
-type ConfigContextBody = {
-  activeGuildId?: unknown;
-  activeStep?: unknown;
-  draft?: unknown;
-};
 
 function normalizeGuildId(value: unknown) {
   if (typeof value !== "string") return null;
@@ -168,25 +167,44 @@ export async function PUT(request: Request) {
       return attachRequestId(response, baseRequestContext.requestId);
     }
 
-    let body: ConfigContextBody = {};
+    let body: {
+      activeGuildId?: string | null;
+      activeStep?: number;
+      draft?: unknown;
+    };
     try {
-      body = (await request.json()) as ConfigContextBody;
-    } catch {
+      body = parseFlowSecureDto(
+        await request.json().catch(() => ({})),
+        {
+          activeGuildId: flowSecureDto.optional(
+            flowSecureDto.nullable(flowSecureDto.discordSnowflake()),
+          ),
+          activeStep: flowSecureDto.optional(
+            flowSecureDto.number({
+              integer: true,
+              min: 1,
+              max: 4,
+            }),
+          ),
+          draft: flowSecureDto.optional(flowSecureDto.unknown()),
+        },
+        {
+          rejectUnknown: true,
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof FlowSecureDtoError)) {
+        throw error;
+      }
       return attachRequestId(applyNoStoreHeaders(NextResponse.json(
-        { ok: false, message: "Payload JSON invalido." },
+        { ok: false, message: error.issues[0] || error.message },
         { status: 400 },
       )), baseRequestContext.requestId);
     }
 
-    const hasActiveGuildPatch = Object.prototype.hasOwnProperty.call(
-      body,
-      "activeGuildId",
-    );
-    const hasActiveStepPatch = Object.prototype.hasOwnProperty.call(
-      body,
-      "activeStep",
-    );
-    const hasDraftPatch = Object.prototype.hasOwnProperty.call(body, "draft");
+    const hasActiveGuildPatch = body.activeGuildId !== undefined;
+    const hasActiveStepPatch = body.activeStep !== undefined;
+    const hasDraftPatch = body.draft !== undefined;
 
     if (!hasActiveGuildPatch && !hasActiveStepPatch && !hasDraftPatch) {
       return attachRequestId(applyNoStoreHeaders(NextResponse.json(

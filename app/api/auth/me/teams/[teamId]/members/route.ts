@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { getCurrentAuthSessionFromCookie } from "@/lib/auth/session";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
+import {
+  FlowSecureDtoError,
+  flowSecureDto,
+  parseFlowSecureDto,
+} from "@/lib/security/flowSecure";
 import { applyNoStoreHeaders, ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { assertTeamPermission } from "@/lib/teams/userTeams";
@@ -16,38 +21,46 @@ export async function POST(
     const authSession = await getCurrentAuthSessionFromCookie();
     if (!authSession) {
       return applyNoStoreHeaders(
-        NextResponse.json({ ok: false, message: "Não autenticado." }, { status: 401 }),
+        NextResponse.json({ ok: false, message: "Nao autenticado." }, { status: 401 }),
       );
     }
 
     const { teamId: teamIdStr } = await params;
     const teamId = Number(teamIdStr);
-    if (!Number.isFinite(teamId)) {
+    if (!Number.isInteger(teamId) || teamId <= 0) {
       return applyNoStoreHeaders(
-        NextResponse.json({ ok: false, message: "ID inválido." }, { status: 400 }),
+        NextResponse.json({ ok: false, message: "ID invalido." }, { status: 400 }),
       );
     }
 
-    let body: { discordUserId?: unknown } = {};
+    let body: { discordUserId: string };
     try {
-      body = (await request.json()) as { discordUserId?: unknown };
-    } catch {
+      body = parseFlowSecureDto(
+        await request.json().catch(() => ({})),
+        {
+          discordUserId: flowSecureDto.discordSnowflake(),
+        },
+        {
+          rejectUnknown: true,
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof FlowSecureDtoError)) {
+        throw error;
+      }
+
       return applyNoStoreHeaders(
-        NextResponse.json({ ok: false, message: "Payload inválido." }, { status: 400 }),
+        NextResponse.json(
+          { ok: false, message: error.issues[0] || error.message },
+          { status: 400 },
+        ),
       );
     }
 
-    const discordUserId = typeof body.discordUserId === "string" ? body.discordUserId.trim() : "";
-    if (!/^\d{10,25}$/.test(discordUserId)) {
-      return applyNoStoreHeaders(
-        NextResponse.json({ ok: false, message: "Discord User ID inválido." }, { status: 400 }),
-      );
-    }
-
+    const discordUserId = body.discordUserId;
     const supabase = getSupabaseAdminClientOrThrow();
     await assertTeamPermission(teamId, authSession.user.id, "manage_members");
 
-    // Avoid duplicate invite
     const existingResult = await supabase
       .from("auth_user_team_members")
       .select("id, status")
@@ -57,11 +70,16 @@ export async function POST(
 
     if (existingResult.data && existingResult.data.status !== "declined") {
       return applyNoStoreHeaders(
-        NextResponse.json({ ok: false, message: "Usuário já é membro ou possui convite pendente nesta equipe." }, { status: 409 }),
+        NextResponse.json(
+          {
+            ok: false,
+            message: "Usuario ja e membro ou possui convite pendente nesta equipe.",
+          },
+          { status: 409 },
+        ),
       );
     }
 
-    // Resolve auth user if they exist
     const authUserResult = await supabase
       .from("auth_users")
       .select("id")
@@ -71,10 +89,13 @@ export async function POST(
     const invitedAuthUserId = authUserResult.data?.id || null;
 
     if (existingResult.data?.status === "declined") {
-      // Re-invite
       await supabase
         .from("auth_user_team_members")
-        .update({ status: "pending", invited_auth_user_id: invitedAuthUserId, accepted_at: null })
+        .update({
+          status: "pending",
+          invited_auth_user_id: invitedAuthUserId,
+          accepted_at: null,
+        })
         .eq("id", existingResult.data.id);
     } else {
       const insertResult = await supabase.from("auth_user_team_members").insert({

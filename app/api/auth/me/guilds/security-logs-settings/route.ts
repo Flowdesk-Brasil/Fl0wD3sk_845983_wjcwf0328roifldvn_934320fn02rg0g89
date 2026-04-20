@@ -21,6 +21,11 @@ import {
   sanitizeErrorMessage,
 } from "@/lib/security/errors";
 import {
+  FlowSecureDtoError,
+  flowSecureDto,
+  parseFlowSecureDto,
+} from "@/lib/security/flowSecure";
+import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
 } from "@/lib/security/http";
@@ -64,11 +69,13 @@ type SecurityLogsSettingsPayload = {
   events: SecurityLogsSettings;
 };
 
-type GuildAccessContext = {
-  sessionData: NonNullable<Awaited<ReturnType<typeof resolveSessionAccessToken>>>;
-  accessibleGuild: Awaited<ReturnType<typeof assertUserAdminInGuildOrNull>>;
-  hasTeamAccess: boolean;
-};
+const OPTIONAL_DISCORD_SNOWFLAKE_TEXT = flowSecureDto.string({
+  maxLength: 20,
+  pattern: /^(?:\d{17,20})?$/,
+  allowEmpty: true,
+  disallowAngleBrackets: true,
+  rejectThreatPatterns: false,
+});
 
 const SECURITY_LOG_EVENT_DESCRIPTORS = [
   {
@@ -466,25 +473,48 @@ export async function POST(request: Request) {
   let diagnostic = createServerSaveDiagnosticContext("security_logs_settings");
 
   try {
-    let body: SecurityLogsSettingsBody = {};
+    let body: {
+      guildId: string;
+      enabled?: boolean;
+      useDefaultChannel?: boolean;
+      defaultChannelId?: string | null;
+      events?: Record<string, unknown>;
+    };
     try {
-      body = (await request.json()) as SecurityLogsSettingsBody;
-    } catch {
+      body = parseFlowSecureDto(
+        await request.json().catch(() => ({})),
+        {
+          guildId: flowSecureDto.discordSnowflake(),
+          enabled: flowSecureDto.optional(flowSecureDto.boolean()),
+          useDefaultChannel: flowSecureDto.optional(flowSecureDto.boolean()),
+          defaultChannelId: flowSecureDto.optional(
+            flowSecureDto.nullable(OPTIONAL_DISCORD_SNOWFLAKE_TEXT),
+          ),
+          events: flowSecureDto.optional(flowSecureDto.record()),
+        },
+        {
+          rejectUnknown: true,
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof FlowSecureDtoError)) {
+        throw error;
+      }
       recordServerSaveDiagnostic({
         context: diagnostic,
         outcome: "payload_invalid",
         httpStatus: 400,
-        detail: "Payload JSON invalido.",
+        detail: error.issues[0] || error.message,
       });
       return applyNoStoreHeaders(
         NextResponse.json(
-          { ok: false, message: "Payload JSON invalido." },
+          { ok: false, message: error.issues[0] || error.message },
           { status: 400 },
         ),
       );
     }
 
-    const guildId = getTrimmedId(body.guildId);
+    const guildId = body.guildId;
     const settings = normalizeSecurityLogsBodyInput(body);
 
     diagnostic = createServerSaveDiagnosticContext(

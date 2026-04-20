@@ -3,6 +3,7 @@ import { authConfig } from "@/lib/auth/config";
 type ExchangeMicrosoftCodeInput = {
   code: string;
   redirectUri: string;
+  codeVerifier?: string | null;
 };
 
 export type MicrosoftTokenResponse = {
@@ -52,7 +53,14 @@ function requireMicrosoftClientConfig() {
   };
 }
 
-export function buildMicrosoftAuthorizeUrl(state: string, redirectUri: string) {
+export function buildMicrosoftAuthorizeUrl(
+  state: string,
+  redirectUri: string,
+  input?: {
+    codeChallenge?: string | null;
+    nonce?: string | null;
+  },
+) {
   const { clientId } = requireMicrosoftClientConfig();
   const url = new URL(MICROSOFT_AUTHORIZE_ENDPOINT);
 
@@ -64,26 +72,42 @@ export function buildMicrosoftAuthorizeUrl(state: string, redirectUri: string) {
   url.searchParams.set("prompt", "select_account");
   url.searchParams.set("state", state);
 
+  if (input?.codeChallenge) {
+    url.searchParams.set("code_challenge", input.codeChallenge);
+    url.searchParams.set("code_challenge_method", "S256");
+  }
+
+  if (input?.nonce) {
+    url.searchParams.set("nonce", input.nonce);
+  }
+
   return url.toString();
 }
 
 export async function exchangeMicrosoftCodeForToken({
   code,
   redirectUri,
+  codeVerifier,
 }: ExchangeMicrosoftCodeInput) {
   const { clientId, clientSecret } = requireMicrosoftClientConfig();
+  const body = new URLSearchParams({
+    client_id: clientId,
+    client_secret: clientSecret,
+    code,
+    grant_type: "authorization_code",
+    redirect_uri: redirectUri,
+  });
+
+  if (codeVerifier) {
+    body.set("code_verifier", codeVerifier);
+  }
+
   const response = await fetch(MICROSOFT_TOKEN_ENDPOINT, {
     method: "POST",
     headers: {
       "content-type": "application/x-www-form-urlencoded",
     },
-    body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
-      code,
-      grant_type: "authorization_code",
-      redirect_uri: redirectUri,
-    }),
+    body,
     cache: "no-store",
   });
 

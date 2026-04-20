@@ -25,6 +25,9 @@ type FlowSecureStringOptions = {
   maxLength?: number;
   pattern?: RegExp;
   allowEmpty?: boolean;
+  rejectThreatPatterns?: boolean;
+  disallowAngleBrackets?: boolean;
+  normalizeWhitespace?: boolean;
 };
 
 type FlowSecureBooleanOptions = {
@@ -48,6 +51,26 @@ export class FlowSecureDtoError extends Error {
     this.statusCode = statusCode;
   }
 }
+
+const FLOWSECURE_THREAT_PATTERNS = [
+  /<\s*script\b/i,
+  /<\s*iframe\b/i,
+  /javascript\s*:/i,
+  /data\s*:\s*text\/html/i,
+  /\bon\w+\s*=/i,
+  /\bunion\b[\s\S]{0,24}\bselect\b/i,
+  /\bselect\b[\s\S]{0,24}\bfrom\b/i,
+  /\bdrop\b[\s\S]{0,24}\btable\b/i,
+  /\binsert\b[\s\S]{0,24}\binto\b/i,
+  /\bdelete\b[\s\S]{0,24}\bfrom\b/i,
+  /\bupdate\b[\s\S]{0,24}\bset\b/i,
+  /--/,
+  /\/\*/,
+  /\*\//,
+  /\bor\b\s+1\s*=\s*1\b/i,
+  /\band\b\s+1\s*=\s*1\b/i,
+  /\bxp_cmdshell\b/i,
+] as const;
 
 class FlowSecureFieldError extends Error {
   constructor(message: string) {
@@ -279,6 +302,36 @@ export function constantTimeEqualText(
   return crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
+export function containsFlowSecureThreatPattern(value: string | null | undefined) {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  const normalized = value.trim();
+  if (!normalized) {
+    return false;
+  }
+
+  return FLOWSECURE_THREAT_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+export function assertFlowSecureSafeText(
+  value: string,
+  input?: {
+    fieldName?: string;
+    disallowAngleBrackets?: boolean;
+  },
+) {
+  const fieldName = input?.fieldName || "valor";
+  if (containsFlowSecureThreatPattern(value)) {
+    throw new FlowSecureFieldError(`Campo ${fieldName} contem padrao inseguro.`);
+  }
+
+  if (input?.disallowAngleBrackets !== false && /[<>]/.test(value)) {
+    throw new FlowSecureFieldError(`Campo ${fieldName} contem caracteres inseguros.`);
+  }
+}
+
 function redactSensitiveValue(value: unknown): unknown {
   if (value === null || value === undefined) return value;
   if (typeof value === "boolean") return value;
@@ -380,7 +433,10 @@ export const flowSecureDto = {
         throw new FlowSecureFieldError(`Campo ${key} precisa ser texto.`);
       }
 
-      const normalized = options.trim === false ? value : value.trim();
+      const maybeTrimmed = options.trim === false ? value : value.trim();
+      const normalized = options.normalizeWhitespace
+        ? maybeTrimmed.replace(/\s+/g, " ")
+        : maybeTrimmed;
       if (!options.allowEmpty && !normalized) {
         throw new FlowSecureFieldError(`Campo ${key} precisa ser preenchido.`);
       }
@@ -407,7 +463,98 @@ export const flowSecureDto = {
         throw new FlowSecureFieldError(`Campo ${key} possui formato invalido.`);
       }
 
+      if (options.rejectThreatPatterns !== false && normalized) {
+        assertFlowSecureSafeText(normalized, {
+          fieldName: key,
+          disallowAngleBrackets: options.disallowAngleBrackets,
+        });
+      }
+
       return normalized;
+    };
+  },
+
+  email(): FlowSecureReader<string> {
+    return flowSecureDto.string({
+      maxLength: 254,
+      pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+      disallowAngleBrackets: true,
+    });
+  },
+
+  discordSnowflake(): FlowSecureReader<string> {
+    return flowSecureDto.string({
+      minLength: 17,
+      maxLength: 20,
+      pattern: /^\d{17,20}$/,
+      disallowAngleBrackets: true,
+    });
+  },
+
+  internalPath(): FlowSecureReader<string> {
+    return flowSecureDto.string({
+      maxLength: 2048,
+      pattern: /^\/(?!\/)[A-Za-z0-9\-._~!$&'()*+,;=:@/%?#]*$/,
+      disallowAngleBrackets: true,
+      rejectThreatPatterns: true,
+    });
+  },
+
+  base64UrlToken(options?: {
+    minLength?: number;
+    maxLength?: number;
+  }): FlowSecureReader<string> {
+    const minLength = options?.minLength ?? 16;
+    const maxLength = options?.maxLength ?? 256;
+    return flowSecureDto.string({
+      minLength,
+      maxLength,
+      pattern: /^[A-Za-z0-9_-]+$/,
+      disallowAngleBrackets: true,
+      rejectThreatPatterns: false,
+    });
+  },
+
+  personName(): FlowSecureReader<string> {
+    return flowSecureDto.string({
+      minLength: 3,
+      maxLength: 120,
+      normalizeWhitespace: true,
+      pattern: /^[\p{L}\p{M}0-9 .,'’-]+$/u,
+      disallowAngleBrackets: true,
+    });
+  },
+
+  looseBoolean(options: FlowSecureBooleanOptions = {}): FlowSecureReader<boolean> {
+    return (value, key) => {
+      if (typeof value === "boolean") {
+        return value;
+      }
+
+      if (value === undefined || value === null || value === "") {
+        if (typeof options.defaultValue === "boolean") {
+          return options.defaultValue;
+        }
+
+        throw new FlowSecureFieldError(`Campo ${key} precisa ser booleano.`);
+      }
+
+      if (typeof value === "number") {
+        if (value === 1) return true;
+        if (value === 0) return false;
+      }
+
+      if (typeof value === "string") {
+        const normalized = value.trim().toLowerCase();
+        if (["1", "true", "yes", "y", "on"].includes(normalized)) {
+          return true;
+        }
+        if (["0", "false", "no", "n", "off"].includes(normalized)) {
+          return false;
+        }
+      }
+
+      throw new FlowSecureFieldError(`Campo ${key} precisa ser booleano.`);
     };
   },
 
@@ -472,6 +619,50 @@ export const flowSecureDto = {
       }
 
       return normalized as TValues[number];
+    };
+  },
+
+  record(): FlowSecureReader<Record<string, unknown>> {
+    return (value, key) => {
+      if (!isRecord(value)) {
+        throw new FlowSecureFieldError(`Campo ${key} precisa ser um objeto.`);
+      }
+
+      return value;
+    };
+  },
+
+  array<T>(
+    reader: FlowSecureReader<T>,
+    options?: {
+      minLength?: number;
+      maxLength?: number;
+    },
+  ): FlowSecureReader<T[]> {
+    return (value, key) => {
+      if (!Array.isArray(value)) {
+        throw new FlowSecureFieldError(`Campo ${key} precisa ser uma lista.`);
+      }
+
+      if (
+        typeof options?.minLength === "number" &&
+        value.length < options.minLength
+      ) {
+        throw new FlowSecureFieldError(
+          `Campo ${key} precisa ter ao menos ${options.minLength} item(ns).`,
+        );
+      }
+
+      if (
+        typeof options?.maxLength === "number" &&
+        value.length > options.maxLength
+      ) {
+        throw new FlowSecureFieldError(
+          `Campo ${key} excede o limite de ${options.maxLength} item(ns).`,
+        );
+      }
+
+      return value.map((item, index) => reader(item, `${key}[${index}]`));
     };
   },
 

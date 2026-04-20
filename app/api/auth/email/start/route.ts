@@ -60,9 +60,7 @@ export async function POST(request: NextRequest) {
     const payload = parseFlowSecureDto(
       await request.json().catch(() => ({})),
       {
-        email: flowSecureDto.string({
-          maxLength: 254,
-        }),
+        email: flowSecureDto.email(),
       },
       {
         rejectUnknown: true,

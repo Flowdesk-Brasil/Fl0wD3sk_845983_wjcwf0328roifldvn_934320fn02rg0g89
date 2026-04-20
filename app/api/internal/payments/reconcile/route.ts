@@ -9,6 +9,11 @@ import {
 import {
   sanitizeErrorMessage,
 } from "@/lib/security/errors";
+import {
+  FlowSecureDtoError,
+  flowSecureDto,
+  parseFlowSecureDto,
+} from "@/lib/security/flowSecure";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -16,10 +21,10 @@ import {
 } from "@/lib/security/requestSecurity";
 
 type ReconcileRequestPayload = {
-  orderNumber?: unknown;
-  limit?: unknown;
-  providerPaymentId?: unknown;
-  guildId?: unknown;
+  orderNumber?: number;
+  limit?: number;
+  providerPaymentId?: string | null;
+  guildId?: string | null;
 };
 
 function resolveAllowedReconcileTokens() {
@@ -108,11 +113,38 @@ async function readPayload(request: Request) {
     return null;
   }
 
-  try {
-    return (await request.json()) as ReconcileRequestPayload;
-  } catch {
-    return null;
-  }
+  return parseFlowSecureDto(
+    await request.json().catch(() => ({})),
+    {
+      orderNumber: flowSecureDto.optional(
+        flowSecureDto.number({
+          integer: true,
+          min: 1,
+        }),
+      ),
+      limit: flowSecureDto.optional(
+        flowSecureDto.number({
+          integer: true,
+          min: 1,
+          max: 100,
+        }),
+      ),
+      providerPaymentId: flowSecureDto.optional(
+        flowSecureDto.nullable(
+          flowSecureDto.string({
+            maxLength: 128,
+            disallowAngleBrackets: true,
+          }),
+        ),
+      ),
+      guildId: flowSecureDto.optional(
+        flowSecureDto.nullable(flowSecureDto.discordSnowflake()),
+      ),
+    },
+    {
+      rejectUnknown: true,
+    },
+  );
 }
 
 async function handleReconcile(request: Request, requestId: string) {
@@ -142,19 +174,31 @@ async function handleReconcile(request: Request, requestId: string) {
     );
   }
 
-  const body = await readPayload(request);
+  let body: ReconcileRequestPayload | null = null;
+  try {
+    body = await readPayload(request);
+  } catch (error) {
+    if (!(error instanceof FlowSecureDtoError)) {
+      throw error;
+    }
+
+    return respond(
+      { ok: false, message: error.issues[0] || error.message },
+      { status: 400 },
+    );
+  }
   const orderNumber =
-    parsePositiveInt(body?.orderNumber) ||
+    (typeof body?.orderNumber === "number" ? body.orderNumber : null) ||
     parsePositiveInt(url.searchParams.get("orderNumber"));
   const limit =
-    parsePositiveInt(body?.limit) ||
+    (typeof body?.limit === "number" ? body.limit : null) ||
     parsePositiveInt(url.searchParams.get("limit")) ||
     25;
   const providerPaymentId =
-    parseNullableString(body?.providerPaymentId) ||
+    body?.providerPaymentId ||
     parseNullableString(url.searchParams.get("providerPaymentId"));
   const guildId =
-    parseNullableString(body?.guildId) ||
+    body?.guildId ||
     parseNullableString(url.searchParams.get("guildId"));
 
   if (orderNumber) {

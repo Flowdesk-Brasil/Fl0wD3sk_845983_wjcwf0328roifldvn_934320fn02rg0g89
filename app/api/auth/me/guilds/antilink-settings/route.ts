@@ -22,6 +22,11 @@ import {
   sanitizeErrorMessage,
 } from "@/lib/security/errors";
 import {
+  FlowSecureDtoError,
+  flowSecureDto,
+  parseFlowSecureDto,
+} from "@/lib/security/flowSecure";
+import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
 } from "@/lib/security/http";
@@ -33,24 +38,13 @@ const MAX_IGNORED_ROLE_IDS = 30;
 
 type AntiLinkEnforcementAction = "delete_only" | "timeout" | "kick" | "ban";
 
-type AntiLinkSettingsBody = {
-  guildId?: unknown;
-  enabled?: unknown;
-  logChannelId?: unknown;
-  enforcementAction?: unknown;
-  timeoutMinutes?: unknown;
-  ignoredRoleIds?: unknown;
-  ignoredChannelIds?: unknown;
-  blockExternalLinks?: unknown;
-  blockDiscordInvites?: unknown;
-  blockObfuscatedLinks?: unknown;
-};
-
-type GuildAccessContext = {
-  sessionData: NonNullable<Awaited<ReturnType<typeof resolveSessionAccessToken>>>;
-  accessibleGuild: Awaited<ReturnType<typeof assertUserAdminInGuildOrNull>>;
-  hasTeamAccess: boolean;
-};
+const OPTIONAL_DISCORD_SNOWFLAKE_TEXT = flowSecureDto.string({
+  maxLength: 20,
+  pattern: /^(?:\d{17,20})?$/,
+  allowEmpty: true,
+  disallowAngleBrackets: true,
+  rejectThreatPatterns: false,
+});
 
 function getTrimmedId(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -328,26 +322,75 @@ export async function POST(request: Request) {
   let diagnostic = createServerSaveDiagnosticContext("antilink_settings");
 
   try {
-    let body: AntiLinkSettingsBody = {};
+    let body: {
+      guildId: string;
+      enabled?: boolean;
+      logChannelId?: string | null;
+      enforcementAction?: AntiLinkEnforcementAction;
+      timeoutMinutes?: number;
+      ignoredRoleIds?: string[];
+      ignoredChannelIds?: string[];
+      blockExternalLinks?: boolean;
+      blockDiscordInvites?: boolean;
+      blockObfuscatedLinks?: boolean;
+    };
     try {
-      body = (await request.json()) as AntiLinkSettingsBody;
-    } catch {
+      body = parseFlowSecureDto(
+        await request.json().catch(() => ({})),
+        {
+          guildId: flowSecureDto.discordSnowflake(),
+          enabled: flowSecureDto.optional(flowSecureDto.boolean()),
+          logChannelId: flowSecureDto.optional(
+            flowSecureDto.nullable(OPTIONAL_DISCORD_SNOWFLAKE_TEXT),
+          ),
+          enforcementAction: flowSecureDto.optional(
+            flowSecureDto.enum(["delete_only", "timeout", "kick", "ban"] as const),
+          ),
+          timeoutMinutes: flowSecureDto.optional(
+            flowSecureDto.number({
+              integer: true,
+              min: 1,
+              max: 10080,
+            }),
+          ),
+          ignoredRoleIds: flowSecureDto.optional(
+            flowSecureDto.array(flowSecureDto.discordSnowflake(), {
+              maxLength: MAX_IGNORED_ROLE_IDS,
+            }),
+          ),
+          ignoredChannelIds: flowSecureDto.optional(
+            flowSecureDto.array(flowSecureDto.discordSnowflake(), {
+              maxLength: 30,
+            }),
+          ),
+          blockExternalLinks: flowSecureDto.optional(flowSecureDto.boolean()),
+          blockDiscordInvites: flowSecureDto.optional(flowSecureDto.boolean()),
+          blockObfuscatedLinks: flowSecureDto.optional(flowSecureDto.boolean()),
+        },
+        {
+          rejectUnknown: true,
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof FlowSecureDtoError)) {
+        throw error;
+      }
       recordServerSaveDiagnostic({
         context: diagnostic,
         outcome: "payload_invalid",
         httpStatus: 400,
-        detail: "Payload JSON invalido.",
+        detail: error.issues[0] || error.message,
       });
       return applyNoStoreHeaders(
         NextResponse.json(
-          { ok: false, message: "Payload JSON invalido." },
+          { ok: false, message: error.issues[0] || error.message },
           { status: 400 },
         ),
       );
     }
 
-    const guildId = getTrimmedId(body.guildId);
-    const enabled = typeof body.enabled === "boolean" ? body.enabled : false;
+    const guildId = body.guildId;
+    const enabled = body.enabled ?? false;
     const logChannelId = resolveOptionalId(body.logChannelId);
     const enforcementAction = normalizeAction(body.enforcementAction);
     const timeoutMinutes = normalizeTimeoutMinutes(body.timeoutMinutes);

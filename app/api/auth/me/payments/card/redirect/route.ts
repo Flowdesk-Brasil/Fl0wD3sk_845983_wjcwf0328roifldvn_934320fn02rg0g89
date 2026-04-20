@@ -62,22 +62,14 @@ import {
 } from "@/lib/security/databaseAvailability";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
 import {
+  flowSecureDto,
+  FlowSecureDtoError,
+  parseFlowSecureDto,
+} from "@/lib/security/flowSecure";
+import {
   buildCanonicalUrlFromInternalPath,
 } from "@/lib/routing/subdomains";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
-
-type CreateCardRedirectBody = {
-  guildId?: unknown;
-  planCode?: unknown;
-  billingPeriodCode?: unknown;
-  couponCode?: unknown;
-  giftCardCode?: unknown;
-  renew?: unknown;
-  returnTarget?: unknown;
-  returnGuildId?: unknown;
-  returnTab?: unknown;
-  forceNew?: unknown;
-};
 
 const CARD_REDIRECT_ROUTE_COALESCE_TTL_MS = 1500;
 
@@ -148,22 +140,94 @@ export async function POST(request: Request) {
       );
     }
 
-    let body: CreateCardRedirectBody = {};
+    let payload: {
+      guildId?: string | null;
+      planCode?: string | null;
+      billingPeriodCode?: string | null;
+      couponCode?: string | null;
+      giftCardCode?: string | null;
+      renew?: boolean;
+      returnTarget?: "servers" | null;
+      returnGuildId?: string | null;
+      returnTab?: "plans" | "settings" | null;
+      forceNew?: boolean;
+    };
     try {
-      body = (await request.json()) as CreateCardRedirectBody;
-    } catch {
+      payload = parseFlowSecureDto(
+        await request.json().catch(() => ({})),
+        {
+          guildId: flowSecureDto.optional(
+            flowSecureDto.nullable(flowSecureDto.discordSnowflake()),
+          ),
+          planCode: flowSecureDto.optional(
+            flowSecureDto.nullable(
+              flowSecureDto.string({
+                maxLength: 32,
+                pattern: /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/,
+              }),
+            ),
+          ),
+          billingPeriodCode: flowSecureDto.optional(
+            flowSecureDto.nullable(
+              flowSecureDto.string({
+                maxLength: 32,
+                pattern: /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/,
+              }),
+            ),
+          ),
+          couponCode: flowSecureDto.optional(
+            flowSecureDto.nullable(
+              flowSecureDto.string({
+                maxLength: 64,
+                pattern: /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/,
+              }),
+            ),
+          ),
+          giftCardCode: flowSecureDto.optional(
+            flowSecureDto.nullable(
+              flowSecureDto.string({
+                maxLength: 64,
+                pattern: /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/,
+              }),
+            ),
+          ),
+          renew: flowSecureDto.optional(flowSecureDto.looseBoolean()),
+          returnTarget: flowSecureDto.optional(
+            flowSecureDto.nullable(flowSecureDto.enum(["servers"] as const)),
+          ),
+          returnGuildId: flowSecureDto.optional(
+            flowSecureDto.nullable(flowSecureDto.discordSnowflake()),
+          ),
+          returnTab: flowSecureDto.optional(
+            flowSecureDto.nullable(
+              flowSecureDto.enum(["plans", "settings"] as const),
+            ),
+          ),
+          forceNew: flowSecureDto.optional(flowSecureDto.looseBoolean()),
+        },
+        {
+          rejectUnknown: true,
+        },
+      );
+    } catch (error) {
       return respond(
-        { ok: false, message: "Payload JSON invalido." },
+        {
+          ok: false,
+          message:
+            error instanceof FlowSecureDtoError
+              ? error.issues[0] || error.message
+              : "Payload JSON invalido.",
+        },
         { status: 400 },
       );
     }
 
-    const guildId = normalizeGuildId(body.guildId);
-    const forceNew = parseForceNewFlag(body.forceNew);
-    const renew = parseForceNewFlag(body.renew);
-    const returnTarget = normalizeReturnTarget(body.returnTarget);
-    const returnGuildId = normalizeGuildId(body.returnGuildId) || guildId;
-    const returnTab = normalizeReturnTab(body.returnTab);
+    const guildId = normalizeGuildId(payload.guildId);
+    const forceNew = parseForceNewFlag(payload.forceNew);
+    const renew = parseForceNewFlag(payload.renew);
+    const returnTarget = normalizeReturnTarget(payload.returnTarget);
+    const returnGuildId = normalizeGuildId(payload.returnGuildId) || guildId;
+    const returnTab = normalizeReturnTab(payload.returnTab);
 
     const access = await ensureGuildAccess(guildId);
     if (!access.ok) {
@@ -181,16 +245,16 @@ export async function POST(request: Request) {
 
     const mutationKey = createStablePaymentIdempotencyKey({
       namespace: "payment-card-redirect-post-route",
-      parts: [
-        access.context.sessionData.authSession.user.id,
-        guildId || "__account__",
-        typeof body.planCode === "string" ? body.planCode : "",
-        typeof body.billingPeriodCode === "string" ? body.billingPeriodCode : "",
-        typeof body.couponCode === "string" ? body.couponCode : "",
-        typeof body.giftCardCode === "string" ? body.giftCardCode : "",
-        renew,
-        returnTarget || "__none__",
-        returnGuildId || "__none__",
+        parts: [
+          access.context.sessionData.authSession.user.id,
+          guildId || "__account__",
+          payload.planCode || "",
+          payload.billingPeriodCode || "",
+          payload.couponCode || "",
+          payload.giftCardCode || "",
+          renew,
+          returnTarget || "__none__",
+          returnGuildId || "__none__",
         returnTab,
         forceNew,
       ],
@@ -246,8 +310,8 @@ export async function POST(request: Request) {
         const checkoutPlan = await resolveCheckoutPlanForGuild({
           userId: user.id,
           guildId,
-          requestedPlanCode: body.planCode,
-          requestedBillingPeriodCode: body.billingPeriodCode,
+          requestedPlanCode: payload.planCode,
+          requestedBillingPeriodCode: payload.billingPeriodCode,
         });
 
         if (checkoutPlan.planChange.execution === "schedule_for_renewal") {
@@ -312,9 +376,8 @@ export async function POST(request: Request) {
         const pricing = await resolveDiscountPricing({
           baseAmount: checkoutPlan.amount,
           currency: checkoutPlan.currency,
-          couponCode: typeof body.couponCode === "string" ? body.couponCode : null,
-          giftCardCode:
-            typeof body.giftCardCode === "string" ? body.giftCardCode : null,
+          couponCode: payload.couponCode || null,
+          giftCardCode: payload.giftCardCode || null,
           userId: user.id,
           planCode: checkoutPlan.plan.code,
           billingPeriodCode: checkoutPlan.plan.billingPeriodCode,

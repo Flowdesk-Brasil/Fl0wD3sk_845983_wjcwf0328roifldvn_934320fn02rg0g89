@@ -56,6 +56,11 @@ import {
   extractAuditErrorMessage,
   sanitizeErrorMessage,
 } from "@/lib/security/errors";
+import {
+  flowSecureDto,
+  FlowSecureDtoError,
+  parseFlowSecureDto,
+} from "@/lib/security/flowSecure";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 type HiddenMethodRecord = {
@@ -73,13 +78,6 @@ type SavedMethodSummary = {
   nickname?: string | null;
 };
 
-type UpdatePlanBody = {
-  guildId?: unknown;
-  planCode?: unknown;
-  recurringEnabled?: unknown;
-  recurringMethodId?: unknown;
-};
-
 function normalizeGuildId(value: unknown) {
   if (typeof value !== "string") return null;
   const guildId = value.trim();
@@ -91,11 +89,6 @@ function toFiniteAmount(value: string | number) {
   if (typeof value === "number") return Number.isFinite(value) ? value : fallbackAmount;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallbackAmount;
-}
-
-function normalizeRecurringEnabled(value: unknown) {
-  if (typeof value !== "boolean") return null;
-  return value;
 }
 
 function normalizeRecurringMethodId(value: unknown) {
@@ -113,13 +106,6 @@ function normalizeRequestedPlanCode(value: unknown) {
 function normalizeRequestedBillingPeriodCode(value: unknown) {
   if (typeof value !== "string") return null;
   return normalizePlanBillingPeriodCode(value, DEFAULT_PLAN_BILLING_PERIOD_CODE);
-}
-
-function shouldIncludePaymentMethods(value: string | null) {
-  if (value === null) return true;
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) return true;
-  return normalized !== "0" && normalized !== "false" && normalized !== "no";
 }
 
 async function ensureGuildAccess(guildId: string | null) {
@@ -528,18 +514,75 @@ export async function GET(request: Request) {
   const requestContext = createSecurityRequestContext(request);
   try {
     const url = new URL(request.url);
-    const guildId = normalizeGuildId(url.searchParams.get("guildId"));
+    let query: {
+      guildId?: string | null;
+      planCode?: string | null;
+      billingPeriodCode?: string | null;
+      includePaymentMethods?: boolean;
+    };
+    try {
+      query = parseFlowSecureDto(
+        {
+          guildId: url.searchParams.get("guildId") ?? undefined,
+          planCode: url.searchParams.get("planCode") ?? undefined,
+          billingPeriodCode:
+            url.searchParams.get("billingPeriodCode") ?? undefined,
+          includePaymentMethods:
+            url.searchParams.get("includePaymentMethods") ?? undefined,
+        },
+        {
+          guildId: flowSecureDto.optional(
+            flowSecureDto.nullable(flowSecureDto.discordSnowflake()),
+          ),
+          planCode: flowSecureDto.optional(
+            flowSecureDto.nullable(
+              flowSecureDto.string({
+                maxLength: 32,
+                pattern: /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/,
+              }),
+            ),
+          ),
+          billingPeriodCode: flowSecureDto.optional(
+            flowSecureDto.nullable(
+              flowSecureDto.string({
+                maxLength: 32,
+                pattern: /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/,
+              }),
+            ),
+          ),
+          includePaymentMethods: flowSecureDto.optional(
+            flowSecureDto.looseBoolean(),
+          ),
+        },
+        {
+          rejectUnknown: true,
+        },
+      );
+    } catch (error) {
+      return attachRequestId(
+        NextResponse.json(
+          {
+            ok: false,
+            message:
+              error instanceof FlowSecureDtoError
+                ? error.issues[0] || error.message
+                : "Parametros invalidos.",
+          },
+          { status: 400 },
+        ),
+        requestContext.requestId,
+      );
+    }
+    const guildId = normalizeGuildId(query.guildId);
     const access = await ensureGuildAccess(guildId);
     if (!access.ok) return attachRequestId(access.response, requestContext.requestId);
 
     const userId = access.context.sessionData.authSession.user.id;
-    const requestedPlanCode = normalizeRequestedPlanCode(url.searchParams.get("planCode"));
+    const requestedPlanCode = normalizeRequestedPlanCode(query.planCode);
     const requestedBillingPeriodCode = normalizeRequestedBillingPeriodCode(
-      url.searchParams.get("billingPeriodCode"),
+      query.billingPeriodCode,
     );
-    const includePaymentMethods = shouldIncludePaymentMethods(
-      url.searchParams.get("includePaymentMethods"),
-    );
+    const includePaymentMethods = query.includePaymentMethods ?? true;
     const [selection, savedMethods] = await Promise.all([
       guildId
         ? resolveEffectivePlanSelection({
@@ -627,34 +670,56 @@ export async function POST(request: Request) {
     const securityResponse = ensureSameOriginJsonMutationRequest(request);
     if (securityResponse) return attachRequestId(securityResponse, baseRequestContext.requestId);
 
-    let body: UpdatePlanBody = {};
+    let payload: {
+      guildId: string;
+      planCode?: string | null;
+      recurringEnabled: boolean;
+      recurringMethodId?: string | null;
+    };
     try {
-      body = (await request.json()) as UpdatePlanBody;
-    } catch {
+      payload = parseFlowSecureDto(
+        await request.json().catch(() => ({})),
+        {
+          guildId: flowSecureDto.discordSnowflake(),
+          planCode: flowSecureDto.optional(
+            flowSecureDto.nullable(
+              flowSecureDto.string({
+                maxLength: 32,
+                pattern: /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/,
+              }),
+            ),
+          ),
+          recurringEnabled: flowSecureDto.looseBoolean(),
+          recurringMethodId: flowSecureDto.optional(
+            flowSecureDto.nullable(
+              flowSecureDto.string({
+                maxLength: 120,
+                pattern: /^[A-Za-z0-9:_-]+$/,
+              }),
+            ),
+          ),
+        },
+        {
+          rejectUnknown: true,
+        },
+      );
+    } catch (error) {
       return attachRequestId(NextResponse.json(
-        { ok: false, message: "Payload JSON invalido." },
+        {
+          ok: false,
+          message:
+            error instanceof FlowSecureDtoError
+              ? error.issues[0] || error.message
+              : "Payload JSON invalido.",
+        },
         { status: 400 },
       ), baseRequestContext.requestId);
     }
 
-    const guildId = normalizeGuildId(body.guildId);
-    const requestedPlanCode = normalizeRequestedPlanCode(body.planCode);
-    const recurringEnabled = normalizeRecurringEnabled(body.recurringEnabled);
-    const recurringMethodId = normalizeRecurringMethodId(body.recurringMethodId);
-
-    if (!guildId) {
-      return attachRequestId(NextResponse.json(
-        { ok: false, message: "Guild ID invalido." },
-        { status: 400 },
-      ), baseRequestContext.requestId);
-    }
-
-    if (recurringEnabled === null) {
-      return attachRequestId(NextResponse.json(
-        { ok: false, message: "Flag de recorrencia invalida." },
-        { status: 400 },
-      ), baseRequestContext.requestId);
-    }
+    const guildId = payload.guildId;
+    const requestedPlanCode = normalizeRequestedPlanCode(payload.planCode);
+    const recurringEnabled = payload.recurringEnabled;
+    const recurringMethodId = normalizeRecurringMethodId(payload.recurringMethodId);
 
     const access = await ensureGuildAccess(guildId);
     if (!access.ok) return attachRequestId(access.response, baseRequestContext.requestId);

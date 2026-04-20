@@ -14,13 +14,14 @@ import {
 import { getUserPlanState } from "@/lib/plans/state";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
 import {
+  FlowSecureDtoError,
+  flowSecureDto,
+  parseFlowSecureDto,
+} from "@/lib/security/flowSecure";
+import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
 } from "@/lib/security/http";
-
-type ClaimServerBody = {
-  guildId?: unknown;
-};
 
 function normalizeGuildId(value: unknown) {
   if (typeof value !== "string") return null;
@@ -54,13 +55,24 @@ export async function POST(request: Request) {
       );
     }
 
-    let body: ClaimServerBody = {};
+    let body: { guildId: string };
     try {
-      body = (await request.json()) as ClaimServerBody;
-    } catch {
+      body = parseFlowSecureDto(
+        await request.json().catch(() => ({})),
+        {
+          guildId: flowSecureDto.discordSnowflake(),
+        },
+        {
+          rejectUnknown: true,
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof FlowSecureDtoError)) {
+        throw error;
+      }
       return applyNoStoreHeaders(
         NextResponse.json(
-          { ok: false, message: "Payload JSON invalido." },
+          { ok: false, message: error.issues[0] || error.message },
           { status: 400 },
         ),
       );

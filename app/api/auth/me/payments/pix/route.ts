@@ -1629,11 +1629,7 @@ export async function POST(request: Request) {
               maxLength: 40,
             }),
           ),
-          payerName: flowSecureDto.optional(
-            flowSecureDto.string({
-              maxLength: 120,
-            }),
-          ),
+          payerName: flowSecureDto.optional(flowSecureDto.personName()),
           payerDocument: flowSecureDto.optional(
             flowSecureDto.string({
               maxLength: 32,
@@ -1642,11 +1638,13 @@ export async function POST(request: Request) {
           couponCode: flowSecureDto.optional(
             flowSecureDto.string({
               maxLength: 80,
+              normalizeWhitespace: true,
             }),
           ),
           giftCardCode: flowSecureDto.optional(
             flowSecureDto.string({
               maxLength: 80,
+              normalizeWhitespace: true,
             }),
           ),
           forceNew: flowSecureDto.optional(flowSecureDto.unknown()),

@@ -30,6 +30,11 @@ import {
 import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { applyNoStoreHeaders, ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import {
+  flowSecureDto,
+  FlowSecureDtoError,
+  parseFlowSecureDto,
+} from "@/lib/security/flowSecure";
+import {
   createCoalescedRouteKey,
   runCoalescedRouteResponse,
 } from "@/lib/security/routeCoalescing";
@@ -40,12 +45,6 @@ import {
   extendSecurityRequestContext,
   logSecurityAuditEventSafe,
 } from "@/lib/security/requestSecurity";
-
-type SchedulePlanChangeBody = {
-  guildId?: unknown;
-  planCode?: unknown;
-  billingPeriodCode?: unknown;
-};
 
 const PLAN_CHANGE_ROUTE_COALESCE_TTL_MS = 2_500;
 
@@ -194,17 +193,53 @@ export async function POST(request: Request) {
       );
     }
 
-    let body: SchedulePlanChangeBody = {};
+    let payload: {
+      guildId?: string | null;
+      planCode?: string | null;
+      billingPeriodCode?: string | null;
+    };
     try {
-      body = (await request.json()) as SchedulePlanChangeBody;
-    } catch {
+      payload = parseFlowSecureDto(
+        await request.json().catch(() => ({})),
+        {
+          guildId: flowSecureDto.optional(
+            flowSecureDto.nullable(flowSecureDto.discordSnowflake()),
+          ),
+          planCode: flowSecureDto.optional(
+            flowSecureDto.nullable(
+              flowSecureDto.string({
+                maxLength: 32,
+                pattern: /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/,
+              }),
+            ),
+          ),
+          billingPeriodCode: flowSecureDto.optional(
+            flowSecureDto.nullable(
+              flowSecureDto.string({
+                maxLength: 32,
+                pattern: /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/,
+              }),
+            ),
+          ),
+        },
+        {
+          rejectUnknown: true,
+        },
+      );
+    } catch (error) {
       return respond(
-        { ok: false, message: "Payload JSON invalido." },
+        {
+          ok: false,
+          message:
+            error instanceof FlowSecureDtoError
+              ? error.issues[0] || error.message
+              : "Payload JSON invalido.",
+        },
         { status: 400 },
       );
     }
 
-    const guildId = normalizeGuildId(body.guildId);
+    const guildId = normalizeGuildId(payload.guildId);
     const access = await ensureGuildAccess(guildId);
     if (!access.ok) {
       return attachRequestId(
@@ -225,8 +260,8 @@ export async function POST(request: Request) {
       parts: [
         userId,
         guildId || "__account__",
-        typeof body.planCode === "string" ? body.planCode : "",
-        typeof body.billingPeriodCode === "string" ? body.billingPeriodCode : "",
+        payload.planCode || "",
+        payload.billingPeriodCode || "",
       ],
     });
 
@@ -270,8 +305,8 @@ export async function POST(request: Request) {
         const selection = await resolveEffectivePlanSelectionForCheckout({
           userId,
           guildId,
-          preferredPlanCode: body.planCode,
-          preferredBillingPeriodCode: body.billingPeriodCode,
+          preferredPlanCode: payload.planCode,
+          preferredBillingPeriodCode: payload.billingPeriodCode,
         });
         const preview = resolvePlanChangePreview({
           userPlanState: selection.userPlanState,

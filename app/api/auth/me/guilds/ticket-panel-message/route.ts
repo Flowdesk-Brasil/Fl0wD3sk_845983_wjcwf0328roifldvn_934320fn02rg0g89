@@ -38,6 +38,11 @@ import {
   ticketPanelLayoutHasAtMostOneFunctionButton,
   ticketPanelLayoutHasRequiredParts,
 } from "@/lib/servers/ticketPanelBuilder";
+import {
+  FlowSecureDtoError,
+  flowSecureDto,
+  parseFlowSecureDto,
+} from "@/lib/security/flowSecure";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 const GUILD_TEXT = 0;
@@ -71,12 +76,6 @@ function pruneLocalRateLimitMapIfNeeded() {
   }
 }
 
-type TicketPanelMessageBody = {
-  guildId?: unknown;
-  menuChannelId?: unknown;
-  panelLayout?: unknown;
-};
-
 type DiscordChannelMessage = {
   id?: unknown;
   author?: {
@@ -84,10 +83,6 @@ type DiscordChannelMessage = {
   } | null;
   components?: unknown;
 };
-
-function getTrimmedId(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
 
 function sleep(ms: number) {
   return new Promise((resolve) => {
@@ -305,35 +300,42 @@ export async function POST(request: Request) {
   let auditContext = baseRequestContext;
 
   try {
-    let body: TicketPanelMessageBody = {};
+    let body: {
+      guildId: string;
+      menuChannelId: string;
+      panelLayout: Record<string, unknown>[];
+    };
     try {
-      body = (await request.json()) as TicketPanelMessageBody;
-    } catch {
+      body = parseFlowSecureDto(
+        await request.json().catch(() => ({})),
+        {
+          guildId: flowSecureDto.discordSnowflake(),
+          menuChannelId: flowSecureDto.discordSnowflake(),
+          panelLayout: flowSecureDto.array(flowSecureDto.record()),
+        },
+        {
+          rejectUnknown: true,
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof FlowSecureDtoError)) {
+        throw error;
+      }
       recordServerSaveDiagnostic({
         context: diagnostic,
         outcome: "payload_invalid",
         httpStatus: 400,
-        detail: "Payload JSON invalido.",
-      });
-      return respond({ ok: false, message: "Payload JSON invalido." }, { status: 400 });
-    }
-
-    const guildId = getTrimmedId(body.guildId);
-    const menuChannelId = getTrimmedId(body.menuChannelId);
-    diagnostic = createServerSaveDiagnosticContext("ticket_panel_dispatch", guildId);
-
-    if (!Array.isArray(body.panelLayout)) {
-      recordServerSaveDiagnostic({
-        context: diagnostic,
-        outcome: "payload_invalid",
-        httpStatus: 400,
-        detail: "Layout do ticket ausente ou invalido.",
+        detail: error.issues[0] || error.message,
       });
       return respond(
-        { ok: false, message: "Layout do ticket ausente ou invalido." },
+        { ok: false, message: error.issues[0] || error.message },
         { status: 400 },
       );
     }
+
+    const guildId = body.guildId;
+    const menuChannelId = body.menuChannelId;
+    diagnostic = createServerSaveDiagnosticContext("ticket_panel_dispatch", guildId);
 
     const panelLayout = normalizeTicketPanelLayout(body.panelLayout);
 

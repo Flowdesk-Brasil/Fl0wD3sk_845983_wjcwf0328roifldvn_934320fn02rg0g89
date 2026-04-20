@@ -5,15 +5,22 @@ import {
   getUserTeamsSnapshotForUser,
 } from "@/lib/teams/userTeams";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
+import {
+  FlowSecureDtoError,
+  flowSecureDto,
+  parseFlowSecureDto,
+} from "@/lib/security/flowSecure";
 import { applyNoStoreHeaders, ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import { getManagedServersForCurrentSession } from "@/lib/servers/managedServers";
 
-type CreateTeamPayload = {
-  name?: unknown;
-  iconKey?: unknown;
-  guildIds?: unknown;
-  memberDiscordIds?: unknown;
-};
+const TEAM_ICON_KEYS = [
+  "aurora",
+  "ember",
+  "ocean",
+  "amethyst",
+  "forest",
+  "sunset",
+] as const;
 
 function normalizeStringArray(input: unknown) {
   if (!Array.isArray(input)) return [];
@@ -75,21 +82,51 @@ export async function POST(request: Request) {
       );
     }
 
-    let body: CreateTeamPayload = {};
+    let body: {
+      name: string;
+      iconKey?: (typeof TEAM_ICON_KEYS)[number];
+      guildIds: string[];
+      memberDiscordIds?: string[];
+    };
 
     try {
-      body = (await request.json()) as CreateTeamPayload;
-    } catch {
+      body = parseFlowSecureDto(
+        await request.json().catch(() => ({})),
+        {
+          name: flowSecureDto.string({
+            minLength: 3,
+            maxLength: 64,
+            normalizeWhitespace: true,
+          }),
+          iconKey: flowSecureDto.optional(flowSecureDto.enum(TEAM_ICON_KEYS)),
+          guildIds: flowSecureDto.array(flowSecureDto.discordSnowflake(), {
+            minLength: 1,
+            maxLength: 100,
+          }),
+          memberDiscordIds: flowSecureDto.optional(
+            flowSecureDto.array(flowSecureDto.discordSnowflake(), {
+              maxLength: 50,
+            }),
+          ),
+        },
+        {
+          rejectUnknown: true,
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof FlowSecureDtoError)) {
+        throw error;
+      }
       return applyNoStoreHeaders(
         NextResponse.json(
-          { ok: false, message: "Payload JSON invalido." },
+          { ok: false, message: error.issues[0] || error.message },
           { status: 400 },
         ),
       );
     }
 
-    const name = typeof body.name === "string" ? body.name : "";
-    const iconKey = typeof body.iconKey === "string" ? body.iconKey : "";
+    const name = body.name;
+    const iconKey = body.iconKey || "";
     const guildIds = normalizeStringArray(body.guildIds);
     const memberDiscordIds = normalizeStringArray(body.memberDiscordIds);
     const managedServers = await getManagedServersForCurrentSession();

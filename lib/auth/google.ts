@@ -3,6 +3,7 @@ import { authConfig } from "@/lib/auth/config";
 type ExchangeGoogleCodeInput = {
   code: string;
   redirectUri: string;
+  codeVerifier?: string | null;
 };
 
 export type GoogleTokenResponse = {
@@ -40,7 +41,14 @@ function requireGoogleClientConfig() {
   };
 }
 
-export function buildGoogleAuthorizeUrl(state: string, redirectUri: string) {
+export function buildGoogleAuthorizeUrl(
+  state: string,
+  redirectUri: string,
+  input?: {
+    codeChallenge?: string | null;
+    nonce?: string | null;
+  },
+) {
   const { clientId } = requireGoogleClientConfig();
   const params = new URLSearchParams({
     client_id: clientId,
@@ -51,12 +59,22 @@ export function buildGoogleAuthorizeUrl(state: string, redirectUri: string) {
     prompt: "select_account",
   });
 
+  if (input?.codeChallenge) {
+    params.set("code_challenge", input.codeChallenge);
+    params.set("code_challenge_method", "S256");
+  }
+
+  if (input?.nonce) {
+    params.set("nonce", input.nonce);
+  }
+
   return `${GOOGLE_AUTHORIZATION_ENDPOINT}?${params.toString()}`;
 }
 
 export async function exchangeGoogleCodeForToken({
   code,
   redirectUri,
+  codeVerifier,
 }: ExchangeGoogleCodeInput) {
   const { clientId, clientSecret } = requireGoogleClientConfig();
   const body = new URLSearchParams({
@@ -66,6 +84,10 @@ export async function exchangeGoogleCodeForToken({
     redirect_uri: redirectUri,
     grant_type: "authorization_code",
   });
+
+  if (codeVerifier) {
+    body.set("code_verifier", codeVerifier);
+  }
 
   const response = await fetch(GOOGLE_TOKEN_ENDPOINT, {
     method: "POST",

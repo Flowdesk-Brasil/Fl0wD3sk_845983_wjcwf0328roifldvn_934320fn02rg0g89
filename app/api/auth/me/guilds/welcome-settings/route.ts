@@ -28,6 +28,11 @@ import {
   type WelcomeThumbnailMode,
 } from "@/lib/servers/welcomeMessageBuilder";
 import {
+  FlowSecureDtoError,
+  flowSecureDto,
+  parseFlowSecureDto,
+} from "@/lib/security/flowSecure";
+import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
 } from "@/lib/security/http";
@@ -36,24 +41,13 @@ import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 const GUILD_TEXT = 0;
 const GUILD_ANNOUNCEMENT = 5;
 
-type WelcomeSettingsBody = {
-  guildId?: unknown;
-  enabled?: unknown;
-  entryPublicChannelId?: unknown;
-  entryLogChannelId?: unknown;
-  exitPublicChannelId?: unknown;
-  exitLogChannelId?: unknown;
-  entryLayout?: unknown;
-  exitLayout?: unknown;
-  entryThumbnailMode?: unknown;
-  exitThumbnailMode?: unknown;
-};
-
-type GuildAccessContext = {
-  sessionData: NonNullable<Awaited<ReturnType<typeof resolveSessionAccessToken>>>;
-  accessibleGuild: Awaited<ReturnType<typeof assertUserAdminInGuildOrNull>>;
-  hasTeamAccess: boolean;
-};
+const OPTIONAL_DISCORD_SNOWFLAKE_TEXT = flowSecureDto.string({
+  maxLength: 20,
+  pattern: /^(?:\d{17,20})?$/,
+  allowEmpty: true,
+  disallowAngleBrackets: true,
+  rejectThreatPatterns: false,
+});
 
 function getTrimmedId(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -290,26 +284,73 @@ export async function POST(request: Request) {
   let diagnostic = createServerSaveDiagnosticContext("welcome_settings");
 
   try {
-    let body: WelcomeSettingsBody = {};
+    let body: {
+      guildId: string;
+      enabled?: boolean;
+      entryPublicChannelId?: string | null;
+      entryLogChannelId?: string | null;
+      exitPublicChannelId?: string | null;
+      exitLogChannelId?: string | null;
+      entryLayout?: Record<string, unknown>[];
+      exitLayout?: Record<string, unknown>[];
+      entryThumbnailMode?: WelcomeThumbnailMode;
+      exitThumbnailMode?: WelcomeThumbnailMode;
+    };
     try {
-      body = (await request.json()) as WelcomeSettingsBody;
-    } catch {
+      body = parseFlowSecureDto(
+        await request.json().catch(() => ({})),
+        {
+          guildId: flowSecureDto.discordSnowflake(),
+          enabled: flowSecureDto.optional(flowSecureDto.boolean()),
+          entryPublicChannelId: flowSecureDto.optional(
+            flowSecureDto.nullable(OPTIONAL_DISCORD_SNOWFLAKE_TEXT),
+          ),
+          entryLogChannelId: flowSecureDto.optional(
+            flowSecureDto.nullable(OPTIONAL_DISCORD_SNOWFLAKE_TEXT),
+          ),
+          exitPublicChannelId: flowSecureDto.optional(
+            flowSecureDto.nullable(OPTIONAL_DISCORD_SNOWFLAKE_TEXT),
+          ),
+          exitLogChannelId: flowSecureDto.optional(
+            flowSecureDto.nullable(OPTIONAL_DISCORD_SNOWFLAKE_TEXT),
+          ),
+          entryLayout: flowSecureDto.optional(
+            flowSecureDto.array(flowSecureDto.record()),
+          ),
+          exitLayout: flowSecureDto.optional(
+            flowSecureDto.array(flowSecureDto.record()),
+          ),
+          entryThumbnailMode: flowSecureDto.optional(
+            flowSecureDto.enum(["avatar", "custom"] as const),
+          ),
+          exitThumbnailMode: flowSecureDto.optional(
+            flowSecureDto.enum(["avatar", "custom"] as const),
+          ),
+        },
+        {
+          rejectUnknown: true,
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof FlowSecureDtoError)) {
+        throw error;
+      }
       recordServerSaveDiagnostic({
         context: diagnostic,
         outcome: "payload_invalid",
         httpStatus: 400,
-        detail: "Payload JSON invalido.",
+        detail: error.issues[0] || error.message,
       });
       return applyNoStoreHeaders(
         NextResponse.json(
-          { ok: false, message: "Payload JSON invalido." },
+          { ok: false, message: error.issues[0] || error.message },
           { status: 400 },
         ),
       );
     }
 
-    const guildId = getTrimmedId(body.guildId);
-    const enabled = typeof body.enabled === "boolean" ? body.enabled : true;
+    const guildId = body.guildId;
+    const enabled = body.enabled ?? true;
     const entryPublicChannelId = resolveOptionalId(body.entryPublicChannelId);
     const entryLogChannelId = resolveOptionalId(body.entryLogChannelId);
     const exitPublicChannelId = resolveOptionalId(body.exitPublicChannelId);

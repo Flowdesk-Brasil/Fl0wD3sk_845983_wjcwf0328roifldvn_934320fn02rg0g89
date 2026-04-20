@@ -19,6 +19,11 @@ import {
   extractAuditErrorMessage,
   sanitizeErrorMessage,
 } from "@/lib/security/errors";
+import {
+  FlowSecureDtoError,
+  flowSecureDto,
+  parseFlowSecureDto,
+} from "@/lib/security/flowSecure";
 import { ensureSameOriginJsonMutationRequest, applyNoStoreHeaders } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -48,6 +53,8 @@ function buildDiscordAvatarUrl(
   const extension = avatarHash.startsWith("a_") ? "gif" : "png";
   return `https://cdn.discordapp.com/avatars/${discordUserId}/${avatarHash}.${extension}?size=160`;
 }
+
+const DISCORD_LINK_TOKEN_PATTERN = /^[A-Za-z0-9._-]+$/;
 
 export async function GET(request: NextRequest) {
   const requestContext = createSecurityRequestContext(request);
@@ -189,21 +196,45 @@ export async function POST(request: NextRequest) {
   });
 
   try {
-    const payload = await request.json().catch(() => ({}));
-    const linkAccessToken =
-      payload && typeof payload === "object" && typeof payload.accessToken === "string"
-        ? payload.accessToken.trim()
-        : null;
-    const source =
-      payload && typeof payload === "object" && typeof payload.source === "string"
-        ? payload.source.trim().slice(0, 64)
-        : "official_link_page";
-    const humanVerificationToken =
-      payload &&
-      typeof payload === "object" &&
-      typeof payload.humanVerificationToken === "string"
-        ? payload.humanVerificationToken.trim()
-        : null;
+    const payload = parseFlowSecureDto(
+      await request.json().catch(() => ({})),
+      {
+        accessToken: flowSecureDto.optional(
+          flowSecureDto.nullable(
+            flowSecureDto.string({
+              minLength: 16,
+              maxLength: 768,
+              pattern: DISCORD_LINK_TOKEN_PATTERN,
+              disallowAngleBrackets: true,
+              rejectThreatPatterns: false,
+            }),
+          ),
+        ),
+        source: flowSecureDto.optional(
+          flowSecureDto.string({
+            maxLength: 64,
+            normalizeWhitespace: true,
+          }),
+        ),
+        humanVerificationToken: flowSecureDto.optional(
+          flowSecureDto.nullable(
+            flowSecureDto.string({
+              minLength: 16,
+              maxLength: 768,
+              pattern: DISCORD_LINK_TOKEN_PATTERN,
+              disallowAngleBrackets: true,
+              rejectThreatPatterns: false,
+            }),
+          ),
+        ),
+      },
+      {
+        rejectUnknown: true,
+      },
+    );
+    const linkAccessToken = payload.accessToken ?? null;
+    const source = payload.source || "official_link_page";
+    const humanVerificationToken = payload.humanVerificationToken ?? null;
     const accessValidation = await validateDiscordLinkAccessToken(linkAccessToken);
 
     if (!accessValidation.ok) {
@@ -371,10 +402,13 @@ export async function POST(request: NextRequest) {
       authenticatedContext.requestId,
     );
   } catch (error) {
-    const message = sanitizeErrorMessage(
-      error,
-      "Erro inesperado ao vincular a conta Discord.",
-    );
+    const isDtoError = error instanceof FlowSecureDtoError;
+    const message = isDtoError
+      ? error.issues[0] || error.message
+      : sanitizeErrorMessage(
+          error,
+          "Erro inesperado ao vincular a conta Discord.",
+        );
 
     await logSecurityAuditEventSafe(authenticatedContext, {
       action: "discord_link_sync",
@@ -395,7 +429,7 @@ export async function POST(request: NextRequest) {
             authenticated: true,
             message,
           },
-          { status: 500 },
+          { status: isDtoError ? 400 : 500 },
         ),
       ),
       authenticatedContext.requestId,

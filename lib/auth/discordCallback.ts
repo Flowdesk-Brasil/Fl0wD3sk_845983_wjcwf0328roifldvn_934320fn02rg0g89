@@ -1,20 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   authConfig,
-  getOAuthModeCookieName,
-  getOAuthNextPathCookieName,
-  getOAuthRedirectUriCookieName,
-  getOAuthStateCookieName,
   normalizeInternalNextPath,
 } from "@/lib/auth/config";
 import {
-  clearSharedAuthCookie,
   clearSharedTrustedDeviceCookie,
   getSharedAuthCookieProofName,
   setSharedSessionCookie,
 } from "@/lib/auth/cookies";
 import { exchangeCodeForToken, fetchDiscordUser } from "@/lib/auth/discord";
 import { createLoginOtpChallenge } from "@/lib/auth/emailOtp";
+import {
+  clearOAuthTransactionCookies,
+  validateOAuthTransactionFromRequest,
+} from "@/lib/auth/oauthIdentity";
 import {
   buildLoginOtpRedirectLocation,
   buildLoginRedirectResponse,
@@ -45,36 +44,7 @@ function extractClientIp(request: NextRequest) {
 }
 
 function clearOAuthCookies(request: NextRequest, response: NextResponse) {
-  clearSharedAuthCookie(request, response, getOAuthStateCookieName("discord"), {
-    httpOnly: true,
-    sameSite: "lax",
-    priority: "high",
-  });
-  clearSharedAuthCookie(
-    request,
-    response,
-    getOAuthRedirectUriCookieName("discord"),
-    {
-      httpOnly: true,
-      sameSite: "lax",
-      priority: "high",
-    },
-  );
-  clearSharedAuthCookie(
-    request,
-    response,
-    getOAuthNextPathCookieName("discord"),
-    {
-      httpOnly: true,
-      sameSite: "lax",
-      priority: "high",
-    },
-  );
-  clearSharedAuthCookie(request, response, getOAuthModeCookieName("discord"), {
-    httpOnly: true,
-    sameSite: "lax",
-    priority: "high",
-  });
+  clearOAuthTransactionCookies(request, response, "discord");
 }
 
 function redirectWithLocation(location: string) {
@@ -124,13 +94,14 @@ export async function handleDiscordAuthCallback(request: NextRequest) {
   }
 
   const initialRequestContext = createSecurityRequestContext(request);
-  const nextPathCookie = normalizeInternalNextPath(
-    request.cookies.get(getOAuthNextPathCookieName("discord"))?.value,
+  const state = request.nextUrl.searchParams.get("state");
+  const oauthTransaction = validateOAuthTransactionFromRequest(
+    request,
+    "discord",
+    state,
   );
-  const oauthModeCookie =
-    request.cookies.get(getOAuthModeCookieName("discord"))?.value === "link"
-      ? "link"
-      : "login";
+  const nextPathCookie = normalizeInternalNextPath(oauthTransaction?.nextPath);
+  const oauthModeCookie = oauthTransaction?.mode || "login";
 
   const rateLimit = await enforceRequestRateLimit({
     action: "auth_discord_callback",
@@ -165,13 +136,8 @@ export async function handleDiscordAuthCallback(request: NextRequest) {
   });
 
   const code = request.nextUrl.searchParams.get("code");
-  const state = request.nextUrl.searchParams.get("state");
-  const stateCookie = request.cookies.get(getOAuthStateCookieName("discord"))?.value;
-  const redirectUriCookie = request.cookies.get(
-    getOAuthRedirectUriCookieName("discord"),
-  )?.value;
 
-  if (!code || !state || !stateCookie || !redirectUriCookie || state !== stateCookie) {
+  if (!code || !oauthTransaction?.redirectUri) {
     const response = buildLoginRedirectResponse(request, {
       nextPath: nextPathCookie,
       mode: oauthModeCookie,
@@ -198,7 +164,7 @@ export async function handleDiscordAuthCallback(request: NextRequest) {
         : null;
     const tokenPayload = await exchangeCodeForToken({
       code,
-      redirectUri: redirectUriCookie,
+      redirectUri: oauthTransaction.redirectUri,
     });
 
     const discordUser = await fetchDiscordUser(tokenPayload.access_token);

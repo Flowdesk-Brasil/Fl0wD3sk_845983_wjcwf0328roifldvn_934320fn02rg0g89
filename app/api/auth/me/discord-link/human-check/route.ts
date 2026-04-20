@@ -10,6 +10,11 @@ import {
 } from "@/lib/discordLink/humanCheck";
 import { validateDiscordLinkAccessToken } from "@/lib/discordLink/linkAccess";
 import { OFFICIAL_DISCORD_GUILD_ID } from "@/lib/discordLink/config";
+import {
+  FlowSecureDtoError,
+  flowSecureDto,
+  parseFlowSecureDto,
+} from "@/lib/security/flowSecure";
 import { ensureSameOriginJsonMutationRequest, applyNoStoreHeaders } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -42,6 +47,8 @@ async function buildAuthenticatedUserPayload() {
     ),
   };
 }
+
+const DISCORD_LINK_TOKEN_PATTERN = /^[A-Za-z0-9._-]+$/;
 
 export async function GET(request: NextRequest) {
   const requestContext = createSecurityRequestContext(request, {
@@ -126,27 +133,96 @@ export async function POST(request: NextRequest) {
   });
   const authenticatedUser = await buildAuthenticatedUserPayload();
 
-  const payload = await request.json().catch(() => ({}));
-  const accessToken =
-    payload && typeof payload === "object" && typeof payload.accessToken === "string"
-      ? payload.accessToken.trim()
-      : null;
-  const challengeToken =
-    payload && typeof payload === "object" && typeof payload.challengeToken === "string"
-      ? payload.challengeToken.trim()
-      : null;
-  const dwellMs =
-    payload && typeof payload === "object" && Number.isFinite(payload.dwellMs)
-      ? Number(payload.dwellMs)
-      : 0;
-  const interactionCount =
-    payload && typeof payload === "object" && Number.isFinite(payload.interactionCount)
-      ? Number(payload.interactionCount)
-      : 0;
-  const pointerType =
-    payload && typeof payload === "object" && typeof payload.pointerType === "string"
-      ? payload.pointerType.trim().slice(0, 24)
-      : "unknown";
+  let payload: {
+    accessToken?: string | null;
+    challengeToken?: string | null;
+    dwellMs?: number;
+    interactionCount?: number;
+    pointerType?: "mouse" | "touch" | "pen" | "unknown";
+  };
+
+  try {
+    payload = parseFlowSecureDto(
+      await request.json().catch(() => ({})),
+      {
+        accessToken: flowSecureDto.optional(
+          flowSecureDto.nullable(
+            flowSecureDto.string({
+              minLength: 16,
+              maxLength: 768,
+              pattern: DISCORD_LINK_TOKEN_PATTERN,
+              disallowAngleBrackets: true,
+              rejectThreatPatterns: false,
+            }),
+          ),
+        ),
+        challengeToken: flowSecureDto.optional(
+          flowSecureDto.nullable(
+            flowSecureDto.string({
+              minLength: 16,
+              maxLength: 768,
+              pattern: DISCORD_LINK_TOKEN_PATTERN,
+              disallowAngleBrackets: true,
+              rejectThreatPatterns: false,
+            }),
+          ),
+        ),
+        dwellMs: flowSecureDto.optional(
+          flowSecureDto.number({
+            integer: true,
+            min: 0,
+            max: 10 * 60 * 1000,
+          }),
+        ),
+        interactionCount: flowSecureDto.optional(
+          flowSecureDto.number({
+            integer: true,
+            min: 0,
+            max: 1000,
+          }),
+        ),
+        pointerType: flowSecureDto.optional(
+          flowSecureDto.enum(["mouse", "touch", "pen", "unknown"] as const),
+        ),
+      },
+      {
+        rejectUnknown: true,
+      },
+    );
+  } catch (error) {
+    const message =
+      error instanceof FlowSecureDtoError
+        ? error.issues[0] || error.message
+        : "Payload invalido.";
+
+    await logSecurityAuditEventSafe(requestContext, {
+      action: "discord_link_human_check",
+      outcome: "blocked",
+      metadata: {
+        reason: message,
+      },
+    });
+
+    return attachRequestId(
+      applyNoStoreHeaders(
+        NextResponse.json(
+          {
+            ok: false,
+            message,
+            authenticatedUser,
+          },
+          { status: 400 },
+        ),
+      ),
+      requestContext.requestId,
+    );
+  }
+
+  const accessToken = payload.accessToken ?? null;
+  const challengeToken = payload.challengeToken ?? null;
+  const dwellMs = payload.dwellMs ?? 0;
+  const interactionCount = payload.interactionCount ?? 0;
+  const pointerType = payload.pointerType ?? "unknown";
 
   const accessValidation = await validateDiscordLinkAccessToken(accessToken);
   if (!accessValidation.ok) {

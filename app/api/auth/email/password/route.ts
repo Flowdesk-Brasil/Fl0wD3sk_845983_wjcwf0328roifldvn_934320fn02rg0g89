@@ -126,25 +126,25 @@ export async function POST(request: NextRequest) {
     payload = parseFlowSecureDto(
       await request.json().catch(() => ({})),
       {
-        email: flowSecureDto.string({
-          maxLength: 254,
-        }),
+        email: flowSecureDto.email(),
         password: flowSecureDto.string({
           allowEmpty: true,
           maxLength: 512,
+          rejectThreatPatterns: false,
+          disallowAngleBrackets: false,
         }),
         confirmPassword: flowSecureDto.optional(
           flowSecureDto.nullable(
             flowSecureDto.string({
               allowEmpty: true,
               maxLength: 512,
+              rejectThreatPatterns: false,
+              disallowAngleBrackets: false,
             }),
           ),
         ),
         next: flowSecureDto.optional(
-          flowSecureDto.string({
-            maxLength: 2048,
-          }),
+          flowSecureDto.internalPath(),
         ),
       },
       {

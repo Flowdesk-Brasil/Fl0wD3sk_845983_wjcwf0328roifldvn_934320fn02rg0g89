@@ -3,7 +3,6 @@ import { clearPlanStateCacheForUser } from "@/lib/account/managedPlanState";
 import {
   assertUserAdminInGuildOrNull,
   hasAcceptedTeamAccessToGuild,
-  isGuildId,
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
 import {
@@ -31,6 +30,11 @@ import {
 import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { applyNoStoreHeaders, ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import {
+  flowSecureDto,
+  FlowSecureDtoError,
+  parseFlowSecureDto,
+} from "@/lib/security/flowSecure";
+import {
   createCoalescedRouteKey,
   runCoalescedRouteResponse,
 } from "@/lib/security/routeCoalescing";
@@ -42,12 +46,6 @@ import {
   logSecurityAuditEventSafe,
 } from "@/lib/security/requestSecurity";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
-
-type ActivateTrialBody = {
-  guildId?: unknown;
-  planCode?: unknown;
-  billingPeriodCode?: unknown;
-};
 
 type PaymentOrderRecord = {
   id: number;
@@ -79,12 +77,6 @@ type PaymentOrderRecord = {
 const PAYMENT_ORDER_SELECT_COLUMNS =
   `id, order_number, guild_id, user_id, payment_method, status, amount, currency, plan_code, plan_name, plan_billing_cycle_days, plan_max_licensed_servers, plan_max_active_tickets, plan_max_automations, plan_max_monthly_actions, provider_status, provider_status_detail, paid_at, expires_at, created_at, updated_at, ${PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS}`;
 const TRIAL_ROUTE_COALESCE_TTL_MS = 2_500;
-
-function normalizeGuildId(value: unknown) {
-  if (typeof value !== "string") return null;
-  const guildId = value.trim();
-  return isGuildId(guildId) ? guildId : null;
-}
 
 function parseAmount(amount: string | number) {
   if (typeof amount === "number") return amount;
@@ -259,26 +251,51 @@ export async function POST(request: Request) {
       );
     }
 
-    let body: ActivateTrialBody = {};
+    let payload: {
+      guildId: string;
+      planCode?: string | null;
+      billingPeriodCode?: string | null;
+    };
     try {
-      body = (await request.json()) as ActivateTrialBody;
-    } catch {
-      return respond(
-        { ok: false, message: "Payload JSON invalido." },
-        { status: 400 },
+      payload = parseFlowSecureDto(
+        await request.json().catch(() => ({})),
+        {
+          guildId: flowSecureDto.discordSnowflake(),
+          planCode: flowSecureDto.optional(
+            flowSecureDto.nullable(
+              flowSecureDto.string({
+                maxLength: 32,
+                pattern: /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/,
+              }),
+            ),
+          ),
+          billingPeriodCode: flowSecureDto.optional(
+            flowSecureDto.nullable(
+              flowSecureDto.string({
+                maxLength: 32,
+                pattern: /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/,
+              }),
+            ),
+          ),
+        },
+        {
+          rejectUnknown: true,
+        },
       );
-    }
-
-    const guildId = normalizeGuildId(body.guildId);
-    if (!guildId) {
+    } catch (error) {
       return respond(
         {
           ok: false,
-          message: "Informe um servidor valido para ativar o plano gratuito.",
+          message:
+            error instanceof FlowSecureDtoError
+              ? error.issues[0] || error.message
+              : "Payload JSON invalido.",
         },
         { status: 400 },
       );
     }
+
+    const guildId = payload.guildId;
 
     const access = await ensureGuildAccess(guildId);
     if (!access.ok) {
@@ -299,8 +316,8 @@ export async function POST(request: Request) {
       parts: [
         user.id,
         guildId || "__account__",
-        typeof body.planCode === "string" ? body.planCode : "",
-        typeof body.billingPeriodCode === "string" ? body.billingPeriodCode : "",
+        payload.planCode || "",
+        payload.billingPeriodCode || "",
       ],
     });
 
@@ -365,8 +382,8 @@ export async function POST(request: Request) {
         const checkoutPlan = await resolveEffectivePlanSelection({
           userId: user.id,
           guildId,
-          preferredPlanCode: body.planCode,
-          preferredBillingPeriodCode: body.billingPeriodCode,
+          preferredPlanCode: payload.planCode,
+          preferredBillingPeriodCode: payload.billingPeriodCode,
         });
 
         if (!checkoutPlan.plan.isTrial) {

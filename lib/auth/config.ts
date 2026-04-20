@@ -5,6 +5,7 @@ import {
   resolveAuthOrigin,
   resolveHostRuntimeContext,
 } from "@/lib/routing/subdomains";
+import { containsFlowSecureThreatPattern } from "@/lib/security/flowSecure";
 
 const DEFAULT_PRODUCTION_AUTH_ORIGIN = "https://account.flwdesk.com";
 const DEFAULT_LOCAL_AUTH_ORIGIN = "http://account.localhost:3000";
@@ -238,6 +239,10 @@ export function normalizeInternalNextPath(path: string | null | undefined) {
   if (!trimmed || trimmed.length > 300) return null;
   if (!trimmed.startsWith("/")) return null;
   if (trimmed.startsWith("//")) return null;
+  if (trimmed.includes("\\")) return null;
+  if (trimmed.includes("/../") || trimmed.endsWith("/..")) return null;
+  if (/[<>]/.test(trimmed)) return null;
+  if (containsFlowSecureThreatPattern(trimmed)) return null;
   return trimmed;
 }
 

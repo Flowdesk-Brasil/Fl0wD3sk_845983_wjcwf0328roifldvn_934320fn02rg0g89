@@ -16,6 +16,11 @@ import {
   resolveDatabaseFailureStatus,
 } from "@/lib/security/databaseAvailability";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
+import {
+  flowSecureDto,
+  FlowSecureDtoError,
+  parseFlowSecureDto,
+} from "@/lib/security/flowSecure";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import {
   createPaymentOrderEventSafe,
@@ -27,26 +32,6 @@ import {
   toApiOrder,
   type PaymentOrderRecord,
 } from "../../pix/route";
-
-type CancelCardCheckoutBody = {
-  guildId?: unknown;
-  orderNumber?: unknown;
-};
-
-function normalizeOrderNumber(value: unknown) {
-  if (typeof value === "number") {
-    return Number.isInteger(value) && value > 0 ? value : null;
-  }
-
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!/^\d{1,12}$/.test(trimmed)) return null;
-    const numeric = Number(trimmed);
-    return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
-  }
-
-  return null;
-}
 
 export async function POST(request: Request) {
   const requestContext = createSecurityRequestContext(request);
@@ -66,24 +51,42 @@ export async function POST(request: Request) {
       );
     }
 
-    let body: CancelCardCheckoutBody = {};
+    let payload: {
+      guildId?: string | null;
+      orderNumber: number;
+    };
     try {
-      body = (await request.json()) as CancelCardCheckoutBody;
-    } catch {
+      payload = parseFlowSecureDto(
+        await request.json().catch(() => ({})),
+        {
+          guildId: flowSecureDto.optional(
+            flowSecureDto.nullable(flowSecureDto.discordSnowflake()),
+          ),
+          orderNumber: flowSecureDto.number({
+            integer: true,
+            min: 1,
+            max: 999_999_999_999,
+          }),
+        },
+        {
+          rejectUnknown: true,
+        },
+      );
+    } catch (error) {
       return respond(
-        { ok: false, message: "Payload JSON invalido." },
+        {
+          ok: false,
+          message:
+            error instanceof FlowSecureDtoError
+              ? error.issues[0] || error.message
+              : "Payload JSON invalido.",
+        },
         { status: 400 },
       );
     }
 
-    const guildId = normalizeGuildId(body.guildId);
-    const orderNumber = normalizeOrderNumber(body.orderNumber);
-    if (!orderNumber) {
-      return respond(
-        { ok: false, message: "Pedido invalido para cancelamento." },
-        { status: 400 },
-      );
-    }
+    const guildId = normalizeGuildId(payload.guildId);
+    const orderNumber = payload.orderNumber;
 
     const access = await ensureGuildAccess(guildId);
     if (!access.ok) {

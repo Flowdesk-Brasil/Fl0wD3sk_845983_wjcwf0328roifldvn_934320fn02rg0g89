@@ -76,16 +76,16 @@ export async function POST(request: NextRequest) {
     const payload = parseFlowSecureDto(
       await request.json().catch(() => ({})),
       {
-        challengeId: flowSecureDto.string({
+        challengeId: flowSecureDto.base64UrlToken({
+          minLength: 8,
           maxLength: 120,
         }),
         code: flowSecureDto.string({
           maxLength: 16,
+          pattern: /^[A-Za-z0-9]+$/,
         }),
         next: flowSecureDto.optional(
-          flowSecureDto.string({
-            maxLength: 2048,
-          }),
+          flowSecureDto.internalPath(),
         ),
         rememberSession: flowSecureDto.optional(
           flowSecureDto.boolean({

@@ -1,20 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  getOAuthModeCookieName,
-  getOAuthNextPathCookieName,
-  getOAuthRedirectUriCookieName,
-  getOAuthStateCookieName,
   isMicrosoftAuthConfigured,
   normalizeInternalNextPath,
   resolveMicrosoftRedirectUri,
 } from "@/lib/auth/config";
-import {
-  clearSharedAuthCookie,
-  setSharedAuthCookie,
-} from "@/lib/auth/cookies";
 import { buildLoginRedirectResponse } from "@/lib/auth/loginFlash";
 import { buildAuthOriginRedirectResponse } from "@/lib/auth/requestOrigin";
 import { isLikelyEmbeddedAuthBrowser } from "@/lib/auth/oauthBrowser";
+import {
+  createOAuthNonce,
+  createOAuthPkcePair,
+  setOAuthTransactionCookies,
+} from "@/lib/auth/oauthIdentity";
 import { buildMicrosoftAuthorizeUrl } from "@/lib/auth/microsoft";
 import { createOAuthState } from "@/lib/auth/session";
 import { applyNoStoreHeaders } from "@/lib/security/http";
@@ -99,67 +96,23 @@ export async function GET(request: NextRequest) {
   }
 
   const state = createOAuthState();
+  const pkce = createOAuthPkcePair();
+  const nonce = createOAuthNonce();
   const redirectUri = resolveMicrosoftRedirectUri(request);
-  const microsoftAuthUrl = buildMicrosoftAuthorizeUrl(state, redirectUri);
-  const response = NextResponse.redirect(microsoftAuthUrl, 302);
-
-  setSharedAuthCookie(request, response, getOAuthStateCookieName("microsoft"), state, {
-    httpOnly: true,
-    sameSite: "lax",
-    maxAge: 60 * 10,
-    path: "/",
-    priority: "high",
+  const microsoftAuthUrl = buildMicrosoftAuthorizeUrl(state, redirectUri, {
+    codeChallenge: pkce.challenge,
+    nonce,
   });
-
-  setSharedAuthCookie(
-    request,
-    response,
-    getOAuthRedirectUriCookieName("microsoft"),
+  const response = NextResponse.redirect(microsoftAuthUrl, 302);
+  setOAuthTransactionCookies(request, response, {
+    provider: "microsoft",
+    state,
     redirectUri,
-    {
-      httpOnly: true,
-      sameSite: "lax",
-      maxAge: 60 * 10,
-      path: "/",
-      priority: "high",
-    },
-  );
-
-  if (requestedNextPath) {
-    setSharedAuthCookie(
-      request,
-      response,
-      getOAuthNextPathCookieName("microsoft"),
-      requestedNextPath,
-      {
-        httpOnly: true,
-        sameSite: "lax",
-        maxAge: 60 * 10,
-        path: "/",
-        priority: "high",
-      },
-    );
-  } else {
-    clearSharedAuthCookie(request, response, getOAuthNextPathCookieName("microsoft"), {
-      httpOnly: true,
-      sameSite: "lax",
-      priority: "high",
-    });
-  }
-
-  setSharedAuthCookie(
-    request,
-    response,
-    getOAuthModeCookieName("microsoft"),
     requestedMode,
-    {
-      httpOnly: true,
-      sameSite: "lax",
-      maxAge: 60 * 10,
-      path: "/",
-      priority: "high",
-    },
-  );
+    requestedNextPath,
+    pkceVerifier: pkce.verifier,
+    nonce,
+  });
 
   await logSecurityAuditEventSafe(requestContext, {
     action: "auth_microsoft_start",

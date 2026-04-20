@@ -206,13 +206,10 @@ export async function POST(request: Request) {
             flowSecureDto.string({
               allowEmpty: true,
               maxLength: 80,
+              normalizeWhitespace: true,
             }),
           ),
-          payerName: flowSecureDto.optional(
-            flowSecureDto.string({
-              maxLength: 120,
-            }),
-          ),
+          payerName: flowSecureDto.optional(flowSecureDto.personName()),
           payerDocument: flowSecureDto.optional(
             flowSecureDto.string({
               maxLength: 32,
@@ -536,6 +533,7 @@ export async function PATCH(request: Request) {
             flowSecureDto.string({
               allowEmpty: true,
               maxLength: 80,
+              normalizeWhitespace: true,
             }),
           ),
         },

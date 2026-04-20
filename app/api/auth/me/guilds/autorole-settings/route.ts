@@ -18,6 +18,11 @@ import {
 } from "@/lib/servers/serverSaveDiagnostics";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
 import {
+  FlowSecureDtoError,
+  flowSecureDto,
+  parseFlowSecureDto,
+} from "@/lib/security/flowSecure";
+import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
 } from "@/lib/security/http";
@@ -26,24 +31,6 @@ import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 const MAX_AUTOROLE_ROLE_IDS = 20;
 
 type AutoRoleAssignmentDelayMinutes = 0 | 10 | 20 | 30;
-
-type AutoRoleSettingsBody = {
-  guildId?: unknown;
-  enabled?: unknown;
-  roleIds?: unknown;
-  assignmentDelayMinutes?: unknown;
-  syncExistingMembers?: unknown;
-};
-
-type GuildAccessContext = {
-  sessionData: NonNullable<Awaited<ReturnType<typeof resolveSessionAccessToken>>>;
-  accessibleGuild: Awaited<ReturnType<typeof assertUserAdminInGuildOrNull>>;
-  hasTeamAccess: boolean;
-};
-
-function getTrimmedId(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
 
 function normalizeRoleIdList(value: unknown) {
   if (!Array.isArray(value)) return [] as string[];
@@ -284,26 +271,57 @@ export async function POST(request: Request) {
   let diagnostic = createServerSaveDiagnosticContext("autorole_settings");
 
   try {
-    let body: AutoRoleSettingsBody = {};
+    let body: {
+      guildId: string;
+      enabled?: boolean;
+      roleIds?: string[];
+      assignmentDelayMinutes?: number;
+      syncExistingMembers?: boolean;
+    };
     try {
-      body = (await request.json()) as AutoRoleSettingsBody;
-    } catch {
+      body = parseFlowSecureDto(
+        await request.json().catch(() => ({})),
+        {
+          guildId: flowSecureDto.discordSnowflake(),
+          enabled: flowSecureDto.optional(flowSecureDto.boolean()),
+          roleIds: flowSecureDto.optional(
+            flowSecureDto.array(flowSecureDto.discordSnowflake(), {
+              maxLength: MAX_AUTOROLE_ROLE_IDS,
+            }),
+          ),
+          assignmentDelayMinutes: flowSecureDto.optional(
+            flowSecureDto.number({
+              integer: true,
+              min: 0,
+              max: 30,
+            }),
+          ),
+          syncExistingMembers: flowSecureDto.optional(flowSecureDto.boolean()),
+        },
+        {
+          rejectUnknown: true,
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof FlowSecureDtoError)) {
+        throw error;
+      }
       recordServerSaveDiagnostic({
         context: diagnostic,
         outcome: "payload_invalid",
         httpStatus: 400,
-        detail: "Payload JSON invalido.",
+        detail: error.issues[0] || error.message,
       });
       return applyNoStoreHeaders(
         NextResponse.json(
-          { ok: false, message: "Payload JSON invalido." },
+          { ok: false, message: error.issues[0] || error.message },
           { status: 400 },
         ),
       );
     }
 
-    const guildId = getTrimmedId(body.guildId);
-    const enabled = typeof body.enabled === "boolean" ? body.enabled : true;
+    const guildId = body.guildId;
+    const enabled = body.enabled ?? true;
     const roleIds = normalizeRoleIdList(body.roleIds);
     const assignmentDelayMinutes = normalizeAssignmentDelayMinutes(
       body.assignmentDelayMinutes,

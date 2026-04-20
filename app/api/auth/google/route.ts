@@ -1,20 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  getOAuthModeCookieName,
-  getOAuthNextPathCookieName,
-  getOAuthRedirectUriCookieName,
-  getOAuthStateCookieName,
   isGoogleAuthConfigured,
   normalizeInternalNextPath,
   resolveGoogleRedirectUri,
 } from "@/lib/auth/config";
-import {
-  clearSharedAuthCookie,
-  setSharedAuthCookie,
-} from "@/lib/auth/cookies";
 import { buildLoginRedirectResponse } from "@/lib/auth/loginFlash";
 import { buildAuthOriginRedirectResponse } from "@/lib/auth/requestOrigin";
 import { isLikelyEmbeddedAuthBrowser } from "@/lib/auth/oauthBrowser";
+import {
+  createOAuthNonce,
+  createOAuthPkcePair,
+  setOAuthTransactionCookies,
+} from "@/lib/auth/oauthIdentity";
 import { buildGoogleAuthorizeUrl } from "@/lib/auth/google";
 import { createOAuthState } from "@/lib/auth/session";
 import { applyNoStoreHeaders } from "@/lib/security/http";
@@ -99,67 +96,23 @@ export async function GET(request: NextRequest) {
   }
 
   const state = createOAuthState();
+  const pkce = createOAuthPkcePair();
+  const nonce = createOAuthNonce();
   const redirectUri = resolveGoogleRedirectUri(request);
-  const googleAuthUrl = buildGoogleAuthorizeUrl(state, redirectUri);
-  const response = NextResponse.redirect(googleAuthUrl, 302);
-
-  setSharedAuthCookie(request, response, getOAuthStateCookieName("google"), state, {
-    httpOnly: true,
-    sameSite: "lax",
-    maxAge: 60 * 10,
-    path: "/",
-    priority: "high",
+  const googleAuthUrl = buildGoogleAuthorizeUrl(state, redirectUri, {
+    codeChallenge: pkce.challenge,
+    nonce,
   });
-
-  setSharedAuthCookie(
-    request,
-    response,
-    getOAuthRedirectUriCookieName("google"),
+  const response = NextResponse.redirect(googleAuthUrl, 302);
+  setOAuthTransactionCookies(request, response, {
+    provider: "google",
+    state,
     redirectUri,
-    {
-      httpOnly: true,
-      sameSite: "lax",
-      maxAge: 60 * 10,
-      path: "/",
-      priority: "high",
-    },
-  );
-
-  if (requestedNextPath) {
-    setSharedAuthCookie(
-      request,
-      response,
-      getOAuthNextPathCookieName("google"),
-      requestedNextPath,
-      {
-        httpOnly: true,
-        sameSite: "lax",
-        maxAge: 60 * 10,
-        path: "/",
-        priority: "high",
-      },
-    );
-  } else {
-    clearSharedAuthCookie(request, response, getOAuthNextPathCookieName("google"), {
-      httpOnly: true,
-      sameSite: "lax",
-      priority: "high",
-    });
-  }
-
-  setSharedAuthCookie(
-    request,
-    response,
-    getOAuthModeCookieName("google"),
     requestedMode,
-    {
-      httpOnly: true,
-      sameSite: "lax",
-      maxAge: 60 * 10,
-      path: "/",
-      priority: "high",
-    },
-  );
+    requestedNextPath,
+    pkceVerifier: pkce.verifier,
+    nonce,
+  });
 
   await logSecurityAuditEventSafe(requestContext, {
     action: "auth_google_start",

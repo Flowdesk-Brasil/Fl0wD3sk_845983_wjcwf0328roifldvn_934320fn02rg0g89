@@ -1,18 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  getOAuthModeCookieName,
-  getOAuthNextPathCookieName,
-  getOAuthRedirectUriCookieName,
-  getOAuthStateCookieName,
   normalizeInternalNextPath,
   resolveDiscordRedirectUri,
 } from "@/lib/auth/config";
-import {
-  clearSharedAuthCookie,
-  setSharedAuthCookie,
-} from "@/lib/auth/cookies";
 import { buildLoginRedirectResponse } from "@/lib/auth/loginFlash";
 import { buildAuthOriginRedirectResponse } from "@/lib/auth/requestOrigin";
+import { isLikelyEmbeddedAuthBrowser } from "@/lib/auth/oauthBrowser";
+import { setOAuthTransactionCookies } from "@/lib/auth/oauthIdentity";
 import { buildDiscordAuthorizeUrl } from "@/lib/auth/discord";
 import { createOAuthState } from "@/lib/auth/session";
 import { applyNoStoreHeaders } from "@/lib/security/http";
@@ -66,69 +60,37 @@ export async function GET(request: NextRequest) {
     outcome: "started",
   });
 
+  if (isLikelyEmbeddedAuthBrowser(request.headers.get("user-agent"))) {
+    await logSecurityAuditEventSafe(requestContext, {
+      action: "auth_discord_start",
+      outcome: "blocked",
+      metadata: {
+        reason: "embedded_browser_blocked",
+      },
+    });
+
+    return attachRequestId(
+      buildLoginRedirectResponse(request, {
+        nextPath: requestedNextPath,
+        mode: requestedMode,
+        error: "discord_embedded_browser",
+      }),
+      requestContext.requestId,
+    );
+  }
+
   const state = createOAuthState();
   const redirectUri = resolveDiscordRedirectUri(request);
   const discordAuthUrl = buildDiscordAuthorizeUrl(state, redirectUri);
 
   const response = NextResponse.redirect(discordAuthUrl, 302);
-
-  setSharedAuthCookie(request, response, getOAuthStateCookieName("discord"), state, {
-    httpOnly: true,
-    sameSite: "lax",
-    maxAge: 60 * 10,
-    path: "/",
-    priority: "high",
-  });
-
-  setSharedAuthCookie(
-    request,
-    response,
-    getOAuthRedirectUriCookieName("discord"),
+  setOAuthTransactionCookies(request, response, {
+    provider: "discord",
+    state,
     redirectUri,
-    {
-      httpOnly: true,
-      sameSite: "lax",
-      maxAge: 60 * 10,
-      path: "/",
-      priority: "high",
-    },
-  );
-
-  if (requestedNextPath) {
-    setSharedAuthCookie(
-      request,
-      response,
-      getOAuthNextPathCookieName("discord"),
-      requestedNextPath,
-      {
-        httpOnly: true,
-        sameSite: "lax",
-        maxAge: 60 * 10,
-        path: "/",
-        priority: "high",
-      },
-    );
-  } else {
-    clearSharedAuthCookie(request, response, getOAuthNextPathCookieName("discord"), {
-      httpOnly: true,
-      sameSite: "lax",
-      priority: "high",
-    });
-  }
-
-  setSharedAuthCookie(
-    request,
-    response,
-    getOAuthModeCookieName("discord"),
     requestedMode,
-    {
-      httpOnly: true,
-      sameSite: "lax",
-      maxAge: 60 * 10,
-      path: "/",
-      priority: "high",
-    },
-  );
+    requestedNextPath,
+  });
 
   await logSecurityAuditEventSafe(requestContext, {
     action: "auth_discord_start",

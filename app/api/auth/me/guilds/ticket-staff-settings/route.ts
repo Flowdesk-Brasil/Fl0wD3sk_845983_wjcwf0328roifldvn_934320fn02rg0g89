@@ -24,18 +24,15 @@ import {
   sanitizeErrorMessage,
 } from "@/lib/security/errors";
 import {
+  FlowSecureDtoError,
+  flowSecureDto,
+  parseFlowSecureDto,
+} from "@/lib/security/flowSecure";
+import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
 } from "@/lib/security/http";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
-
-type StaffSettingsBody = {
-  guildId?: unknown;
-  adminRoleId?: unknown;
-  claimRoleIds?: unknown;
-  closeRoleIds?: unknown;
-  notifyRoleIds?: unknown;
-};
 
 const MAX_ROLE_SELECTIONS = 25;
 
@@ -262,19 +259,49 @@ export async function POST(request: Request) {
   let diagnostic = createServerSaveDiagnosticContext("ticket_staff_settings");
 
   try {
-    let body: StaffSettingsBody = {};
+    let body: {
+      guildId: string;
+      adminRoleId: string;
+      claimRoleIds: string[];
+      closeRoleIds: string[];
+      notifyRoleIds: string[];
+    };
     try {
-      body = (await request.json()) as StaffSettingsBody;
-    } catch {
+      body = parseFlowSecureDto(
+        await request.json().catch(() => ({})),
+        {
+          guildId: flowSecureDto.discordSnowflake(),
+          adminRoleId: flowSecureDto.discordSnowflake(),
+          claimRoleIds: flowSecureDto.array(flowSecureDto.discordSnowflake(), {
+            minLength: 1,
+            maxLength: MAX_ROLE_SELECTIONS,
+          }),
+          closeRoleIds: flowSecureDto.array(flowSecureDto.discordSnowflake(), {
+            minLength: 1,
+            maxLength: MAX_ROLE_SELECTIONS,
+          }),
+          notifyRoleIds: flowSecureDto.array(flowSecureDto.discordSnowflake(), {
+            minLength: 1,
+            maxLength: MAX_ROLE_SELECTIONS,
+          }),
+        },
+        {
+          rejectUnknown: true,
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof FlowSecureDtoError)) {
+        throw error;
+      }
       recordServerSaveDiagnostic({
         context: diagnostic,
         outcome: "payload_invalid",
         httpStatus: 400,
-        detail: "Payload JSON invalido.",
+        detail: error.issues[0] || error.message,
       });
       return applyNoStoreHeaders(
         NextResponse.json(
-        { ok: false, message: "Payload JSON invalido." },
+        { ok: false, message: error.issues[0] || error.message },
         { status: 400 },
         ),
       );

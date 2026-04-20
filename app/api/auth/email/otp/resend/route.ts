@@ -60,7 +60,8 @@ export async function POST(request: NextRequest) {
     const payload = parseFlowSecureDto(
       await request.json().catch(() => ({})),
       {
-        challengeId: flowSecureDto.string({
+        challengeId: flowSecureDto.base64UrlToken({
+          minLength: 8,
           maxLength: 120,
         }),
       },

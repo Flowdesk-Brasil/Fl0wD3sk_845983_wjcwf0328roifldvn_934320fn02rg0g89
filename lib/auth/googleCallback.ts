@@ -1,20 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   authConfig,
-  getOAuthModeCookieName,
-  getOAuthNextPathCookieName,
-  getOAuthRedirectUriCookieName,
-  getOAuthStateCookieName,
   isGoogleAuthConfigured,
   normalizeInternalNextPath,
 } from "@/lib/auth/config";
 import {
-  clearSharedAuthCookie,
   clearSharedTrustedDeviceCookie,
   getSharedAuthCookieProofName,
   setSharedSessionCookie,
 } from "@/lib/auth/cookies";
 import { createLoginOtpChallenge } from "@/lib/auth/emailOtp";
+import {
+  clearOAuthTransactionCookies,
+  validateOAuthTransactionFromRequest,
+  validateOidcIdTokenClaims,
+} from "@/lib/auth/oauthIdentity";
 import { exchangeGoogleCodeForToken, fetchGoogleUser } from "@/lib/auth/google";
 import {
   buildLoginOtpRedirectLocation,
@@ -45,36 +45,7 @@ function extractClientIp(request: NextRequest) {
 }
 
 function clearOAuthCookies(request: NextRequest, response: NextResponse) {
-  clearSharedAuthCookie(request, response, getOAuthStateCookieName("google"), {
-    httpOnly: true,
-    sameSite: "lax",
-    priority: "high",
-  });
-  clearSharedAuthCookie(
-    request,
-    response,
-    getOAuthRedirectUriCookieName("google"),
-    {
-      httpOnly: true,
-      sameSite: "lax",
-      priority: "high",
-    },
-  );
-  clearSharedAuthCookie(
-    request,
-    response,
-    getOAuthNextPathCookieName("google"),
-    {
-      httpOnly: true,
-      sameSite: "lax",
-      priority: "high",
-    },
-  );
-  clearSharedAuthCookie(request, response, getOAuthModeCookieName("google"), {
-    httpOnly: true,
-    sameSite: "lax",
-    priority: "high",
-  });
+  clearOAuthTransactionCookies(request, response, "google");
 }
 
 function redirectWithLocation(location: string) {
@@ -128,13 +99,14 @@ export async function handleGoogleAuthCallback(request: NextRequest) {
   }
 
   const initialRequestContext = createSecurityRequestContext(request);
-  const nextPathCookie = normalizeInternalNextPath(
-    request.cookies.get(getOAuthNextPathCookieName("google"))?.value,
+  const state = request.nextUrl.searchParams.get("state");
+  const oauthTransaction = validateOAuthTransactionFromRequest(
+    request,
+    "google",
+    state,
   );
-  const oauthModeCookie =
-    request.cookies.get(getOAuthModeCookieName("google"))?.value === "link"
-      ? "link"
-      : "login";
+  const nextPathCookie = normalizeInternalNextPath(oauthTransaction?.nextPath);
+  const oauthModeCookie = oauthTransaction?.mode || "login";
 
   const rateLimit = await enforceRequestRateLimit({
     action: "auth_google_callback",
@@ -179,13 +151,8 @@ export async function handleGoogleAuthCallback(request: NextRequest) {
   }
 
   const code = request.nextUrl.searchParams.get("code");
-  const state = request.nextUrl.searchParams.get("state");
-  const stateCookie = request.cookies.get(getOAuthStateCookieName("google"))?.value;
-  const redirectUriCookie = request.cookies.get(
-    getOAuthRedirectUriCookieName("google"),
-  )?.value;
 
-  if (!code || !state || !stateCookie || !redirectUriCookie || state !== stateCookie) {
+  if (!code || !oauthTransaction?.redirectUri) {
     const response = buildLoginRedirectResponse(request, {
       nextPath: nextPathCookie,
       mode: oauthModeCookie,
@@ -212,8 +179,18 @@ export async function handleGoogleAuthCallback(request: NextRequest) {
         : null;
     const tokenPayload = await exchangeGoogleCodeForToken({
       code,
-      redirectUri: redirectUriCookie,
+      redirectUri: oauthTransaction.redirectUri,
+      codeVerifier: oauthTransaction.pkceVerifier,
     });
+    const oidcValidation = validateOidcIdTokenClaims({
+      provider: "google",
+      idToken: tokenPayload.id_token,
+      expectedAudience: authConfig.googleClientId || "",
+      expectedNonce: oauthTransaction.nonce,
+    });
+    if (!oidcValidation.ok) {
+      throw new Error(`OIDC Google invalido: ${oidcValidation.reason || "unknown_reason"}`);
+    }
     const googleUser = await fetchGoogleUser(tokenPayload.access_token);
     const user = await resolveAuthUserForGoogleLogin(googleUser, {
       currentUserId: currentSession?.user.id ?? null,

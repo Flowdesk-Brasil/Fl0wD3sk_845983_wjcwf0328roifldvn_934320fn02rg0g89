@@ -4,12 +4,16 @@ import {
   assertUserAdminInGuildOrNull,
   buildBotInviteUrl,
   hasAcceptedTeamAccessToGuild,
-  isGuildId,
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
 import { updateSessionActiveGuild } from "@/lib/auth/session";
 import { getLockedGuildLicenseByGuildId } from "@/lib/payments/licenseStatus";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
+import {
+  FlowSecureDtoError,
+  flowSecureDto,
+  parseFlowSecureDto,
+} from "@/lib/security/flowSecure";
 import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
@@ -21,10 +25,6 @@ import {
   extendSecurityRequestContext,
   logSecurityAuditEventSafe,
 } from "@/lib/security/requestSecurity";
-
-type ValidateGuildBody = {
-  guildId?: unknown;
-};
 
 type DiscordGuildMember = {
   roles: string[];
@@ -184,23 +184,37 @@ export async function POST(request: Request) {
       return response;
     }
 
-    let body: ValidateGuildBody = {};
+    let body: { guildId: string };
     try {
-      body = (await request.json()) as ValidateGuildBody;
-    } catch {
+      body = parseFlowSecureDto(
+        await request.json().catch(() => ({})),
+        {
+          guildId: flowSecureDto.discordSnowflake(),
+        },
+        {
+          rejectUnknown: true,
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof FlowSecureDtoError)) {
+        throw error;
+      }
+
+      await logSecurityAuditEventSafe(auditContext, {
+        action: "auth_bot_presence_validate",
+        outcome: "blocked",
+        metadata: {
+          reason: error.issues[0] || error.message,
+        },
+      });
+
       return respond(
-        { ok: false, message: "Payload JSON invalido." },
+        { ok: false, message: error.issues[0] || error.message },
         { status: 400 },
       );
     }
 
-    const guildId = typeof body.guildId === "string" ? body.guildId.trim() : "";
-    if (!isGuildId(guildId)) {
-      return respond(
-        { ok: false, message: "Guild ID invalido." },
-        { status: 400 },
-      );
-    }
+    const guildId = body.guildId;
 
     const guildAuditContext = extendSecurityRequestContext(auditContext, {
       guildId,

@@ -21,6 +21,11 @@ import {
 } from "@/lib/security/databaseAvailability";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
 import {
+  flowSecureDto,
+  FlowSecureDtoError,
+  parseFlowSecureDto,
+} from "@/lib/security/flowSecure";
+import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
 } from "@/lib/security/http";
@@ -35,16 +40,6 @@ import {
   extendSecurityRequestContext,
   logSecurityAuditEventSafe,
 } from "@/lib/security/requestSecurity";
-
-type DiscountPreviewBody = {
-  guildId?: unknown;
-  couponCode?: unknown;
-  giftCardCode?: unknown;
-  baseAmount?: unknown;
-  currency?: unknown;
-  planCode?: unknown;
-  billingPeriodCode?: unknown;
-};
 
 const DISCOUNT_PREVIEW_ROUTE_COALESCE_TTL_MS = 1_500;
 
@@ -171,17 +166,90 @@ export async function POST(request: Request) {
   }
 
   try {
-    let body: DiscountPreviewBody = {};
+    let payload: {
+      guildId?: string | null;
+      couponCode?: string | null;
+      giftCardCode?: string | null;
+      baseAmount?: number | null;
+      currency?: string | null;
+      planCode?: string | null;
+      billingPeriodCode?: string | null;
+    };
     try {
-      body = (await request.json()) as DiscountPreviewBody;
-    } catch {
+      payload = parseFlowSecureDto(
+        await request.json().catch(() => ({})),
+        {
+          guildId: flowSecureDto.optional(
+            flowSecureDto.nullable(flowSecureDto.discordSnowflake()),
+          ),
+          couponCode: flowSecureDto.optional(
+            flowSecureDto.nullable(
+              flowSecureDto.string({
+                maxLength: 64,
+                pattern: /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/,
+              }),
+            ),
+          ),
+          giftCardCode: flowSecureDto.optional(
+            flowSecureDto.nullable(
+              flowSecureDto.string({
+                maxLength: 64,
+                pattern: /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/,
+              }),
+            ),
+          ),
+          baseAmount: flowSecureDto.optional(
+            flowSecureDto.nullable(
+              flowSecureDto.number({
+                min: 0,
+                max: 1_000_000,
+              }),
+            ),
+          ),
+          currency: flowSecureDto.optional(
+            flowSecureDto.nullable(
+              flowSecureDto.string({
+                minLength: 3,
+                maxLength: 8,
+                pattern: /^[A-Za-z]{3,8}$/,
+              }),
+            ),
+          ),
+          planCode: flowSecureDto.optional(
+            flowSecureDto.nullable(
+              flowSecureDto.string({
+                maxLength: 32,
+                pattern: /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/,
+              }),
+            ),
+          ),
+          billingPeriodCode: flowSecureDto.optional(
+            flowSecureDto.nullable(
+              flowSecureDto.string({
+                maxLength: 32,
+                pattern: /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/,
+              }),
+            ),
+          ),
+        },
+        {
+          rejectUnknown: true,
+        },
+      );
+    } catch (error) {
       return respond(
-        { ok: false, message: "Payload JSON invalido." },
+        {
+          ok: false,
+          message:
+            error instanceof FlowSecureDtoError
+              ? error.issues[0] || error.message
+              : "Payload JSON invalido.",
+        },
         { status: 400 },
       );
     }
 
-    const guildId = normalizeGuildId(body.guildId);
+    const guildId = normalizeGuildId(payload.guildId);
 
     const access = await ensureGuildAccess(guildId);
     if (!access.ok) {
@@ -199,17 +267,17 @@ export async function POST(request: Request) {
 
     const mutationKey = createCoalescedRouteKey({
       namespace: "payment-discount-preview-post",
-      parts: [
-        access.sessionData.authSession.user.id,
-        guildId || "__account__",
-        typeof body.couponCode === "string" ? body.couponCode : "",
-        typeof body.giftCardCode === "string" ? body.giftCardCode : "",
-        normalizeAmount(body.baseAmount),
-        normalizeCurrency(body.currency),
-        normalizePlanCode(body.planCode) || "",
-        normalizeBillingPeriodCode(body.billingPeriodCode) || "",
-      ],
-    });
+        parts: [
+          access.sessionData.authSession.user.id,
+          guildId || "__account__",
+          payload.couponCode || "",
+          payload.giftCardCode || "",
+          normalizeAmount(payload.baseAmount),
+          normalizeCurrency(payload.currency),
+          normalizePlanCode(payload.planCode) || "",
+          normalizeBillingPeriodCode(payload.billingPeriodCode) || "",
+        ],
+      });
 
     return await runCoalescedRouteResponse({
       key: mutationKey,
@@ -249,13 +317,15 @@ export async function POST(request: Request) {
         });
 
         const preview = await resolveDiscountPricing({
-          baseAmount: normalizeAmount(body.baseAmount),
-          currency: normalizeCurrency(body.currency),
-          couponCode: typeof body.couponCode === "string" ? body.couponCode : null,
-          giftCardCode: typeof body.giftCardCode === "string" ? body.giftCardCode : null,
+          baseAmount: normalizeAmount(payload.baseAmount),
+          currency: normalizeCurrency(payload.currency),
+          couponCode: payload.couponCode || null,
+          giftCardCode: payload.giftCardCode || null,
           userId: access.sessionData.authSession.user.id,
-          planCode: normalizePlanCode(body.planCode),
-          billingPeriodCode: normalizeBillingPeriodCode(body.billingPeriodCode),
+          planCode: normalizePlanCode(payload.planCode),
+          billingPeriodCode: normalizeBillingPeriodCode(
+            payload.billingPeriodCode,
+          ),
         });
         const flowPointsBalanceRecord = await getUserPlanFlowPointsBalance(
           access.sessionData.authSession.user.id,
