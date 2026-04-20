@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 
 import { type AccountTab } from "@/lib/account/tabs";
+import type { SupportTicket } from "@/lib/account/supportTickets";
 import {
   scheduleWarmBrowserRoutes,
   warmBrowserRoute,
@@ -32,7 +33,7 @@ type AccountSummaryData = {
   ordersCount?: number;
   apiKeysCount?: number;
   flowPoints?: number;
-  initialTickets?: unknown[];
+  initialTickets?: SupportTicket[];
 };
 
 type AccountSummaryResponse = {
@@ -44,9 +45,17 @@ type AccountSummaryResponse = {
 type TabRendererProps = {
   id: AccountTab;
   initialSummary?: AccountSummaryData | null;
-  initialTickets?: unknown[];
-  displayName?: string;
-  avatarUrl?: string | null;
+  initialTickets?: SupportTicket[];
+  displayName: string;
+  avatarUrl: string | null;
+  [key: string]: unknown;
+};
+
+type AccountTabComponentProps = {
+  displayName: string;
+  avatarUrl: string | null;
+  initialTickets?: SupportTicket[];
+  onNavigateTickets?: () => void;
   [key: string]: unknown;
 };
 
@@ -82,15 +91,18 @@ function preloadAccountTabModule(tab: Exclude<AccountTab, "overview">) {
   return ACCOUNT_TAB_IMPORTERS[tab]().catch(() => null);
 }
 
-const TAB_COMPONENTS: Record<string, ComponentType<Record<string, unknown>>> = {
-  plans: dynamic<Record<string, unknown>>(() => ACCOUNT_TAB_IMPORTERS.plans().then((m) => m.PlansTab), { ssr: false, loading: AccountTabLoadingState }),
-  payment_methods: dynamic<Record<string, unknown>>(() => ACCOUNT_TAB_IMPORTERS.payment_methods().then((m) => m.PaymentMethodsTab), { ssr: false, loading: AccountTabLoadingState }),
-  payment_history: dynamic<Record<string, unknown>>(() => ACCOUNT_TAB_IMPORTERS.payment_history().then((m) => m.PaymentHistoryTab), { ssr: false, loading: AccountTabLoadingState }),
-  api_keys: dynamic<Record<string, unknown>>(() => ACCOUNT_TAB_IMPORTERS.api_keys().then((m) => m.ApiKeysTab), { ssr: false, loading: AccountTabLoadingState }),
-  teams: dynamic<Record<string, unknown>>(() => ACCOUNT_TAB_IMPORTERS.teams().then((m) => m.TeamsTab), { ssr: false, loading: AccountTabLoadingState }),
-  tickets: dynamic<Record<string, unknown>>(() => ACCOUNT_TAB_IMPORTERS.tickets().then((m) => m.TicketsTab), { ssr: false, loading: AccountTabLoadingState }),
-  status: dynamic<Record<string, unknown>>(() => ACCOUNT_TAB_IMPORTERS.status().then((m) => m.StatusTab), { ssr: false, loading: AccountTabLoadingState }),
-  delete_account: dynamic<Record<string, unknown>>(() => ACCOUNT_TAB_IMPORTERS.delete_account().then((m) => m.DeleteAccountTab), { ssr: false, loading: AccountTabLoadingState }),
+const TAB_COMPONENTS: Record<
+  Exclude<AccountTab, "overview">,
+  ComponentType<AccountTabComponentProps>
+> = {
+  plans: dynamic<AccountTabComponentProps>(() => ACCOUNT_TAB_IMPORTERS.plans().then((m) => m.PlansTab), { ssr: false, loading: AccountTabLoadingState }),
+  payment_methods: dynamic<AccountTabComponentProps>(() => ACCOUNT_TAB_IMPORTERS.payment_methods().then((m) => m.PaymentMethodsTab), { ssr: false, loading: AccountTabLoadingState }),
+  payment_history: dynamic<AccountTabComponentProps>(() => ACCOUNT_TAB_IMPORTERS.payment_history().then((m) => m.PaymentHistoryTab), { ssr: false, loading: AccountTabLoadingState }),
+  api_keys: dynamic<AccountTabComponentProps>(() => ACCOUNT_TAB_IMPORTERS.api_keys().then((m) => m.ApiKeysTab), { ssr: false, loading: AccountTabLoadingState }),
+  teams: dynamic<AccountTabComponentProps>(() => ACCOUNT_TAB_IMPORTERS.teams().then((m) => m.TeamsTab), { ssr: false, loading: AccountTabLoadingState }),
+  tickets: dynamic<AccountTabComponentProps>(() => ACCOUNT_TAB_IMPORTERS.tickets().then((m) => m.TicketsTab), { ssr: false, loading: AccountTabLoadingState }),
+  status: dynamic<AccountTabComponentProps>(() => ACCOUNT_TAB_IMPORTERS.status().then((m) => m.StatusTab), { ssr: false, loading: AccountTabLoadingState }),
+  delete_account: dynamic<AccountTabComponentProps>(() => ACCOUNT_TAB_IMPORTERS.delete_account().then((m) => m.DeleteAccountTab), { ssr: false, loading: AccountTabLoadingState }),
 };
 
 export function TabRenderer({
@@ -171,7 +183,7 @@ export function TabRenderer({
 }
 
 type QuickCard = {
-  id: AccountTab;
+  id: Exclude<AccountTab, "overview">;
   icon: LucideIcon;
   title: string;
   description: string;
@@ -191,8 +203,8 @@ function OverviewContent({
   avatarUrl,
   initialSummary,
 }: {
-  displayName?: string;
-  avatarUrl?: string | null;
+  displayName: string;
+  avatarUrl: string | null;
   initialSummary?: AccountSummaryData | null;
 }) {
   const hasInitialSummary = Boolean(initialSummary);
