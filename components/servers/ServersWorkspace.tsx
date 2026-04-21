@@ -412,7 +412,36 @@ function parseWorkspaceRoute(pathname: string | null): {
 
   if (!pathname) return fallback;
 
-  const bareMatch = pathname.match(/^\/servers\/(\d{10,25})\/?$/);
+  const normalizedPathname = (() => {
+    if (pathname === "/") {
+      return "/servers";
+    }
+
+    const comparablePathname =
+      pathname !== "/" && pathname.endsWith("/")
+        ? pathname.slice(0, -1)
+        : pathname;
+
+    if (comparablePathname === "/plans") {
+      return "/servers/plans";
+    }
+
+    if (comparablePathname.startsWith("/servers")) {
+      return comparablePathname;
+    }
+
+    if (
+      /^\/\d{10,25}(?:\/(?:tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|security\/(?:antilink|autorole|logs))?)?$/.test(
+        comparablePathname,
+      )
+    ) {
+      return `/servers${comparablePathname}`;
+    }
+
+    return comparablePathname;
+  })();
+
+  const bareMatch = normalizedPathname.match(/^\/servers\/(\d{10,25})\/?$/);
   if (bareMatch) {
     return {
       guildId: bareMatch[1],
@@ -421,7 +450,7 @@ function parseWorkspaceRoute(pathname: string | null): {
     };
   }
 
-  const ticketSectionMatch = pathname.match(
+  const ticketSectionMatch = normalizedPathname.match(
     /^\/servers\/(\d{10,25})\/tickets?\/(overview|message|flowai)\/?$/,
   );
   if (ticketSectionMatch) {
@@ -435,7 +464,7 @@ function parseWorkspaceRoute(pathname: string | null): {
     };
   }
 
-  const entryExitSectionMatch = pathname.match(
+  const entryExitSectionMatch = normalizedPathname.match(
     /^\/servers\/(\d{10,25})\/entry-exit\/(overview|message)\/?$/,
   );
   if (entryExitSectionMatch) {
@@ -449,7 +478,7 @@ function parseWorkspaceRoute(pathname: string | null): {
     };
   }
 
-  const securitySectionMatch = pathname.match(
+  const securitySectionMatch = normalizedPathname.match(
     /^\/servers\/(\d{10,25})\/security\/(antilink|autorole|logs)\/?$/,
   );
   if (securitySectionMatch) {
@@ -475,7 +504,17 @@ function normalizeComparablePath(value: string) {
 }
 
 function isServersWorkspacePath(pathname: string) {
-  return pathname === "/servers" || pathname.startsWith("/servers/");
+  if (pathname === "/servers" || pathname.startsWith("/servers/")) {
+    return true;
+  }
+
+  if (pathname === "/" || pathname === "/plans") {
+    return true;
+  }
+
+  return /^\/\d{10,25}(?:\/(?:tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|security\/(?:antilink|autorole|logs))?)?\/?$/.test(
+    pathname,
+  );
 }
 
 function statusStyle(status: ManagedServerStatus) {
@@ -2025,7 +2064,10 @@ export function ServersWorkspace({
       buildServerConfigUrl(guildId, "settings", "security_autorole"),
       buildServerConfigUrl(guildId, "settings", "security_logs"),
     ].forEach((url) => {
-      router.prefetch(url);
+      warmBrowserRoute(url, {
+        router,
+        prefetchDocument: true,
+      });
     });
   }, [buildServerConfigUrl, router]);
 
@@ -2379,7 +2421,10 @@ export function ServersWorkspace({
 
   const prefetchServerConfig = useCallback((guildId: string, tab: ServerEditorTab = "settings") => {
     prefetchWorkspaceSections(guildId);
-    router.prefetch(buildServerConfigUrl(guildId, tab));
+    warmBrowserRoute(buildServerConfigUrl(guildId, tab), {
+      router,
+      prefetchDocument: true,
+    });
   }, [buildServerConfigUrl, prefetchWorkspaceSections, router]);
 
   useEffect(() => {
