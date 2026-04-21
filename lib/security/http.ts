@@ -11,7 +11,6 @@ const FIRST_PARTY_CONNECT_SOURCES = [
   "https://config.flwdesk.com",
   "https://status.flwdesk.com",
   "https://fdesk.flwdesk.com",
-  "https://servers.flwdesk.com",
   "https://*.flwdesk.com",
   "wss://*.flwdesk.com",
 ] as const;
