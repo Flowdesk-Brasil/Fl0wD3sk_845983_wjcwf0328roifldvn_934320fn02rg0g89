@@ -55,6 +55,7 @@ import {
   readPaymentCheckoutPathDetails,
   resolvePaymentBillingPeriodCodeFromCycleDays,
 } from "@/lib/payments/paymentRouting";
+import { buildBrowserRoutingTargetFromInternalPath } from "@/lib/routing/subdomains";
 
 type ConfigStepFourProps = {
   displayName: string;
@@ -1209,19 +1210,17 @@ function resolveApprovedRedirectConfig(
   fallbackGuildId: string | null,
   hasExistingServer: boolean = false,
 ) {
+  const delayMs = 10_000;
+
   if (typeof window === "undefined") {
     return {
-      targetUrl: fallbackGuildId || hasExistingServer ? "http://fdesk.localhost:3000/" : "http://config.localhost:3000/",
-      delayMs: 10_000,
+      targetUrl:
+        fallbackGuildId || hasExistingServer
+          ? "http://fdesk.localhost:3000/servers/"
+          : "http://config.localhost:3000/",
+      delayMs,
     };
   }
-
-  const currentUrl = new URL(window.location.href);
-  const hostname = currentUrl.hostname;
-  const isLocal = hostname === "localhost" || hostname === "127.0.0.1";
-  const port = currentUrl.port ? `:${currentUrl.port}` : "";
-  const baseDomain = isLocal ? `localhost${port}` : "flwdesk.com";
-  const protocol = currentUrl.protocol || "https:";
 
   const params = new URLSearchParams(window.location.search);
   const isRenewFlow = params.get("renew")?.trim() === "1";
@@ -1233,19 +1232,22 @@ function resolveApprovedRedirectConfig(
   const userHasServer = Boolean(fallbackGuildId || hasExistingServer || isRenewFlow || returnTarget === "servers");
   
   if (returnTarget === "config") {
+    const target = buildBrowserRoutingTargetFromInternalPath(
+      explicitConfigReturnPath || "/config/",
+    );
     return {
-      targetUrl: explicitConfigReturnPath 
-        ? `${protocol}//config.${baseDomain}${explicitConfigReturnPath}`
-        : `${protocol}//config.${baseDomain}/`,
-      delayMs: 10_000,
+      targetUrl: target.href,
+      delayMs,
     };
   }
 
-  const targetDomain = userHasServer ? `fdesk.${baseDomain}` : `config.${baseDomain}`;
+  const target = buildBrowserRoutingTargetFromInternalPath(
+    userHasServer ? "/servers/" : "/config/",
+  );
 
   return {
-    targetUrl: `${protocol}//${targetDomain}/`,
-    delayMs: isRenewFlow ? 5_000 : 10_000,
+    targetUrl: target.href,
+    delayMs: isRenewFlow ? 5_000 : delayMs,
   };
 }
 

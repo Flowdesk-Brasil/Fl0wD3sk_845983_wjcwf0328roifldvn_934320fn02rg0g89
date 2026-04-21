@@ -69,7 +69,8 @@ const CANONICAL_HOST_CONFIG: Record<CanonicalHost, CanonicalHostConfig> = {
     subdomain: "fdesk",
   },
   servers: {
-    subdomain: "servers",
+    subdomain: "fdesk",
+    legacySubdomains: ["servers"],
   },
   pay: {
     subdomain: "pay",
@@ -98,9 +99,9 @@ const WORKSPACE_AREA_CONFIG: Record<WorkspaceArea, WorkspaceAreaConfig> = {
     externalBasePath: "/",
   },
   servers: {
-    canonicalHost: "servers",
+    canonicalHost: "dashboard",
     internalBasePath: "/servers",
-    externalBasePath: "/",
+    externalBasePath: "/servers",
   },
   account: {
     canonicalHost: "dashboard",
@@ -569,6 +570,9 @@ export function detectWorkspaceAreaFromExternalPath(
     case "dashboard":
       if (normalizedPathname === "/account" || normalizedPathname.startsWith("/account/")) {
         return "account";
+      }
+      if (normalizedPathname === "/servers" || normalizedPathname.startsWith("/servers/")) {
+        return "servers";
       }
       return "dashboard";
     case "servers":

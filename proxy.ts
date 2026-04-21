@@ -204,6 +204,27 @@ function maybeBuildCanonicalHostRedirect(
     return null;
   }
 
+  if (canonicalHost === "servers") {
+    const pathname = request.nextUrl.pathname;
+    const shouldPreservePath =
+      Boolean(detectWorkspaceAreaFromPath(pathname)) ||
+      isCanonicalPublicPath(pathname) ||
+      isStaticPublicAssetPath(pathname) ||
+      pathname === "/api" ||
+      pathname.startsWith("/api/");
+
+    if (!shouldPreservePath) {
+      const targetLocation = buildCanonicalUrlFromInternalPath(
+        request,
+        `${getWorkspaceAreaInternalPath("servers", pathname)}${request.nextUrl.search}`,
+      );
+
+      if (targetLocation !== getCurrentRequestLocation(request)) {
+        return buildRedirectResponse(request, requestId, csp, targetLocation, 308);
+      }
+    }
+  }
+
   return buildRedirectResponse(
     request,
     requestId,
