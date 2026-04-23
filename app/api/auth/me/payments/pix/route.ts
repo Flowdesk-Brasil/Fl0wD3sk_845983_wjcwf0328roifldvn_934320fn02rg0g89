@@ -84,6 +84,7 @@ import {
   applyFlowPointsToAmount,
   buildPlanTransitionPayload,
   orderTransitionAllowsImmediateApproval,
+  readOrderPlanTransitionPayload,
   resolvePlanChangePreview,
   type PlanChangePreview,
 } from "@/lib/plans/change";
@@ -215,6 +216,34 @@ function mergeProviderPayload(
     ...basePayload,
     ...patch,
   };
+}
+
+function readOrderFinalizationStatus(providerPayload: unknown) {
+  if (!providerPayload || typeof providerPayload !== "object" || Array.isArray(providerPayload)) {
+    return null;
+  }
+
+  const payloadRecord = providerPayload as Record<string, unknown>;
+  const rawFinalization =
+    payloadRecord.flowdesk_finalization &&
+    typeof payloadRecord.flowdesk_finalization === "object" &&
+    !Array.isArray(payloadRecord.flowdesk_finalization)
+      ? (payloadRecord.flowdesk_finalization as Record<string, unknown>)
+      : payloadRecord.finalization &&
+          typeof payloadRecord.finalization === "object" &&
+          !Array.isArray(payloadRecord.finalization)
+        ? (payloadRecord.finalization as Record<string, unknown>)
+        : null;
+  const status =
+    rawFinalization && typeof rawFinalization.status === "string"
+      ? rawFinalization.status.trim().toLowerCase()
+      : "";
+
+  if (status === "settled" || status === "pending" || status === "refunded") {
+    return status;
+  }
+
+  return null;
 }
 
 function isProviderDocumentErrorMessage(message: string) {
@@ -655,6 +684,7 @@ export function toApiOrder(
   checkoutAccessToken: string | null = null,
 ) {
   const qrDataUri = toQrDataUri(record.provider_qr_base64);
+  const transition = readOrderPlanTransitionPayload(record.provider_payload);
 
   return {
     id: record.id,
@@ -685,6 +715,9 @@ export function toApiOrder(
     expiresAt: record.expires_at,
     checkoutAccessToken,
     checkoutAccessTokenExpiresAt: record.checkout_link_expires_at,
+    planTransitionKind: transition?.kind || null,
+    planTransitionExecution: transition?.execution || null,
+    finalizationStatus: readOrderFinalizationStatus(record.provider_payload),
     createdAt: record.created_at,
     updatedAt: record.updated_at,
   };

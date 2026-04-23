@@ -1079,6 +1079,127 @@ function FallbackServerIcon() {
   return <div className="flex h-[54px] w-[54px] items-center justify-center rounded-[16px] bg-[#131313] text-[15px] font-semibold text-[#7A7A7A]">FD</div>;
 }
 
+const SERVER_SKELETON_OPACITY_LEVELS = [1, 0.76, 0.58] as const;
+
+function ServerSkeletonBlock({ className }: { className: string }) {
+  return <div className={`flowdesk-shimmer ${className}`.trim()} />;
+}
+
+function ServerOverviewSkeletonCard({ index }: { index: number }) {
+  const opacity =
+    SERVER_SKELETON_OPACITY_LEVELS[
+      Math.min(index, SERVER_SKELETON_OPACITY_LEVELS.length - 1)
+    ];
+
+  return (
+    <article
+      className="overflow-hidden rounded-[26px] border border-[#151515] bg-[#0A0A0A] p-[18px]"
+      style={{
+        opacity,
+        animationDelay: `${index * 36}ms`,
+      }}
+      aria-hidden="true"
+    >
+      <div className="flex items-start justify-between gap-[14px]">
+        <div className="flex min-w-0 items-start gap-[14px]">
+          <ServerSkeletonBlock className="h-[56px] w-[56px] rounded-[16px] bg-[#121212]" />
+          <div className="min-w-0 flex-1">
+            <ServerSkeletonBlock className="h-[18px] w-[160px] max-w-full rounded-full bg-[#151515]" />
+            <ServerSkeletonBlock className="mt-[10px] h-[14px] w-[122px] max-w-full rounded-full bg-[#111111]" />
+          </div>
+        </div>
+
+        <div className="flex items-center gap-[10px]">
+          <div className="flex h-[42px] w-[42px] items-center justify-center rounded-full border border-[#1A1A1A] bg-[#0D0D0D]">
+            <ServerSkeletonBlock className="h-[10px] w-[10px] rounded-full bg-[#1B1B1B]" />
+          </div>
+          <ServerSkeletonBlock className="h-[40px] w-[40px] rounded-[14px] bg-[#111111]" />
+        </div>
+      </div>
+
+      <ServerSkeletonBlock className="mt-[18px] h-[34px] w-[150px] max-w-full rounded-full bg-[#101010]" />
+
+      <div className="mt-[18px] rounded-[20px] border border-[#141414] bg-[#080808] px-[16px] py-[16px]">
+        <div className="flex items-center justify-between gap-[12px]">
+          <ServerSkeletonBlock className="h-[12px] w-[84px] rounded-full bg-[#131313]" />
+          <ServerSkeletonBlock className="h-[24px] w-[88px] rounded-full bg-[#101010]" />
+        </div>
+        <ServerSkeletonBlock className="mt-[14px] h-[18px] w-[92%] rounded-full bg-[#151515]" />
+        <ServerSkeletonBlock className="mt-[10px] h-[14px] w-[68%] rounded-full bg-[#111111]" />
+      </div>
+    </article>
+  );
+}
+
+function ServerListSkeletonRow({ index }: { index: number }) {
+  const opacity =
+    SERVER_SKELETON_OPACITY_LEVELS[
+      Math.min(index, SERVER_SKELETON_OPACITY_LEVELS.length - 1)
+    ];
+
+  return (
+    <article
+      className="border-b border-[#141414] bg-[#0A0A0A] px-[18px] py-[18px]"
+      style={{
+        opacity,
+        animationDelay: `${index * 36}ms`,
+      }}
+      aria-hidden="true"
+    >
+      <div className="flex flex-col gap-[18px] xl:flex-row xl:items-center xl:justify-between">
+        <div className="flex min-w-0 items-center gap-[16px]">
+          <ServerSkeletonBlock className="h-[56px] w-[56px] rounded-[16px] bg-[#121212]" />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-x-[12px] gap-y-[8px]">
+              <ServerSkeletonBlock className="h-[18px] w-[160px] max-w-full rounded-full bg-[#151515]" />
+              <ServerSkeletonBlock className="h-[24px] w-[84px] rounded-full bg-[#101010]" />
+            </div>
+            <div className="mt-[10px] flex flex-wrap items-center gap-x-[14px] gap-y-[8px]">
+              <ServerSkeletonBlock className="h-[13px] w-[132px] rounded-full bg-[#111111]" />
+              <ServerSkeletonBlock className="h-[13px] w-[92px] rounded-full bg-[#111111]" />
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-[8px] xl:min-w-[250px] xl:justify-items-start">
+          <ServerSkeletonBlock className="h-[16px] w-[156px] rounded-full bg-[#151515]" />
+          <ServerSkeletonBlock className="h-[13px] w-[224px] max-w-full rounded-full bg-[#111111]" />
+        </div>
+
+        <div className="flex flex-wrap items-center justify-end gap-[12px] xl:ml-[18px]">
+          <ServerSkeletonBlock className="h-[32px] w-[122px] rounded-full bg-[#101010]" />
+          <div className="flex h-[42px] w-[42px] items-center justify-center rounded-full border border-[#1A1A1A] bg-[#0D0D0D]">
+            <ServerSkeletonBlock className="h-[10px] w-[10px] rounded-full bg-[#1B1B1B]" />
+          </div>
+          <ServerSkeletonBlock className="h-[40px] w-[40px] rounded-[14px] bg-[#111111]" />
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function ServersOverviewSkeletonGrid() {
+  return (
+    <div className="grid gap-[14px] xl:grid-cols-2">
+      {Array.from({ length: 3 }, (_, index) => (
+        <ServerOverviewSkeletonCard key={index} index={index} />
+      ))}
+    </div>
+  );
+}
+
+function ServersListSkeleton() {
+  return (
+    <div className="px-[18px] py-[24px]">
+      <div className="space-y-[12px]">
+        {Array.from({ length: 3 }, (_, index) => (
+          <ServerListSkeletonRow key={index} index={index} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ServerListRow({
   server,
   index,
@@ -3071,7 +3192,7 @@ export function ServersWorkspace({
     : viewMode === "overview"
       ? selectedTeam
         ? `Servidores vinculados a equipe ${selectedTeam.name}, com visao mais limpa para moderacao, cobranca da conta e operacao do painel.`
-        : "Uma visao mais limpa para encontrar servidores, acompanhar a cobranca da conta e abrir configuracoes rapido."
+        : "Encontre servidores, acompanhe as cobrancas da conta e abra configuracoes rapidas."
       : selectedTeam
         ? `Modo lista da equipe ${selectedTeam.name}, com todos os servidores vinculados organizados no mesmo fluxo.`
         : "Modo lista para navegar mais rapido entre todos os servidores e estados da conta.";
@@ -3955,31 +4076,11 @@ export function ServersWorkspace({
                   {shouldShowOverviewPaneSkeleton ? (
                     viewMode === "overview" ? (
                       <div className={workspacePaneRevealClass}>
-                        <div className="grid gap-[14px] xl:grid-cols-2">
-                          {Array.from({ length: 4 }, (_, index) => (
-                            <div
-                              key={index}
-                              className="overflow-hidden rounded-[24px] border border-[#141414] bg-[#0A0A0A] px-[18px] py-[20px]"
-                            >
-                              <div className="flowdesk-shimmer h-[210px] rounded-[18px] bg-[#111111]" />
-                            </div>
-                          ))}
-                        </div>
+                        <ServersOverviewSkeletonGrid />
                       </div>
                     ) : (
                       <div className={`${shellClass} ${workspacePaneRevealClass} overflow-visible`}>
-                        <div className="px-[18px] py-[24px]">
-                          <div className="space-y-[12px]">
-                            {Array.from({ length: 5 }, (_, index) => (
-                              <div
-                                key={index}
-                                className="overflow-hidden rounded-[24px] border border-[#141414] bg-[#0A0A0A] px-[18px] py-[20px]"
-                              >
-                                <div className="flowdesk-shimmer h-[82px] rounded-[18px] bg-[#111111]" />
-                              </div>
-                            ))}
-                          </div>
-                        </div>
+                        <ServersListSkeleton />
                       </div>
                     )
                   ) : (
@@ -4081,13 +4182,7 @@ export function ServersWorkspace({
                       </div>
                       {isLoading ? (
                         <div>
-                          <div className="grid gap-[14px] xl:grid-cols-2">
-                            {Array.from({ length: 4 }, (_, index) => (
-                              <div key={index} className="overflow-hidden rounded-[24px] border border-[#141414] bg-[#0A0A0A] px-[18px] py-[20px]">
-                                <div className="flowdesk-shimmer h-[210px] rounded-[18px] bg-[#111111]" />
-                              </div>
-                            ))}
-                          </div>
+                          <ServersOverviewSkeletonGrid />
                         </div>
                       ) : errorMessage ? (
                         <div className="py-[34px] text-center text-[13px] text-[#C2C2C2]">{errorMessage}</div>
@@ -4124,7 +4219,7 @@ export function ServersWorkspace({
                   ) : (
                     <div className={`${shellClass} ${workspacePaneRevealClass} overflow-visible`}>
                       <div className="border-b border-[#141414] px-[18px] py-[18px]"><div className="flex flex-col gap-[10px] sm:flex-row sm:items-center sm:justify-between"><div><p className="text-[12px] uppercase tracking-[0.18em] text-[#666666]">Projetos</p><h2 className="mt-[10px] text-[26px] leading-none font-medium tracking-[-0.04em] text-[#E5E5E5]">{selectedTeam ? `Servidores da equipe ${selectedTeam.name}` : "Todos os servidores"}</h2></div><p className="text-[13px] leading-[1.5] text-[#6F6F6F]">{filteredServers.length} resultado(s) exibidos de {activeTeamServerCount} servidor(es).</p></div></div>
-                      {isLoading ? <div className="px-[18px] py-[24px]"><div className="space-y-[12px]">{Array.from({ length: 5 }, (_, index) => <div key={index} className="overflow-hidden rounded-[24px] border border-[#141414] bg-[#0A0A0A] px-[18px] py-[20px]"><div className="flowdesk-shimmer h-[82px] rounded-[18px] bg-[#111111]" /></div>)}</div></div> : errorMessage ? <div className="px-[18px] py-[34px] text-center text-[13px] text-[#C2C2C2]">{errorMessage}</div> : filteredServers.length ? <div>{filteredServers.map((server, index) => <ServerListRow key={server.guildId} server={server} index={index} isSelected={selectedGuildIdForConfig === server.guildId} isCopied={copiedGuildId === server.guildId} openCardMenuGuildId={openCardMenuGuildId} onOpen={handleOpenServerConfig} onPrefetch={prefetchServerConfig} onCopy={(guildId) => { void handleCopyGuildId(guildId); }} onToggleMenu={(guildId) => { setOpenCardMenuGuildId((current) => current === guildId ? null : guildId); }} onCopyFromMenu={handleCardMenuCopyId} />)}</div> : <div className="px-[18px] py-[24px]"><ServersEmptyState onPrimaryAction={emptyStateSyncContent ? handleServersSyncAction : null} selectedTeamName={selectedTeam?.name} syncContent={emptyStateSyncContent} /></div>}
+                      {isLoading ? <ServersListSkeleton /> : errorMessage ? <div className="px-[18px] py-[34px] text-center text-[13px] text-[#C2C2C2]">{errorMessage}</div> : filteredServers.length ? <div>{filteredServers.map((server, index) => <ServerListRow key={server.guildId} server={server} index={index} isSelected={selectedGuildIdForConfig === server.guildId} isCopied={copiedGuildId === server.guildId} openCardMenuGuildId={openCardMenuGuildId} onOpen={handleOpenServerConfig} onPrefetch={prefetchServerConfig} onCopy={(guildId) => { void handleCopyGuildId(guildId); }} onToggleMenu={(guildId) => { setOpenCardMenuGuildId((current) => current === guildId ? null : guildId); }} onCopyFromMenu={handleCardMenuCopyId} />)}</div> : <div className="px-[18px] py-[24px]"><ServersEmptyState onPrimaryAction={emptyStateSyncContent ? handleServersSyncAction : null} selectedTeamName={selectedTeam?.name} syncContent={emptyStateSyncContent} /></div>}
                     </div>
                   )}
                 </LandingReveal>

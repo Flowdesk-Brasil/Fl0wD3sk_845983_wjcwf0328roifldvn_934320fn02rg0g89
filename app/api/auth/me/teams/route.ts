@@ -13,7 +13,7 @@ import {
   parseFlowSecureDto,
 } from "@/lib/security/flowSecure";
 import { applyNoStoreHeaders, ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
-import { getManagedServersForCurrentSession } from "@/lib/servers/managedServers";
+import { getPanelManagedServersForCurrentSession } from "@/lib/servers/managedServers";
 import { getPlanGuildsForUser } from "@/lib/plans/planGuilds";
 import { sendTeamCreatedEmailSafe } from "@/lib/mail/transactional";
 
@@ -226,7 +226,7 @@ export async function POST(request: Request) {
     let selectedManagedServersLoaded = false;
 
     try {
-      const managedServers = await getManagedServersForCurrentSession();
+      const managedServers = await getPanelManagedServersForCurrentSession();
       selectedManagedServersLoaded = true;
       managedServers
         .filter((server) => server.canLinkToTeam && !server.isLinkedToTeam)

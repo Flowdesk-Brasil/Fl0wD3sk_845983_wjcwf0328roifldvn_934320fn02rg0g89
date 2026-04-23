@@ -101,6 +101,14 @@ type PixOrder = {
   expiresAt: string | null;
   checkoutAccessToken?: string | null;
   checkoutAccessTokenExpiresAt?: string | null;
+  planTransitionKind?: "new" | "current" | "upgrade" | "downgrade" | null;
+  planTransitionExecution?:
+    | "pay_now"
+    | "schedule_for_renewal"
+    | "already_active"
+    | "trial_activation"
+    | null;
+  finalizationStatus?: "settled" | "pending" | "refunded" | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -1034,6 +1042,18 @@ function isTrustedApprovedPaymentOrder(order: PixOrder | null | undefined) {
   return Boolean(order.providerPaymentId && order.paidAt);
 }
 
+function isApprovedPaymentBenefitDelivered(order: PixOrder | null | undefined) {
+  if (!isTrustedApprovedPaymentOrder(order)) return false;
+  if (!order) return false;
+  if (order.method === "trial") return true;
+  if (isCoveredByInternalCreditsApprovedOrder(order)) return true;
+  return order.finalizationStatus === "settled";
+}
+
+function isApprovedPaymentAwaitingBenefitDelivery(order: PixOrder | null | undefined) {
+  return isTrustedApprovedPaymentOrder(order) && !isApprovedPaymentBenefitDelivered(order);
+}
+
 function roundMoney(amount: number) {
   if (!Number.isFinite(amount)) return 0;
   return Math.round(amount * 100) / 100;
@@ -1262,16 +1282,20 @@ function normalizeServersTabFromQuery(value: string | null) {
 
 function resolveApprovedRedirectConfig(
   fallbackGuildId: string | null,
+  order: PixOrder | null = null,
   hasExistingServer: boolean = false,
 ) {
   const delayMs = 10_000;
+  const stepOneConfigPath = buildConfigUrlWithHashRoute("/config", "", "#/step/1");
 
   if (typeof window === "undefined") {
     return {
       targetUrl:
-        fallbackGuildId || hasExistingServer
+        order?.planTransitionKind === "new" || order?.planTransitionKind === "upgrade"
+          ? "http://config.localhost:3000/#/step/1"
+          : fallbackGuildId || hasExistingServer
           ? "http://fdesk.localhost:3000/servers/"
-          : "http://config.localhost:3000/",
+          : "http://config.localhost:3000/#/step/1",
       delayMs,
     };
   }
@@ -1282,12 +1306,17 @@ function resolveApprovedRedirectConfig(
   const explicitConfigReturnPath = normalizeConfigReturnPathFromQuery(
     params.get("returnPath"),
   );
+  const planTransitionKind = order?.planTransitionKind || null;
+  const mustReturnToConfigStepOne =
+    planTransitionKind === "new" || planTransitionKind === "upgrade";
 
-  const userHasServer = Boolean(fallbackGuildId || hasExistingServer || isRenewFlow || returnTarget === "servers");
+  const userHasServer = Boolean(
+    fallbackGuildId || hasExistingServer || isRenewFlow || returnTarget === "servers",
+  );
   
   if (returnTarget === "config") {
     const target = buildBrowserRoutingTargetFromInternalPath(
-      explicitConfigReturnPath || "/config/",
+      explicitConfigReturnPath || stepOneConfigPath,
     );
     return {
       targetUrl: target.href,
@@ -1296,12 +1325,19 @@ function resolveApprovedRedirectConfig(
   }
 
   const target = buildBrowserRoutingTargetFromInternalPath(
-    userHasServer ? "/servers/" : "/config/",
+    mustReturnToConfigStepOne
+      ? stepOneConfigPath
+      : userHasServer
+        ? "/servers/"
+        : stepOneConfigPath,
   );
 
   return {
     targetUrl: target.href,
-    delayMs: isRenewFlow ? 5_000 : delayMs,
+    delayMs:
+      isRenewFlow || planTransitionKind === "current"
+        ? 5_000
+        : delayMs,
   };
 }
 
@@ -2938,6 +2974,7 @@ function ApprovedPaymentPanel({
   statusMessage,
   redirectDelayMs,
   redirectTargetUrl,
+  isRedirectReady,
   onContinueNow,
 }: {
   className: string;
@@ -2945,6 +2982,7 @@ function ApprovedPaymentPanel({
   statusMessage: string | null;
   redirectDelayMs: number;
   redirectTargetUrl: string;
+  isRedirectReady: boolean;
   onContinueNow: () => void;
 }) {
   const initialSeconds = Math.max(1, Math.ceil(redirectDelayMs / 1000));
@@ -2953,6 +2991,12 @@ function ApprovedPaymentPanel({
   );
 
   useEffect(() => {
+    setRemainingSeconds(Math.max(1, Math.ceil(redirectDelayMs / 1000)));
+  }, [redirectDelayMs]);
+
+  useEffect(() => {
+    if (!isRedirectReady) return;
+
     const intervalId = window.setInterval(() => {
       setRemainingSeconds((current) => (current > 1 ? current - 1 : 1));
     }, 1000);
@@ -2960,7 +3004,7 @@ function ApprovedPaymentPanel({
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [initialSeconds]);
+  }, [initialSeconds, isRedirectReady]);
 
   const methodLabel = resolveCompletedPaymentMethodLabel(order?.method);
   const successHeadline =
@@ -2970,12 +3014,16 @@ function ApprovedPaymentPanel({
 
   return (
     <div className={`${className} flowdesk-stage-fade`}>
-      <div className="inline-flex items-center gap-[10px] rounded-full border border-[rgba(14,207,156,0.22)] bg-[rgba(14,207,156,0.1)] px-[12px] py-[7px] text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8EF0D1]">
-        <span className="inline-flex h-[18px] w-[18px] items-center justify-center rounded-full bg-[rgba(14,207,156,0.18)] text-[#D8FFF1]">
+      <div
+        aria-label="Confirmado"
+        title="Confirmado"
+        className="inline-flex h-[46px] w-[46px] items-center justify-center rounded-full bg-[#0ECF9C] text-[#041510] shadow-[0_16px_34px_rgba(14,207,156,0.3)]"
+      >
+        <span className="inline-flex h-[46px] w-[46px] items-center justify-center rounded-full">
           <svg
             aria-hidden="true"
             viewBox="0 0 20 20"
-            className="h-[11px] w-[11px]"
+            className="h-[20px] w-[20px]"
             fill="none"
             stroke="currentColor"
             strokeWidth="2"
@@ -2985,7 +3033,6 @@ function ApprovedPaymentPanel({
             <path d="m4.5 10 3 3 8-8" />
           </svg>
         </span>
-        Confirmado
       </div>
 
       <h2 className="mt-[16px] text-[28px] font-semibold tracking-[-0.05em] text-[#F4F4F4]">
@@ -3020,7 +3067,7 @@ function ApprovedPaymentPanel({
             Redirecionamento
           </p>
           <p className="mt-[8px] text-[17px] font-semibold text-[#F1F1F1]">
-            {remainingSeconds}s
+            {isRedirectReady ? `${remainingSeconds}s` : "Validando..."}
           </p>
         </div>
       </div>
@@ -3039,7 +3086,8 @@ function ApprovedPaymentPanel({
         <button
           type="button"
           onClick={onContinueNow}
-          className="inline-flex h-[54px] items-center justify-center rounded-[16px] bg-[linear-gradient(180deg,#0062FF_0%,#0153D5_100%)] px-[22px] text-[15px] font-semibold text-white transition-transform duration-150 ease-out hover:scale-[1.01] active:scale-[0.99]"
+          disabled={!isRedirectReady}
+          className="inline-flex h-[54px] items-center justify-center rounded-[16px] bg-[linear-gradient(180deg,#0062FF_0%,#0153D5_100%)] px-[22px] text-[15px] font-semibold text-white transition-transform duration-150 ease-out hover:scale-[1.01] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:scale-[1]"
         >
           Continuar agora
         </button>
@@ -3256,9 +3304,17 @@ export function ConfigStepFour({
     () => normalizeBrazilZipDigits(cardBillingZipCode),
     [cardBillingZipCode],
   );
-  const pendingPixOrderId = pixOrder?.status === "pending" ? pixOrder.id : null;
+  const isApprovedOrderAwaitingBenefitDelivery = isApprovedPaymentAwaitingBenefitDelivery(
+    pixOrder,
+  );
+  const pendingPixOrderId =
+    pixOrder && (pixOrder.status === "pending" || isApprovedOrderAwaitingBenefitDelivery)
+      ? pixOrder.id
+      : null;
   const pendingPixOrderNumber =
-    pixOrder?.status === "pending" ? pixOrder.orderNumber : null;
+    pixOrder && (pixOrder.status === "pending" || isApprovedOrderAwaitingBenefitDelivery)
+      ? pixOrder.orderNumber
+      : null;
   const fallbackPlanOptions = useMemo(
     () => decoratePlanSummaries(getAllPlanPricingDefinitions(selectedBillingPeriodCode)),
     [selectedBillingPeriodCode],
@@ -4311,9 +4367,10 @@ export function ConfigStepFour({
     const activeOrderCode = pendingPixOrderNumber;
     const checkoutQuery = readCheckoutStatusQuery();
     const checkoutReturnStatus = checkoutQuery.status;
-    const shouldUseFastCardPolling =
-      pixOrder?.method === "card" && checkoutReturnStatus === "approved";
-    const pollingIntervalMs = shouldUseFastCardPolling ? 2500 : 8000;
+    const shouldUseFastApprovalPolling =
+      isApprovedPaymentAwaitingBenefitDelivery(pixOrder) ||
+      (pixOrder?.method === "card" && checkoutReturnStatus === "approved");
+    const pollingIntervalMs = shouldUseFastApprovalPolling ? 2500 : 8000;
     let isMounted = true;
     let activeController: AbortController | null = null;
 
@@ -4390,13 +4447,18 @@ export function ConfigStepFour({
           }
 
           if (payload.order.status === "approved") {
+            const benefitDelivered = isApprovedPaymentBenefitDelivered(
+              payload.order,
+            );
             setMethodMessage(
               payload.licenseActive
                 ? buildActiveLicenseMessage(payload.licenseExpiresAt)
-                : "Pagamento aprovado para a conta.",
+                : benefitDelivered
+                  ? "Pagamento aprovado para a conta."
+                  : "Pagamento aprovado. Finalizando a liberacao do plano na conta...",
             );
             setCheckoutStatusQuery({ order: payload.order, guildId: activeGuildId });
-            if (onApproved) {
+            if (benefitDelivered && onApproved) {
               onApproved(payload.order);
             }
           } else if (payload.order.method === "card") {
@@ -4407,8 +4469,8 @@ export function ConfigStepFour({
           }
         } else if (payload.order.method === "card") {
           setMethodMessage(
-            shouldUseFastCardPolling
-              ? "Confirmando pagamento aprovado com o Mercado Pago..."
+            shouldUseFastApprovalPolling
+              ? "Pagamento aprovado. Validando a entrega do plano..."
               : "Pagamento com cartao em analise.",
           );
         }
@@ -4437,6 +4499,8 @@ export function ConfigStepFour({
     pendingPixOrderId,
     pendingPixOrderNumber,
     pixOrder?.checkoutAccessToken,
+    pixOrder?.finalizationStatus,
+    pixOrder?.planTransitionExecution,
     pixOrder?.method,
     pixOrder?.status,
     onApproved,
@@ -4826,6 +4890,9 @@ export function ConfigStepFour({
   const currentPaymentStatusLabel = paymentStatusLabel(pixOrder);
   const orderDiagnostic = resolveOrderDiagnostic(pixOrder);
   const hasTrustedApprovedPayment = isTrustedApprovedPaymentOrder(pixOrder);
+  const hasApprovedPaymentBenefitDelivered = isApprovedPaymentBenefitDelivered(
+    pixOrder,
+  );
   const isHostedCardApprovalAwaitingConfirmation = Boolean(
     pixOrder &&
       pixOrder.method === "card" &&
@@ -4908,7 +4975,7 @@ export function ConfigStepFour({
 
   useEffect(() => {
     if (!shouldShowStatusResultPanel) return;
-    if (!hasTrustedApprovedPayment) return;
+    if (!hasApprovedPaymentBenefitDelivered) return;
     if (!resolvedOrderNumber) return;
 
     if (hasApprovedOrderBeenAutoRedirected(resolvedOrderNumber)) {
@@ -4917,6 +4984,7 @@ export function ConfigStepFour({
 
     const redirectConfig = resolveApprovedRedirectConfig(
       guildId,
+      pixOrder,
       hasAccountLastPaymentGuild,
     );
 
@@ -4931,8 +4999,9 @@ export function ConfigStepFour({
   }, [
     guildId,
     hasAccountLastPaymentGuild,
-    hasTrustedApprovedPayment,
+    hasApprovedPaymentBenefitDelivered,
     paymentStatus,
+    pixOrder,
     resolvedOrderNumber,
     shouldShowStatusResultPanel,
   ]);
@@ -5013,12 +5082,13 @@ export function ConfigStepFour({
 
       return resolveApprovedRedirectConfig(
         guildId,
+        pixOrder,
         hasAccountLastPaymentGuild,
       ).targetUrl || "/servers/plans";
     })();
 
     window.location.assign(fallbackUrl);
-  }, [guildId, hasAccountLastPaymentGuild, phase]);
+  }, [guildId, hasAccountLastPaymentGuild, phase, pixOrder]);
 
   const handleSelectPlan = useCallback(
     (nextPlanCode: PlanCode) => {
@@ -5605,13 +5675,16 @@ export function ConfigStepFour({
         }
 
         setView("methods");
+        const benefitDelivered = isApprovedPaymentBenefitDelivered(payload.order);
         setMethodMessage(
           payload.licenseActive
             ? buildActiveLicenseMessage(payload.licenseExpiresAt)
-            : "Pagamento aprovado para a conta.",
+            : benefitDelivered
+              ? "Pagamento aprovado para a conta."
+              : "Pagamento aprovado. Finalizando a liberacao do plano na conta...",
         );
         setCheckoutStatusQuery({ order: payload.order, guildId });
-        if (onApproved) {
+        if (benefitDelivered && onApproved) {
           onApproved(payload.order);
         }
       } else if (payload.order.status === "pending" && payload.order.qrCodeText) {
@@ -5727,12 +5800,13 @@ export function ConfigStepFour({
             : "Plano gratuito ativado com sucesso. Redirecionando...",
       );
 
-      if (onApproved) {
+      if (isApprovedPaymentBenefitDelivered(payload.order) && onApproved) {
         onApproved(payload.order);
       }
 
       const redirectConfig = resolveApprovedRedirectConfig(
         guildId,
+        payload.order,
         hasAccountLastPaymentGuild,
       );
       trialActivationRedirectTimeoutRef.current = window.setTimeout(() => {
@@ -5899,7 +5973,7 @@ export function ConfigStepFour({
       }
 
       setCheckoutStatusQuery({ order: payload.order, guildId });
-      if (onApproved) {
+      if (isApprovedPaymentBenefitDelivered(payload.order) && onApproved) {
         onApproved(payload.order);
       }
     } catch (error) {
@@ -6088,13 +6162,16 @@ export function ConfigStepFour({
 
         setView("methods");
         setPhase("checkout");
+        const benefitDelivered = isApprovedPaymentBenefitDelivered(payload.order);
         setMethodMessage(
           payload.licenseActive
             ? buildActiveLicenseMessage(payload.licenseExpiresAt)
-            : "Pagamento aprovado para a conta.",
+            : benefitDelivered
+              ? "Pagamento aprovado para a conta."
+              : "Pagamento aprovado. Finalizando a liberacao do plano na conta...",
         );
         setCheckoutStatusQuery({ order: payload.order, guildId });
-        if (onApproved) {
+        if (benefitDelivered && onApproved) {
           onApproved(payload.order);
         }
       } else if (payload.order.status === "pending" && payload.order.qrCodeText) {
@@ -6374,10 +6451,12 @@ export function ConfigStepFour({
         setMethodMessage(
           payload.licenseActive
             ? buildActiveLicenseMessage(payload.licenseExpiresAt)
-            : "Pagamento com cartao aprovado.",
+            : isApprovedPaymentBenefitDelivered(payload.order)
+              ? "Pagamento com cartao aprovado."
+              : "Pagamento aprovado. Finalizando a liberacao do plano na conta...",
         );
         setCheckoutStatusQuery({ order: payload.order, guildId });
-        if (onApproved) {
+        if (isApprovedPaymentBenefitDelivered(payload.order) && onApproved) {
           onApproved(payload.order);
         }
       } else if (payload.order.status === "pending") {
@@ -6912,7 +6991,11 @@ export function ConfigStepFour({
   const showCartDiscountEditor =
     isDiscountEditorOpen || hasManualDiscountCode;
   const approvedRedirectConfig = shouldShowApprovedConfirmationPanel
-    ? resolveApprovedRedirectConfig(guildId, Boolean(accountPlan?.lastPaymentGuildId))
+    ? resolveApprovedRedirectConfig(
+        guildId,
+        pixOrder,
+        Boolean(accountPlan?.lastPaymentGuildId),
+      )
     : null;
   const checkoutPanelTitle = shouldShowApprovedConfirmationPanel
     ? pixOrder?.method === "trial"
@@ -7192,6 +7275,7 @@ export function ConfigStepFour({
                           statusMessage={checkoutStatusLabel}
                           redirectDelayMs={approvedRedirectConfig.delayMs}
                           redirectTargetUrl={approvedRedirectConfig.targetUrl}
+                          isRedirectReady={hasApprovedPaymentBenefitDelivered}
                           onContinueNow={() => {
                             window.location.assign(
                               approvedRedirectConfig.targetUrl,

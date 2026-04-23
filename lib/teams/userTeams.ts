@@ -92,8 +92,8 @@ type TeamMemberRow = {
   invited_auth_user_id: number | null;
   invited_by_user_id: number;
   status: TeamMembershipStatus;
-  role_id: number | null;
-  custom_permissions: TeamRolePermission[];
+  role_id?: number | null;
+  custom_permissions?: TeamRolePermission[];
   accepted_at: string | null;
   created_at: string;
 };
@@ -125,6 +125,13 @@ type CachedUserTeamsSnapshot = {
   teams: UserTeam[];
   pendingInvites: PendingTeamInvite[];
 };
+
+const TEAM_MEMBER_SELECT =
+  "id, team_id, invited_discord_user_id, invited_auth_user_id, invited_by_user_id, status, role_id, custom_permissions, accepted_at, created_at";
+const TEAM_MEMBER_LEGACY_SELECT =
+  "id, team_id, invited_discord_user_id, invited_auth_user_id, invited_by_user_id, status, accepted_at, created_at";
+const TEAM_ROLE_SELECT =
+  "id, team_id, name, permissions, created_at";
 
 const EMPTY_USER_TEAMS_SNAPSHOT: CachedUserTeamsSnapshot = {
   teams: [],
@@ -219,6 +226,66 @@ function isRecoverableUserTeamsStorageError(error: unknown) {
     message.includes("relationship") ||
     message.includes("column")
   );
+}
+
+function isMissingTeamRolesSchemaError(error: unknown) {
+  const message =
+    error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+
+  return (
+    (message.includes("auth_user_team_roles") ||
+      message.includes("team_roles") ||
+      message.includes("custom_permissions") ||
+      message.includes("role_id")) &&
+    (
+      message.includes("does not exist") ||
+      message.includes("schema cache") ||
+      message.includes("could not find") ||
+      message.includes("relationship") ||
+      message.includes("column")
+    )
+  );
+}
+
+function normalizeTeamMemberRow(
+  row: Omit<TeamMemberRow, "role_id" | "custom_permissions"> & {
+    role_id?: number | null;
+    custom_permissions?: TeamRolePermission[] | null;
+  },
+): TeamMemberRow {
+  return {
+    ...row,
+    role_id: typeof row.role_id === "number" ? row.role_id : null,
+    custom_permissions: Array.isArray(row.custom_permissions)
+      ? row.custom_permissions
+      : [],
+  };
+}
+
+async function loadTeamMemberRowsWithFallback(
+  load: (selectClause: string) => unknown,
+) {
+  const primaryResult = await load(TEAM_MEMBER_SELECT) as {
+    data: TeamMemberRow[] | null;
+    error: { message?: string | null } | null;
+  };
+
+  if (primaryResult.error && isMissingTeamRolesSchemaError(primaryResult.error)) {
+    const legacyResult = await load(TEAM_MEMBER_LEGACY_SELECT) as {
+      data: TeamMemberRow[] | null;
+      error: { message?: string | null } | null;
+    };
+    if (legacyResult.error) {
+      throw new Error(legacyResult.error.message || "Erro ao carregar membros da equipe.");
+    }
+    return (legacyResult.data || []).map((row) => normalizeTeamMemberRow(row));
+  }
+
+  if (primaryResult.error) {
+    throw new Error(primaryResult.error.message || "Erro ao carregar membros da equipe.");
+  }
+
+  return (primaryResult.data || []).map((row) => normalizeTeamMemberRow(row));
 }
 
 function toDashboardPermissionsResult(
@@ -393,31 +460,30 @@ export async function getUserTeamsSnapshotForUser(input: {
       throw new Error(ownedTeamsResult.error.message);
     }
 
-    const memberInvitesBaseQuery = supabase
-      .from("auth_user_team_members")
-      .select(
-        "id, team_id, invited_discord_user_id, invited_auth_user_id, invited_by_user_id, status, role_id, custom_permissions, accepted_at, created_at",
-      );
-    const memberInvitesResult = input.discordUserId
-      ? await memberInvitesBaseQuery
+    const memberInvites = await loadTeamMemberRowsWithFallback((selectClause) => {
+      const query = supabase
+        .from("auth_user_team_members")
+        .select(selectClause);
+
+      if (input.discordUserId) {
+        return query
           .or(
             `invited_discord_user_id.eq.${input.discordUserId},invited_auth_user_id.eq.${input.authUserId}`,
           )
-          .returns<TeamMemberRow[]>()
-      : await memberInvitesBaseQuery
-          .eq("invited_auth_user_id", input.authUserId)
           .returns<TeamMemberRow[]>();
+      }
 
-    if (memberInvitesResult.error) {
-      throw new Error(memberInvitesResult.error.message);
-    }
+      return query
+        .eq("invited_auth_user_id", input.authUserId)
+        .returns<TeamMemberRow[]>();
+    });
 
     const ownedTeams = ownedTeamsResult.data || [];
     const ownTeamIds = ownedTeams.map((team) => team.id);
-    const acceptedMemberships = (memberInvitesResult.data || []).filter(
+    const acceptedMemberships = memberInvites.filter(
       (membership) => membership.status === "accepted",
     );
-    const pendingMemberships = (memberInvitesResult.data || []).filter(
+    const pendingMemberships = memberInvites.filter(
       (membership) => membership.status === "pending",
     );
 
@@ -462,40 +528,37 @@ export async function getUserTeamsSnapshotForUser(input: {
     const rolesById = new Map<number, TeamRoleRow>();
 
     if (allKnownTeamIds.length) {
-      const [teamServersResult, teamMembersResult, teamRolesResult] = await Promise.all([
+      const [teamServersResult, loadedTeamMembers] = await Promise.all([
         supabase
           .from("auth_user_team_servers")
           .select("team_id, guild_id")
           .in("team_id", allKnownTeamIds)
           .returns<TeamServerRow[]>(),
-        supabase
-          .from("auth_user_team_members")
-          .select(
-            "id, team_id, invited_discord_user_id, invited_auth_user_id, invited_by_user_id, status, role_id, custom_permissions, accepted_at, created_at",
-          )
-          .in("team_id", allKnownTeamIds)
-          .returns<TeamMemberRow[]>(),
-        supabase
-          .from("auth_user_team_roles")
-          .select("id, team_id, name, permissions, created_at")
-          .in("team_id", allKnownTeamIds)
-          .returns<TeamRoleRow[]>(),
+        loadTeamMemberRowsWithFallback((selectClause) =>
+          supabase
+            .from("auth_user_team_members")
+            .select(selectClause)
+            .in("team_id", allKnownTeamIds)
+            .returns<TeamMemberRow[]>(),
+        ),
       ]);
 
       if (teamServersResult.error) {
         throw new Error(teamServersResult.error.message);
       }
 
-      if (teamMembersResult.error) {
-        throw new Error(teamMembersResult.error.message);
-      }
+      teamServers = teamServersResult.data || [];
+      teamMembers = loadedTeamMembers || [];
 
-      if (teamRolesResult.error) {
+      const teamRolesResult = await supabase
+        .from("auth_user_team_roles")
+        .select(TEAM_ROLE_SELECT)
+        .in("team_id", allKnownTeamIds)
+        .returns<TeamRoleRow[]>();
+
+      if (teamRolesResult.error && !isMissingTeamRolesSchemaError(teamRolesResult.error)) {
         throw new Error(teamRolesResult.error.message);
       }
-
-      teamServers = teamServersResult.data || [];
-      teamMembers = teamMembersResult.data || [];
 
       for (const roleRow of teamRolesResult.data || []) {
         const role: TeamRole = {
@@ -575,7 +638,7 @@ export async function getUserTeamsSnapshotForUser(input: {
                 ? authUserMap.get(member.invited_auth_user_id)?.display_name || null
                 : null,
               status: member.status,
-              roleId: member.role_id,
+              roleId: member.role_id ?? null,
               roleName: role?.name || null,
               customPermissions: Array.isArray(member.custom_permissions) ? member.custom_permissions : [],
               acceptedAt: member.accepted_at,
@@ -1022,21 +1085,49 @@ export async function assertTeamPermission(teamId: number, authUserId: number, r
     .eq("invited_auth_user_id", authUserId)
     .maybeSingle();
 
-  if (!memberCheck.data || memberCheck.data.status !== "accepted") {
+  const safeMemberCheck =
+    memberCheck.error && isMissingTeamRolesSchemaError(memberCheck.error)
+      ? await supabase
+          .from("auth_user_team_members")
+          .select("status")
+          .eq("team_id", teamId)
+          .eq("invited_auth_user_id", authUserId)
+          .maybeSingle<{ status: TeamMembershipStatus }>()
+      : memberCheck;
+
+  if (safeMemberCheck.error) {
+    throw new Error(safeMemberCheck.error.message);
+  }
+
+  if (!safeMemberCheck.data || safeMemberCheck.data.status !== "accepted") {
     throw new Error("Voce nao e membro desta equipe.");
   }
   
   const perms = new Set<string>(
-    Array.isArray(memberCheck.data.custom_permissions) ? memberCheck.data.custom_permissions : []
+    Array.isArray(
+      "custom_permissions" in safeMemberCheck.data
+        ? safeMemberCheck.data.custom_permissions
+        : [],
+    )
+      ? (
+          "custom_permissions" in safeMemberCheck.data
+            ? safeMemberCheck.data.custom_permissions
+            : []
+        )
+      : []
   );
 
-  if (memberCheck.data.role_id) {
+  if ("role_id" in safeMemberCheck.data && safeMemberCheck.data.role_id) {
     const roleCheck = await supabase
       .from("auth_user_team_roles")
       .select("permissions")
-      .eq("id", memberCheck.data.role_id)
+      .eq("id", safeMemberCheck.data.role_id)
       .single();
-      
+
+    if (roleCheck.error && !isMissingTeamRolesSchemaError(roleCheck.error)) {
+      throw new Error(roleCheck.error.message);
+    }
+
     if (roleCheck.data && Array.isArray(roleCheck.data.permissions)) {
       roleCheck.data.permissions.forEach(p => perms.add(p));
     }
@@ -1152,6 +1243,13 @@ export async function getEffectiveDashboardPermissions(input: {
       .in("team_id", teamIds)
       .eq("invited_auth_user_id", input.authUserId)
       .eq("status", "accepted");
+
+    if (membershipsResult.error && isMissingTeamRolesSchemaError(membershipsResult.error)) {
+      return cacheDashboardPermissions(cacheKey, {
+        permissions: [],
+        isTeamServer: true,
+      });
+    }
 
     if (membershipsResult.error) {
       throw new Error(membershipsResult.error.message);

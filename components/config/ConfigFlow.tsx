@@ -1188,6 +1188,32 @@ export function ConfigFlow({
     setStepHash(1);
   }, [managedServers, setAndSyncContext]);
 
+  const handleResolvedStepFourApproved = useCallback((order?: {
+    planTransitionKind?: "new" | "current" | "upgrade" | "downgrade" | null;
+  }) => {
+    const planTransitionKind = order?.planTransitionKind || null;
+    const shouldReturnToConfigStepOne =
+      planTransitionKind === "new" || planTransitionKind === "upgrade";
+    const searchParams = new URLSearchParams(window.location.search);
+    const isServerLimitUpgrade = searchParams.get("reason") === "server-limit";
+
+    if (shouldReturnToConfigStepOne || isServerLimitUpgrade) {
+      setAndSyncContext({ activeStep: 1 }, true);
+      setIsTransitioningStep(true);
+      setStepHash(1);
+      return;
+    }
+
+    if (managedServers.length > 0) {
+      window.location.assign(`/servers/?v=${Date.now()}`);
+      return;
+    }
+
+    setAndSyncContext({ activeStep: 1 }, true);
+    setIsTransitioningStep(true);
+    setStepHash(1);
+  }, [managedServers, setAndSyncContext]);
+
   const handleServerSwitcherSelect = useCallback(
     async (guildId: string) => {
       if (!guildId) return;
@@ -1421,7 +1447,7 @@ export function ConfigFlow({
           forceFreshCheckout={forceFreshCheckout}
           initialDraft={stepFourDraft}
           onDraftChange={handleStepFourDraftChange}
-          onApproved={handleStepFourApproved}
+          onApproved={handleResolvedStepFourApproved}
         />
       );
     }
@@ -1471,7 +1497,7 @@ export function ConfigFlow({
     handleProceedAfterValidation,
     handleProceedToStepFour,
     handleProceedToStepThree,
-    handleStepFourApproved,
+    handleResolvedStepFourApproved,
     handleStepFourDraftChange,
     hasExplicitInitialPlan,
     handleStepThreeDraftChange,
