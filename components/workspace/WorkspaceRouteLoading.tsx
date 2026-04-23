@@ -395,31 +395,55 @@ function ServersOverviewMainSkeleton() {
         </div>
       </div>
 
-      <div className="mt-[22px] space-y-[14px]">
-        {Array.from({ length: 3 }, (_, index) => (
-          <div
-            key={index}
-            className="rounded-[26px] border border-[#151515] bg-[#0A0A0A] p-[18px]"
-          >
-            <div className="flex flex-col gap-[18px] xl:flex-row xl:items-center xl:justify-between">
-              <div className="flex min-w-0 items-center gap-[16px]">
-                <SkeletonBar width={56} height={56} className="rounded-[16px]" />
-                <div className="min-w-0 flex-1">
-                  <SkeletonBar width="48%" height={18} className="max-w-full rounded-full" />
-                  <SkeletonBar width="34%" height={12} className="mt-[10px] max-w-full rounded-full" />
-                </div>
-              </div>
-              <div className="grid gap-[8px] xl:min-w-[240px]">
-                <SkeletonBar width={138} height={16} className="rounded-full" />
-                <SkeletonBar width={176} height={12} className="rounded-full" />
-              </div>
-              <div className="flex items-center gap-[12px]">
-                <SkeletonBar width={108} height={34} className="rounded-full" />
-                <SkeletonBar width={40} height={40} className="rounded-[14px]" />
-              </div>
-            </div>
+      <div className="mt-[22px]">
+        <div className="mb-[18px] flex flex-col gap-[10px] sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <SkeletonBar width={78} height={12} className="rounded-full bg-[#111111]" />
+            <SkeletonBar width="min(280px,54vw)" height={28} className="mt-[12px] max-w-full rounded-[14px]" />
           </div>
-        ))}
+          <SkeletonBar width={194} height={12} className="rounded-full bg-[#101010]" />
+        </div>
+
+        <div className="grid gap-[14px] xl:grid-cols-2">
+          {Array.from({ length: 3 }, (_, index) => {
+            const opacity = index === 0 ? 1 : index === 1 ? 0.76 : 0.58;
+            return (
+              <article
+                key={index}
+                className="overflow-hidden rounded-[26px] border border-[#151515] bg-[#0A0A0A] p-[18px] shadow-[0_18px_48px_rgba(0,0,0,0.24)]"
+                style={{ opacity }}
+              >
+                <div className="flex items-start justify-between gap-[14px]">
+                  <div className="flex min-w-0 items-start gap-[14px]">
+                    <SkeletonBar width={56} height={56} className="rounded-[16px] bg-[#121212]" />
+                    <div className="min-w-0 flex-1">
+                      <SkeletonBar width="min(190px,44vw)" height={18} className="max-w-full rounded-full" />
+                      <SkeletonBar width={124} height={12} className="mt-[10px] rounded-full bg-[#111111]" />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-[10px]">
+                    <div className="flex h-[42px] w-[42px] items-center justify-center rounded-full border border-[#1A1A1A] bg-[#0D0D0D]">
+                      <SkeletonBar width={10} height={10} className="rounded-full bg-[#1B1B1B]" />
+                    </div>
+                    <SkeletonBar width={40} height={40} className="rounded-[14px] bg-[#111111]" />
+                  </div>
+                </div>
+
+                <SkeletonBar width={148} height={34} className="mt-[18px] rounded-full bg-[#101010]" />
+
+                <div className="mt-[18px] rounded-[20px] border border-[#141414] bg-[#080808] px-[16px] py-[16px]">
+                  <div className="flex items-center justify-between gap-[12px]">
+                    <SkeletonBar width={82} height={12} className="rounded-full bg-[#131313]" />
+                    <SkeletonBar width={90} height={24} className="rounded-full bg-[#101010]" />
+                  </div>
+                  <SkeletonBar width="92%" height={18} className="mt-[14px] max-w-full rounded-full bg-[#151515]" />
+                  <SkeletonBar width="68%" height={14} className="mt-[10px] max-w-full rounded-full bg-[#111111]" />
+                </div>
+              </article>
+            );
+          })}
+        </div>
       </div>
     </section>
   );
