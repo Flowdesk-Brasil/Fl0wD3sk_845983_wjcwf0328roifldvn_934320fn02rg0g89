@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { getCurrentAuthSessionFromCookie } from "@/lib/auth/session";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { applyNoStoreHeaders, ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
-import { assertTeamPermission } from "@/lib/teams/userTeams";
+import {
+  assertTeamPermission,
+  invalidateTeamAccessCachesForTeam,
+} from "@/lib/teams/userTeams";
 
 // PATCH /api/auth/me/teams/[teamId]/roles/[roleId] - Update role
 export async function PATCH(
@@ -38,11 +41,13 @@ export async function PATCH(
       .eq("team_id", teamId);
 
     if (error) throw error;
+    await invalidateTeamAccessCachesForTeam(teamId);
 
     return applyNoStoreHeaders(NextResponse.json({ ok: true }));
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Erro interno.";
     console.error("[PATCH /teams/roles/:roleId]", err);
-    return applyNoStoreHeaders(NextResponse.json({ ok: false, message: err?.message || "Erro interno." }, { status: 500 }));
+    return applyNoStoreHeaders(NextResponse.json({ ok: false, message }, { status: 500 }));
   }
 }
 
@@ -67,6 +72,14 @@ export async function DELETE(
     const supabase = getSupabaseAdminClientOrThrow();
     await assertTeamPermission(teamId, authSession.user.id, "manage_roles");
 
+    const unlinkMembersResult = await supabase
+      .from("auth_user_team_members")
+      .update({ role_id: null })
+      .eq("team_id", teamId)
+      .eq("role_id", roleId);
+
+    if (unlinkMembersResult.error) throw unlinkMembersResult.error;
+
     const { error } = await supabase
       .from("auth_user_team_roles")
       .delete()
@@ -74,10 +87,12 @@ export async function DELETE(
       .eq("team_id", teamId);
 
     if (error) throw error;
+    await invalidateTeamAccessCachesForTeam(teamId);
 
     return applyNoStoreHeaders(NextResponse.json({ ok: true }));
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Erro interno.";
     console.error("[DELETE /teams/roles/:roleId]", err);
-    return applyNoStoreHeaders(NextResponse.json({ ok: false, message: err?.message || "Erro interno." }, { status: 500 }));
+    return applyNoStoreHeaders(NextResponse.json({ ok: false, message }, { status: 500 }));
   }
 }

@@ -8,7 +8,10 @@ import {
 } from "@/lib/security/flowSecure";
 import { applyNoStoreHeaders, ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
-import { assertTeamPermission } from "@/lib/teams/userTeams";
+import {
+  assertTeamPermission,
+  invalidateTeamAccessCachesForTeam,
+} from "@/lib/teams/userTeams";
 
 export async function POST(
   request: Request,
@@ -89,7 +92,7 @@ export async function POST(
     const invitedAuthUserId = authUserResult.data?.id || null;
 
     if (existingResult.data?.status === "declined") {
-      await supabase
+      const updateResult = await supabase
         .from("auth_user_team_members")
         .update({
           status: "pending",
@@ -97,6 +100,7 @@ export async function POST(
           accepted_at: null,
         })
         .eq("id", existingResult.data.id);
+      if (updateResult.error) throw new Error(updateResult.error.message);
     } else {
       const insertResult = await supabase.from("auth_user_team_members").insert({
         team_id: teamId,
@@ -107,6 +111,8 @@ export async function POST(
       });
       if (insertResult.error) throw new Error(insertResult.error.message);
     }
+
+    await invalidateTeamAccessCachesForTeam(teamId);
 
     return applyNoStoreHeaders(NextResponse.json({ ok: true }));
   } catch (error) {

@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { getCurrentAuthSessionFromCookie } from "@/lib/auth/session";
-import { getUserTeamsSnapshotForUser } from "@/lib/teams/userTeams";
+import {
+  getTeamCacheInvalidationTargets,
+  invalidateTeamAccessCaches,
+} from "@/lib/teams/userTeams";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { applyNoStoreHeaders, ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
@@ -29,6 +32,12 @@ export async function DELETE(
     }
 
     const supabase = getSupabaseAdminClientOrThrow();
+    const invalidationTarget = await getTeamCacheInvalidationTargets(teamId).catch(
+      () => ({
+        authUserIds: [authSession.user.id],
+        guildIds: [],
+      }),
+    );
 
     // Verify ownership
     const teamResult = await supabase
@@ -51,10 +60,12 @@ export async function DELETE(
 
     // Cascade delete
     await supabase.from("auth_user_team_members").delete().eq("team_id", teamId);
+    await supabase.from("auth_user_team_roles").delete().eq("team_id", teamId);
     await supabase.from("auth_user_team_servers").delete().eq("team_id", teamId);
     const deleteResult = await supabase.from("auth_user_teams").delete().eq("id", teamId);
 
     if (deleteResult.error) throw new Error(deleteResult.error.message);
+    invalidateTeamAccessCaches(invalidationTarget);
 
     return applyNoStoreHeaders(NextResponse.json({ ok: true }));
   } catch (error) {

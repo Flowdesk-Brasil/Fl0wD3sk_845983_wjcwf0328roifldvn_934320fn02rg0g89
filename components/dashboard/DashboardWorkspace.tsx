@@ -615,7 +615,7 @@ export function DashboardWorkspace({
     () =>
       teamServerOptions.filter(
         (server) =>
-          server.canManage &&
+          server.canLinkToTeam &&
           !server.isLinkedToTeam &&
           !linkedGuildIdsInTeams.has(server.guildId),
       ),

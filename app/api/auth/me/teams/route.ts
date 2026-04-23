@@ -228,7 +228,7 @@ export async function POST(request: Request) {
       const managedServers = await getManagedServersForCurrentSession();
       selectedManagedServersLoaded = true;
       managedServers
-        .filter((server) => server.canManage && !server.isLinkedToTeam)
+        .filter((server) => server.canLinkToTeam && !server.isLinkedToTeam)
         .forEach((server) => allowedGuildIds.add(server.guildId));
     } catch {
       // Fallback DB-only para nao matar a criacao da equipe se a sync ao vivo falhar.

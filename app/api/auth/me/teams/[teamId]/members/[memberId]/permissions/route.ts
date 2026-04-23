@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { getCurrentAuthSessionFromCookie } from "@/lib/auth/session";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { applyNoStoreHeaders, ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
-import { assertTeamPermission } from "@/lib/teams/userTeams";
+import {
+  assertTeamPermission,
+  invalidateTeamAccessCachesForTeam,
+} from "@/lib/teams/userTeams";
 
 // PATCH /api/auth/me/teams/[teamId]/members/[memberId]/permissions - Update custom perms for member
 export async function PATCH(
@@ -36,10 +39,12 @@ export async function PATCH(
       .eq("team_id", teamId);
 
     if (error) throw error;
+    await invalidateTeamAccessCachesForTeam(teamId);
 
     return applyNoStoreHeaders(NextResponse.json({ ok: true }));
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Erro interno.";
     console.error("[PATCH /teams/members/:memberId/permissions]", err);
-    return applyNoStoreHeaders(NextResponse.json({ ok: false, message: err?.message || "Erro interno." }, { status: 500 }));
+    return applyNoStoreHeaders(NextResponse.json({ ok: false, message }, { status: 500 }));
   }
 }

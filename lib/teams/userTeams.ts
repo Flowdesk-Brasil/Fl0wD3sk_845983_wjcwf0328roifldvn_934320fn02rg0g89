@@ -153,6 +153,11 @@ const dashboardPermissionsInflight = new Map<
   Promise<{ permissions: Set<TeamRolePermission> | "full"; isTeamServer: boolean }>
 >();
 
+export type TeamCacheInvalidationTarget = {
+  authUserIds: number[];
+  guildIds: string[];
+};
+
 function readCacheEntry<TValue>(
   cache: Map<string, CacheEntry<TValue>>,
   key: string,
@@ -674,25 +679,135 @@ export async function getUserTeamsSnapshotForUser(input: {
   return cloneUserTeamsSnapshot(await loadPromise);
 }
 
-function invalidateUserTeamsSnapshotCache(input: {
-  authUserId: number;
-  discordUserId: string | null;
-}) {
-  const cacheKey = buildUserTeamsSnapshotCacheKey(input);
-  userTeamsSnapshotCache.delete(cacheKey);
-  userTeamsSnapshotInflight.delete(cacheKey);
-  acceptedTeamGuildIdsCache.delete(cacheKey);
-  acceptedTeamGuildIdsInflight.delete(cacheKey);
+export function invalidateUserTeamsSnapshotCacheForAuthUser(authUserId: number) {
+  const authUserPrefix = `${authUserId}:`;
+  for (const cacheKey of userTeamsSnapshotCache.keys()) {
+    if (cacheKey.startsWith(authUserPrefix)) {
+      userTeamsSnapshotCache.delete(cacheKey);
+    }
+  }
+  for (const inflightKey of userTeamsSnapshotInflight.keys()) {
+    if (inflightKey.startsWith(authUserPrefix)) {
+      userTeamsSnapshotInflight.delete(inflightKey);
+    }
+  }
+  acceptedTeamGuildIdsCache.delete(`${authUserId}:no-discord`);
+  acceptedTeamGuildIdsInflight.delete(`${authUserId}:no-discord`);
+  for (const cacheKey of acceptedTeamGuildIdsCache.keys()) {
+    if (cacheKey.startsWith(authUserPrefix)) {
+      acceptedTeamGuildIdsCache.delete(cacheKey);
+    }
+  }
+  for (const inflightKey of acceptedTeamGuildIdsInflight.keys()) {
+    if (inflightKey.startsWith(authUserPrefix)) {
+      acceptedTeamGuildIdsInflight.delete(inflightKey);
+    }
+  }
   for (const permissionsCacheKey of dashboardPermissionsCache.keys()) {
-    if (permissionsCacheKey.startsWith(`${input.authUserId}:`)) {
+    if (permissionsCacheKey.startsWith(authUserPrefix)) {
       dashboardPermissionsCache.delete(permissionsCacheKey);
     }
   }
   for (const permissionsInflightKey of dashboardPermissionsInflight.keys()) {
-    if (permissionsInflightKey.startsWith(`${input.authUserId}:`)) {
+    if (permissionsInflightKey.startsWith(authUserPrefix)) {
       dashboardPermissionsInflight.delete(permissionsInflightKey);
     }
   }
+}
+
+export function invalidateDashboardPermissionsCacheForGuildIds(guildIds: string[]) {
+  const guildIdSet = new Set(uniqueStrings(guildIds));
+  if (!guildIdSet.size) return;
+
+  for (const permissionsCacheKey of dashboardPermissionsCache.keys()) {
+    const separatorIndex = permissionsCacheKey.indexOf(":");
+    const guildId =
+      separatorIndex >= 0 ? permissionsCacheKey.slice(separatorIndex + 1) : "";
+    if (guildIdSet.has(guildId)) {
+      dashboardPermissionsCache.delete(permissionsCacheKey);
+    }
+  }
+  for (const permissionsInflightKey of dashboardPermissionsInflight.keys()) {
+    const separatorIndex = permissionsInflightKey.indexOf(":");
+    const guildId =
+      separatorIndex >= 0 ? permissionsInflightKey.slice(separatorIndex + 1) : "";
+    if (guildIdSet.has(guildId)) {
+      dashboardPermissionsInflight.delete(permissionsInflightKey);
+    }
+  }
+}
+
+export function invalidateTeamAccessCaches(target: TeamCacheInvalidationTarget) {
+  for (const authUserId of uniqueStrings(target.authUserIds.map(String)).map(Number)) {
+    if (Number.isSafeInteger(authUserId) && authUserId > 0) {
+      invalidateUserTeamsSnapshotCacheForAuthUser(authUserId);
+    }
+  }
+  invalidateDashboardPermissionsCacheForGuildIds(target.guildIds);
+}
+
+export async function getTeamCacheInvalidationTargets(
+  teamId: number,
+): Promise<TeamCacheInvalidationTarget> {
+  const supabase = getSupabaseAdminClientOrThrow();
+  const [teamResult, membersResult, serversResult] = await Promise.all([
+    supabase
+      .from("auth_user_teams")
+      .select("owner_user_id")
+      .eq("id", teamId)
+      .maybeSingle<{ owner_user_id: number }>(),
+    supabase
+      .from("auth_user_team_members")
+      .select("invited_auth_user_id")
+      .eq("team_id", teamId)
+      .returns<Array<{ invited_auth_user_id: number | null }>>(),
+    supabase
+      .from("auth_user_team_servers")
+      .select("guild_id")
+      .eq("team_id", teamId)
+      .returns<Array<{ guild_id: string }>>(),
+  ]);
+
+  if (teamResult.error) {
+    throw new Error(teamResult.error.message);
+  }
+  if (membersResult.error) {
+    throw new Error(membersResult.error.message);
+  }
+  if (serversResult.error) {
+    throw new Error(serversResult.error.message);
+  }
+
+  const authUserIds = uniqueStrings([
+    typeof teamResult.data?.owner_user_id === "number"
+      ? String(teamResult.data.owner_user_id)
+      : "",
+    ...((membersResult.data || [])
+      .map((member) =>
+        typeof member.invited_auth_user_id === "number"
+          ? String(member.invited_auth_user_id)
+          : "",
+      )),
+  ])
+    .filter(Boolean)
+    .map(Number);
+
+  const guildIds = uniqueStrings(
+    (serversResult.data || [])
+      .map((server) => server.guild_id)
+      .filter((guildId): guildId is string => typeof guildId === "string"),
+  );
+
+  return {
+    authUserIds,
+    guildIds,
+  };
+}
+
+export async function invalidateTeamAccessCachesForTeam(teamId: number) {
+  const target = await getTeamCacheInvalidationTargets(teamId);
+  invalidateTeamAccessCaches(target);
+  return target;
 }
 
 export async function createUserTeamForUser(input: {
@@ -753,6 +868,7 @@ export async function createUserTeamForUser(input: {
   const memberDiscordIds = normalizeDiscordIds(input.memberDiscordIds).filter(
     (discordUserId) => discordUserId !== input.discordUserId,
   );
+  const affectedAuthUserIds = new Set<number>([input.authUserId]);
 
   const insertTeamResult = await supabase
     .from("auth_user_teams")
@@ -803,6 +919,11 @@ export async function createUserTeamForUser(input: {
       const authUserByDiscordId = new Map(
         (existingUsersResult.data || []).map((user) => [user.discord_user_id, user.id]),
       );
+      for (const authUserId of authUserByDiscordId.values()) {
+        if (Number.isSafeInteger(authUserId) && authUserId > 0) {
+          affectedAuthUserIds.add(authUserId);
+        }
+      }
 
       const membersInsertResult = await supabase
         .from("auth_user_team_members")
@@ -831,9 +952,9 @@ export async function createUserTeamForUser(input: {
       : new Error("Nao foi possivel concluir a criacao da equipe.");
   }
 
-  invalidateUserTeamsSnapshotCache({
-    authUserId: input.authUserId,
-    discordUserId: input.discordUserId,
+  invalidateTeamAccessCaches({
+    authUserIds: [...affectedAuthUserIds],
+    guildIds,
   });
   return teamId;
 }
@@ -878,10 +999,7 @@ export async function acceptUserTeamInviteForUser(input: {
     throw new Error(updateResult.error.message);
   }
 
-  invalidateUserTeamsSnapshotCache({
-    authUserId: input.authUserId,
-    discordUserId: input.discordUserId,
-  });
+  await invalidateTeamAccessCachesForTeam(input.teamId);
   return membershipResult.data.id;
 }
 

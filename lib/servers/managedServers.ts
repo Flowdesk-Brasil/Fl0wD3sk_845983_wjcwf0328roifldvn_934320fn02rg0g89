@@ -255,6 +255,7 @@ async function fetchManagedServersFresh(
 
   const accessibleGuilds = accessibleGuildsResult.ok ? accessibleGuildsResult.guilds : [];
   const accessibleGuildLookup = buildGuildLookup(accessibleGuilds);
+  const accessibleGuildIds = new Set(accessibleGuilds.map((guild) => guild.id));
   const sessionGuildLookup = buildGuildLookup(authSession.discordGuildsCache);
 
   const acceptedTeamGuildIds = new Set(
@@ -346,15 +347,10 @@ async function fetchManagedServersFresh(
   const globalTeamLinkedGuildIds = await getGlobalTeamLinkedGuildIds(guildIdsForLookup);
 
   const servers = Array.from(guildCatalog.values())
-    .filter(
-      (guild) =>
-        ownedPlanGuildIds.has(guild.id) ||
-        normalizedLockedGuildMap.has(guild.id) ||
-        acceptedTeamGuildIds.has(guild.id),
-    )
     .map((guild) => {
       const ownedPlanGuild = ownedPlanGuildsByGuildId.get(guild.id) || null;
       const lockedRecord = normalizedLockedGuildMap.get(guild.id) || null;
+      const isAccessibleToCurrentUser = accessibleGuildIds.has(guild.id);
       const currentLicenseBelongsToViewer = Boolean(
         lockedRecord && lockedRecord.userId !== authSession.user.id,
       );
@@ -365,6 +361,14 @@ async function fetchManagedServersFresh(
       const accessMode: ManagedServer["accessMode"] =
         ownedPlanGuildIds.has(guild.id) || guild.owner ? "owner" : "viewer";
       const isLinkedToTeam = globalTeamLinkedGuildIds.has(guild.id);
+      const canLinkToTeam = Boolean(
+        !currentLicenseBelongsToViewer &&
+          (
+            acceptedTeamGuildIds.has(guild.id) ||
+            ownedPlanGuildIds.has(guild.id) ||
+            (isAccessibleToCurrentUser && !isLinkedToTeam)
+          ),
+      );
       const isOwnedPlanGuildInactive = Boolean(
         !currentLicenseBelongsToViewer &&
           ownedPlanGuild &&
@@ -422,6 +426,7 @@ async function fetchManagedServersFresh(
           ownedPlanGuildIds.has(guild.id) ||
           acceptedTeamGuildIds.has(guild.id) ||
           (!isLinkedToTeam && (guild.owner || false)),
+        canLinkToTeam,
         blockedByPlanLimit: isOwnedPlanGuildInactive || isPendingDowngradePayment,
         pendingDowngradePayment: isPendingDowngradePayment,
         licenseOwnerUserId: lockedRecord?.userId || authSession.user.id,

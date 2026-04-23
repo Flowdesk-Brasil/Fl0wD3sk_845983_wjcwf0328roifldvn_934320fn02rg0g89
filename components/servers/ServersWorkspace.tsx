@@ -2108,7 +2108,7 @@ export function ServersWorkspace({
     () =>
       teamServerOptions.filter(
         (server) =>
-          server.canManage &&
+          server.canLinkToTeam &&
           !server.isLinkedToTeam &&
           !linkedGuildIdsInTeams.has(server.guildId),
       ),
