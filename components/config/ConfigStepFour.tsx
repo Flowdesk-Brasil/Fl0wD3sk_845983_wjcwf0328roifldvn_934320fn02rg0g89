@@ -32,6 +32,7 @@ import {
   areHostedCardCheckoutsEnabled,
   CARD_PAYMENTS_DISABLED_MESSAGE,
 } from "@/lib/payments/cardAvailability";
+import { CHECKOUT_AMOUNT_MISMATCH_MESSAGE } from "@/lib/payments/checkoutConsistency";
 import {
   buildConfigCheckoutPath,
   DEFAULT_PLAN_BILLING_PERIOD_CODE,
@@ -183,6 +184,7 @@ type MethodSelectorPanelProps = {
   methodMessage: string | null;
   canInteract: boolean;
   isOrderLoading: boolean;
+  loadingLabel?: string | null;
   hasOrderReady: boolean;
   cardEnabled: boolean;
   selectedRail: CheckoutRail | null;
@@ -202,6 +204,8 @@ type PixFormPanelProps = {
   onBack: () => void;
   isSubmitting: boolean;
   canSubmit: boolean;
+  isLocked?: boolean;
+  lockMessage?: string | null;
   errorMessage: string | null;
   hasInputError: boolean;
   errorAnimationTick: number;
@@ -1606,8 +1610,18 @@ function normalizePaymentUiMessage(message: string | null | undefined) {
 const PIX_EXPIRATION_AUTO_RECOVERY_MESSAGE =
   "A tentativa anterior expirou. O sistema vai preparar uma nova cobranca segura.";
 
+const CHECKOUT_AMOUNT_VALIDATION_PENDING_MESSAGE =
+  "Estamos validando o valor final do checkout. Aguarde alguns instantes para continuar.";
+
+const CHECKOUT_AMOUNT_VALIDATION_FAILED_MESSAGE =
+  "Ainda nao foi possivel confirmar o valor final do checkout. Aguarde alguns segundos e tente novamente.";
+
 function shouldAutoRecoverExpiredPixMessage(message: string | null | undefined) {
   return normalizePaymentUiMessage(message) === PIX_EXPIRATION_AUTO_RECOVERY_MESSAGE;
+}
+
+function isCheckoutAmountMismatchMessage(message: string | null | undefined) {
+  return normalizePaymentUiMessage(message) === CHECKOUT_AMOUNT_MISMATCH_MESSAGE;
 }
 
 function parseUnknownErrorMessage(error: unknown) {
@@ -2456,6 +2470,7 @@ function MethodSelectorPanel(props: MethodSelectorPanelProps) {
     methodMessage,
     canInteract,
     isOrderLoading,
+    loadingLabel,
     hasOrderReady,
     selectedRail,
     pixTermsAccepted,
@@ -2593,7 +2608,7 @@ function MethodSelectorPanel(props: MethodSelectorPanelProps) {
       {!canInteract && isOrderLoading ? (
         <div className="mt-[14px] flex items-center justify-center gap-2 text-[12px] text-[#C2C2C2]">
           <ButtonLoader size={14} colorClassName="text-[#C2C2C2]" />
-          <span>Aguardando carregamento do pedido</span>
+          <span>{loadingLabel || "Aguardando carregamento do pedido"}</span>
         </div>
       ) : null}
 
@@ -2633,6 +2648,8 @@ function PixFormPanel({
   onBack,
   isSubmitting,
   canSubmit,
+  isLocked = false,
+  lockMessage = null,
   errorMessage,
   hasInputError,
   errorAnimationTick,
@@ -2660,7 +2677,7 @@ function PixFormPanel({
             Nome completo
           </label>
           <div className="relative">
-            <input type="text" value={payerName} onChange={(event) => onPayerNameChange(event.currentTarget.value)} placeholder="Digite o nome do titular" className={`h-[58px] w-full rounded-[18px] border bg-[#090909] px-[18px] pr-[62px] text-[16px] text-[#F0F0F0] outline-none placeholder:text-[#525252] ${resolveInputBorderClass(hasInputError, payerNameStatus)}`} aria-invalid={hasInputError} />
+            <input type="text" value={payerName} onChange={(event) => onPayerNameChange(event.currentTarget.value)} placeholder="Digite o nome do titular" disabled={isLocked || isSubmitting} className={`h-[58px] w-full rounded-[18px] border bg-[#090909] px-[18px] pr-[62px] text-[16px] text-[#F0F0F0] outline-none placeholder:text-[#525252] disabled:cursor-not-allowed disabled:opacity-55 ${resolveInputBorderClass(hasInputError, payerNameStatus)}`} aria-invalid={hasInputError} />
             <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2"><ValidationIndicator status={payerNameStatus} /></span>
           </div>
         </div>
@@ -2670,11 +2687,17 @@ function PixFormPanel({
             CPF
           </label>
           <div className="relative">
-            <input type="text" value={payerDocument} onChange={(event) => onPayerDocumentChange(event.currentTarget.value)} placeholder="000.000.000-00" className={`h-[58px] w-full rounded-[18px] border bg-[#090909] px-[18px] pr-[62px] text-[16px] text-[#F0F0F0] outline-none placeholder:text-[#525252] ${resolveInputBorderClass(hasInputError, payerDocumentStatus)}`} inputMode="numeric" aria-invalid={hasInputError} />
+            <input type="text" value={payerDocument} onChange={(event) => onPayerDocumentChange(event.currentTarget.value)} placeholder="000.000.000-00" disabled={isLocked || isSubmitting} className={`h-[58px] w-full rounded-[18px] border bg-[#090909] px-[18px] pr-[62px] text-[16px] text-[#F0F0F0] outline-none placeholder:text-[#525252] disabled:cursor-not-allowed disabled:opacity-55 ${resolveInputBorderClass(hasInputError, payerDocumentStatus)}`} inputMode="numeric" aria-invalid={hasInputError} />
             <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2"><ValidationIndicator status={payerDocumentStatus} /></span>
           </div>
         </div>
       </div>
+
+      {lockMessage ? (
+        <p className="mt-[12px] flowdesk-slide-down text-left text-[12px] leading-[1.65] text-[#B8B8B8]">
+          {lockMessage}
+        </p>
+      ) : null}
 
       {errorMessage ? (
         <p key={`pix-form-error-${errorAnimationTick}-${errorMessage}`} className="mt-[12px] flowdesk-slide-down text-left text-[12px] leading-[1.6] text-[#DB4646]">
@@ -2682,7 +2705,7 @@ function PixFormPanel({
         </p>
       ) : null}
 
-      <button type="button" onClick={onSubmit} disabled={!canSubmit || isSubmitting} className="mt-[18px] flex h-[58px] w-full items-center justify-center rounded-[18px] bg-[linear-gradient(180deg,#0062FF_0%,#0153D5_100%)] text-[16px] font-semibold text-white transition-transform duration-150 ease-out hover:scale-[1.01] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-45">
+      <button type="button" onClick={onSubmit} disabled={isLocked || !canSubmit || isSubmitting} className="mt-[18px] flex h-[58px] w-full items-center justify-center rounded-[18px] bg-[linear-gradient(180deg,#0062FF_0%,#0153D5_100%)] text-[16px] font-semibold text-white transition-transform duration-150 ease-out hover:scale-[1.01] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-45">
         {isSubmitting ? <ButtonLoader size={22} colorClassName="text-white" /> : "Gerar QR Code PIX"}
       </button>
 
@@ -3117,6 +3140,8 @@ export function ConfigStepFour({
     useState<DiscountPreviewApiResponse["preview"] | null>(null);
   const [discountMessage, setDiscountMessage] = useState<string | null>(null);
   const [isDiscountLoading, setIsDiscountLoading] = useState(false);
+  const [lastSuccessfulCheckoutAmountValidationKey, setLastSuccessfulCheckoutAmountValidationKey] =
+    useState<string | null>(null);
   const [discountRefreshTick, setDiscountRefreshTick] = useState(0);
   const [isCartNoticeDismissed, setIsCartNoticeDismissed] = useState(false);
   const [isDiscountEditorOpen, setIsDiscountEditorOpen] = useState(
@@ -3268,6 +3293,29 @@ export function ConfigStepFour({
     () => buildUnifiedDiscountCodePayload(normalizedDiscountCode),
     [normalizedDiscountCode],
   );
+  const checkoutAmountValidationKey = useMemo(
+    () =>
+      [
+        guildId || "account",
+        selectedPlanCode,
+        selectedBillingPeriodCode,
+        roundMoney(baseCheckoutAmount).toFixed(2),
+        checkoutCurrency,
+        manualDiscountPayload.couponCode || "",
+        manualDiscountPayload.giftCardCode || "",
+        roundMoney(knownFlowPointsBalance).toFixed(2),
+      ].join("|"),
+    [
+      baseCheckoutAmount,
+      checkoutCurrency,
+      guildId,
+      knownFlowPointsBalance,
+      manualDiscountPayload.couponCode,
+      manualDiscountPayload.giftCardCode,
+      selectedBillingPeriodCode,
+      selectedPlanCode,
+    ],
+  );
   const hasManualDiscountCode = Boolean(
     manualDiscountPayload.couponCode || manualDiscountPayload.giftCardCode,
   );
@@ -3411,12 +3459,9 @@ export function ConfigStepFour({
     setDiscountPreview((current) =>
       hasManualDiscountCode ? current || localFallbackPreview : localFallbackPreview,
     );
-    if (!hasManualDiscountCode) {
-      setDiscountMessage(null);
-    } else {
-      setDiscountMessage(null);
-    }
-    setIsDiscountLoading(hasManualDiscountCode);
+    setDiscountMessage(null);
+    setIsDiscountLoading(true);
+    setLastSuccessfulCheckoutAmountValidationKey(null);
 
     const controller = new AbortController();
     let abortedByTimeout = false;
@@ -3454,6 +3499,7 @@ export function ConfigStepFour({
 
           if (!isActive) return;
           setDiscountPreview(payload.preview);
+          setLastSuccessfulCheckoutAmountValidationKey(checkoutAmountValidationKey);
           setKnownFlowPointsBalance(
             roundMoney(
               Math.max(0, payload.preview.flowPoints?.balanceBefore || 0),
@@ -3483,6 +3529,7 @@ export function ConfigStepFour({
             );
           }
 
+          setLastSuccessfulCheckoutAmountValidationKey(null);
           setDiscountPreview(localFallbackPreview);
         } finally {
           if (!isActive) {
@@ -3513,6 +3560,7 @@ export function ConfigStepFour({
     discountRefreshTick,
     hasManualDiscountCode,
     manualDiscountPayload,
+    checkoutAmountValidationKey,
     selectedBillingPeriodCode,
     selectedPlanCode,
   ]);
@@ -4522,9 +4570,50 @@ export function ConfigStepFour({
     };
   }, [cardBillingZipCodeDigits]);
 
+  const requiresLiveCheckoutAmountValidation = useMemo(
+    () =>
+      Boolean(
+        resolvedPlan.isAvailable &&
+          !resolvedPlan.isTrial &&
+          selectedPlanChange.execution === "pay_now" &&
+          activeDiscountPreview.totalAmount > 0,
+      ),
+    [
+      activeDiscountPreview.totalAmount,
+      resolvedPlan.isAvailable,
+      resolvedPlan.isTrial,
+      selectedPlanChange.execution,
+    ],
+  );
+  const isCheckoutAmountReady = useMemo(
+    () =>
+      !requiresLiveCheckoutAmountValidation ||
+      (!isPlanLoading &&
+        !isDiscountLoading &&
+        lastSuccessfulCheckoutAmountValidationKey === checkoutAmountValidationKey),
+    [
+      checkoutAmountValidationKey,
+      isDiscountLoading,
+      isPlanLoading,
+      lastSuccessfulCheckoutAmountValidationKey,
+      requiresLiveCheckoutAmountValidation,
+    ],
+  );
+  const isCheckoutAmountValidationBusy = Boolean(
+    requiresLiveCheckoutAmountValidation && (isPlanLoading || isDiscountLoading),
+  );
+  const checkoutAmountValidationMessage = !requiresLiveCheckoutAmountValidation
+    ? null
+    : isCheckoutAmountValidationBusy
+      ? CHECKOUT_AMOUNT_VALIDATION_PENDING_MESSAGE
+      : !isCheckoutAmountReady
+        ? CHECKOUT_AMOUNT_VALIDATION_FAILED_MESSAGE
+        : null;
+
   const canSubmitPix = useMemo(() => {
     return Boolean(
       (pixOrder?.orderNumber || lastKnownOrderNumber) &&
+        isCheckoutAmountReady &&
         !isLoadingOrder &&
         !isPreparingBaseOrder &&
         pixDocumentStatus === "valid" &&
@@ -4532,6 +4621,7 @@ export function ConfigStepFour({
         !isSubmittingPix,
     );
   }, [
+    isCheckoutAmountReady,
     isLoadingOrder,
     isPreparingBaseOrder,
     isSubmittingPix,
@@ -4545,6 +4635,7 @@ export function ConfigStepFour({
     return Boolean(
       cardPaymentsEnabled &&
         (pixOrder?.orderNumber || lastKnownOrderNumber) &&
+        isCheckoutAmountReady &&
         !isLoadingOrder &&
         !isPreparingBaseOrder &&
         cardBrand &&
@@ -4562,6 +4653,7 @@ export function ConfigStepFour({
     cardDocumentStatus,
     cardExpiryStatus,
     cardHolderStatus,
+    isCheckoutAmountReady,
     cardNumberStatus,
     cardPaymentsEnabled,
     cardCvvStatus,
@@ -4596,8 +4688,11 @@ export function ConfigStepFour({
   );
   const hasPaymentOrderReady = Boolean(resolvedOrderNumber);
   const isPaymentOrderBusy = isLoadingOrder || isPreparingBaseOrder;
+  const isPaymentCheckoutBusy =
+    isPaymentOrderBusy || isCheckoutAmountValidationBusy;
   const canChoosePaymentMethod = Boolean(
-    !isPaymentOrderBusy &&
+    isCheckoutAmountReady &&
+      !isPaymentCheckoutBusy &&
       hasPaymentOrderReady &&
       !isSubmittingCard &&
       !isCancellingPendingCard &&
@@ -4980,6 +5075,14 @@ export function ConfigStepFour({
   const startCardRedirectCheckout = useCallback(async (surfaceLabel = "cartao") => {
     if (isSubmittingCard) return;
 
+    if (!isCheckoutAmountReady) {
+      setView("methods");
+      setMethodMessage(
+        checkoutAmountValidationMessage || CHECKOUT_AMOUNT_VALIDATION_PENDING_MESSAGE,
+      );
+      return;
+    }
+
     if (pixOrder?.method === "card" && pixOrder.status === "pending") {
       setView("methods");
       setMethodMessage(
@@ -5080,6 +5183,16 @@ export function ConfigStepFour({
         parseUnknownErrorMessage(error) ||
         "Falha ao preparar checkout com cartao.";
 
+      if (isCheckoutAmountMismatchMessage(message)) {
+        forceNewCheckoutRef.current = true;
+        setView("methods");
+        setMethodMessage(
+          "Atualizamos o valor final do checkout com seguranca. Revise o total e continue novamente.",
+        );
+        setPaymentBootstrapRequestKey((current) => current + 1);
+        return;
+      }
+
       setCardFormHasInputError(false);
       setCardFormError(message);
       setCardFormErrorAnimationTick((current) => current + 1);
@@ -5094,8 +5207,10 @@ export function ConfigStepFour({
     }
   }, [
     activeDiscountPreview.totalAmount,
+    checkoutAmountValidationMessage,
     guildId,
     handleActiveLicenseCheckoutBlock,
+    isCheckoutAmountReady,
     isSubmittingCard,
     manualDiscountPayload,
     pixOrder?.method,
@@ -5149,6 +5264,13 @@ export function ConfigStepFour({
   }, [guildId]);
 
   const handleChooseMethod = useCallback((method: PaymentMethod) => {
+    if (!isCheckoutAmountReady) {
+      setMethodMessage(
+        checkoutAmountValidationMessage || CHECKOUT_AMOUNT_VALIDATION_PENDING_MESSAGE,
+      );
+      return;
+    }
+
     if (isPaymentOrderBusy) {
       setMethodMessage("Ainda estamos preparando o pedido. Aguarde alguns segundos.");
       return;
@@ -5199,15 +5321,24 @@ export function ConfigStepFour({
     setCardRedirectRequestKey((current) => current + 1);
   }, [
     cardPaymentsEnabled,
+    checkoutAmountValidationMessage,
     guildId,
     handleRetryPreparePaymentOrder,
     hasPaymentOrderReady,
+    isCheckoutAmountReady,
     isPaymentOrderBusy,
     selectedRail,
     view,
   ]);
 
   const handleStartPixFlow = useCallback(() => {
+    if (!isCheckoutAmountReady) {
+      setMethodMessage(
+        checkoutAmountValidationMessage || CHECKOUT_AMOUNT_VALIDATION_PENDING_MESSAGE,
+      );
+      return;
+    }
+
     if (isPaymentOrderBusy) {
       setMethodMessage("Ainda estamos preparando o pedido. Aguarde alguns segundos.");
       return;
@@ -5224,7 +5355,13 @@ export function ConfigStepFour({
     setMethodMessage(null);
     setPixFormHasInputError(false);
     setPixFormError(null);
-  }, [handleRetryPreparePaymentOrder, hasPaymentOrderReady, isPaymentOrderBusy]);
+  }, [
+    checkoutAmountValidationMessage,
+    handleRetryPreparePaymentOrder,
+    hasPaymentOrderReady,
+    isCheckoutAmountReady,
+    isPaymentOrderBusy,
+  ]);
 
   const handleRefreshExpiredPixPayment = useCallback(async () => {
     if (pixAutoRefreshInFlightRef.current) {
@@ -5629,6 +5766,13 @@ export function ConfigStepFour({
       return;
     }
 
+    if (!isCheckoutAmountReady) {
+      setMethodMessage(
+        checkoutAmountValidationMessage || CHECKOUT_AMOUNT_VALIDATION_PENDING_MESSAGE,
+      );
+      return;
+    }
+
     if (activeDiscountPreview.totalAmount <= 0) {
       void handleApplyCoveredPlanChange();
       return;
@@ -5640,9 +5784,11 @@ export function ConfigStepFour({
     }
   }, [
     activeDiscountPreview.totalAmount,
+    checkoutAmountValidationMessage,
     handleApplyCoveredPlanChange,
     handleActivateTrialPlan,
     handleSchedulePlanChange,
+    isCheckoutAmountReady,
     resolvedPlan.isAvailable,
     resolvedPlan.isTrial,
     resolvedPlan.unavailableReason,
@@ -5667,6 +5813,15 @@ export function ConfigStepFour({
 
   const handleSubmitPixPayment = useCallback(async () => {
     if (isSubmittingPix) return;
+    if (!isCheckoutAmountReady) {
+      setPixFormHasInputError(false);
+      setPixFormError(
+        checkoutAmountValidationMessage || CHECKOUT_AMOUNT_VALIDATION_PENDING_MESSAGE,
+      );
+      setPixFormErrorAnimationTick((current) => current + 1);
+      return;
+    }
+
     if (
       !(pixOrder?.orderNumber || lastKnownOrderNumber) ||
       isLoadingOrder ||
@@ -5787,6 +5942,16 @@ export function ConfigStepFour({
         clearCheckoutStatusQuery();
         forceNewCheckoutRef.current = true;
         await handleRefreshExpiredPixPayment();
+      } else if (isCheckoutAmountMismatchMessage(message)) {
+        setPixFormHasInputError(false);
+        setPixFormError(null);
+        setSelectedRail("pix");
+        setView("methods");
+        setMethodMessage(
+          "Atualizamos o valor final do checkout com seguranca. Revise o total e continue novamente.",
+        );
+        forceNewCheckoutRef.current = true;
+        setPaymentBootstrapRequestKey((current) => current + 1);
       } else {
         setPixFormHasInputError(false);
         setPixFormError(message);
@@ -5800,9 +5965,11 @@ export function ConfigStepFour({
     guildId,
     handleActiveLicenseCheckoutBlock,
     isLoadingOrder,
+    isCheckoutAmountReady,
     isPreparingBaseOrder,
     isSubmittingPix,
     activeDiscountPreview.totalAmount,
+    checkoutAmountValidationMessage,
     manualDiscountPayload,
     payerName,
     pixDocumentStatus,
@@ -5839,6 +6006,15 @@ export function ConfigStepFour({
       setCardFormHasInputError(false);
       setCardFormError(
         "Ja existe um pagamento com cartao em analise. Aguarde o retorno antes de tentar novamente.",
+      );
+      setCardFormErrorAnimationTick((current) => current + 1);
+      return;
+    }
+
+    if (!isCheckoutAmountReady) {
+      setCardFormHasInputError(false);
+      setCardFormError(
+        checkoutAmountValidationMessage || CHECKOUT_AMOUNT_VALIDATION_PENDING_MESSAGE,
       );
       setCardFormErrorAnimationTick((current) => current + 1);
       return;
@@ -6067,6 +6243,15 @@ export function ConfigStepFour({
 
       if (shouldFlagInputError) {
         triggerCardFormValidationError(message);
+      } else if (isCheckoutAmountMismatchMessage(message)) {
+        forceNewCheckoutRef.current = true;
+        setView("methods");
+        setCardFormHasInputError(false);
+        setCardFormError(null);
+        setMethodMessage(
+          "Atualizamos o valor final do checkout com seguranca. Revise o total e continue novamente.",
+        );
+        setPaymentBootstrapRequestKey((current) => current + 1);
       } else {
         setCardFormHasInputError(false);
         setCardFormError(message);
@@ -6085,8 +6270,10 @@ export function ConfigStepFour({
     cardHolderName,
     cardNumberDigits,
     cardClientCooldownUntil,
+    checkoutAmountValidationMessage,
     guildId,
     handleActiveLicenseCheckoutBlock,
+    isCheckoutAmountReady,
     isSubmittingCard,
     pixOrder?.method,
     pixOrder?.status,
@@ -6405,6 +6592,10 @@ export function ConfigStepFour({
 
   const checkoutStatusLabel =
     methodMessage ||
+    ((phase === "checkout" &&
+      !shouldShowApprovedConfirmationPanel &&
+      checkoutAmountValidationMessage) ||
+      null) ||
     (shouldShowStatusResultPanel ? currentPaymentStatusLabel : null);
   const planDisplayName = resolvedPlan.name;
   const planBillingLabel = resolvedPlan.billingLabel;
@@ -6570,16 +6761,22 @@ export function ConfigStepFour({
   const isContinueButtonDisabled = Boolean(
     isPlanSelectionLocked ||
       isSubmittingTrial ||
+      (requiresLiveCheckoutAmountValidation && !isCheckoutAmountReady) ||
       isContinueButtonAwaitingPayment ||
       isScheduledTargetAlreadyPending ||
       !resolvedPlan.isAvailable,
   );
   const isContinueButtonBusy =
-    phase === "cart" && isSubmittingTrial;
+    phase === "cart" &&
+    (isSubmittingTrial || isCheckoutAmountValidationBusy);
   const continueButtonLabel = !resolvedPlan.isAvailable
     ? "Indisponivel"
     : resolvedPlan.isTrial
       ? "Ativar gratuitamente"
+      : requiresLiveCheckoutAmountValidation && !isCheckoutAmountReady
+        ? isCheckoutAmountValidationBusy
+          ? "Validando valor final"
+          : "Aguardando validacao"
       : selectedPlanChange.execution === "schedule_for_renewal"
         ? isScheduledTargetAlreadyPending
           ? "Troca agendada"
@@ -6843,6 +7040,8 @@ export function ConfigStepFour({
                           }}
                           isSubmitting={isSubmittingPix}
                           canSubmit={canSubmitPix}
+                          isLocked={!isCheckoutAmountReady}
+                          lockMessage={checkoutAmountValidationMessage}
                           errorMessage={pixFormError}
                           hasInputError={pixFormHasInputError}
                           errorAnimationTick={pixFormErrorAnimationTick}
@@ -6872,7 +7071,12 @@ export function ConfigStepFour({
                           onSelectHostedRail={handleHostedRailSelection}
                           methodMessage={checkoutStatusLabel}
                           canInteract={canChoosePaymentMethod}
-                          isOrderLoading={isPaymentOrderBusy}
+                          isOrderLoading={isPaymentCheckoutBusy}
+                          loadingLabel={
+                            isPaymentOrderBusy
+                              ? "Aguardando carregamento do pedido"
+                              : "Validando valor final do checkout"
+                          }
                           hasOrderReady={hasPaymentOrderReady}
                           cardEnabled={cardPaymentsEnabled}
                           selectedRail={selectedRail}
@@ -7216,6 +7420,15 @@ export function ConfigStepFour({
 
                     </>
                   )}
+
+                  {phase === "cart" && checkoutAmountValidationMessage ? (
+                    <div className="mt-[14px] flex items-center gap-[8px] text-[12px] leading-[1.6] text-[#B7B7B7]">
+                      {isCheckoutAmountValidationBusy ? (
+                        <ButtonLoader size={14} colorClassName="text-[#B7B7B7]" />
+                      ) : null}
+                      <span>{checkoutAmountValidationMessage}</span>
+                    </div>
+                  ) : null}
 
                   <button
                     type="button"
