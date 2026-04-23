@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentAuthSessionFromCookie } from "@/lib/auth/session";
-import { getManagedServersForCurrentSession } from "@/lib/servers/managedServers";
+import { getPanelManagedServersForCurrentSession } from "@/lib/servers/managedServers";
 import {
   assertTeamPermission,
   getUserTeamsSnapshotForUser,
@@ -108,12 +108,13 @@ export async function PATCH(request: Request, { params }: TeamRouteParams) {
     );
     const currentGuildIdSet = new Set(currentGuildIds);
 
-    const managedServers = await getManagedServersForCurrentSession();
+    const managedServers = await getPanelManagedServersForCurrentSession();
     const allowedGuildIds = new Set(
       managedServers
         .filter(
           (server) =>
-            currentGuildIdSet.has(server.guildId) || server.canLinkToTeam,
+            currentGuildIdSet.has(server.guildId) ||
+            (server.isPanelVisible && server.canLinkToTeam),
         )
         .map((server) => server.guildId),
     );

@@ -187,9 +187,109 @@ function WorkspaceSidebarSkeleton() {
 
 export function DashboardContentSkeleton() {
   return (
-    <div className="mt-[24px] space-y-[10px]">
-      <SkeletonBar width="min(220px,48vw)" height={12} className="max-w-full rounded-full bg-[#111111]" />
-      <SkeletonBar width="min(340px,64vw)" height={12} className="max-w-full rounded-full bg-[#101010]" />
+    <div className="mt-[24px] rounded-[24px] border border-[#121212] bg-[#070707] px-[16px] py-[16px] shadow-[0_18px_54px_rgba(0,0,0,0.24)]">
+      <div className="flex flex-col gap-[14px] xl:flex-row xl:items-center xl:justify-between">
+        <div className="min-w-0 flex-1 space-y-[10px]">
+          <SkeletonBar width="min(240px,52vw)" height={12} className="max-w-full rounded-full bg-[#111111]" />
+          <SkeletonBar width="min(380px,68vw)" height={12} className="max-w-full rounded-full bg-[#101010]" />
+        </div>
+        <div className="flex flex-wrap gap-[8px]">
+          {Array.from({ length: 3 }, (_, index) => (
+            <SkeletonBar
+              key={index}
+              width={index === 0 ? 74 : 62}
+              height={34}
+              className="rounded-full bg-[#101010]"
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DashboardTabContentSkeleton() {
+  return (
+    <div className="mt-[28px] space-y-[14px]">
+      <div className="grid gap-[14px] xl:grid-cols-[minmax(0,1.45fr)_minmax(300px,0.75fr)]">
+        <div className="rounded-[28px] border border-[#121212] bg-[#090909] p-[20px] shadow-[0_18px_56px_rgba(0,0,0,0.24)]">
+          <div className="flex flex-col gap-[18px]">
+            <div className="space-y-[10px]">
+              <SkeletonBar width={118} height={12} className="rounded-full bg-[#111111]" />
+              <SkeletonBar width="56%" height={18} className="max-w-full rounded-full" />
+              <SkeletonBar width="82%" height={12} className="max-w-full rounded-full bg-[#111111]" />
+            </div>
+
+            <div className="grid gap-[10px] md:grid-cols-3">
+              {Array.from({ length: 3 }, (_, index) => (
+                <div
+                  key={index}
+                  className="rounded-[20px] border border-[#141414] bg-[#0C0C0C] p-[16px]"
+                >
+                  <SkeletonBar width={78} height={10} className="rounded-full bg-[#111111]" />
+                  <SkeletonBar width={58} height={22} className="mt-[14px] rounded-[12px]" />
+                  <SkeletonBar width="72%" height={10} className="mt-[12px] max-w-full rounded-full bg-[#101010]" />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-[28px] border border-[#121212] bg-[#090909] p-[20px] shadow-[0_18px_56px_rgba(0,0,0,0.24)]">
+          <div className="space-y-[14px]">
+            <SkeletonBar width={104} height={12} className="rounded-full bg-[#111111]" />
+            {Array.from({ length: 4 }, (_, index) => (
+              <div
+                key={index}
+                className="flex items-center gap-[12px] rounded-[18px] border border-[#141414] bg-[#0C0C0C] px-[14px] py-[12px]"
+              >
+                <SkeletonBar width={40} height={40} className="rounded-[14px]" />
+                <div className="min-w-0 flex-1 space-y-[8px]">
+                  <SkeletonBar width="58%" height={12} className="max-w-full rounded-full" />
+                  <SkeletonBar width="42%" height={10} className="max-w-full rounded-full bg-[#111111]" />
+                </div>
+                <SkeletonBar width={44} height={28} className="rounded-full bg-[#111111]" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-[28px] border border-[#121212] bg-[#090909] p-[20px] shadow-[0_18px_56px_rgba(0,0,0,0.24)]">
+        <div className="space-y-[14px]">
+          <div className="flex flex-col gap-[10px] md:flex-row md:items-center md:justify-between">
+            <div className="space-y-[8px]">
+              <SkeletonBar width={126} height={12} className="rounded-full bg-[#111111]" />
+              <SkeletonBar width={188} height={10} className="rounded-full bg-[#101010]" />
+            </div>
+            <div className="flex gap-[8px]">
+              <SkeletonBar width={92} height={36} className="rounded-[12px] bg-[#101010]" />
+              <SkeletonBar width={42} height={36} className="rounded-[12px] bg-[#101010]" />
+            </div>
+          </div>
+
+          <div className="space-y-[10px]">
+            {Array.from({ length: 4 }, (_, index) => (
+              <div
+                key={index}
+                className="flex flex-col gap-[14px] rounded-[20px] border border-[#141414] bg-[#0B0B0B] px-[16px] py-[14px] md:flex-row md:items-center md:justify-between"
+              >
+                <div className="flex min-w-0 items-center gap-[12px]">
+                  <SkeletonBar width={44} height={44} className="rounded-[14px]" />
+                  <div className="min-w-0 space-y-[8px]">
+                    <SkeletonBar width="min(220px,46vw)" height={12} className="max-w-full rounded-full" />
+                    <SkeletonBar width="min(140px,32vw)" height={10} className="max-w-full rounded-full bg-[#111111]" />
+                  </div>
+                </div>
+                <div className="flex items-center gap-[10px]">
+                  <SkeletonBar width={110} height={30} className="rounded-full bg-[#101010]" />
+                  <SkeletonBar width={38} height={38} className="rounded-[12px] bg-[#101010]" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -364,19 +464,18 @@ function resolveWorkspaceMainSkeleton(variant: WorkspaceRouteLoadingVariant) {
 export function WorkspaceRouteContentLoading({
   variant,
 }: WorkspaceRouteLoadingProps) {
-  return (
-    <div className="relative min-h-screen overflow-x-clip bg-[#040404] text-white">
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05)_0%,rgba(255,255,255,0.012)_28%,transparent_68%)]"
-      />
+  if (variant === "dashboard") {
+    return (
+      <section className="min-w-0">
+        <DashboardTabContentSkeleton />
+      </section>
+    );
+  }
 
-      <main className="relative px-[20px] pt-[32px] pb-[56px] md:px-6 lg:px-8">
-        <div className="mx-auto w-full max-w-[1220px]">
-          {resolveWorkspaceMainSkeleton(variant)}
-        </div>
-      </main>
-    </div>
+  return (
+    <section className="min-w-0">
+      {resolveWorkspaceMainSkeleton(variant)}
+    </section>
   );
 }
 

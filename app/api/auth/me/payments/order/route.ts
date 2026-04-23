@@ -28,6 +28,7 @@ import {
   getApprovedOrdersForGuild,
   resolveCoverageForApprovedOrder,
 } from "@/lib/payments/licenseStatus";
+import { readOrderPlanTransitionPayload } from "@/lib/plans/change";
 import {
   getCachedLatestPaymentOrderForUserAndGuild,
   getCachedPaymentOrderByCodeForGuild,
@@ -201,10 +202,40 @@ function maskPayerDocument(
   return `${"*".repeat(Math.max(4, normalizedLast4.length))}${normalizedLast4}`;
 }
 
+function readOrderFinalizationStatus(providerPayload: unknown) {
+  if (!providerPayload || typeof providerPayload !== "object" || Array.isArray(providerPayload)) {
+    return null;
+  }
+
+  const payloadRecord = providerPayload as Record<string, unknown>;
+  const rawFinalization =
+    payloadRecord.flowdesk_finalization &&
+    typeof payloadRecord.flowdesk_finalization === "object" &&
+    !Array.isArray(payloadRecord.flowdesk_finalization)
+      ? (payloadRecord.flowdesk_finalization as Record<string, unknown>)
+      : payloadRecord.finalization &&
+          typeof payloadRecord.finalization === "object" &&
+          !Array.isArray(payloadRecord.finalization)
+        ? (payloadRecord.finalization as Record<string, unknown>)
+        : null;
+  const status =
+    rawFinalization && typeof rawFinalization.status === "string"
+      ? rawFinalization.status.trim().toLowerCase()
+      : "";
+
+  if (status === "settled" || status === "pending" || status === "refunded") {
+    return status;
+  }
+
+  return null;
+}
+
 function toApiOrder(
   record: PaymentOrderRecord,
   checkoutAccessToken: string | null = null,
 ) {
+  const transition = readOrderPlanTransitionPayload(record.provider_payload);
+
   return {
     id: record.id,
     orderNumber: record.order_number,
@@ -234,6 +265,9 @@ function toApiOrder(
     expiresAt: record.expires_at,
     checkoutAccessToken,
     checkoutAccessTokenExpiresAt: record.checkout_link_expires_at,
+    planTransitionKind: transition?.kind || null,
+    planTransitionExecution: transition?.execution || null,
+    finalizationStatus: readOrderFinalizationStatus(record.provider_payload),
     createdAt: record.created_at,
     updatedAt: record.updated_at,
   };

@@ -19,6 +19,7 @@ import {
   reconcilePaymentOrderWithProviderPayment,
 } from "@/lib/payments/reconciliation";
 import { settleApprovedPaymentOrder } from "@/lib/payments/paymentSettlement";
+import { readOrderPlanTransitionPayload } from "@/lib/plans/change";
 import {
   getApprovedOrdersForGuild,
   resolveLatestLicenseCoverageFromApprovedOrders,
@@ -88,10 +89,40 @@ function normalizeGuildId(value: string | null) {
   return isGuildId(guildId) ? guildId : null;
 }
 
+function readOrderFinalizationStatus(providerPayload: unknown) {
+  if (!providerPayload || typeof providerPayload !== "object" || Array.isArray(providerPayload)) {
+    return null;
+  }
+
+  const payloadRecord = providerPayload as Record<string, unknown>;
+  const rawFinalization =
+    payloadRecord.flowdesk_finalization &&
+    typeof payloadRecord.flowdesk_finalization === "object" &&
+    !Array.isArray(payloadRecord.flowdesk_finalization)
+      ? (payloadRecord.flowdesk_finalization as Record<string, unknown>)
+      : payloadRecord.finalization &&
+          typeof payloadRecord.finalization === "object" &&
+          !Array.isArray(payloadRecord.finalization)
+        ? (payloadRecord.finalization as Record<string, unknown>)
+        : null;
+  const status =
+    rawFinalization && typeof rawFinalization.status === "string"
+      ? rawFinalization.status.trim().toLowerCase()
+      : "";
+
+  if (status === "settled" || status === "pending" || status === "refunded") {
+    return status;
+  }
+
+  return null;
+}
+
 function toOrderState(
   order: PaymentOrderStateRecord,
   checkoutAccessToken: string | null = null,
 ) {
+  const transition = readOrderPlanTransitionPayload(order.provider_payload);
+
   return {
     orderNumber: order.order_number,
     guildId: order.guild_id,
@@ -106,6 +137,12 @@ function toOrderState(
     expiresAt: order.expires_at,
     checkoutAccessToken,
     checkoutAccessTokenExpiresAt: order.checkout_link_expires_at,
+    planCode: order.plan_code,
+    planName: order.plan_name,
+    planBillingCycleDays: order.plan_billing_cycle_days,
+    planTransitionKind: transition?.kind || null,
+    planTransitionExecution: transition?.execution || null,
+    finalizationStatus: readOrderFinalizationStatus(order.provider_payload),
     createdAt: order.created_at,
     updatedAt: order.updated_at,
   };

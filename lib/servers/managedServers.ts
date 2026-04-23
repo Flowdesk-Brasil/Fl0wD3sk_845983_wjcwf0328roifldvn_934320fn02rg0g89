@@ -188,7 +188,9 @@ export function filterPanelVisibleManagedServers(servers: ManagedServer[]) {
 
 export function filterTeamCatalogManagedServers(servers: ManagedServer[]) {
   return servers.filter(
-    (server) => server.canLinkToTeam || server.isLinkedToTeam,
+    (server) =>
+      server.isPanelVisible &&
+      (server.canLinkToTeam || server.isLinkedToTeam),
   );
 }
 
@@ -391,11 +393,8 @@ async function fetchManagedServersFresh(
       );
       const canLinkToTeam = Boolean(
         !currentLicenseBelongsToViewer &&
-          (
-            acceptedTeamGuildIds.has(guild.id) ||
-            ownedPlanGuildIds.has(guild.id) ||
-            (isAccessibleToCurrentUser && !isLinkedToTeam)
-          ),
+          !isLinkedToTeam &&
+          isPanelVisible,
       );
       const isOwnedPlanGuildInactive = Boolean(
         !currentLicenseBelongsToViewer &&
