@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { getCurrentAuthSessionFromCookie } from "@/lib/auth/session";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { applyNoStoreHeaders, ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
-import { assertTeamPermission } from "@/lib/teams/userTeams";
+import {
+  assertTeamPermission,
+  invalidateTeamAccessCachesForTeam,
+} from "@/lib/teams/userTeams";
 
 // POST /api/auth/me/teams/[teamId]/roles - Create a new role
 export async function POST(
@@ -41,10 +44,12 @@ export async function POST(
       .single();
 
     if (error) throw error;
+    await invalidateTeamAccessCachesForTeam(teamId);
 
     return applyNoStoreHeaders(NextResponse.json({ ok: true, role: data }));
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Erro interno.";
     console.error("[POST /teams/roles]", err);
-    return applyNoStoreHeaders(NextResponse.json({ ok: false, message: err?.message || "Erro interno." }, { status: 500 }));
+    return applyNoStoreHeaders(NextResponse.json({ ok: false, message }, { status: 500 }));
   }
 }

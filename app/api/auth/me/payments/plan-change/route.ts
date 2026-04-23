@@ -6,23 +6,12 @@ import {
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
 import {
-  getUserPlanFlowPointsBalance,
-  getUserPlanScheduledChange,
-  resolveFlowPointsBalanceAmount,
   resolvePlanChangePreview,
   scheduleUserPlanDowngrade,
 } from "@/lib/plans/change";
 import {
-  applyUserPlanStatePricingAdjustments,
-  getBasicPlanAvailability,
-  getUserPlanState,
-  resolveEffectivePlanSelection,
+  resolveEffectivePlanSelectionForCheckoutContext,
 } from "@/lib/plans/state";
-import {
-  normalizePlanBillingPeriodCode,
-  normalizePlanCode,
-  resolvePlanPricing,
-} from "@/lib/plans/catalog";
 import {
   resolveDatabaseFailureMessage,
   resolveDatabaseFailureStatus,
@@ -132,46 +121,6 @@ async function ensureGuildAccess(guildId: string | null) {
     context: {
       sessionData,
     },
-  };
-}
-
-async function resolveEffectivePlanSelectionForCheckout(input: {
-  userId: number;
-  guildId: string | null;
-  preferredPlanCode?: unknown;
-  preferredBillingPeriodCode?: unknown;
-}) {
-  if (input.guildId) {
-    return resolveEffectivePlanSelection({
-      userId: input.userId,
-      guildId: input.guildId,
-      preferredPlanCode: input.preferredPlanCode,
-      preferredBillingPeriodCode: input.preferredBillingPeriodCode,
-    });
-  }
-
-  const [userPlanState, basicPlanAvailability, flowPointsBalanceRecord, scheduledChange] =
-    await Promise.all([
-      getUserPlanState(input.userId),
-      getBasicPlanAvailability(input.userId),
-      getUserPlanFlowPointsBalance(input.userId),
-      getUserPlanScheduledChange(input.userId),
-    ]);
-  const selectedPlan = applyUserPlanStatePricingAdjustments(
-    resolvePlanPricing(
-      normalizePlanCode(input.preferredPlanCode),
-      normalizePlanBillingPeriodCode(input.preferredBillingPeriodCode),
-    ),
-    userPlanState,
-  );
-
-  return {
-    plan: selectedPlan,
-    guildSettings: null,
-    userPlanState,
-    basicPlanAvailability,
-    flowPointsBalance: resolveFlowPointsBalanceAmount(flowPointsBalanceRecord),
-    scheduledChange,
   };
 }
 
@@ -302,7 +251,7 @@ export async function POST(request: Request) {
           outcome: "started",
         });
 
-        const selection = await resolveEffectivePlanSelectionForCheckout({
+        const selection = await resolveEffectivePlanSelectionForCheckoutContext({
           userId,
           guildId,
           preferredPlanCode: payload.planCode,

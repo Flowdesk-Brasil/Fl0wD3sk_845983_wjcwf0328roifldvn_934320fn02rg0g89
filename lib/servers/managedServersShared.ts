@@ -7,6 +7,7 @@ export type ManagedServer = {
   status: ManagedServerStatus;
   accessMode: "owner" | "viewer";
   canManage: boolean;
+  canLinkToTeam: boolean;
   isLinkedToTeam: boolean;
   blockedByPlanLimit: boolean;
   pendingDowngradePayment: boolean;

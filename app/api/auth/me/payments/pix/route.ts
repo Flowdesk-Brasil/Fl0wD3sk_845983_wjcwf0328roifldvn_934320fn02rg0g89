@@ -73,14 +73,11 @@ import {
 } from "@/lib/payments/orderQueryCache";
 import {
   type PlanPricingDefinition,
-  resolvePlanPricing,
-  normalizePlanCode,
-  normalizePlanBillingPeriodCode,
 } from "@/lib/plans/catalog";
 
 import {
   resolveApprovedOrderLicenseExpiresAt,
-  resolveEffectivePlanSelection,
+  resolveEffectivePlanSelectionForCheckoutContext,
   syncUserPlanStateFromOrder,
 } from "@/lib/plans/state";
 import {
@@ -501,26 +498,27 @@ async function resolveCheckoutPlanWithoutGuild(input: {
   requestedPlanCode?: unknown;
   requestedBillingPeriodCode?: unknown;
 }) {
-  const plan = resolvePlanPricing(
-    normalizePlanCode(input.requestedPlanCode),
-    normalizePlanBillingPeriodCode(input.requestedBillingPeriodCode),
-  );
-
+  const selection = await resolveEffectivePlanSelectionForCheckoutContext({
+    userId: input.userId,
+    guildId: null,
+    preferredPlanCode: input.requestedPlanCode,
+    preferredBillingPeriodCode: input.requestedBillingPeriodCode,
+  });
   const planChange = resolvePlanChangePreview({
-    userPlanState: null,
-    targetPlan: plan,
-    flowPointsBalance: 0,
-    scheduledChange: null,
+    userPlanState: selection.userPlanState,
+    targetPlan: selection.plan,
+    flowPointsBalance: selection.flowPointsBalance,
+    scheduledChange: selection.scheduledChange,
   });
 
   return {
-    plan,
-    amount: plan.totalAmount,
-    currency: plan.currency || resolvePixCurrency(),
-    currentPlanRepurchaseBlocked: false,
-    userPlanState: null,
-    flowPointsBalance: 0,
-    scheduledChange: null,
+    plan: selection.plan,
+    amount: Math.max(0, Math.round(planChange.immediateSubtotalAmount * 100) / 100),
+    currency: selection.plan.currency || resolvePixCurrency(),
+    currentPlanRepurchaseBlocked: planChange.isCurrentSelectionBlocked,
+    userPlanState: selection.userPlanState,
+    flowPointsBalance: selection.flowPointsBalance,
+    scheduledChange: selection.scheduledChange,
     planChange,
   };
 }
@@ -537,9 +535,9 @@ export async function resolveCheckoutPlanForGuild(input: {
     return resolveCheckoutPlanWithoutGuild(input);
   }
 
-  const selection = await resolveEffectivePlanSelection({
+  const selection = await resolveEffectivePlanSelectionForCheckoutContext({
     userId: input.userId,
-    guildId: guildId,
+    guildId,
     preferredPlanCode: input.requestedPlanCode,
     preferredBillingPeriodCode: input.requestedBillingPeriodCode,
   });

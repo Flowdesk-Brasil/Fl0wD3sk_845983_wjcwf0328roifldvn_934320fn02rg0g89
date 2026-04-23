@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Users, Trash2, Clock, CheckCircle2, Crown,
   ChevronDown, ChevronUp, X, Plus, Server, ShieldAlert,
@@ -10,6 +10,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useNotifications } from "@/components/notifications/NotificationsProvider";
 import { buildBrowserRoutingTargetFromInternalPath } from "@/lib/routing/subdomains";
+import type { ManagedServer } from "@/lib/servers/managedServersShared";
 import { DangerActionModal } from "../DangerActionModal";
 
 type TeamRolePermission =
@@ -55,6 +56,21 @@ type Team = {
   memberCount: number;
   pendingCount: number;
   createdAt: string;
+  updatedAt: string;
+};
+
+type TeamsApiResponse = {
+  ok: boolean;
+  message?: string;
+  teams?: Team[];
+  conflictingGuildIds?: string[];
+  invalidGuildIds?: string[];
+};
+
+type ManagedServersApiResponse = {
+  ok: boolean;
+  message?: string;
+  servers?: ManagedServer[];
 };
 
 const TEAM_GRADIENT: Record<string, string> = {
@@ -85,13 +101,18 @@ function Spinner({ size = 14 }: { size?: number }) {
   return <Loader2 className="animate-spin" style={{ width: size, height: size }} />;
 }
 
+function buildFallbackGuildName(guildId: string) {
+  return `Servidor ${guildId.slice(-6)}`;
+}
+
 export function TeamsTab() {
   const notifications = useNotifications();
   const [teams, setTeams] = useState<Team[]>([]);
+  const [managedServers, setManagedServers] = useState<ManagedServer[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedTeams, setExpandedTeams] = useState<Set<number>>(new Set());
 
-  // Active tab per team: "members" | "roles" | "invite"
+  // Active tab per team: "members" | "servers" | "roles" | "invite"
   const [activeTab, setActiveTab] = useState<Record<number, string>>({});
 
   // Invite
@@ -113,6 +134,8 @@ export function TeamsTab() {
   const [isDeletingRole, setIsDeletingRole] = useState(false);
   const [editingRole, setEditingRole] = useState<{ teamId: number; role: TeamRole; name: string; permissions: TeamRolePermission[] } | null>(null);
   const [isSavingRoleEdit, setIsSavingRoleEdit] = useState(false);
+  const [serverDraftByTeam, setServerDraftByTeam] = useState<Record<number, string[]>>({});
+  const [savingServersTeamId, setSavingServersTeamId] = useState<number | null>(null);
 
   // Team delete
   const [teamToDelete, setTeamToDelete] = useState<Team | null>(null);
@@ -127,12 +150,25 @@ export function TeamsTab() {
   const loadTeams = useCallback(async (silent = false) => {
     try {
       if (!silent) setLoading(true);
-      const res = await fetch("/api/auth/me/teams");
-      const json = await res.json();
-      if (!json.ok) {
-        throw new Error(json.message || "Nao foi possivel carregar as equipes.");
+      const [teamsResponse, serversResponse] = await Promise.all([
+        fetch("/api/auth/me/teams", { cache: "no-store" }),
+        fetch("/api/auth/me/servers", { cache: "no-store" }),
+      ]);
+      const [teamsPayload, serversPayload] = (await Promise.all([
+        teamsResponse.json(),
+        serversResponse.json(),
+      ])) as [TeamsApiResponse, ManagedServersApiResponse];
+
+      if (!teamsResponse.ok || !teamsPayload.ok) {
+        throw new Error(
+          teamsPayload.message || "Nao foi possivel carregar as equipes.",
+        );
       }
-      setTeams(json.teams || []);
+
+      setTeams(teamsPayload.teams || []);
+      if (serversResponse.ok && serversPayload.ok) {
+        setManagedServers(serversPayload.servers || []);
+      }
       return true;
     } catch (err) {
       console.error(err);
@@ -153,8 +189,34 @@ export function TeamsTab() {
     memberId: number;
     anchorRect: DOMRect | null;
   } | null>(null);
+  const sortedManagedServers = useMemo(
+    () =>
+      [...managedServers].sort((left, right) =>
+        left.guildName.localeCompare(right.guildName, "pt-BR"),
+      ),
+    [managedServers],
+  );
+  const managedServerByGuildId = useMemo(
+    () => new Map(sortedManagedServers.map((server) => [server.guildId, server])),
+    [sortedManagedServers],
+  );
+  const unlinkedTeamEligibleServers = useMemo(
+    () =>
+      sortedManagedServers.filter(
+        (server) => server.canLinkToTeam && !server.isLinkedToTeam,
+      ),
+    [sortedManagedServers],
+  );
 
   useEffect(() => { void loadTeams(); }, [loadTeams]);
+
+  useEffect(() => {
+    setServerDraftByTeam(
+      Object.fromEntries(
+        teams.map((team) => [team.id, [...team.linkedGuildIds]]),
+      ) as Record<number, string[]>,
+    );
+  }, [teams]);
 
   useEffect(() => {
     if (!roleMenuState) return;
@@ -255,6 +317,72 @@ export function TeamsTab() {
   }
 
   // ─── Delete team ──────────────────────────────────────────────────────────
+  const handleToggleTeamServer = useCallback((teamId: number, guildId: string) => {
+    setServerDraftByTeam((current) => {
+      const currentGuildIds = current[teamId] || [];
+      return {
+        ...current,
+        [teamId]: currentGuildIds.includes(guildId)
+          ? currentGuildIds.filter((value) => value !== guildId)
+          : [...currentGuildIds, guildId],
+      };
+    });
+  }, []);
+
+  const handleResetTeamServers = useCallback((team: Team) => {
+    setServerDraftByTeam((current) => ({
+      ...current,
+      [team.id]: [...team.linkedGuildIds],
+    }));
+  }, []);
+
+  const handleSaveTeamServers = useCallback(async (team: Team) => {
+    if (savingServersTeamId === team.id) return;
+
+    const nextGuildIds = Array.from(
+      new Set(serverDraftByTeam[team.id] || team.linkedGuildIds),
+    );
+
+    if (!nextGuildIds.length) {
+      notifications.error("Selecione pelo menos um servidor para a equipe.", {
+        title: "Equipes",
+      });
+      return;
+    }
+
+    setSavingServersTeamId(team.id);
+    try {
+      const res = await fetch(`/api/auth/me/teams/${team.id}/servers`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ guildIds: nextGuildIds }),
+      });
+      const json = (await res.json().catch(() => null)) as TeamsApiResponse | null;
+      if (!res.ok || json?.ok === false) {
+        throw new Error(
+          json?.message || "Nao foi possivel atualizar os servidores da equipe.",
+        );
+      }
+
+      await loadTeams(true);
+      notifications.success("Servidores da equipe atualizados com sucesso.", {
+        title: "Equipes",
+      });
+    } catch (err) {
+      console.error(err);
+      notifications.error(
+        err instanceof Error
+          ? err.message
+          : "Nao foi possivel atualizar os servidores da equipe.",
+        {
+          title: "Equipes",
+        },
+      );
+    } finally {
+      setSavingServersTeamId(null);
+    }
+  }, [loadTeams, notifications, savingServersTeamId, serverDraftByTeam]);
+
   async function handleDeleteTeamConfirm() {
     if (!teamToDelete) return;
     setDeletingTeamId(teamToDelete.id);
@@ -577,8 +705,41 @@ export function TeamsTab() {
         const acceptedMembers = team.members.filter((m) => m.status === "accepted");
         const pendingMembers = team.members.filter((m) => m.status === "pending");
 
+        const canManageServers = isOwner || team.currentUserPermissions.includes("manage_servers");
         const canManageRoles = isOwner || team.currentUserPermissions.includes("manage_roles");
         const canManageMembers = isOwner || team.currentUserPermissions.includes("manage_members");
+        const selectedServerDraft = serverDraftByTeam[team.id] || team.linkedGuildIds;
+        const selectedServerDraftSet = new Set(selectedServerDraft);
+        const teamServerOptions = [
+          ...sortedManagedServers.filter(
+            (server) =>
+              team.linkedGuildIds.includes(server.guildId) ||
+              (server.canLinkToTeam && !server.isLinkedToTeam),
+          ),
+          ...team.linkedGuildIds
+            .filter((guildId) => !managedServerByGuildId.has(guildId))
+            .map((guildId) => ({
+              guildId,
+              guildName: buildFallbackGuildName(guildId),
+              iconUrl: null,
+              status: "off" as const,
+              accessMode: "viewer" as const,
+              canManage: false,
+              canLinkToTeam: true,
+              isLinkedToTeam: true,
+              blockedByPlanLimit: false,
+              pendingDowngradePayment: false,
+              licenseOwnerUserId: 0,
+              licensePaidAt: team.createdAt,
+              licenseExpiresAt: team.updatedAt,
+              graceExpiresAt: team.updatedAt,
+              daysUntilExpire: 0,
+              daysUntilOff: 0,
+            })),
+        ];
+        const hasServerDraftChanges =
+          selectedServerDraft.length !== team.linkedGuildIds.length ||
+          team.linkedGuildIds.some((guildId) => !selectedServerDraftSet.has(guildId));
 
         return (
           <div
@@ -642,6 +803,9 @@ export function TeamsTab() {
                 <div className="flex gap-[2px] px-[18px] pt-[14px]">
                   {[
                     { id: "members", icon: <Users className="h-[13px] w-[13px]" />, label: "Membros" },
+                    ...(canManageServers ? [
+                      { id: "servers", icon: <Server className="h-[13px] w-[13px]" />, label: "Servidores" },
+                    ] : []),
                     ...(canManageRoles ? [
                       { id: "roles", icon: <Shield className="h-[13px] w-[13px]" />, label: "Cargos" },
                     ] : []),
@@ -670,14 +834,17 @@ export function TeamsTab() {
                       {/* Servers bar */}
                       {team.linkedGuildIds.length > 0 && (
                         <div className="flex flex-wrap gap-[6px] mb-[12px]">
-                          {team.linkedGuildIds.map((guildId) => (
+                          {team.linkedGuildIds.map((guildId) => {
+                            const linkedServer = managedServerByGuildId.get(guildId);
+                            return (
                             <span
                               key={guildId}
                               className="flex items-center gap-[5px] rounded-[8px] border border-[#1A1A1A] bg-[#0D0D0D] px-[10px] py-[4px] font-mono text-[11px] text-[#666666]"
+                              title={linkedServer?.guildName || buildFallbackGuildName(guildId)}
                             >
-                              <Server className="h-[10px] w-[10px]" /> {guildId}
+                              <Server className="h-[10px] w-[10px]" /> {linkedServer?.guildName || guildId}
                             </span>
-                          ))}
+                          )})}
                         </div>
                       )}
 
@@ -872,6 +1039,105 @@ export function TeamsTab() {
                   )}
 
                   {/* ── TAB: ROLES ─────────────────────────────────────────── */}
+                  {tab === "servers" && canManageServers && (
+                    <div className="space-y-[14px]">
+                      <div className="rounded-[14px] border border-[#141414] bg-[#080808] p-[16px]">
+                        <div className="flex flex-col gap-[10px] sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <p className="text-[13px] font-semibold text-[#DDDDDD]">Servidores da equipe</p>
+                            <p className="mt-[6px] text-[12px] leading-[1.6] text-[#555555]">
+                              Escolha quais servidores este time pode operar dentro do painel.
+                            </p>
+                          </div>
+                          <span className="text-[12px] text-[#777777]">
+                            {selectedServerDraft.length} selecionado(s)
+                          </span>
+                        </div>
+
+                        <div className="mt-[14px] space-y-[8px]">
+                          {teamServerOptions.length ? (
+                            teamServerOptions.map((server) => {
+                              const isChecked = selectedServerDraftSet.has(server.guildId);
+                              return (
+                                <label
+                                  key={server.guildId}
+                                  className={`flex cursor-pointer items-center gap-[12px] rounded-[12px] border px-[14px] py-[12px] transition-colors ${
+                                    isChecked
+                                      ? "border-[rgba(0,98,255,0.28)] bg-[rgba(0,98,255,0.06)]"
+                                      : "border-[#141414] bg-[#0A0A0A] hover:border-[#1C1C1C]"
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    onChange={() => handleToggleTeamServer(team.id, server.guildId)}
+                                    className="hidden"
+                                  />
+                                  <span
+                                    className={`inline-flex h-[18px] w-[18px] items-center justify-center rounded-[6px] border ${
+                                      isChecked
+                                        ? "border-[#0062FF] bg-[#0062FF]"
+                                        : "border-[#303030] bg-[#111111]"
+                                    }`}
+                                  >
+                                    {isChecked ? (
+                                      <span className="h-[6px] w-[6px] rounded-full bg-white" />
+                                    ) : null}
+                                  </span>
+                                  <div className="min-w-0 flex-1">
+                                    <p className="truncate text-[13px] font-medium text-[#D8D8D8]">
+                                      {server.guildName}
+                                    </p>
+                                    <p className="mt-[4px] text-[11px] text-[#555555] font-mono">
+                                      {server.guildId}
+                                    </p>
+                                  </div>
+                                  <span className="rounded-full bg-[#111111] px-[8px] py-[3px] text-[10px] font-medium uppercase tracking-wide text-[#777777]">
+                                    {server.status}
+                                  </span>
+                                </label>
+                              );
+                            })
+                          ) : (
+                            <div className="rounded-[12px] border border-[#141414] bg-[#0A0A0A] px-[14px] py-[14px] text-[13px] leading-[1.6] text-[#666666]">
+                              Nenhum servidor elegivel para vincular a esta equipe agora.
+                            </div>
+                          )}
+                        </div>
+
+                        {!!unlinkedTeamEligibleServers.length && (
+                          <p className="mt-[12px] text-[11px] leading-[1.6] text-[#4F4F4F]">
+                            Servidores livres no painel: {unlinkedTeamEligibleServers.length}
+                          </p>
+                        )}
+
+                        <div className="mt-[16px] flex flex-col gap-[8px] sm:flex-row">
+                          <button
+                            type="button"
+                            onClick={() => handleResetTeamServers(team)}
+                            disabled={savingServersTeamId === team.id || !hasServerDraftChanges}
+                            className="flex h-[38px] items-center justify-center rounded-[10px] border border-[#1A1A1A] bg-[#0A0A0A] px-[14px] text-[12px] font-medium text-[#A0A0A0] transition hover:border-[#262626] hover:text-[#E0E0E0] disabled:opacity-40"
+                          >
+                            Restaurar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleSaveTeamServers(team)}
+                            disabled={
+                              savingServersTeamId === team.id ||
+                              !hasServerDraftChanges ||
+                              !selectedServerDraft.length
+                            }
+                            className="flex h-[38px] flex-1 items-center justify-center gap-[8px] rounded-[10px] bg-[#F1F1F1] px-[14px] text-[12px] font-semibold text-[#111111] transition hover:opacity-90 disabled:opacity-30"
+                          >
+                            {savingServersTeamId === team.id ? <Spinner size={14} /> : <Check className="h-[14px] w-[14px]" />}
+                            Salvar servidores
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {tab === "roles" && canManageRoles && (
                     <div className="space-y-[20px]">
                       {/* Existing roles */}

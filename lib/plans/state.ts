@@ -7,6 +7,7 @@ import {
   DEFAULT_PLAN_CODE,
   buildPlanSnapshot,
   normalizePlanBillingPeriodCode,
+  normalizePlanCode,
   isPlanCode,
   type PlanPricingDefinition,
   resolvePlanDefinition,
@@ -1074,6 +1075,51 @@ export async function resolveEffectivePlanSelection(input: {
   return {
     plan,
     guildSettings,
+    userPlanState,
+    basicPlanAvailability,
+    flowPointsBalance: resolveFlowPointsBalanceAmount(flowPointsBalanceRecord),
+    scheduledChange,
+  };
+}
+
+export async function resolveEffectivePlanSelectionForCheckoutContext(input: {
+  userId: number;
+  guildId: string | null;
+  preferredPlanCode?: unknown;
+  preferredBillingPeriodCode?: unknown;
+}) {
+  if (input.guildId) {
+    return resolveEffectivePlanSelection({
+      userId: input.userId,
+      guildId: input.guildId,
+      preferredPlanCode: input.preferredPlanCode,
+      preferredBillingPeriodCode: input.preferredBillingPeriodCode,
+    });
+  }
+
+  const [
+    userPlanState,
+    basicPlanAvailability,
+    flowPointsBalanceRecord,
+    scheduledChange,
+  ] = await Promise.all([
+    getUserPlanState(input.userId),
+    getBasicPlanAvailability(input.userId),
+    getUserPlanFlowPointsBalance(input.userId),
+    getUserPlanScheduledChange(input.userId),
+  ]);
+
+  const plan = applyUserPlanStatePricingAdjustments(
+    resolvePlanPricing(
+      normalizePlanCode(input.preferredPlanCode),
+      normalizePlanBillingPeriodCode(input.preferredBillingPeriodCode),
+    ),
+    userPlanState,
+  );
+
+  return {
+    plan,
+    guildSettings: null,
     userPlanState,
     basicPlanAvailability,
     flowPointsBalance: resolveFlowPointsBalanceAmount(flowPointsBalanceRecord),

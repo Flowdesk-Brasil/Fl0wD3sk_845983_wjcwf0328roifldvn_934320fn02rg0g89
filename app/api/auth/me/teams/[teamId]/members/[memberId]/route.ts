@@ -3,7 +3,10 @@ import { getCurrentAuthSessionFromCookie } from "@/lib/auth/session";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { applyNoStoreHeaders, ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
-import { assertTeamPermission } from "@/lib/teams/userTeams";
+import {
+  assertTeamPermission,
+  invalidateTeamAccessCachesForTeam,
+} from "@/lib/teams/userTeams";
 
 export async function DELETE(
   request: Request,
@@ -40,6 +43,7 @@ export async function DELETE(
       .eq("team_id", teamId);
 
     if (deleteResult.error) throw new Error(deleteResult.error.message);
+    await invalidateTeamAccessCachesForTeam(teamId);
 
     return applyNoStoreHeaders(NextResponse.json({ ok: true }));
   } catch (error) {
