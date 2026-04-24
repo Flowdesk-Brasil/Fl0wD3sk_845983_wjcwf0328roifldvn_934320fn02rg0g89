@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { History, CheckCircle2, XCircle, AlertCircle, QrCode, CreditCard, Search, ChevronDown, MessageSquare } from "lucide-react";
 import { usePaymentHistory } from "@/hooks/useAccountData";
 
@@ -15,6 +15,8 @@ type Order = {
   status: OrderStatus;
   amount: number;
   currency: string;
+  planCode?: string | null;
+  planName?: string | null;
   paidAt: string | null;
   createdAt: string;
   expiresAt?: string | null;
@@ -33,6 +35,8 @@ type Order = {
     payableBeforeDiscountsAmount: number;
   } | null;
 };
+
+const ORDERS_PER_PAGE = 9;
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("pt-BR", {
@@ -93,12 +97,74 @@ function groupOrdersByMonth(orders: Order[]) {
   }));
 }
 
+function prettifyPlanCode(planCode: string) {
+  return planCode
+    .replace(/[-_]+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function resolvePlanLabel(order: Order) {
+  if (typeof order.planName === "string" && order.planName.trim()) {
+    return order.planName.trim();
+  }
+
+  if (typeof order.planCode === "string" && order.planCode.trim()) {
+    return prettifyPlanCode(order.planCode);
+  }
+
+  return "Plano contratado";
+}
+
+function buildPaginationItems(totalPages: number, currentPage: number) {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  const pages = new Set<number>([1, totalPages, currentPage]);
+
+  if (currentPage <= 4) {
+    pages.add(2);
+    pages.add(3);
+    pages.add(4);
+    pages.add(5);
+  } else if (currentPage >= totalPages - 3) {
+    pages.add(totalPages - 1);
+    pages.add(totalPages - 2);
+    pages.add(totalPages - 3);
+    pages.add(totalPages - 4);
+  } else {
+    pages.add(currentPage - 1);
+    pages.add(currentPage + 1);
+  }
+
+  const sortedPages = [...pages]
+    .filter((page) => page >= 1 && page <= totalPages)
+    .sort((left, right) => left - right);
+
+  const items: Array<number | string> = [];
+
+  for (let index = 0; index < sortedPages.length; index += 1) {
+    const page = sortedPages[index];
+    const previous = sortedPages[index - 1];
+
+    if (typeof previous === "number" && page - previous > 1) {
+      items.push(`ellipsis-${previous}-${page}`);
+    }
+
+    items.push(page);
+  }
+
+  return items;
+}
+
 export function PaymentHistoryTab({ onNavigateTickets: _onNavigateTickets }: { onNavigateTickets?: () => void }) {
   void _onNavigateTickets;
   const { orders, loading } = usePaymentHistory();
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "approved" | "pending" | "failed">("all");
   const [expandedOrderId, setExpandedOrderId] = useState<number | null>(null);
+  const [rawCurrentPage, setRawCurrentPage] = useState(1);
 
   const filteredOrders = useMemo(() => {
     return orders.filter((order: Order) => {
@@ -109,6 +175,14 @@ export function PaymentHistoryTab({ onNavigateTickets: _onNavigateTickets }: { o
       return matchSearch && matchStatus;
     });
   }, [orders, searchQuery, statusFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / ORDERS_PER_PAGE));
+  const currentPage = Math.min(rawCurrentPage, totalPages);
+
+  const paginatedOrders = useMemo(() => {
+    const startIndex = (currentPage - 1) * ORDERS_PER_PAGE;
+    return filteredOrders.slice(startIndex, startIndex + ORDERS_PER_PAGE);
+  }, [currentPage, filteredOrders]);
 
   if (loading) {
     return (
@@ -121,7 +195,8 @@ export function PaymentHistoryTab({ onNavigateTickets: _onNavigateTickets }: { o
     );
   }
 
-  const groups = groupOrdersByMonth(filteredOrders);
+  const groups = groupOrdersByMonth(paginatedOrders);
+  const paginationItems = buildPaginationItems(totalPages, currentPage);
 
   return (
     <div className="mt-[32px] space-y-[24px]">
@@ -133,7 +208,11 @@ export function PaymentHistoryTab({ onNavigateTickets: _onNavigateTickets }: { o
             <input
               type="text"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setRawCurrentPage(1);
+                setExpandedOrderId(null);
+              }}
               placeholder="Buscar por nº do pedido..."
               className="w-full bg-transparent text-[15px] text-[#D5D5D5] outline-none placeholder:text-[#4A4A4A]"
             />
@@ -146,7 +225,11 @@ export function PaymentHistoryTab({ onNavigateTickets: _onNavigateTickets }: { o
                 return (
                   <button
                     key={opt}
-                    onClick={() => setStatusFilter(opt)}
+                    onClick={() => {
+                      setStatusFilter(opt);
+                      setRawCurrentPage(1);
+                      setExpandedOrderId(null);
+                    }}
                     className={`rounded-[10px] px-[16px] py-[8px] text-[13px] font-semibold transition-all ${
                       isActive
                         ? "bg-[#1A1A1A] text-[#EEEEEE] shadow-sm"
@@ -214,6 +297,9 @@ export function PaymentHistoryTab({ onNavigateTickets: _onNavigateTickets }: { o
                             <p className="mt-[3px] text-[13px] text-[#636363]">
                               {formatDate(order.paidAt || order.createdAt)}
                             </p>
+                            <p className="mt-[4px] text-[12px] font-medium text-[#8A8A8A]">
+                              {resolvePlanLabel(order)}
+                            </p>
                           </div>
                         </div>
 
@@ -268,6 +354,9 @@ export function PaymentHistoryTab({ onNavigateTickets: _onNavigateTickets }: { o
                             <div className="space-y-[16px]">
                               <div>
                                 <p className="text-[11px] font-bold uppercase tracking-widest text-[#444]">Produto</p>
+                                <p className="mt-[6px] text-[13px] font-medium text-[#8A8A8A]">
+                                  {resolvePlanLabel(order)}
+                                </p>
                                 <p className="mt-[4px] text-[15px] font-semibold text-[#D1D1D1]">Licença Flowdesk</p>
                               </div>
                               <div>
@@ -350,6 +439,59 @@ export function PaymentHistoryTab({ onNavigateTickets: _onNavigateTickets }: { o
           ))}
         </div>
       )}
+
+      {filteredOrders.length > ORDERS_PER_PAGE ? (
+        <div className="flex flex-wrap items-center justify-center gap-[12px] pt-[2px] md:justify-end">
+          <button
+            type="button"
+            onClick={() => {
+              setRawCurrentPage((page) => Math.max(1, page - 1));
+              setExpandedOrderId(null);
+            }}
+            disabled={currentPage === 1}
+            className="text-[12px] font-semibold uppercase tracking-[0.14em] text-[#7B7B7B] transition-colors hover:text-[#EDEDED] disabled:cursor-not-allowed disabled:opacity-35"
+          >
+            Anterior
+          </button>
+
+          {paginationItems.map((item) =>
+            typeof item === "number" ? (
+              <button
+                key={item}
+                type="button"
+                onClick={() => {
+                  setRawCurrentPage(item);
+                  setExpandedOrderId(null);
+                }}
+                aria-current={currentPage === item ? "page" : undefined}
+                className={`min-w-[22px] text-center text-[14px] font-semibold transition-colors ${
+                  currentPage === item
+                    ? "text-[#F1F1F1]"
+                    : "text-[#6F6F6F] hover:text-[#D9D9D9]"
+                }`}
+              >
+                {item}
+              </button>
+            ) : (
+              <span key={item} className="text-[14px] font-semibold text-[#555555]">
+                ...
+              </span>
+            ),
+          )}
+
+          <button
+            type="button"
+            onClick={() => {
+              setRawCurrentPage((page) => Math.min(totalPages, page + 1));
+              setExpandedOrderId(null);
+            }}
+            disabled={currentPage === totalPages}
+            className="text-[12px] font-semibold uppercase tracking-[0.14em] text-[#7B7B7B] transition-colors hover:text-[#EDEDED] disabled:cursor-not-allowed disabled:opacity-35"
+          >
+            Proximo
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

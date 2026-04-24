@@ -36,6 +36,8 @@ export type PaymentOrderRecord = {
   status: PaymentOrderStatus;
   amount: string | number;
   currency: string;
+  plan_code: string | null;
+  plan_name: string | null;
   provider_payment_id: string | null;
   provider_status: string | null;
   provider_status_detail: string | null;
@@ -61,6 +63,8 @@ export type HistoryOrder = {
   status: PaymentOrderStatus;
   amount: number;
   currency: string;
+  planCode: string | null;
+  planName: string | null;
   providerStatus: string | null;
   providerStatusDetail: string | null;
   card: unknown;
@@ -89,7 +93,7 @@ export type ManagedHistory = {
 };
 
 const PAYMENT_HISTORY_SELECT_COLUMNS =
-  "id, order_number, user_id, guild_id, payment_method, status, amount, currency, provider_payment_id, provider_status, provider_status_detail, provider_payload, paid_at, expires_at, created_at, updated_at";
+  "id, order_number, user_id, guild_id, payment_method, status, amount, currency, plan_code, plan_name, provider_payment_id, provider_status, provider_status_detail, provider_payload, paid_at, expires_at, created_at, updated_at";
 
 const PAYMENT_HISTORY_EVENT_SELECT_COLUMNS =
   "payment_order_id, event_type, event_payload, created_at";
@@ -229,6 +233,8 @@ function toHistoryOrder(
     status: order.status,
     amount: toFiniteAmount(order.amount),
     currency: order.currency,
+    planCode: order.plan_code,
+    planName: order.plan_name,
     providerStatus: order.provider_status,
     providerStatusDetail: order.provider_status_detail,
     card,

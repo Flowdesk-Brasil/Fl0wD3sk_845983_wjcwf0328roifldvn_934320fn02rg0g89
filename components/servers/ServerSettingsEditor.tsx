@@ -5554,7 +5554,11 @@ export function ServerSettingsEditor({
         >
           <div className="min-w-0 w-full shrink-0">
             {shouldShowBlockingSkeleton ? (
-              <ServerSettingsEditorSkeleton standalone />
+              <ServerSettingsEditorSkeleton
+                standalone
+                tab={activeTab}
+                settingsSection={settingsSection}
+              />
             ) : (
               <>
                 {isLoading ? (

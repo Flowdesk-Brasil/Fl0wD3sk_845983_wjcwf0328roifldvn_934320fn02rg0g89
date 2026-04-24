@@ -700,7 +700,10 @@ export function ServersDashboard({
               }}
             />
           ) : shouldShowEditorSkeleton ? (
-            <ServerSettingsEditorSkeleton standalone />
+            <ServerSettingsEditorSkeleton
+              standalone
+              tab={selectedEditorTabForConfig}
+            />
           ) : null}
 
           {!isEditingServer ? (

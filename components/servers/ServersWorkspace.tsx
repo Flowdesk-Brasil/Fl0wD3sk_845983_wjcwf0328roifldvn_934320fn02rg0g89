@@ -4085,7 +4085,11 @@ export function ServersWorkspace({
                     )
                   ) : (
                     <div className={editorPanelRevealClass}>
-                      <ServerSettingsEditorSkeleton standalone />
+                      <ServerSettingsEditorSkeleton
+                        standalone
+                        tab={selectedEditorTabForConfig}
+                        settingsSection={selectedSettingsSectionForConfig}
+                      />
                     </div>
                   )}
                 </LandingReveal>
@@ -4116,7 +4120,11 @@ export function ServersWorkspace({
               ) : shouldShowEditorSkeleton ? (
                 <LandingReveal delay={52} duration={240}>
                   <div className={editorPanelRevealClass}>
-                    <ServerSettingsEditorSkeleton standalone />
+                    <ServerSettingsEditorSkeleton
+                      standalone
+                      tab={selectedEditorTabForConfig}
+                      settingsSection={selectedSettingsSectionForConfig}
+                    />
                   </div>
                 </LandingReveal>
               ) : shouldShowEditorUnavailableState ? (

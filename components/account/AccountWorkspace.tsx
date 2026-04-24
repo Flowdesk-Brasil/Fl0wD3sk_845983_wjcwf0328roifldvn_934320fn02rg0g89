@@ -98,7 +98,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     category: "Cobrança",
     items: [
-      { id: "plans", label: "Planos", icon: BadgePercent },
+      { id: "plans", label: "Assinaturas", icon: BadgePercent },
       { id: "payment_methods", label: "Métodos de Pagamento", icon: CreditCard },
       { id: "payment_history", label: "Histórico", icon: History },
     ],
@@ -120,6 +120,25 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
+const ACCOUNT_NAV_GROUPS: NavGroup[] = NAV_GROUPS.map((group) => ({
+  ...group,
+  items: group.items.map((item) => {
+    if (item.id === "plans") {
+      return { ...item, label: "Assinaturas" };
+    }
+
+    if (item.id === "payment_methods") {
+      return { ...item, label: "Metodos de Pagamento" };
+    }
+
+    if (item.id === "payment_history") {
+      return { ...item, label: "Historico de Pagamentos" };
+    }
+
+    return item;
+  }),
+}));
+
 const ACCOUNT_SIDEBAR_COLLAPSE_KEY = "flowdesk_account_sidebar_groups_v1";
 const SAVED_PANEL_ACCOUNTS_KEY = "flowdesk_saved_panel_accounts_v1";
 
@@ -129,7 +148,7 @@ function buildAccountGroupKey(group: NavGroup, groupIndex: number) {
 
 function buildDefaultCollapsedGroups() {
   return Object.fromEntries(
-    NAV_GROUPS.map((group, groupIndex) => [buildAccountGroupKey(group, groupIndex), true]),
+    ACCOUNT_NAV_GROUPS.map((group, groupIndex) => [buildAccountGroupKey(group, groupIndex), true]),
   ) as Record<string, boolean>;
 }
 
@@ -502,12 +521,12 @@ export function AccountWorkspace({
   }, [collapsedGroups, hasLoadedCollapsedGroups]);
 
   useEffect(() => {
-    const activeGroupIndex = NAV_GROUPS.findIndex((group) =>
+    const activeGroupIndex = ACCOUNT_NAV_GROUPS.findIndex((group) =>
       group.items.some((item) => item.id === activeTab),
     );
     if (activeGroupIndex < 0) return;
 
-    const groupKey = buildAccountGroupKey(NAV_GROUPS[activeGroupIndex], activeGroupIndex);
+    const groupKey = buildAccountGroupKey(ACCOUNT_NAV_GROUPS[activeGroupIndex], activeGroupIndex);
     setCollapsedGroups((prev) => {
       if (prev[groupKey] === false) return prev;
       return { ...prev, [groupKey]: false };
@@ -590,7 +609,7 @@ export function AccountWorkspace({
     },
     plans: {
       eyebrow: "Cobrança",
-      title: "Planos",
+      title: "Assinaturas",
       subtitle: "Seu plano atual, status de ativação e opções de upgrade.",
     },
     payment_methods: {
@@ -673,12 +692,12 @@ export function AccountWorkspace({
       </div>
 
       <div className="mt-[14px] flex-1 overflow-y-auto pr-[2px]">
-        {NAV_GROUPS.map((group, groupIndex) => {
+        {ACCOUNT_NAV_GROUPS.map((group, groupIndex) => {
           const visibleItems = group.items.filter(matchesSearch);
           if (!visibleItems.length) return null;
           const shouldShowCategory =
             groupIndex === 0 ||
-            (group.category !== NAV_GROUPS[groupIndex - 1]?.category);
+            (group.category !== ACCOUNT_NAV_GROUPS[groupIndex - 1]?.category);
 
           const groupKey = buildAccountGroupKey(group, groupIndex);
           const isCollapsed = collapsedGroups[groupKey] && !normalizedSearch;

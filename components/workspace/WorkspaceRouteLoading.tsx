@@ -1,4 +1,8 @@
-import { ServerSettingsEditorSkeleton } from "@/components/servers/ServerSettingsEditorSkeleton";
+import {
+  ServerSettingsEditorSkeleton,
+  type ServerSettingsSkeletonSection,
+  type ServerSettingsSkeletonTab,
+} from "@/components/servers/ServerSettingsEditorSkeleton";
 
 type WorkspaceRouteLoadingVariant =
   | "dashboard"
@@ -8,6 +12,8 @@ type WorkspaceRouteLoadingVariant =
 
 type WorkspaceRouteLoadingProps = {
   variant: WorkspaceRouteLoadingVariant;
+  tab?: ServerSettingsSkeletonTab;
+  settingsSection?: ServerSettingsSkeletonSection | null;
 };
 
 function SkeletonBar({
@@ -449,7 +455,13 @@ function ServersOverviewMainSkeleton() {
   );
 }
 
-function ServerSettingsMainSkeleton() {
+function ServerSettingsMainSkeleton({
+  tab = "settings",
+  settingsSection = "overview",
+}: {
+  tab?: ServerSettingsSkeletonTab;
+  settingsSection?: ServerSettingsSkeletonSection | null;
+}) {
   return (
     <section className="min-w-0">
       <div className="relative z-[700] flex flex-col gap-[18px]">
@@ -463,13 +475,21 @@ function ServerSettingsMainSkeleton() {
       </div>
 
       <div className="mt-[22px]">
-        <ServerSettingsEditorSkeleton standalone />
+        <ServerSettingsEditorSkeleton
+          standalone
+          tab={tab}
+          settingsSection={settingsSection}
+        />
       </div>
     </section>
   );
 }
 
-function resolveWorkspaceMainSkeleton(variant: WorkspaceRouteLoadingVariant) {
+function resolveWorkspaceMainSkeleton({
+  variant,
+  tab,
+  settingsSection,
+}: WorkspaceRouteLoadingProps) {
   if (variant === "dashboard") {
     return <DashboardMainSkeleton />;
   }
@@ -479,7 +499,7 @@ function resolveWorkspaceMainSkeleton(variant: WorkspaceRouteLoadingVariant) {
   }
 
   if (variant === "server-settings") {
-    return <ServerSettingsMainSkeleton />;
+    return <ServerSettingsMainSkeleton tab={tab} settingsSection={settingsSection} />;
   }
 
   return <ServersOverviewMainSkeleton />;
@@ -487,6 +507,8 @@ function resolveWorkspaceMainSkeleton(variant: WorkspaceRouteLoadingVariant) {
 
 export function WorkspaceRouteContentLoading({
   variant,
+  tab,
+  settingsSection,
 }: WorkspaceRouteLoadingProps) {
   if (variant === "dashboard") {
     return (
@@ -498,13 +520,15 @@ export function WorkspaceRouteContentLoading({
 
   return (
     <section className="min-w-0">
-      {resolveWorkspaceMainSkeleton(variant)}
+      {resolveWorkspaceMainSkeleton({ variant, tab, settingsSection })}
     </section>
   );
 }
 
 export function WorkspaceRouteLoading({
   variant,
+  tab,
+  settingsSection,
 }: WorkspaceRouteLoadingProps) {
   const isAccount = variant === "account";
   const sidebarShellClass = isAccount
@@ -516,7 +540,11 @@ export function WorkspaceRouteLoading({
     ? "relative px-[20px] pt-[32px] pb-[56px] md:px-6 lg:px-8 xl:min-h-screen xl:pl-[358px] xl:pr-[42px]"
     : "relative px-[20px] pt-[32px] pb-[56px] md:px-6 lg:min-h-screen lg:pl-[358px] lg:pr-[42px]";
 
-  const mainContent = resolveWorkspaceMainSkeleton(variant);
+  const mainContent = resolveWorkspaceMainSkeleton({
+    variant,
+    tab,
+    settingsSection,
+  });
 
   return (
     <div className="relative min-h-screen overflow-x-clip bg-[#040404] text-white">
