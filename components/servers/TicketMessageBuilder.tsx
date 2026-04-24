@@ -137,6 +137,13 @@ function scopeKey(scope: Scope) {
   return scope.parentId ? `${scope.parentId}:${scope.componentId}` : scope.componentId;
 }
 
+function isSameScope(left: Scope | null, right: Scope | null) {
+  return (
+    left?.parentId === right?.parentId &&
+    left?.componentId === right?.componentId
+  );
+}
+
 function isAction(component: TicketPanelContainerChild | TicketPanelComponent): component is ActionComponent {
   return component.type === "button" || component.type === "link_button" || component.type === "select";
 }
@@ -658,6 +665,82 @@ function insertContainerChild(
   return hasInserted ? nextLayout : layout;
 }
 
+function mapComponentToContentAccessory(
+  component: TicketPanelComponent | TicketPanelContainerChild,
+): TicketPanelContentAccessory | null {
+  if (component.type === "button") {
+    return {
+      type: "button",
+      label: component.label,
+      style: component.style,
+      disabled: component.disabled,
+    };
+  }
+
+  if (component.type === "link_button") {
+    return {
+      type: "link_button",
+      label: component.label,
+      url: component.url,
+    };
+  }
+
+  if (component.type === "image") {
+    return {
+      type: "thumbnail",
+      imageUrl: component.url,
+      alt: component.alt,
+    };
+  }
+
+  return null;
+}
+
+function assignContentAccessory(
+  layout: TicketPanelLayout,
+  scope: Scope,
+  accessory: TicketPanelContentAccessory,
+) {
+  let updated = false;
+
+  const nextLayout = layout.map((component) => {
+    if (scope.parentId) {
+      if (component.type !== "container" || component.id !== scope.parentId) {
+        return component;
+      }
+
+      return {
+        ...component,
+        children: component.children.map((child) => {
+          if (child.id !== scope.componentId || child.type !== "content") {
+            return child;
+          }
+          updated = true;
+          return {
+            ...child,
+            accessory,
+          };
+        }),
+      };
+    }
+
+    if (component.id !== scope.componentId || component.type !== "content") {
+      return component;
+    }
+
+    updated = true;
+    return {
+      ...component,
+      accessory,
+    };
+  });
+
+  return {
+    layout: nextLayout,
+    updated,
+  };
+}
+
 function isSameDropSlot(left: DropSlot | null, right: DropSlot | null) {
   return (
     left?.parentId === right?.parentId &&
@@ -990,6 +1073,7 @@ function TicketMessageBuilder({
   const [menuAnchor, setMenuAnchor] = useState<MenuAnchor | null>(null);
   const [dragState, setDragState] = useState<DragState>(null);
   const [activeDropSlot, setActiveDropSlot] = useState<DropSlot | null>(null);
+  const [activeAccessoryDropScope, setActiveAccessoryDropScope] = useState<Scope | null>(null);
   const [customAccentContainerId, setCustomAccentContainerId] = useState<string | null>(null);
   const [customAccentDrafts, setCustomAccentDrafts] = useState<Record<string, string>>({});
   const [pendingPreviewLink, setPendingPreviewLink] = useState<{ url: string; label: string } | null>(null);
@@ -1014,6 +1098,10 @@ function TicketMessageBuilder({
     );
     return parent?.children.find((child) => child.id === dragState.componentId) ?? null;
   }, [dragState, layout]);
+  const draggedAccessory = useMemo(
+    () => (draggedComponent ? mapComponentToContentAccessory(draggedComponent) : null),
+    [draggedComponent],
+  );
   const hasFunctionalButton = functionalButtonCount > 0;
   const rootItems = useMemo(
     () => (hasFunctionalButton ? ROOT_ITEMS.filter((item) => item.value !== "button") : ROOT_ITEMS),
@@ -1186,6 +1274,7 @@ function TicketMessageBuilder({
   useEffect(() => {
     if (!dragState) {
       setActiveDropSlot(null);
+      setActiveAccessoryDropScope(null);
     }
   }, [dragState]);
 
@@ -1271,6 +1360,30 @@ function TicketMessageBuilder({
     }
     commit(moveById(layout, scope.componentId, direction));
   }, [commit, layout, updateContainerChildren]);
+
+  const canDropAccessoryAtScope = useCallback((scope: Scope) => {
+    if (!dragState || disabled || !draggedAccessory) {
+      return false;
+    }
+
+    if (scope.parentId) {
+      const parent = layout.find(
+        (component): component is TicketPanelContainerComponent =>
+          component.type === "container" && component.id === scope.parentId,
+      );
+      return Boolean(
+        parent?.children.some(
+          (child) => child.id === scope.componentId && child.type === "content",
+        ),
+      );
+    }
+
+    return Boolean(
+      layout.some(
+        (component) => component.id === scope.componentId && component.type === "content",
+      ),
+    );
+  }, [disabled, dragState, draggedAccessory, layout]);
 
   const canDropAtSlot = useCallback((slot: DropSlot) => {
     if (!dragState || disabled || !draggedComponent) return false;
@@ -1361,8 +1474,45 @@ function TicketMessageBuilder({
 
     commit(nextLayout);
     setActiveDropSlot(null);
+    setActiveAccessoryDropScope(null);
     setDragState(null);
   }, [canDropAtSlot, commit, dragState, layout]);
+
+  const applyAccessoryDrop = useCallback((scope: Scope) => {
+    if (!dragState || !draggedAccessory || !canDropAccessoryAtScope(scope)) {
+      return;
+    }
+
+    let baseLayout = layout;
+
+    if (dragState.kind === "root") {
+      const extracted = extractRootComponent(layout, dragState.componentId);
+      if (!extracted.moved || !mapComponentToContentAccessory(extracted.moved)) {
+        return;
+      }
+      baseLayout = extracted.layout;
+    } else {
+      const extracted = extractContainerChild(
+        layout,
+        dragState.parentId,
+        dragState.componentId,
+      );
+      if (!extracted.moved || !mapComponentToContentAccessory(extracted.moved)) {
+        return;
+      }
+      baseLayout = extracted.layout;
+    }
+
+    const assigned = assignContentAccessory(baseLayout, scope, draggedAccessory);
+    if (!assigned.updated) {
+      return;
+    }
+
+    commit(assigned.layout);
+    setActiveAccessoryDropScope(null);
+    setActiveDropSlot(null);
+    setDragState(null);
+  }, [canDropAccessoryAtScope, commit, dragState, draggedAccessory, layout]);
 
   const renderDropSlot = (
     slot: DropSlot,
@@ -1383,14 +1533,18 @@ function TicketMessageBuilder({
         onDragOver={(event) => {
           if (!canDrop) return;
           event.preventDefault();
+          event.stopPropagation();
           event.dataTransfer.dropEffect = "move";
+          setActiveAccessoryDropScope(null);
           setActiveDropSlot((current) => (isSameDropSlot(current, slot) ? current : slot));
         }}
         onDrop={(event) => {
           if (!canDrop) return;
           event.preventDefault();
+          event.stopPropagation();
           applyDropSlot(slot);
         }}
+        data-ticket-drop-slot="true"
         className="relative overflow-visible transition-[height] duration-150 ease-out"
         style={{ height: reservedHeight }}
       >
@@ -1432,44 +1586,352 @@ function TicketMessageBuilder({
     return groups;
   };
 
-  const renderContentAccessoryEditor = (content: TicketPanelContentComponent, scope: Scope) => (
-    <>
-      <div className="flex items-start justify-end pt-[2px]">
-        <div className="relative" data-ticket-menu="true">
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={(event) => {
-              const shouldClose = openMenu && openMenu.kind === "accessory" && scopeKey(openMenu.scope) === scopeKey(scope);
-              setOpenMenu(shouldClose ? null : { kind: "accessory", scope });
-              setMenuAnchor(shouldClose ? null : getMenuAnchor(event.currentTarget));
-            }}
-            className={cn(
-              "inline-flex h-[42px] w-[42px] items-center justify-center rounded-[14px] border transition-colors duration-200",
-              content.accessory
-                ? "border-[#F2F2F2] bg-[#111111] text-[#F2F2F2]"
-                : "border-[#171717] bg-[#0C0C0C] text-[#B7B7B7] hover:bg-[#111111] hover:text-[#EDEDED]",
-              disabled && "cursor-not-allowed opacity-50",
-            )}
-            aria-label={content.accessory ? "Trocar acessorio" : "Adicionar acessorio"}
-            title={content.accessory ? "Trocar acessorio" : "Adicionar acessorio"}
-          >
-            <Shapes className="h-[17px] w-[17px]" strokeWidth={2} />
-          </button>
-          {openMenu && openMenu.kind === "accessory" && scopeKey(openMenu.scope) === scopeKey(scope) ? <Menu items={ACCESSORY_ITEMS.filter((item) => item.value !== "button" || content.accessory?.type === "button" || !hasFunctionalButton)} anchor={menuAnchor} onSelect={(type) => { const nextAccessory = createTicketPanelContentAccessoryByType(type); if (scope.parentId) updateChild(scope.parentId, scope.componentId, (current) => current.type === "content" ? { ...current, accessory: nextAccessory } : current); else updateRoot(scope.componentId, (current) => current.type === "content" ? { ...current, accessory: nextAccessory } : current); setOpenMenu(null); setMenuAnchor(null); }} align="right" /> : null}
+  const renderContentAccessoryEditor = (content: TicketPanelContentComponent, scope: Scope) => {
+    const canDropAccessory = canDropAccessoryAtScope(scope);
+    const isAccessoryDropActive = isSameScope(activeAccessoryDropScope, scope);
+    const accessoryTitle = content.accessory
+      ? content.accessory.type === "thumbnail"
+        ? "Miniatura"
+        : content.accessory.type === "user_thumbnail"
+          ? "Foto do usuario"
+          : content.accessory.type === "link_button"
+            ? "Botao de link"
+            : "Botao"
+      : "Slot lateral";
+
+    return (
+      <>
+        <div className="flex items-start justify-end pt-[2px]">
+          <div className="relative" data-ticket-menu="true">
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={(event) => {
+                const shouldClose =
+                  openMenu &&
+                  openMenu.kind === "accessory" &&
+                  scopeKey(openMenu.scope) === scopeKey(scope);
+                setOpenMenu(shouldClose ? null : { kind: "accessory", scope });
+                setMenuAnchor(shouldClose ? null : getMenuAnchor(event.currentTarget));
+              }}
+              className={cn(
+                "inline-flex h-[42px] w-[42px] items-center justify-center rounded-[14px] border transition-colors duration-200",
+                content.accessory
+                  ? "border-[#F2F2F2] bg-[#111111] text-[#F2F2F2]"
+                  : "border-[#171717] bg-[#0C0C0C] text-[#B7B7B7] hover:bg-[#111111] hover:text-[#EDEDED]",
+                disabled && "cursor-not-allowed opacity-50",
+              )}
+              aria-label={content.accessory ? "Trocar acessorio" : "Adicionar acessorio"}
+              title={content.accessory ? "Trocar acessorio" : "Adicionar acessorio"}
+            >
+              <Shapes className="h-[17px] w-[17px]" strokeWidth={2} />
+            </button>
+            {openMenu &&
+            openMenu.kind === "accessory" &&
+            scopeKey(openMenu.scope) === scopeKey(scope) ? (
+              <Menu
+                items={ACCESSORY_ITEMS.filter(
+                  (item) =>
+                    item.value !== "button" ||
+                    content.accessory?.type === "button" ||
+                    !hasFunctionalButton,
+                )}
+                anchor={menuAnchor}
+                onSelect={(type) => {
+                  const nextAccessory = createTicketPanelContentAccessoryByType(type);
+                  if (scope.parentId) {
+                    updateChild(scope.parentId, scope.componentId, (current) =>
+                      current.type === "content"
+                        ? { ...current, accessory: nextAccessory }
+                        : current,
+                    );
+                  } else {
+                    updateRoot(scope.componentId, (current) =>
+                      current.type === "content"
+                        ? { ...current, accessory: nextAccessory }
+                        : current,
+                    );
+                  }
+                  setOpenMenu(null);
+                  setMenuAnchor(null);
+                }}
+                align="right"
+              />
+            ) : null}
+          </div>
         </div>
-      </div>
-      {content.accessory ? (
-        <div className="space-y-[12px] rounded-[16px] border border-[#171717] bg-[#080808] p-[12px] xl:col-span-2">
-          <div className="flex items-center justify-between gap-[12px]"><p className="text-[13px] font-medium text-[#E8E8E8]">{content.accessory.type === "thumbnail" ? "Miniatura" : content.accessory.type === "user_thumbnail" ? "Foto do usuario" : content.accessory.type === "link_button" ? "Botao de link" : "Botao"}</p><IconButton label="Remover acessorio" disabled={disabled} onClick={() => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "content" ? { ...current, accessory: null } : current) : updateRoot(scope.componentId, (current) => current.type === "content" ? { ...current, accessory: null } : current)}><Trash2 className="h-[15px] w-[15px]" strokeWidth={2.1} /></IconButton></div>
-          {content.accessory.type === "thumbnail" ? <div className="grid gap-[12px]"><Field value={content.accessory.imageUrl} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "content" && current.accessory?.type === "thumbnail" ? { ...current, accessory: { ...current.accessory, imageUrl: next.slice(0, 1000), alt: "" } } : current) : updateRoot(scope.componentId, (current) => current.type === "content" && current.accessory?.type === "thumbnail" ? { ...current, accessory: { ...current.accessory, imageUrl: next.slice(0, 1000), alt: "" } } : current)} placeholder="URL da miniatura" disabled={disabled} /></div> : null}
-          {content.accessory.type === "user_thumbnail" ? <div className="rounded-[14px] border border-[#141414] bg-[#0A0A0A] px-[12px] py-[12px]"><p className="text-[12px] leading-[1.6] text-[#7A7A7A]">A miniatura sera puxada automaticamente da foto do usuario que disparar o evento, sem precisar de link manual.</p></div> : null}
-          {content.accessory.type === "button" ? <div className="space-y-[12px]"><Field value={content.accessory.label} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "content" && current.accessory?.type === "button" ? { ...current, accessory: { ...current.accessory, label: next.slice(0, 80) } } : current) : updateRoot(scope.componentId, (current) => current.type === "content" && current.accessory?.type === "button" ? { ...current, accessory: { ...current.accessory, label: next.slice(0, 80) } } : current)} placeholder="Texto do botao funcional" disabled={disabled} /><p className="text-[12px] leading-[1.55] text-[#787878]">A mensagem inteira aceita apenas um botao funcional para abrir o ticket.</p><div className="grid grid-cols-2 gap-[8px] min-[920px]:grid-cols-4">{BUTTON_STYLES.map((style) => <button key={style.value} type="button" disabled={disabled} onClick={() => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "content" && current.accessory?.type === "button" ? { ...current, accessory: { ...current.accessory, style: style.value } } : current) : updateRoot(scope.componentId, (current) => current.type === "content" && current.accessory?.type === "button" ? { ...current, accessory: { ...current.accessory, style: style.value } } : current)} className={cn("rounded-[14px] border px-[10px] py-[10px] text-[12px] font-medium transition-colors duration-200", content.accessory?.type === "button" && content.accessory.style === style.value ? "border-[#F2F2F2] bg-[#111111] text-[#F2F2F2]" : "border-[#171717] bg-[#0A0A0A] text-[#818181] hover:bg-[#101010]")}>{style.label}</button>)}</div></div> : null}
-          {content.accessory.type === "link_button" ? <div className="grid gap-[12px]"><Field value={content.accessory.label} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "content" && current.accessory?.type === "link_button" ? { ...current, accessory: { ...current.accessory, label: next.slice(0, 80) } } : current) : updateRoot(scope.componentId, (current) => current.type === "content" && current.accessory?.type === "link_button" ? { ...current, accessory: { ...current.accessory, label: next.slice(0, 80) } } : current)} placeholder="Texto do botao" disabled={disabled} /><Field value={content.accessory.url} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "content" && current.accessory?.type === "link_button" ? { ...current, accessory: { ...current.accessory, url: next.slice(0, 1000) } } : current) : updateRoot(scope.componentId, (current) => current.type === "content" && current.accessory?.type === "link_button" ? { ...current, accessory: { ...current.accessory, url: next.slice(0, 1000) } } : current)} placeholder="https://seu-link.com" disabled={disabled} /></div> : null}
+        <div
+          onDragOver={(event) => {
+            if (!canDropAccessory) return;
+            event.preventDefault();
+            event.stopPropagation();
+            event.dataTransfer.dropEffect = "move";
+            setActiveDropSlot(null);
+            setActiveAccessoryDropScope((current) =>
+              isSameScope(current, scope) ? current : scope,
+            );
+          }}
+          onDrop={(event) => {
+            if (!canDropAccessory) return;
+            event.preventDefault();
+            event.stopPropagation();
+            applyAccessoryDrop(scope);
+          }}
+          className={cn(
+            "space-y-[12px] rounded-[16px] border p-[12px] xl:col-span-2",
+            content.accessory ? "bg-[#080808]" : "bg-[#070707]",
+            isAccessoryDropActive
+              ? "border-[rgba(255,255,255,0.4)] shadow-[0_0_0_1px_rgba(255,255,255,0.08)]"
+              : content.accessory
+                ? "border-[#171717]"
+                : "border-dashed border-[#1D1D1D]",
+          )}
+        >
+          <div className="flex items-center justify-between gap-[12px]">
+            <div>
+              <p className="text-[13px] font-medium text-[#E8E8E8]">{accessoryTitle}</p>
+              <p className="mt-[4px] text-[12px] leading-[1.55] text-[#767676]">
+                Arraste imagem, botao ou link para este slot. Imagem vira miniatura automaticamente.
+              </p>
+            </div>
+            {content.accessory ? (
+              <IconButton
+                label="Remover acessorio"
+                disabled={disabled}
+                onClick={() =>
+                  scope.parentId
+                    ? updateChild(scope.parentId, scope.componentId, (current) =>
+                        current.type === "content"
+                          ? { ...current, accessory: null }
+                          : current,
+                      )
+                    : updateRoot(scope.componentId, (current) =>
+                        current.type === "content"
+                          ? { ...current, accessory: null }
+                          : current,
+                      )
+                }
+              >
+                <Trash2 className="h-[15px] w-[15px]" strokeWidth={2.1} />
+              </IconButton>
+            ) : null}
+          </div>
+          {content.accessory ? (
+            <>
+              {content.accessory.type === "thumbnail" ? (
+                <div className="grid gap-[12px]">
+                  <Field
+                    value={content.accessory.imageUrl}
+                    onChange={(next) =>
+                      scope.parentId
+                        ? updateChild(scope.parentId, scope.componentId, (current) =>
+                            current.type === "content" &&
+                            current.accessory?.type === "thumbnail"
+                              ? {
+                                  ...current,
+                                  accessory: {
+                                    ...current.accessory,
+                                    imageUrl: next.slice(0, 1000),
+                                    alt: "",
+                                  },
+                                }
+                              : current,
+                          )
+                        : updateRoot(scope.componentId, (current) =>
+                            current.type === "content" &&
+                            current.accessory?.type === "thumbnail"
+                              ? {
+                                  ...current,
+                                  accessory: {
+                                    ...current.accessory,
+                                    imageUrl: next.slice(0, 1000),
+                                    alt: "",
+                                  },
+                                }
+                              : current,
+                          )
+                    }
+                    placeholder="URL da miniatura"
+                    disabled={disabled}
+                  />
+                </div>
+              ) : null}
+              {content.accessory.type === "user_thumbnail" ? (
+                <div className="rounded-[14px] border border-[#141414] bg-[#0A0A0A] px-[12px] py-[12px]">
+                  <p className="text-[12px] leading-[1.6] text-[#7A7A7A]">
+                    A miniatura sera puxada automaticamente da foto do usuario que disparar o evento, sem precisar de link manual.
+                  </p>
+                </div>
+              ) : null}
+              {content.accessory.type === "button" ? (
+                <div className="space-y-[12px]">
+                  <Field
+                    value={content.accessory.label}
+                    onChange={(next) =>
+                      scope.parentId
+                        ? updateChild(scope.parentId, scope.componentId, (current) =>
+                            current.type === "content" &&
+                            current.accessory?.type === "button"
+                              ? {
+                                  ...current,
+                                  accessory: {
+                                    ...current.accessory,
+                                    label: next.slice(0, 80),
+                                  },
+                                }
+                              : current,
+                          )
+                        : updateRoot(scope.componentId, (current) =>
+                            current.type === "content" &&
+                            current.accessory?.type === "button"
+                              ? {
+                                  ...current,
+                                  accessory: {
+                                    ...current.accessory,
+                                    label: next.slice(0, 80),
+                                  },
+                                }
+                              : current,
+                          )
+                    }
+                    placeholder="Texto do botao funcional"
+                    disabled={disabled}
+                  />
+                  <p className="text-[12px] leading-[1.55] text-[#787878]">
+                    A mensagem inteira aceita apenas um botao funcional para abrir o ticket.
+                  </p>
+                  <div className="grid grid-cols-2 gap-[8px] min-[920px]:grid-cols-4">
+                    {BUTTON_STYLES.map((style) => (
+                      <button
+                        key={style.value}
+                        type="button"
+                        disabled={disabled}
+                        onClick={() =>
+                          scope.parentId
+                            ? updateChild(scope.parentId, scope.componentId, (current) =>
+                                current.type === "content" &&
+                                current.accessory?.type === "button"
+                                  ? {
+                                      ...current,
+                                      accessory: {
+                                        ...current.accessory,
+                                        style: style.value,
+                                      },
+                                    }
+                                  : current,
+                              )
+                            : updateRoot(scope.componentId, (current) =>
+                                current.type === "content" &&
+                                current.accessory?.type === "button"
+                                  ? {
+                                      ...current,
+                                      accessory: {
+                                        ...current.accessory,
+                                        style: style.value,
+                                      },
+                                    }
+                                  : current,
+                              )
+                        }
+                        className={cn(
+                          "rounded-[14px] border px-[10px] py-[10px] text-[12px] font-medium transition-colors duration-200",
+                          content.accessory?.type === "button" &&
+                            content.accessory.style === style.value
+                            ? "border-[#F2F2F2] bg-[#111111] text-[#F2F2F2]"
+                            : "border-[#171717] bg-[#0A0A0A] text-[#818181] hover:bg-[#101010]",
+                        )}
+                      >
+                        {style.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {content.accessory.type === "link_button" ? (
+                <div className="grid gap-[12px]">
+                  <Field
+                    value={content.accessory.label}
+                    onChange={(next) =>
+                      scope.parentId
+                        ? updateChild(scope.parentId, scope.componentId, (current) =>
+                            current.type === "content" &&
+                            current.accessory?.type === "link_button"
+                              ? {
+                                  ...current,
+                                  accessory: {
+                                    ...current.accessory,
+                                    label: next.slice(0, 80),
+                                  },
+                                }
+                              : current,
+                          )
+                        : updateRoot(scope.componentId, (current) =>
+                            current.type === "content" &&
+                            current.accessory?.type === "link_button"
+                              ? {
+                                  ...current,
+                                  accessory: {
+                                    ...current.accessory,
+                                    label: next.slice(0, 80),
+                                  },
+                                }
+                              : current,
+                          )
+                    }
+                    placeholder="Texto do botao"
+                    disabled={disabled}
+                  />
+                  <Field
+                    value={content.accessory.url}
+                    onChange={(next) =>
+                      scope.parentId
+                        ? updateChild(scope.parentId, scope.componentId, (current) =>
+                            current.type === "content" &&
+                            current.accessory?.type === "link_button"
+                              ? {
+                                  ...current,
+                                  accessory: {
+                                    ...current.accessory,
+                                    url: next.slice(0, 1000),
+                                  },
+                                }
+                              : current,
+                          )
+                        : updateRoot(scope.componentId, (current) =>
+                            current.type === "content" &&
+                            current.accessory?.type === "link_button"
+                              ? {
+                                  ...current,
+                                  accessory: {
+                                    ...current.accessory,
+                                    url: next.slice(0, 1000),
+                                  },
+                                }
+                              : current,
+                          )
+                    }
+                    placeholder="https://seu-link.com"
+                    disabled={disabled}
+                  />
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <div
+              className={cn(
+                "rounded-[14px] border border-dashed px-[12px] py-[14px] text-[12px] leading-[1.6] text-[#7B7B7B]",
+                isAccessoryDropActive
+                  ? "border-[rgba(255,255,255,0.35)] bg-[#0A0A0A] text-[#D8D8D8]"
+                  : "border-[#1B1B1B] bg-[#090909]",
+              )}
+            >
+              Solte aqui para transformar o item em acessorio lateral do texto. Se preferir, use o botao acima para escolher miniatura, foto do usuario, botao ou link.
+            </div>
+          )}
         </div>
-      ) : null}
-    </>
-  );
+      </>
+    );
+  };
 
   const renderSelectOptions = (component: TicketPanelSelectComponent, scope: Scope) => (
     <div className="space-y-[10px] rounded-[18px] border border-[#171717] bg-[#0B0B0B] p-[14px]">
@@ -1503,6 +1965,7 @@ function TicketMessageBuilder({
           if (!canDrop || disabled) return;
           event.preventDefault();
           event.dataTransfer.dropEffect = "move";
+          setActiveAccessoryDropScope(null);
           const slot = getCardDropSlot(
             scope,
             index,
@@ -1731,7 +2194,31 @@ function TicketMessageBuilder({
         </div>
 
         {container.children.length ? (
-          <div className="overflow-visible rounded-[22px] border border-[#171717] bg-[#070707] p-[14px]">
+          <div
+            onDragOver={(event) => {
+              if (!canDropAtSlot({ parentId: container.id, index: container.children.length })) {
+                return;
+              }
+              event.preventDefault();
+              event.stopPropagation();
+              event.dataTransfer.dropEffect = "move";
+              setActiveAccessoryDropScope(null);
+              setActiveDropSlot((current) =>
+                isSameDropSlot(current, { parentId: container.id, index: container.children.length })
+                  ? current
+                  : { parentId: container.id, index: container.children.length },
+              );
+            }}
+            onDrop={(event) => {
+              if (!canDropAtSlot({ parentId: container.id, index: container.children.length })) {
+                return;
+              }
+              event.preventDefault();
+              event.stopPropagation();
+              applyDropSlot({ parentId: container.id, index: container.children.length });
+            }}
+            className="overflow-visible rounded-[22px] border border-[#171717] bg-[#070707] p-[14px]"
+          >
             {renderDropSlot(
               { parentId: container.id, index: 0 },
               `child-slot-start-${container.id}`,
@@ -1770,7 +2257,9 @@ function TicketMessageBuilder({
             onDragOver={(event) => {
               if (!canDropIntoEmptyContainer) return;
               event.preventDefault();
+              event.stopPropagation();
               event.dataTransfer.dropEffect = "move";
+              setActiveAccessoryDropScope(null);
               setActiveDropSlot((current) =>
                 isSameDropSlot(current, emptyContainerDropSlot)
                   ? current
@@ -1780,6 +2269,7 @@ function TicketMessageBuilder({
             onDrop={(event) => {
               if (!canDropIntoEmptyContainer) return;
               event.preventDefault();
+              event.stopPropagation();
               applyDropSlot(emptyContainerDropSlot);
             }}
             className={cn(

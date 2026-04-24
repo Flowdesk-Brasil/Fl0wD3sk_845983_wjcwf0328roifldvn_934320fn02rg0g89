@@ -190,7 +190,7 @@ type QuickCard = {
 };
 
 const QUICK_CARDS: QuickCard[] = [
-  { id: "plans", icon: BadgePercent, title: "Planos", description: "Visualize seu plano atual, status e opcoes de upgrade." },
+  { id: "plans", icon: BadgePercent, title: "Assinaturas", description: "Visualize sua assinatura atual, status e opcoes disponiveis." },
   { id: "payment_methods", icon: CreditCard, title: "Metodos de Pagamento", description: "Adicione ou remova cartoes e metodos de pagamento." },
   { id: "payment_history", icon: History, title: "Historico de Pagamentos", description: "Timeline de cobrancas e transacoes aprovadas." },
   { id: "api_keys", icon: Key, title: "Chaves de API", description: "Crie chaves para integrar o Flowdesk externamente." },
