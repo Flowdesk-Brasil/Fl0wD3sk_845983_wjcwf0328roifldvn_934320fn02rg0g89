@@ -5,7 +5,10 @@ import {
   getHostingProjectForUser,
   normalizeVpsCode,
   requestVpsAgent,
+<<<<<<< HEAD
   resolveHostingAccessState,
+=======
+>>>>>>> 9c6e756 (Att master)
   resolveRuntimeStatus,
   type VpsAction,
 } from "@/lib/hosting/vpsRuntime";
@@ -70,6 +73,7 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
   }
 
   const supabase = getSupabaseAdminClientOrThrow();
+<<<<<<< HEAD
   const paymentStatus = project.payment_order_id
     ? await supabase
         .from("payment_orders")
@@ -96,6 +100,8 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
     );
   }
 
+=======
+>>>>>>> 9c6e756 (Att master)
   await appendVpsEvent({
     projectId: project.id,
     userId: session.user.id,

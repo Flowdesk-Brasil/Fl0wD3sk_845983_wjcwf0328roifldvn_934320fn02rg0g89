@@ -11,6 +11,7 @@ type RouteProps = {
   params: Promise<{ code: string }>;
 };
 
+<<<<<<< HEAD
 async function load(code: string) {
   const session = await getCurrentAuthSessionFromCookie();
   const vpsCode = normalizeVpsCode(code);
@@ -28,6 +29,21 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
   if (!loaded.ok) {
     return applyNoStoreHeaders(
       NextResponse.json({ ok: false, message: loaded.message }, { status: loaded.status }),
+=======
+export async function GET(request: NextRequest, { params }: RouteProps) {
+  const session = await getCurrentAuthSessionFromCookie();
+  const { code } = await params;
+  const vpsCode = normalizeVpsCode(code);
+  if (!session || !vpsCode) {
+    return applyNoStoreHeaders(
+      NextResponse.json({ ok: false, message: "Login necessario." }, { status: 401 }),
+    );
+  }
+  const project = await getHostingProjectForUser({ userId: session.user.id, vpsCode });
+  if (!project) {
+    return applyNoStoreHeaders(
+      NextResponse.json({ ok: false, message: "VPS nao encontrada." }, { status: 404 }),
+>>>>>>> 9c6e756 (Att master)
     );
   }
   const search = request.nextUrl.searchParams.get("q")?.trim().toLowerCase() || "";
@@ -35,7 +51,11 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
   let query = getSupabaseAdminClientOrThrow()
     .from("hosting_vps_logs")
     .select("*")
+<<<<<<< HEAD
     .eq("hosting_project_id", loaded.project.id)
+=======
+    .eq("hosting_project_id", project.id)
+>>>>>>> 9c6e756 (Att master)
     .order("emitted_at", { ascending: false })
     .limit(500);
   if (["debug", "info", "warn", "error", "success"].includes(level)) {
@@ -52,6 +72,7 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
   );
   return applyNoStoreHeaders(NextResponse.json({ ok: true, logs: logs.reverse() }));
 }
+<<<<<<< HEAD
 
 export async function DELETE(_request: NextRequest, { params }: RouteProps) {
   const { code } = await params;
@@ -75,3 +96,5 @@ export async function DELETE(_request: NextRequest, { params }: RouteProps) {
 
   return applyNoStoreHeaders(NextResponse.json({ ok: true, logs: [] }));
 }
+=======
+>>>>>>> 9c6e756 (Att master)
