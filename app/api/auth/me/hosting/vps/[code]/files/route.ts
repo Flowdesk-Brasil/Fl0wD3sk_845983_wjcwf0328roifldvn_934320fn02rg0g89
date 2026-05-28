@@ -9,6 +9,7 @@ import {
   requestVpsAgent,
 } from "@/lib/hosting/vpsRuntime";
 import {
+<<<<<<< HEAD
   buildHostingGitHubAppInstallUrl,
   commitHostingGitHubRepositoryFile,
   fetchHostingGitHubRepositoryFile,
@@ -20,6 +21,11 @@ import {
   readHostingGitHubStoredToken,
   readHostingGitHubToken,
   resolveHostingGitHubInstallationPermissionIssue,
+=======
+  fetchHostingGitHubRepositoryFile,
+  fetchHostingGitHubRepositoryTree,
+  readHostingGitHubToken,
+>>>>>>> 9c6e756 (Att master)
 } from "@/lib/hosting/github";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { applyNoStoreHeaders } from "@/lib/security/http";
@@ -36,6 +42,7 @@ async function load(code: string) {
   return project ? { session, project } : null;
 }
 
+<<<<<<< HEAD
 function buildGitHubWritePermissionMessage(error?: unknown) {
   if (error instanceof HostingGitHubApiError) {
     if (error.ssoUrl) {
@@ -392,6 +399,8 @@ async function updateRuntimeFilesPayload(input: {
     .eq("id", input.projectId);
 }
 
+=======
+>>>>>>> 9c6e756 (Att master)
 export async function GET(request: NextRequest, { params }: RouteProps) {
   const { code } = await params;
   const loaded = await load(code);
@@ -402,13 +411,17 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
   }
   const path = request.nextUrl.searchParams.get("path") || "";
   const sync = request.nextUrl.searchParams.get("sync") === "1";
+<<<<<<< HEAD
   const raw = request.nextUrl.searchParams.get("raw") === "1";
+=======
+>>>>>>> 9c6e756 (Att master)
   try {
     const payload = await requestVpsAgent({
       project: loaded.project,
       path: `/v1/vps/${loaded.project.vps_code}/files?path=${encodeURIComponent(path)}${sync ? "&recursive=1" : ""}`,
       timeoutMs: 12_000,
     });
+<<<<<<< HEAD
     if (raw && path) {
       const response = buildRawFileResponse(path, extractFilePayload(payload));
       if (response) return response;
@@ -446,6 +459,16 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
     }
     const token = await readHostingGitHubToken(loaded.project.user_id);
     let githubFailed = false;
+=======
+    return applyNoStoreHeaders(
+      NextResponse.json({
+        ok: true,
+        ...(isRecord(payload) ? payload : { payload }),
+      }),
+    );
+  } catch {
+    const token = await readHostingGitHubToken();
+>>>>>>> 9c6e756 (Att master)
     if (token && path) {
       const file = await fetchHostingGitHubRepositoryFile({
         token,
@@ -453,6 +476,7 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
         repo: loaded.project.github_repo,
         branch: loaded.project.github_branch,
         path,
+<<<<<<< HEAD
       }).catch((error) => {
         githubFailed = isPermanentHostingGitHubAuthError(error);
         return null;
@@ -462,6 +486,10 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
           const response = buildRawFileResponse(path, file);
           if (response) return response;
         }
+=======
+      }).catch(() => null);
+      if (file) {
+>>>>>>> 9c6e756 (Att master)
         return applyNoStoreHeaders(
           NextResponse.json({ ok: true, file, agentConnected: false, source: "github" }),
         );
@@ -474,10 +502,14 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
         owner: loaded.project.github_owner,
         repo: loaded.project.github_repo,
         branch: loaded.project.github_branch,
+<<<<<<< HEAD
       }).catch((error) => {
         githubFailed = isPermanentHostingGitHubAuthError(error);
         return null;
       });
+=======
+      }).catch(() => null);
+>>>>>>> 9c6e756 (Att master)
       if (tree) {
         const currentPayload = isRecord(loaded.project.runtime_status_payload)
           ? loaded.project.runtime_status_payload
@@ -499,6 +531,7 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
       }
     }
 
+<<<<<<< HEAD
     if (raw && path) {
       return applyNoStoreHeaders(
         NextResponse.json({ ok: false, message: "Arquivo nao encontrado para preview." }, { status: 404 }),
@@ -517,6 +550,17 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
           : githubFailed
             ? "Nao consegui validar o GitHub deste repositorio. Reconecte a conta."
             : undefined,
+=======
+    const payload = isRecord(loaded.project.runtime_status_payload)
+      ? loaded.project.runtime_status_payload
+      : {};
+    return applyNoStoreHeaders(
+      NextResponse.json({
+        ok: true,
+        tree: Array.isArray(payload.fileTree) ? payload.fileTree : [],
+        file: null,
+        agentConnected: false,
+>>>>>>> 9c6e756 (Att master)
       }),
     );
   }
@@ -531,6 +575,7 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
     );
   }
   const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+<<<<<<< HEAD
   const action = readString(body.action) || "";
   const path = normalizeFilePath(body.path);
   const targetPath = normalizeFilePath(body.targetPath);
@@ -602,12 +647,16 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
     );
   }
 
+=======
+  const path = readString(body.path);
+>>>>>>> 9c6e756 (Att master)
   const content = typeof body.content === "string" ? body.content : null;
   if (!path || content === null) {
     return applyNoStoreHeaders(
       NextResponse.json({ ok: false, message: "Arquivo invalido." }, { status: 400 }),
     );
   }
+<<<<<<< HEAD
   const fileContents = isRecord(currentPayload.fileContents)
     ? { ...currentPayload.fileContents } as Record<string, string>
     : {};
@@ -754,12 +803,17 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
   let agentOk = false;
   try {
     await requestVpsAgent({
+=======
+  try {
+    const payload = await requestVpsAgent({
+>>>>>>> 9c6e756 (Att master)
       project: loaded.project,
       method: "POST",
       path: `/v1/vps/${loaded.project.vps_code}/files`,
       body: { path, content },
       timeoutMs: 15_000,
     });
+<<<<<<< HEAD
     agentOk = true;
   } catch {
     agentOk = false;
@@ -846,4 +900,27 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
       message: successMessage,
     }),
   );
+=======
+    await appendVpsEvent({
+      projectId: loaded.project.id,
+      userId: loaded.session.user.id,
+      action: "file_write",
+      status: "succeeded",
+      message: `Arquivo ${path} salvo.`,
+    });
+    return applyNoStoreHeaders(NextResponse.json({ ok: true, payload }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Falha ao salvar arquivo.";
+    await getSupabaseAdminClientOrThrow().from("hosting_vps_logs").insert({
+      hosting_project_id: loaded.project.id,
+      level: "error",
+      source: "files",
+      message,
+      metadata: { path },
+    });
+    return applyNoStoreHeaders(
+      NextResponse.json({ ok: false, message }, { status: 503 }),
+    );
+  }
+>>>>>>> 9c6e756 (Att master)
 }

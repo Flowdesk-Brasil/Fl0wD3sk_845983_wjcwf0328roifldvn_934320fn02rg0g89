@@ -9,8 +9,12 @@ import {
   getHostingKindLabel,
   type HostingKind,
 } from "@/lib/hosting/catalog";
+<<<<<<< HEAD
 import { readHostingGitHubToken } from "@/lib/hosting/github";
 import { resolveHostingAccessState, resolveRuntimeStatus } from "@/lib/hosting/vpsRuntime";
+=======
+import { resolveRuntimeStatus } from "@/lib/hosting/vpsRuntime";
+>>>>>>> 9c6e756 (Att master)
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 type VpsPanelPageProps = {
@@ -35,12 +39,15 @@ type HostingProjectRow = {
   runtime_status: string | null;
   runtime_status_payload: unknown;
   runtime_last_seen_at: string | null;
+<<<<<<< HEAD
   billing_status: string | null;
   access_expires_at: string | null;
   refund_access_until: string | null;
   refunded_at: string | null;
   suspended_at: string | null;
   suspension_reason: string | null;
+=======
+>>>>>>> 9c6e756 (Att master)
   windows_runtime: string;
   provisioning_payload: unknown;
   created_at: string;
@@ -154,6 +161,7 @@ function resolvePurchaseContext(value: unknown) {
   return context;
 }
 
+<<<<<<< HEAD
 function buildDiscordAvatarUrl(
   discordUserId: string | null,
   avatarHash: string | null,
@@ -163,6 +171,8 @@ function buildDiscordAvatarUrl(
   return `https://cdn.discordapp.com/avatars/${discordUserId}/${avatarHash}.${extension}?size=96`;
 }
 
+=======
+>>>>>>> 9c6e756 (Att master)
 export default async function VpsPanelPage({ params }: VpsPanelPageProps) {
   const { code: rawCode } = await params;
   const code = normalizeVpsCode(rawCode);
@@ -193,7 +203,11 @@ export default async function VpsPanelPage({ params }: VpsPanelPageProps) {
   const { data: project, error } = await supabase
     .from("hosting_projects")
     .select(
+<<<<<<< HEAD
       "id, vps_code, user_id, payment_order_id, hosting_kind, hosting_plan_id, hosting_region_id, github_owner, github_repo, github_repo_id, github_branch, status, runtime_status, runtime_status_payload, runtime_last_seen_at, billing_status, access_expires_at, refund_access_until, refunded_at, suspended_at, suspension_reason, windows_runtime, provisioning_payload, created_at, updated_at",
+=======
+      "id, vps_code, user_id, payment_order_id, hosting_kind, hosting_plan_id, hosting_region_id, github_owner, github_repo, github_repo_id, github_branch, status, runtime_status, runtime_status_payload, runtime_last_seen_at, windows_runtime, provisioning_payload, created_at, updated_at",
+>>>>>>> 9c6e756 (Att master)
     )
     .eq("vps_code", code)
     .eq("user_id", user.id)
@@ -266,6 +280,7 @@ export default async function VpsPanelPage({ params }: VpsPanelPageProps) {
   const paymentAmount = paymentOrder
     ? formatMoney(paymentOrder.amount, paymentOrder.currency)
     : formatMoney(plan?.monthlyAmount, plan?.currency);
+<<<<<<< HEAD
   const accessState = resolveHostingAccessState({
     projectStatus: project.status,
     billingStatus: project.billing_status,
@@ -291,12 +306,15 @@ export default async function VpsPanelPage({ params }: VpsPanelPageProps) {
       />
     );
   }
+=======
+>>>>>>> 9c6e756 (Att master)
   const runtimePayload = isRecord(project.runtime_status_payload)
     ? project.runtime_status_payload
     : {};
   const fileTree = Array.isArray(runtimePayload.fileTree)
     ? runtimePayload.fileTree
     : [];
+<<<<<<< HEAD
   const githubConnected = Boolean(await readHostingGitHubToken(user.id));
 
   const snapshot: VpsWorkspaceSnapshot = {
@@ -307,6 +325,10 @@ export default async function VpsPanelPage({ params }: VpsPanelPageProps) {
       username: user.username,
       avatarUrl: buildDiscordAvatarUrl(user.discord_user_id, user.avatar),
     },
+=======
+
+  const snapshot: VpsWorkspaceSnapshot = {
+>>>>>>> 9c6e756 (Att master)
     project: {
       vpsCode: code,
       status: project.status,
@@ -332,7 +354,10 @@ export default async function VpsPanelPage({ params }: VpsPanelPageProps) {
       paidAtLabel: paymentOrder?.paid_at
         ? `Pago em ${formatDateTime(paymentOrder.paid_at)}`
         : `Criado em ${formatDateTime(paymentOrder?.created_at)}`,
+<<<<<<< HEAD
       githubConnected,
+=======
+>>>>>>> 9c6e756 (Att master)
     },
     metrics: [],
     logs: [],
