@@ -7,11 +7,14 @@ import {
   readString,
   requestVpsAgent,
 } from "@/lib/hosting/vpsRuntime";
+<<<<<<< HEAD
 import {
   fetchHostingGitHubRepositoryCommits,
   readHostingGitHubInstallationTokenForRepository,
   readHostingGitHubToken,
 } from "@/lib/hosting/github";
+=======
+>>>>>>> 9c6e756 (Att master)
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 
@@ -27,6 +30,7 @@ async function load(code: string) {
   return project ? { session, project } : null;
 }
 
+<<<<<<< HEAD
 async function readDeployments(projectId: number, limit = 50) {
   const { data, error } = await getSupabaseAdminClientOrThrow()
     .from("hosting_vps_deployments")
@@ -137,6 +141,9 @@ async function syncDeploymentsFromGitHub(loaded: NonNullable<Awaited<ReturnType<
 }
 
 export async function GET(request: NextRequest, { params }: RouteProps) {
+=======
+export async function GET(_request: NextRequest, { params }: RouteProps) {
+>>>>>>> 9c6e756 (Att master)
   const { code } = await params;
   const loaded = await load(code);
   if (!loaded) {
@@ -144,6 +151,7 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
       NextResponse.json({ ok: false, message: "VPS nao encontrada." }, { status: 404 }),
     );
   }
+<<<<<<< HEAD
   const sync = request.nextUrl.searchParams.get("sync") === "1";
   let syncResult: Awaited<ReturnType<typeof syncDeploymentsFromGitHub>> | null = null;
   try {
@@ -162,6 +170,20 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
       }, { status: 500 }),
     );
   }
+=======
+  const { data, error } = await getSupabaseAdminClientOrThrow()
+    .from("hosting_vps_deployments")
+    .select("*")
+    .eq("hosting_project_id", loaded.project.id)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  if (error) {
+    return applyNoStoreHeaders(
+      NextResponse.json({ ok: false, message: error.message }, { status: 500 }),
+    );
+  }
+  return applyNoStoreHeaders(NextResponse.json({ ok: true, deployments: data || [] }));
+>>>>>>> 9c6e756 (Att master)
 }
 
 export async function POST(request: NextRequest, { params }: RouteProps) {
