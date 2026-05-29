@@ -467,8 +467,13 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
       }),
     );
   } catch {
+<<<<<<< HEAD
     const token = await readHostingGitHubToken();
 >>>>>>> 9c6e756 (Att master)
+=======
+    const token = await readHostingGitHubToken(loaded.project.user_id);
+    let githubFailed = false;
+>>>>>>> 7babcb8 (att)
     if (token && path) {
       const file = await fetchHostingGitHubRepositoryFile({
         token,
@@ -476,6 +481,7 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
         repo: loaded.project.github_repo,
         branch: loaded.project.github_branch,
         path,
+<<<<<<< HEAD
 <<<<<<< HEAD
       }).catch((error) => {
         githubFailed = isPermanentHostingGitHubAuthError(error);
@@ -488,6 +494,12 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
         }
 =======
       }).catch(() => null);
+=======
+      }).catch(() => {
+        githubFailed = true;
+        return null;
+      });
+>>>>>>> 7babcb8 (att)
       if (file) {
 >>>>>>> 9c6e756 (Att master)
         return applyNoStoreHeaders(
@@ -503,6 +515,7 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
         repo: loaded.project.github_repo,
         branch: loaded.project.github_branch,
 <<<<<<< HEAD
+<<<<<<< HEAD
       }).catch((error) => {
         githubFailed = isPermanentHostingGitHubAuthError(error);
         return null;
@@ -510,6 +523,12 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
 =======
       }).catch(() => null);
 >>>>>>> 9c6e756 (Att master)
+=======
+      }).catch(() => {
+        githubFailed = true;
+        return null;
+      });
+>>>>>>> 7babcb8 (att)
       if (tree) {
         const currentPayload = isRecord(loaded.project.runtime_status_payload)
           ? loaded.project.runtime_status_payload
@@ -560,7 +579,16 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
         tree: Array.isArray(payload.fileTree) ? payload.fileTree : [],
         file: null,
         agentConnected: false,
+<<<<<<< HEAD
 >>>>>>> 9c6e756 (Att master)
+=======
+        reconnectRequired: !token || githubFailed,
+        message: !token
+          ? "Reconecte o GitHub para espelhar os arquivos."
+          : githubFailed
+            ? "Nao consegui validar o GitHub deste repositorio. Reconecte a conta."
+            : undefined,
+>>>>>>> 7babcb8 (att)
       }),
     );
   }
