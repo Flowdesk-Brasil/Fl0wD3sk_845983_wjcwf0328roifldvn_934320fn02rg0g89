@@ -25,6 +25,9 @@ type NormalizedEnvVariableInput = {
 };
 
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 7babcb8 (att)
 function buildDotEnvContent(variables: NormalizedEnvVariableInput[]) {
   return variables
     .map((variable) => {
@@ -38,8 +41,11 @@ function buildDotEnvContent(variables: NormalizedEnvVariableInput[]) {
     .join("\n");
 }
 
+<<<<<<< HEAD
 =======
 >>>>>>> 9c6e756 (Att master)
+=======
+>>>>>>> 7babcb8 (att)
 function normalizeEnvironment(value: unknown) {
   return value === "development" || value === "preview" || value === "production"
     ? value
@@ -222,6 +228,9 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
     path: `/v1/vps/${loaded.project.vps_code}/env`,
     body: {
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 7babcb8 (att)
       mode: "dotenv",
       envFiles: Object.fromEntries(
         ["development", "preview", "production"].map((environment) => [
@@ -229,8 +238,11 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
           buildDotEnvContent(normalizedVariables.filter((item) => item.environment === environment)),
         ]),
       ),
+<<<<<<< HEAD
 =======
 >>>>>>> 9c6e756 (Att master)
+=======
+>>>>>>> 7babcb8 (att)
       variables: normalizedVariables.map((item) => ({
         environment: item.environment,
         key: item.key,
