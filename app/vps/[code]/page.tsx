@@ -173,6 +173,9 @@ function resolvePurchaseContext(value: unknown) {
 }
 
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 76d40df (att)
 function buildDiscordAvatarUrl(
   discordUserId: string | null,
   avatarHash: string | null,
@@ -182,8 +185,11 @@ function buildDiscordAvatarUrl(
   return `https://cdn.discordapp.com/avatars/${discordUserId}/${avatarHash}.${extension}?size=96`;
 }
 
+<<<<<<< HEAD
 =======
 >>>>>>> 9c6e756 (Att master)
+=======
+>>>>>>> 76d40df (att)
 export default async function VpsPanelPage({ params }: VpsPanelPageProps) {
   const { code: rawCode } = await params;
   const code = normalizeVpsCode(rawCode);
@@ -349,10 +355,13 @@ export default async function VpsPanelPage({ params }: VpsPanelPageProps) {
       username: user.username,
       avatarUrl: buildDiscordAvatarUrl(user.discord_user_id, user.avatar),
     },
+<<<<<<< HEAD
 =======
 
   const snapshot: VpsWorkspaceSnapshot = {
 >>>>>>> 9c6e756 (Att master)
+=======
+>>>>>>> 76d40df (att)
     project: {
       vpsCode: code,
       status: project.status,
