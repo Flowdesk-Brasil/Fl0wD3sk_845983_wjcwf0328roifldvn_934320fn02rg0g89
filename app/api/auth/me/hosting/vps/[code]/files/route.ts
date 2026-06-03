@@ -22,6 +22,7 @@ import {
   readHostingGitHubStoredToken,
   readHostingGitHubToken,
   resolveHostingGitHubInstallationPermissionIssue,
+<<<<<<< HEAD
 =======
 =======
   buildHostingGitHubAppInstallUrl,
@@ -35,6 +36,8 @@ import {
   readHostingGitHubStoredToken,
   readHostingGitHubToken,
 >>>>>>> 9c6e756 (Att master)
+=======
+>>>>>>> 2922bb1 (Atualização de hoje)
 } from "@/lib/hosting/github";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { applyNoStoreHeaders } from "@/lib/security/http";
@@ -111,10 +114,15 @@ type FileTreeNode = {
 };
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 type FilePayloadLike = Record<string, unknown>;
 
 =======
 >>>>>>> 76d40df (att)
+=======
+type FilePayloadLike = Record<string, unknown>;
+
+>>>>>>> 2922bb1 (Atualização de hoje)
 function languageFromFilePath(path: string) {
   const baseName = path.split("/").pop()?.toLowerCase() || "";
   const extension = baseName.includes(".") ? baseName.split(".").pop()?.toLowerCase() || "" : baseName;
@@ -220,6 +228,9 @@ function languageFromFilePath(path: string) {
 }
 
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 2922bb1 (Atualização de hoje)
 function fileExtensionFromPath(path: string) {
   const baseName = path.split("/").pop()?.toLowerCase() || "";
   return baseName.includes(".") ? baseName.split(".").pop()?.toLowerCase() || "" : "";
@@ -306,8 +317,11 @@ function buildRawFileResponse(path: string, file: FilePayloadLike | null) {
   );
 }
 
+<<<<<<< HEAD
 =======
 >>>>>>> 76d40df (att)
+=======
+>>>>>>> 2922bb1 (Atualização de hoje)
 function normalizeFilePath(value: unknown) {
   return (readString(value) || "").replace(/^\/+|\/+$/g, "").replace(/\\/g, "/");
 }
@@ -433,9 +447,13 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
   const path = request.nextUrl.searchParams.get("path") || "";
   const sync = request.nextUrl.searchParams.get("sync") === "1";
 <<<<<<< HEAD
+<<<<<<< HEAD
   const raw = request.nextUrl.searchParams.get("raw") === "1";
 =======
 >>>>>>> 9c6e756 (Att master)
+=======
+  const raw = request.nextUrl.searchParams.get("raw") === "1";
+>>>>>>> 2922bb1 (Atualização de hoje)
   try {
     const payload = await requestVpsAgent({
       project: loaded.project,
@@ -443,6 +461,9 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
       timeoutMs: 12_000,
     });
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 2922bb1 (Atualização de hoje)
     if (raw && path) {
       const response = buildRawFileResponse(path, extractFilePayload(payload));
       if (response) return response;
@@ -455,6 +476,7 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
         }),
       );
     }
+<<<<<<< HEAD
   } catch {
     const runtimePayload = isRecord(loaded.project.runtime_status_payload)
       ? loaded.project.runtime_status_payload
@@ -487,6 +509,8 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
         ...(isRecord(payload) ? payload : { payload }),
       }),
     );
+=======
+>>>>>>> 2922bb1 (Atualização de hoje)
   } catch {
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -499,6 +523,10 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
       : {};
     const fileContents = isRecord(runtimePayload.fileContents) ? runtimePayload.fileContents : {};
     if (path && typeof fileContents[path] === "string") {
+      if (raw) {
+        const response = buildRawFileResponse(path, { content: fileContents[path] });
+        if (response) return response;
+      }
       return applyNoStoreHeaders(
         NextResponse.json({
           ok: true,
@@ -535,6 +563,7 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
           const response = buildRawFileResponse(path, file);
           if (response) return response;
         }
+<<<<<<< HEAD
 =======
       }).catch(() => null);
 =======
@@ -549,6 +578,8 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
 >>>>>>> 7babcb8 (att)
       if (file) {
 >>>>>>> 9c6e756 (Att master)
+=======
+>>>>>>> 2922bb1 (Atualização de hoje)
         return applyNoStoreHeaders(
           NextResponse.json({ ok: true, file, agentConnected: false, source: "github" }),
         );
@@ -604,6 +635,9 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
 
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 2922bb1 (Atualização de hoje)
     if (raw && path) {
       return applyNoStoreHeaders(
         NextResponse.json({ ok: false, message: "Arquivo nao encontrado para preview." }, { status: 404 }),
@@ -1018,7 +1052,17 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
   const token = await readHostingGitHubToken(loaded.project.user_id);
   let githubCommit: Awaited<ReturnType<typeof commitHostingGitHubRepositoryFile>> | null = null;
   let githubCommitSource: "oauth" | "github_app" = "oauth";
-  const appInstallUrl = buildHostingGitHubAppInstallUrl();
+  let appInstallUrl = buildHostingGitHubAppInstallUrl();
+  let appPermissionMessage: string | null = null;
+  const resolveAppInstallContext = async () => {
+    const installation = await readHostingGitHubRepositoryInstallation({
+      owner: loaded.project.github_owner,
+      repo: loaded.project.github_repo,
+    });
+    if (installation?.html_url) appInstallUrl = installation.html_url;
+    appPermissionMessage = resolveHostingGitHubInstallationPermissionIssue(installation);
+    return installation;
+  };
   const commitWithToken = (nextToken: string) => commitHostingGitHubRepositoryFile(
     buildGitHubCommitPayload({
       token: nextToken,
@@ -1031,11 +1075,14 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
     }),
   );
   const tryGitHubAppCommit = async () => {
+    await resolveAppInstallContext();
     const installation = await readHostingGitHubInstallationTokenForRepository({
       owner: loaded.project.github_owner,
       repo: loaded.project.github_repo,
     });
     if (!installation?.token) return null;
+    if (installation.installationUrl) appInstallUrl = installation.installationUrl;
+    if (installation.permissionIssue) appPermissionMessage = installation.permissionIssue;
     const commit = await commitWithToken(installation.token);
     githubCommitSource = "github_app";
     return commit;
@@ -1062,7 +1109,7 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
                       reauthorizeRequired: true,
                       ssoUrl: retryError.ssoUrl,
                       installAppUrl: appInstallUrl,
-                      message: buildGitHubWritePermissionMessage(retryError),
+                      message: appPermissionMessage || buildGitHubWritePermissionMessage(retryError),
                     },
                     { status: 403 },
                   ),
@@ -1070,7 +1117,7 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
               }
               return applyNoStoreHeaders(
                 NextResponse.json(
-                  { ok: false, reconnectRequired: true, installAppUrl: appInstallUrl, message: "Reconecte o GitHub para renovar a permissao de escrita deste repositorio." },
+                  { ok: false, reconnectRequired: true, installAppUrl: appInstallUrl, message: appPermissionMessage || "Reconecte o GitHub para renovar a permissao de escrita deste repositorio." },
                   { status: 401 },
                 ),
               );
@@ -1093,7 +1140,7 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
               reauthorizeRequired: true,
               ssoUrl: error.ssoUrl,
               installAppUrl: appInstallUrl,
-              message: buildGitHubWritePermissionMessage(error),
+              message: appPermissionMessage || buildGitHubWritePermissionMessage(error),
             },
             { status: 403 },
           ),
@@ -1107,7 +1154,7 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
         } else {
         return applyNoStoreHeaders(
           NextResponse.json(
-            { ok: false, reconnectRequired: true, installAppUrl: appInstallUrl, message: "Reconecte o GitHub para enviar esta alteracao ao repositorio." },
+            { ok: false, reconnectRequired: true, installAppUrl: appInstallUrl, message: appPermissionMessage || "Reconecte o GitHub para enviar esta alteracao ao repositorio." },
             { status: 401 },
           ),
         );
@@ -1127,7 +1174,7 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
     if (!githubCommit) {
       return applyNoStoreHeaders(
         NextResponse.json(
-          { ok: false, reconnectRequired: true, installAppUrl: appInstallUrl, message: "Conecte o GitHub ou instale o GitHub App Flowdesk para salvar e commitar alteracoes no repositorio." },
+          { ok: false, reconnectRequired: true, installAppUrl: appInstallUrl, message: appPermissionMessage || "Conecte o GitHub ou instale o GitHub App Flowdesk para salvar e commitar alteracoes no repositorio." },
           { status: 401 },
         ),
       );
@@ -1164,6 +1211,44 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
     : githubCommit?.commitSha
       ? `Commit ${githubCommit.commitSha.slice(0, 7)} enviado ao GitHub.`
       : "Alteracao enviada ao GitHub.";
+
+  if (githubCommit?.commitSha) {
+    const environment = savedThroughBranch ? "preview" : "production";
+    const status = savedThroughBranch ? "preview" : "production";
+    const supabase = getSupabaseAdminClientOrThrow();
+    const existingDeployment = await supabase
+      .from("hosting_vps_deployments")
+      .select("id")
+      .eq("hosting_project_id", loaded.project.id)
+      .eq("commit_sha", githubCommit.commitSha)
+      .eq("branch", githubCommit.branch)
+      .eq("environment", environment)
+      .maybeSingle<{ id: number }>();
+    if (!existingDeployment.data) {
+      await supabase.from("hosting_vps_deployments").insert({
+        hosting_project_id: loaded.project.id,
+        environment,
+        status,
+        branch: githubCommit.branch,
+        commit_sha: githubCommit.commitSha,
+        commit_author: "Flowdesk",
+        commit_message: `Atualiza ${path} pelo painel Flowdesk`,
+        build_started_at: new Date().toISOString(),
+        build_finished_at: new Date().toISOString(),
+        deployed_at: new Date().toISOString(),
+        logs: [],
+        metadata: {
+          source: "panel_file_editor",
+          commitSource: githubCommitSource,
+          baseBranch: githubCommit.baseBranch,
+          commitUrl: githubCommit.commitUrl,
+          pullRequestUrl: githubCommit.pullRequestUrl,
+          pullRequestNumber: githubCommit.pullRequestNumber,
+          filePath: path,
+        },
+      });
+    }
+  }
 
   await appendVpsEvent({
     projectId: loaded.project.id,
