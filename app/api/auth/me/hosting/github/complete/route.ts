@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  consumeHostingGitHubHandoffToken,
+  consumeHostingGitHubHandoffTokenBundle,
   fetchHostingGitHubProfile,
   setHostingGitHubTokenCookie,
+  storeHostingGitHubTokenForUser,
 } from "@/lib/hosting/github";
+import { getCurrentAuthSessionFromCookie } from "@/lib/auth/session";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 
 type CompleteGitHubBody = {
@@ -24,8 +26,8 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const token = consumeHostingGitHubHandoffToken(body.handoffToken);
-  if (!token) {
+  const tokenBundle = consumeHostingGitHubHandoffTokenBundle(body.handoffToken);
+  if (!tokenBundle) {
     return applyNoStoreHeaders(
       NextResponse.json({
         ok: false,
@@ -36,13 +38,28 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const profile = await fetchHostingGitHubProfile(token);
+    const session = await getCurrentAuthSessionFromCookie();
+    const profile = await fetchHostingGitHubProfile(tokenBundle.accessToken);
+    if (session?.user?.id) {
+      await storeHostingGitHubTokenForUser({
+        userId: session.user.id,
+        token: tokenBundle.accessToken,
+        refreshToken: tokenBundle.refreshToken,
+        accessTokenExpiresAt: tokenBundle.accessTokenExpiresAt,
+        refreshTokenExpiresAt: tokenBundle.refreshTokenExpiresAt,
+        scope: tokenBundle.scope,
+        tokenType: tokenBundle.tokenType,
+        login: profile.user.login,
+        accountType: profile.user.type,
+        avatarUrl: profile.user.avatarUrl,
+      }).catch(() => null);
+    }
     const response = NextResponse.json({
       ok: true,
       connected: true,
       ...profile,
     });
-    setHostingGitHubTokenCookie(request, response, token);
+    setHostingGitHubTokenCookie(request, response, tokenBundle.accessToken);
     return applyNoStoreHeaders(response);
   } catch (error) {
     return applyNoStoreHeaders(

@@ -22,7 +22,7 @@ import {
   Zap,
 } from "lucide-react";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
-import { buildPaymentCheckoutEntryHref } from "@/lib/payments/paymentRouting";
+import { buildBrowserRoutingTargetFromInternalPath } from "@/lib/routing/subdomains";
 import {
   HOSTING_KIND_OPTIONS,
   HOSTING_PLANS,
@@ -89,6 +89,8 @@ type GitHubRepositoriesResponse = {
   ok: boolean;
   message?: string;
   repositories?: HostingRepository[];
+  hiddenUsedCount?: number;
+  hiddenNoWriteCount?: number;
 };
 
 type HostingProvisionResponse = {
@@ -96,6 +98,36 @@ type HostingProvisionResponse = {
   message?: string;
   vpsCode?: string;
   redirectUrl?: string;
+};
+
+export type HostingProjectCard = {
+  id: number;
+  vps_code: string;
+  hosting_kind: HostingKind;
+  hosting_plan_id: string;
+  hosting_region_id: string;
+  github_owner: string;
+  github_repo: string;
+  github_branch: string;
+  status: string;
+  runtime_status?: string | null;
+  billing_status?: string | null;
+  access_expires_at?: string | null;
+  refund_access_until?: string | null;
+  created_at?: string | null;
+  payment_orders?: {
+    status?: string | null;
+    amount?: number | null;
+    currency?: string | null;
+    paid_at?: string | null;
+    expires_at?: string | null;
+  } | Array<{
+    status?: string | null;
+    amount?: number | null;
+    currency?: string | null;
+    paid_at?: string | null;
+    expires_at?: string | null;
+  }> | null;
 };
 
 function resolveStepDirection(from: HostingStep, to: HostingStep): StepDirection {
@@ -136,26 +168,316 @@ function writeDraft(draft: HostingDraft) {
   window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
 }
 
-function generateVpsCode() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (char) => {
-    const value = Math.floor(Math.random() * 16);
-    const resolved = char === "x" ? value : (value & 0x3) | 0x8;
-    return resolved.toString(16);
-  });
+function resolveVpsDisplayUrl(code: string) {
+  return `https://fdesk.flwdesk.com/vps/${code}`;
 }
 
-function resolveVpsUrl(code: string | null) {
-  return `https://fdesk.flwdesk.com/vps/${code || generateVpsCode()}`;
+function resolveVpsInternalPath(code: string) {
+  return `/vps/${code}`;
 }
 
 function resolveKindIcon(kind: HostingKind) {
   if (kind === "site") return Globe2;
   if (kind === "bot") return Bot;
   return ImageIcon;
+}
+
+function formatHostingDate(value?: string | null) {
+  if (!value) return "Sem data";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Sem data";
+  return new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function readProjectPayment(project: HostingProjectCard) {
+  return Array.isArray(project.payment_orders)
+    ? project.payment_orders[0] || null
+    : project.payment_orders || null;
+}
+
+function resolveProjectCardStatus(project: HostingProjectCard) {
+  const payment = readProjectPayment(project);
+  const accessUntil = project.refund_access_until || project.access_expires_at || payment?.expires_at || null;
+  const accessMs = accessUntil ? Date.parse(accessUntil) : Number.NaN;
+  const expired = Boolean(accessUntil && Number.isFinite(accessMs) && accessMs <= Date.now());
+  const paymentStatus = String(payment?.status || "").toLowerCase();
+  const billingStatus = String(project.billing_status || "").toLowerCase();
+  if (paymentStatus === "charged_back" || billingStatus === "charged_back") {
+    return { label: "Contestada", tone: "danger" as const, accessUntil };
+  }
+  if (expired || billingStatus === "expired") {
+    return { label: "Expirada", tone: "danger" as const, accessUntil };
+  }
+  if (project.status === "suspended" || billingStatus === "past_due") {
+    return { label: "Suspensa", tone: "warning" as const, accessUntil };
+  }
+  if (paymentStatus === "refunded" || paymentStatus === "partially_refunded" || billingStatus === "refunded") {
+    return { label: "Restornada ate vencimento", tone: "warning" as const, accessUntil };
+  }
+  if (project.status === "active") {
+    return { label: "Ativa", tone: "success" as const, accessUntil };
+  }
+  return { label: "Provisionando", tone: "info" as const, accessUntil };
+}
+
+function HostingProjectsOverview({
+  projects,
+  githubConnected,
+  onCreate,
+  onReconnect,
+}: {
+  projects: HostingProjectCard[];
+  githubConnected: boolean;
+  onCreate: () => void;
+  onReconnect: () => void;
+}) {
+  const [reconnecting, setReconnecting] = useState(false);
+  const [reconnectMessage, setReconnectMessage] = useState<string | null>(null);
+
+  async function completeReconnect(handoffToken: unknown) {
+    if (typeof handoffToken !== "string" || !handoffToken.trim()) {
+      setReconnectMessage("GitHub autorizou, mas a validacao temporaria nao chegou ao painel.");
+      return false;
+    }
+
+    const response = await fetch("/api/auth/me/hosting/github/complete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ handoffToken }),
+    });
+    const payload = await response.json() as GitHubCompleteResponse;
+    setReconnectMessage(payload.message || null);
+    if (response.ok && payload.connected) {
+      onReconnect();
+      return true;
+    }
+    return false;
+  }
+
+  async function processReconnectPayload(input: unknown) {
+    const data = input as {
+      source?: string;
+      ok?: boolean;
+      message?: string;
+      handoffToken?: string | null;
+    };
+    if (data?.source !== "flowdesk-hosting-github") return false;
+    window.localStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
+    setReconnectMessage(data.message || null);
+    if (!data.ok) return true;
+    await completeReconnect(data.handoffToken);
+    return true;
+  }
+
+  async function processStoredReconnectHandoff() {
+    try {
+      const raw = window.localStorage.getItem(GITHUB_HANDOFF_STORAGE_KEY);
+      if (!raw) return false;
+      return await processReconnectPayload(JSON.parse(raw) as unknown);
+    } catch {
+      window.localStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
+      return false;
+    }
+  }
+
+  async function reconnectGitHub() {
+    if (reconnecting) return;
+    setReconnecting(true);
+    setReconnectMessage(null);
+    const width = 540;
+    const height = 720;
+    const left = window.screenX + Math.max(0, (window.outerWidth - width) / 2);
+    const top = window.screenY + Math.max(0, (window.outerHeight - height) / 2);
+    const popup = window.open(
+      "/api/auth/github/hosting/start?mode=reconnect",
+      "flowdesk-hosting-github-reconnect",
+      `width=${width},height=${height},left=${left},top=${top},popup=yes`,
+    );
+
+    if (!popup) {
+      setReconnecting(false);
+      setReconnectMessage("Permita popups para reconectar o GitHub.");
+      return;
+    }
+
+    let finished = false;
+    let timeoutId = 0;
+    let pollIntervalId = 0;
+
+    const finish = () => {
+      finished = true;
+      window.clearTimeout(timeoutId);
+      window.clearInterval(pollIntervalId);
+      window.removeEventListener("message", handleMessage);
+      setReconnecting(false);
+    };
+
+    const poll = async () => {
+      const processed = await processStoredReconnectHandoff();
+      if (processed) {
+        finish();
+        return;
+      }
+      if (popup.closed) {
+        const response = await fetch("/api/auth/me/hosting/github/status", { cache: "no-store" });
+        const payload = await response.json() as GitHubStatusResponse;
+        if (payload.connected) {
+          onReconnect();
+        } else {
+          setReconnectMessage(payload.message || "A reconexao do GitHub nao foi concluida.");
+        }
+        finish();
+      }
+    };
+
+    const handleMessage = (event: MessageEvent) => {
+      void processReconnectPayload(event.data).then((processed) => {
+        if (processed) finish();
+      });
+    };
+
+    window.addEventListener("message", handleMessage);
+    pollIntervalId = window.setInterval(() => {
+      if (!finished) void poll();
+    }, 700);
+    timeoutId = window.setTimeout(() => {
+      if (!finished) {
+        setReconnectMessage("Tempo limite ao reconectar GitHub. Tente novamente.");
+        finish();
+      }
+    }, 120_000);
+  }
+
+  if (!githubConnected) {
+    return (
+      <HostingShell>
+        <div className="mx-auto flex min-h-[420px] w-full max-w-[620px] items-center justify-center">
+          <div className="w-full rounded-[24px] border border-[#171717] bg-[#080808] p-[22px] text-center shadow-[0_24px_80px_rgba(0,0,0,0.28)]">
+            <span className="mx-auto flex h-[56px] w-[56px] items-center justify-center rounded-[18px] border border-[#202020] bg-[#101010] text-white">
+              <GitBranch className="h-[25px] w-[25px]" />
+            </span>
+            <h2 className="mt-[18px] text-[26px] font-semibold tracking-[-0.04em] text-white">
+              Reconecte o GitHub
+            </h2>
+            <p className="mx-auto mt-[10px] max-w-[460px] text-[14px] leading-[1.55] text-[#8E8E8E]">
+              Suas VPS continuam protegidas, mas precisamos validar o GitHub novamente para listar projetos, arquivos e deploys com seguranca.
+            </p>
+            <button
+              type="button"
+              onClick={() => void reconnectGitHub()}
+              disabled={reconnecting}
+              className="mt-[18px] inline-flex h-[44px] items-center justify-center gap-[9px] rounded-[12px] bg-[#F2F2F2] px-[16px] text-[13px] font-semibold text-[#050505] transition-colors hover:bg-white"
+            >
+              {reconnecting ? <Loader2 className="h-[16px] w-[16px] animate-spin" /> : <GitBranch className="h-[16px] w-[16px]" />}
+              {reconnecting ? "Conectando..." : "Conectar GitHub"}
+            </button>
+            {reconnectMessage ? (
+              <p className="mx-auto mt-[12px] max-w-[460px] rounded-[14px] border border-[#1B1B1B] bg-[#0B0B0B] px-[12px] py-[10px] text-[12px] leading-[1.5] text-[#8E8E8E]">
+                {reconnectMessage}
+              </p>
+            ) : null}
+          </div>
+        </div>
+      </HostingShell>
+    );
+  }
+
+  return (
+    <HostingShell>
+      <div className="flex flex-col gap-[14px] md:flex-row md:items-end md:justify-between">
+        <SectionHeader
+          eyebrow="Hospedagem"
+          title="Suas VPS"
+          description="Gerencie as hospedagens ativas, acompanhe vencimento, repositorio, plano e abra o painel operacional de cada VPS."
+        />
+        <button
+          type="button"
+          onClick={onCreate}
+          className="inline-flex h-[44px] items-center justify-center gap-[9px] rounded-[12px] bg-[#0F62FE] px-[16px] text-[13px] font-semibold text-white transition-colors hover:bg-[#2A73FF]"
+        >
+          <Rocket className="h-[16px] w-[16px]" />
+          Adquirir uma hospedagem
+        </button>
+      </div>
+
+      <div className="grid gap-[14px] xl:grid-cols-2">
+        {projects.map((project) => {
+          const Icon = resolveKindIcon(project.hosting_kind);
+          const plan = HOSTING_PLANS[project.hosting_kind]?.find((item) => item.id === project.hosting_plan_id);
+          const region = HOSTING_REGIONS.find((item) => item.id === project.hosting_region_id) || HOSTING_REGIONS[0];
+          const status = resolveProjectCardStatus(project);
+          const statusClass =
+            status.tone === "success"
+              ? "border-[rgba(52,168,83,0.28)] bg-[rgba(52,168,83,0.10)] text-[#9BE7AC]"
+              : status.tone === "warning"
+                ? "border-[rgba(255,190,80,0.28)] bg-[rgba(255,190,80,0.10)] text-[#FFD28A]"
+                : status.tone === "danger"
+                  ? "border-[rgba(255,82,82,0.28)] bg-[rgba(255,82,82,0.10)] text-[#FF9B9B]"
+                  : "border-[rgba(15,98,254,0.28)] bg-[rgba(15,98,254,0.10)] text-[#9BC2FF]";
+          return (
+            <a
+              key={project.vps_code}
+              href={resolveVpsInternalPath(project.vps_code)}
+              className="group overflow-hidden rounded-[22px] border border-[#171717] bg-[#080808] transition-colors hover:border-[#2A2A2A]"
+            >
+              <div className="grid min-h-[226px] md:grid-cols-[190px_minmax(0,1fr)]">
+                <div className="relative overflow-hidden border-b border-[#171717] bg-[#0B0B0B] p-[18px] md:border-b-0 md:border-r">
+                  <div className="absolute inset-x-0 bottom-0 h-[90px] bg-[linear-gradient(180deg,rgba(15,98,254,0)_0%,rgba(15,98,254,0.16)_100%)]" />
+                  <div className="relative flex h-full min-h-[150px] flex-col justify-between">
+                    <span className="flex h-[54px] w-[54px] items-center justify-center rounded-[16px] border border-[#202020] bg-[#111111] text-white">
+                      <Icon className="h-[25px] w-[25px]" />
+                    </span>
+                    <div>
+                      <p className="font-mono text-[12px] font-semibold text-[#777777]">{project.vps_code.slice(0, 8)}</p>
+                      <p className="mt-[5px] text-[13px] font-semibold text-[#DADADA]">{getHostingKindLabel(project.hosting_kind)}</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="min-w-0 p-[18px]">
+                  <div className="flex flex-wrap items-start justify-between gap-[12px]">
+                    <div className="min-w-0">
+                      <h3 className="truncate text-[20px] font-semibold tracking-[-0.04em] text-white">
+                        {project.github_repo}
+                      </h3>
+                      <p className="mt-[5px] truncate font-mono text-[12px] text-[#858585]">
+                        {project.github_owner}/{project.github_repo} - {project.github_branch}
+                      </p>
+                    </div>
+                    <span className={`rounded-full border px-[10px] py-[6px] text-[11px] font-bold uppercase tracking-[0.12em] ${statusClass}`}>
+                      {status.label}
+                    </span>
+                  </div>
+                  <div className="mt-[18px] grid gap-[10px] sm:grid-cols-3">
+                    {[
+                      ["Plano", plan?.name || project.hosting_plan_id],
+                      ["Regiao", `${region.city}, ${region.country}`],
+                      ["Acesso ate", formatHostingDate(status.accessUntil)],
+                    ].map(([label, value]) => (
+                      <div key={label} className="rounded-[14px] border border-[#151515] bg-[#0B0B0B] p-[12px]">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#555555]">{label}</p>
+                        <p className="mt-[5px] truncate text-[13px] font-semibold text-[#DADADA]">{value}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-[16px] flex items-center justify-between gap-[12px]">
+                    <span className="text-[12px] text-[#777777]">Runtime: {project.runtime_status || "offline"}</span>
+                    <span className="inline-flex items-center gap-[7px] text-[13px] font-semibold text-[#9BC2FF]">
+                      Abrir painel
+                      <ExternalLink className="h-[14px] w-[14px]" />
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </a>
+          );
+        })}
+      </div>
+    </HostingShell>
+  );
 }
 
 function HostingShell({
@@ -354,7 +676,6 @@ function GithubStep({
   const [connecting, setConnecting] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
-  const [debugMessage, setDebugMessage] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<HostingGitHubAccount[]>([]);
 
   async function processGitHubPopupPayload(input: unknown) {
@@ -371,7 +692,6 @@ function GithubStep({
     setMessage(data.message || null);
 
     if (!data.ok) {
-      setDebugMessage("popup=erro");
       return true;
     }
 
@@ -398,7 +718,6 @@ function GithubStep({
       return await processGitHubPopupPayload(parsed);
     } catch {
       window.localStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
-      setDebugMessage("handoff_storage=invalido");
       return false;
     }
   }
@@ -406,7 +725,6 @@ function GithubStep({
   async function completeGitHubConnection(handoffToken: unknown) {
     if (typeof handoffToken !== "string" || !handoffToken.trim()) {
       setMessage("GitHub autorizou, mas nao recebi a validacao temporaria do popup.");
-      setDebugMessage("handoff=ausente");
       return false;
     }
 
@@ -422,14 +740,6 @@ function GithubStep({
       const payload = await response.json() as GitHubCompleteResponse;
       setMessage(payload.message || "GitHub conectado com sucesso.");
       setAccounts(payload.accounts || []);
-      setDebugMessage(
-        [
-          `complete=${response.status}`,
-          `ok=${payload.ok ? "sim" : "nao"}`,
-          `connected=${payload.connected ? "sim" : "nao"}`,
-          `contas=${payload.accounts?.length ?? 0}`,
-        ].join(" | "),
-      );
 
       if (response.ok && payload.connected && payload.accounts?.length) {
         onPatch({
@@ -440,9 +750,8 @@ function GithubStep({
         });
         return true;
       }
-    } catch (error) {
+    } catch {
       setMessage("Nao consegui concluir a validacao local do GitHub.");
-      setDebugMessage(error instanceof Error ? error.message : "Erro desconhecido no handoff.");
     }
 
     return false;
@@ -457,15 +766,6 @@ function GithubStep({
       const payload = await response.json() as GitHubStatusResponse;
       setMessage(payload.message || null);
       setAccounts(payload.accounts || []);
-      setDebugMessage(
-        [
-          `status=${response.status}`,
-          `ok=${payload.ok ? "sim" : "nao"}`,
-          `connected=${payload.connected ? "sim" : "nao"}`,
-          `token=${payload.diagnostics?.tokenPresent ? "sim" : "nao"}`,
-          `contas=${payload.diagnostics?.accountsCount ?? payload.accounts?.length ?? 0}`,
-        ].join(" | "),
-      );
 
       if (payload.connected && payload.accounts?.length) {
         onPatch({
@@ -481,9 +781,8 @@ function GithubStep({
           setMessage("GitHub ainda nao retornou uma conta valida para este dominio.");
         }
       }
-    } catch (error) {
+    } catch {
       setMessage("Nao consegui consultar o GitHub agora.");
-      setDebugMessage(error instanceof Error ? error.message : "Erro desconhecido na validacao.");
     } finally {
       setLoadingStatus(false);
     }
@@ -503,7 +802,6 @@ function GithubStep({
   function connect() {
     setConnecting(true);
     setMessage(null);
-    setDebugMessage(null);
 
     const width = 540;
     const height = 720;
@@ -597,11 +895,6 @@ function GithubStep({
                 {message ? (
                   <p className="mt-[7px] text-[12px] font-medium text-[#9AAFFF]">{message}</p>
                 ) : null}
-                {debugMessage ? (
-                  <p className="mt-[6px] rounded-[10px] border border-[#1B1B1B] bg-[#080808] px-[9px] py-[6px] font-mono text-[11px] text-[#777777]">
-                    {debugMessage}
-                  </p>
-                ) : null}
               </div>
             </div>
             <ActionButton
@@ -648,6 +941,8 @@ function RepositoryStep({
   const [repositories, setRepositories] = useState<HostingRepository[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
+  const [hiddenUsedCount, setHiddenUsedCount] = useState(0);
+  const [hiddenNoWriteCount, setHiddenNoWriteCount] = useState(0);
   const selectedAccount = draft.selectedGithubAccountLogin || accounts[0]?.login || "";
   const selectedAccountRecord = accounts.find((account) => account.login === selectedAccount) || accounts[0] || null;
 
@@ -687,8 +982,12 @@ function RepositoryStep({
         throw new Error(payload.message || "Nao foi possivel carregar repositorios.");
       }
       setRepositories(payload.repositories || []);
+      setHiddenUsedCount(payload.hiddenUsedCount || 0);
+      setHiddenNoWriteCount(payload.hiddenNoWriteCount || 0);
     } catch (error) {
       setRepositories([]);
+      setHiddenUsedCount(0);
+      setHiddenNoWriteCount(0);
       setMessage(error instanceof Error ? error.message : "Nao foi possivel carregar repositorios.");
     } finally {
       setLoading(false);
@@ -772,7 +1071,21 @@ function RepositoryStep({
         ) : null}
         {!loading && !message && repositories.length === 0 ? (
           <div className="p-[18px] text-[13px] font-medium text-[#777777]">
-            Nenhum repositorio encontrado nessa conta.
+            {hiddenUsedCount > 0
+              ? "Todos os repositorios encontrados nessa conta ja estao vinculados a uma VPS. Escolha outra conta/organizacao ou crie um novo repositorio."
+              : hiddenNoWriteCount > 0
+                ? "Os repositorios encontrados nessa conta nao liberaram escrita para o Flowdesk. Reconecte o GitHub com acesso total ou ajuste a permissao da organizacao."
+                : "Nenhum repositorio encontrado nessa conta."}
+          </div>
+        ) : null}
+        {!loading && !message && hiddenUsedCount > 0 && repositories.length > 0 ? (
+          <div className="border-b border-[#151515] bg-[#0B0B0B] px-[18px] py-[12px] text-[12px] font-medium text-[#8E8E8E]">
+            {hiddenUsedCount} repositorio(s) ja vinculado(s) a outra VPS foram ocultados para evitar duplicidade.
+          </div>
+        ) : null}
+        {!loading && !message && hiddenNoWriteCount > 0 ? (
+          <div className="border-b border-[#151515] bg-[#0B0B0B] px-[18px] py-[12px] text-[12px] font-medium text-[#8E8E8E]">
+            {hiddenNoWriteCount} repositorio(s) sem permissao de escrita foram ocultados. Reconecte o GitHub com acesso total ou ajuste a permissao na organizacao.
           </div>
         ) : null}
         {!loading && !message ? repositories.map((repo) => {
@@ -946,6 +1259,7 @@ function RegionStep({
   onPatch: (patch: Partial<HostingDraft>) => void;
 }) {
   const selectedRegion = HOSTING_REGIONS.find((region) => region.id === draft.selectedRegionId) || HOSTING_REGIONS[0];
+  const [isRegionMenuOpen, setIsRegionMenuOpen] = useState(false);
 
   return (
     <div className="grid gap-[18px] xl:grid-cols-[minmax(0,0.88fr)_minmax(420px,1fr)]">
@@ -955,20 +1269,74 @@ function RegionStep({
           title="Escolha o local de servidor"
           description="Por enquanto a primeira regiao disponivel e Sao Paulo. A estrutura ja esta preparada para novas regioes e comparacao de ping."
         />
-        <div className="flex min-h-[52px] items-center gap-[12px] rounded-[16px] border border-[#171717] bg-[#080808] px-[14px]">
-          <MapPin className="h-[18px] w-[18px] text-[#9BE7AC]" />
-          <select
-            value={selectedRegion.id}
-            onChange={(event) => onPatch({ selectedRegionId: event.target.value })}
-            className="h-full min-w-0 flex-1 bg-transparent text-[14px] font-semibold text-[#EEEEEE] outline-none"
+        <div className="relative">
+          <button
+            type="button"
+            aria-expanded={isRegionMenuOpen}
+            onClick={() => setIsRegionMenuOpen((current) => !current)}
+            className="flex min-h-[56px] w-full items-center gap-[12px] rounded-[16px] border border-[#171717] bg-[#080808] px-[14px] text-left transition-colors hover:border-[#252525] hover:bg-[#0C0C0C]"
           >
-            {HOSTING_REGIONS.map((region) => (
-              <option key={region.id} value={region.id}>
-                {region.name} - Melhor latencia {region.pingMs} ms
-              </option>
-            ))}
-          </select>
-          <ChevronRight className="h-[18px] w-[18px] rotate-90 text-[#777777]" />
+            <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[12px] border border-[rgba(155,231,172,0.22)] bg-[rgba(52,168,83,0.08)]">
+              <MapPin className="h-[17px] w-[17px] text-[#9BE7AC]" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[14px] font-semibold text-[#EEEEEE]">
+                {selectedRegion.name}
+              </span>
+              <span className="mt-[3px] block truncate text-[12px] text-[#777777]">
+                Melhor latencia {selectedRegion.pingMs} ms
+              </span>
+            </span>
+            <span className="rounded-full border border-[rgba(52,168,83,0.2)] bg-[rgba(52,168,83,0.08)] px-[9px] py-[4px] text-[11px] font-semibold text-[#9BE7AC]">
+              Disponivel
+            </span>
+            <ChevronRight
+              className={`h-[18px] w-[18px] text-[#777777] transition-transform ${
+                isRegionMenuOpen ? "-rotate-90" : "rotate-90"
+              }`}
+            />
+          </button>
+          {isRegionMenuOpen ? (
+            <div className="absolute left-0 right-0 top-[64px] z-30 overflow-hidden rounded-[16px] border border-[#202020] bg-[#080808] p-[6px] shadow-[0_22px_60px_rgba(0,0,0,0.45)]">
+              {HOSTING_REGIONS.map((region) => {
+                const isSelected = region.id === selectedRegion.id;
+                return (
+                  <button
+                    key={region.id}
+                    type="button"
+                    onClick={() => {
+                      onPatch({ selectedRegionId: region.id });
+                      setIsRegionMenuOpen(false);
+                    }}
+                    className={`flex w-full items-center gap-[12px] rounded-[12px] px-[10px] py-[10px] text-left transition-colors ${
+                      isSelected ? "bg-[#101A12]" : "hover:bg-[#101010]"
+                    }`}
+                  >
+                    <span className="flex h-[32px] w-[32px] shrink-0 items-center justify-center rounded-[11px] bg-[#111111]">
+                      <MapPin className="h-[16px] w-[16px] text-[#9BE7AC]" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-semibold text-[#EEEEEE]">
+                        {region.name}
+                      </span>
+                      <span className="mt-[2px] block text-[12px] text-[#777777]">
+                        {region.city}, {region.country} - {region.pingMs} ms
+                      </span>
+                    </span>
+                    <span
+                      className={`rounded-full px-[8px] py-[4px] text-[11px] font-semibold ${
+                        region.status === "available"
+                          ? "bg-[rgba(52,168,83,0.1)] text-[#9BE7AC]"
+                          : "bg-[#151515] text-[#777777]"
+                      }`}
+                    >
+                      {region.status === "available" ? "Ativo" : "Em breve"}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
         </div>
         <div className="rounded-[16px] border border-[rgba(52,168,83,0.18)] bg-[rgba(52,168,83,0.07)] p-[14px]">
           <p className="text-[13px] leading-[1.55] text-[#C8EAD0]">
@@ -1123,10 +1491,10 @@ function PaymentStep({
   const [message, setMessage] = useState<string | null>(null);
   const [autoCheckoutStarted, setAutoCheckoutStarted] = useState(false);
   const checkoutHref = useMemo(() => {
-    if (!plan) return "#";
+    if (!plan || !draft.kind) return "#";
     const params = new URLSearchParams({
       source: "dashboard-hosting",
-      hostingKind: draft.kind || "",
+      hostingKind: draft.kind,
       hostingPlan: plan.id,
       hostingRegion: region.id,
       repository: repository ? `${repository.owner}/${repository.name}` : "",
@@ -1136,11 +1504,11 @@ function PaymentStep({
       returnPath: HOSTING_STEP_PATH_BY_STEP.payment,
       fresh: "1",
     });
-    return buildPaymentCheckoutEntryHref({
-      planCode: plan.paymentPlanCode,
-      billingPeriodCode: "monthly",
-      searchParams: params,
-    });
+    const internalHref = `/payment/vps/${draft.kind}/${plan.id}?${params.toString()}`;
+    if (typeof window === "undefined") return internalHref;
+    return buildBrowserRoutingTargetFromInternalPath(internalHref, {
+      fallbackHost: "pay",
+    }).href;
   }, [draft.kind, plan, region.id, repository]);
 
   useEffect(() => {
@@ -1271,7 +1639,33 @@ function ReadyStep({
   plan: HostingPlan | null;
   onReset: () => void;
 }) {
-  const url = resolveVpsUrl(draft.vpsCode);
+  const vpsCode = draft.vpsCode;
+
+  if (!vpsCode) {
+    return (
+      <div className="rounded-[22px] border border-[#1D1D1D] bg-[#080808] p-[22px]">
+        <div className="flex h-[54px] w-[54px] items-center justify-center rounded-[17px] bg-[#111111] text-[#8E8E8E]">
+          <Rocket className="h-[25px] w-[25px]" />
+        </div>
+        <h2 className="mt-[18px] text-[28px] font-semibold tracking-[-0.04em] text-[#F1F1F1]">
+          Nenhuma VPS liberada nesta sessao
+        </h2>
+        <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#9B9B9B]">
+          A tela de sucesso expira automaticamente para evitar mostrar uma VPS antiga em uma nova compra.
+        </p>
+        <button
+          type="button"
+          onClick={onReset}
+          className="mt-[18px] inline-flex h-[44px] items-center justify-center rounded-[12px] bg-[#0F62FE] px-[16px] text-[13px] font-semibold text-white transition-colors hover:bg-[#2A73FF]"
+        >
+          Criar hospedagem
+        </button>
+      </div>
+    );
+  }
+
+  const url = resolveVpsDisplayUrl(vpsCode);
+  const panelPath = resolveVpsInternalPath(vpsCode);
 
   return (
     <div className="grid gap-[18px] xl:grid-cols-[minmax(0,1fr)_390px]">
@@ -1291,7 +1685,7 @@ function ReadyStep({
         </div>
         <div className="mt-[18px] flex flex-wrap gap-[10px]">
           <a
-            href={url}
+            href={panelPath}
             className="inline-flex h-[44px] items-center justify-center gap-[9px] rounded-[12px] bg-[#0F62FE] px-[16px] text-[13px] font-semibold text-white transition-colors hover:bg-[#2A73FF]"
           >
             Abrir painel da VPS
@@ -1313,8 +1707,14 @@ function ReadyStep({
 
 export function HostingWorkspace({
   initialStep = "kind",
+  initialProjects = [],
+  forceOnboarding = false,
+  githubConnected = false,
 }: {
   initialStep?: HostingStep;
+  initialProjects?: HostingProjectCard[];
+  forceOnboarding?: boolean;
+  githubConnected?: boolean;
 }) {
   const router = useRouter();
   const [draft, setDraft] = useState<HostingDraft>({
@@ -1350,6 +1750,21 @@ export function HostingWorkspace({
     writeDraft(draft);
   }, [draft, hydrated]);
 
+  useEffect(() => {
+    if (!hydrated || draft.step !== "ready" || !draft.vpsCode) return;
+    const vpsCode = draft.vpsCode;
+    const timeoutId = window.setTimeout(() => {
+      window.sessionStorage.removeItem(STORAGE_KEY);
+      router.replace(resolveVpsInternalPath(vpsCode), {
+        scroll: false,
+      });
+    }, 10_000);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [draft.step, draft.vpsCode, hydrated, router]);
+
   function patchDraft(patch: Partial<HostingDraft>) {
     const current = draftRef.current;
     const nextDraft = {
@@ -1375,6 +1790,26 @@ export function HostingWorkspace({
     router.push(HOSTING_STEP_PATH_BY_STEP.kind, {
       scroll: false,
     });
+  }
+
+  function startNewHosting() {
+    if (typeof window !== "undefined") {
+      window.sessionStorage.removeItem(STORAGE_KEY);
+    }
+    setStepDirection("forward");
+    const next = { ...DEFAULT_DRAFT, step: "kind" as const };
+    draftRef.current = next;
+    setDraft(next);
+    router.push(HOSTING_STEP_PATH_BY_STEP.kind, {
+      scroll: false,
+    });
+  }
+
+  function reconnectGithubFromOverview() {
+    window.sessionStorage.removeItem(STORAGE_KEY);
+    draftRef.current = DEFAULT_DRAFT;
+    setDraft(DEFAULT_DRAFT);
+    router.refresh();
   }
 
   const repository =
@@ -1411,6 +1846,17 @@ export function HostingWorkspace({
         region={region}
         plan={plan}
         onReset={reset}
+      />
+    );
+  }
+
+  if (!forceOnboarding && initialStep === "kind" && initialProjects.length > 0) {
+    return (
+      <HostingProjectsOverview
+        projects={initialProjects}
+        githubConnected={githubConnected}
+        onCreate={startNewHosting}
+        onReconnect={reconnectGithubFromOverview}
       />
     );
   }
