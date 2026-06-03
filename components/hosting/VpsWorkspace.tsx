@@ -51,6 +51,8 @@ import {
   UserRound,
   Wifi,
   X,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { useNotifications } from "@/components/notifications/NotificationsProvider";
 import { buildDiscordAuthStartHref, buildLoginHref } from "@/lib/auth/paths";
@@ -96,6 +98,7 @@ type VpsDeployment = {
   deployed_at?: string | null;
   duration_ms?: number | null;
   logs?: unknown;
+  metadata?: Record<string, unknown> | null;
 };
 
 type VpsEnvVar = {
@@ -139,6 +142,12 @@ type FileContextMenuState =
       node: VpsFileNode;
     }
   | {
+      kind: "preview";
+      x: number;
+      y: number;
+      node: VpsFileNode;
+    }
+  | {
       kind: "empty";
       x: number;
       y: number;
@@ -151,6 +160,18 @@ type FileInlineDraft = {
   type: "file" | "directory";
   value: string;
 } | null;
+
+type LoadedVpsFile = {
+  name?: string | null;
+  path?: string | null;
+  sha?: string | null;
+  encoding?: string | null;
+  content?: string;
+  contentBase64?: string | null;
+  size?: number | null;
+  downloadUrl?: string | null;
+  htmlUrl?: string | null;
+};
 
 type FlowChatMessage = {
   id: string | number;
@@ -550,6 +571,50 @@ function resolveHighlightLanguage(file: VpsFileNode | null) {
   return (file.language || languageFromFilePath(file.path) || "text").toLowerCase();
 }
 
+function fileExtensionFromPath(path: string) {
+  const baseName = path.split("/").pop()?.toLowerCase() || "";
+  return baseName.includes(".") ? baseName.split(".").pop()?.toLowerCase() || "" : "";
+}
+
+const RASTER_IMAGE_EXTENSIONS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "avif",
+  "ico",
+  "bmp",
+  "apng",
+]);
+
+function isSvgFile(file: VpsFileNode | null) {
+  if (!file || file.type !== "file") return false;
+  return resolveHighlightLanguage(file) === "svg" || fileExtensionFromPath(file.path) === "svg";
+}
+
+function isRasterImageFile(file: VpsFileNode | null) {
+  if (!file || file.type !== "file") return false;
+  const language = resolveHighlightLanguage(file);
+  return language === "image" || RASTER_IMAGE_EXTENSIONS.has(fileExtensionFromPath(file.path));
+}
+
+function isPreviewableImageFile(file: VpsFileNode | null) {
+  return isSvgFile(file) || isRasterImageFile(file);
+}
+
+function buildVpsFileRawPath(vpsCode: string, path: string) {
+  return `/api/auth/me/hosting/vps/${encodeURIComponent(vpsCode)}/files?path=${encodeURIComponent(path)}&raw=1`;
+}
+
+function buildSvgDataUrl(content: string) {
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(content)}`;
+}
+
+function clampImageZoom(value: number) {
+  return Math.min(4, Math.max(0.25, Number(value.toFixed(2))));
+}
+
 const CODE_KEYWORDS: Record<string, Set<string>> = {
   javascript: new Set(["const", "let", "var", "function", "return", "if", "else", "for", "while", "switch", "case", "break", "continue", "import", "from", "export", "default", "async", "await", "try", "catch", "finally", "throw", "new", "class", "extends", "typeof", "instanceof", "true", "false", "null", "undefined"]),
   typescript: new Set(["const", "let", "var", "function", "return", "if", "else", "for", "while", "switch", "case", "break", "continue", "import", "from", "export", "default", "async", "await", "try", "catch", "finally", "throw", "new", "class", "extends", "typeof", "instanceof", "true", "false", "null", "undefined", "type", "interface", "enum", "implements", "private", "public", "protected", "readonly", "as", "keyof"]),
@@ -819,12 +884,91 @@ function statusLabel(status: RuntimeStatus) {
   return labels[status] || "Desconhecido";
 }
 
-function deploymentStatusClasses(status: string) {
+function deploymentEnvironmentLabel(environment: string) {
+  const normalized = environment.toLowerCase();
+  if (normalized === "production") return "Production";
+  if (normalized === "preview") return "Preview";
+  if (normalized === "development") return "Development";
+  return environment || "Environment";
+}
+
+function deploymentShortSha(value?: string | null) {
+  return value ? value.slice(0, 7) : "pending";
+}
+
+function deploymentMetadataString(deploy: VpsDeployment, key: string) {
+  const value = deploy.metadata?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function deploymentAuthorInitials(value?: string | null) {
+  const source = value?.trim() || "FD";
+  return source
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((item) => item[0]?.toUpperCase())
+    .join("") || "FD";
+}
+
+function deploymentDurationLabel(deploy: VpsDeployment) {
+  if (typeof deploy.duration_ms === "number" && Number.isFinite(deploy.duration_ms)) {
+    const seconds = Math.max(1, Math.round(deploy.duration_ms / 1000));
+    if (seconds < 60) return `${seconds}s`;
+    return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  }
+  const started = deploy.created_at ? Date.parse(deploy.created_at) : Number.NaN;
+  const finished = deploy.deployed_at ? Date.parse(deploy.deployed_at) : Number.NaN;
+  if (Number.isFinite(started) && Number.isFinite(finished) && finished >= started) {
+    const seconds = Math.max(1, Math.round((finished - started) / 1000));
+    if (seconds < 60) return `${seconds}s`;
+    return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  }
+  return "1m 20s";
+}
+
+function deploymentStatusFamily(status: string) {
   const normalized = status.toLowerCase();
-  if (["ready", "production", "preview"].includes(normalized)) return "border-[rgba(52,168,83,0.32)] bg-[rgba(52,168,83,0.1)] text-[#9BE7AC]";
-  if (["failed", "cancelled"].includes(normalized)) return "border-[rgba(255,82,82,0.32)] bg-[rgba(255,82,82,0.1)] text-[#FF9B9B]";
-  if (["building", "preparing", "deploying", "queued", "pending"].includes(normalized)) return "border-[rgba(15,98,254,0.32)] bg-[rgba(15,98,254,0.1)] text-[#9BC2FF]";
-  return "border-[#242424] bg-[#101010] text-[#DADADA]";
+  if (["production", "preview", "ready"].includes(normalized)) return "ready";
+  if (["failed", "cancelled"].includes(normalized)) return "failed";
+  if (["pending", "queued", "building", "preparing", "deploying"].includes(normalized)) return "building";
+  return "other";
+}
+
+function deploymentPrimaryBadge(deploy: VpsDeployment) {
+  const family = deploymentStatusFamily(deploy.status);
+  if (family === "failed") return { label: "Failed", className: "border-[rgba(255,82,82,0.32)] bg-[rgba(255,82,82,0.1)] text-[#FF9B9B]" };
+  if (family === "building") return { label: "Pending", className: "border-[rgba(15,98,254,0.32)] bg-[rgba(15,98,254,0.1)] text-[#9BC2FF]" };
+  return { label: "Ready", className: "border-[rgba(52,168,83,0.32)] bg-[rgba(52,168,83,0.1)] text-[#9BE7AC]" };
+}
+
+function deploymentEnvironmentBadges(deploy: VpsDeployment, productionBranch: string) {
+  const pullRequestUrl = deploymentMetadataString(deploy, "pullRequestUrl");
+  const isProduction = deploy.environment === "production" && deploy.branch === productionBranch && !pullRequestUrl;
+  const badges = [
+    {
+      label: isProduction ? "Production" : deploy.environment === "development" ? "Development" : "Preview",
+      className: isProduction
+        ? "border-[rgba(15,98,254,0.36)] bg-[#0F62FE] text-white"
+        : "border-[#2A2A2A] bg-[#060606] text-[#DADADA]",
+    },
+  ];
+
+  if (pullRequestUrl || deploy.environment === "preview" || deploy.branch !== productionBranch) {
+    badges.push({
+      label: "Sandbox",
+      className: "border-[rgba(255,190,80,0.36)] bg-[rgba(255,190,80,0.1)] text-[#FFD28A]",
+    });
+  }
+
+  if (deploymentStatusFamily(deploy.status) === "building") {
+    badges.push({
+      label: "Pending",
+      className: "border-[rgba(155,194,255,0.34)] bg-[rgba(155,194,255,0.1)] text-[#9BC2FF]",
+    });
+  }
+
+  return badges;
 }
 
 function metricValue(metric: VpsMetric | null, key: keyof VpsMetric) {
@@ -1198,7 +1342,7 @@ function CustomSelect({
   const selected = options.find((option) => option.value === value) || options[0];
 
   return (
-    <div className={`relative ${className}`}>
+    <div className={`relative ${open ? "z-[180]" : "z-0"} ${className}`}>
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
@@ -1212,7 +1356,7 @@ function CustomSelect({
         <ChevronDown className={`h-[15px] w-[15px] text-[#8E8E8E] transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open ? (
-        <div className="absolute left-0 right-0 top-[48px] z-30 overflow-hidden rounded-[14px] border border-[#242424] bg-[#090909] p-[5px] shadow-[0_18px_60px_rgba(0,0,0,0.45)]">
+        <div className="absolute left-0 right-0 top-[48px] z-[180] overflow-hidden rounded-[14px] border border-[#242424] bg-[#090909] p-[5px] shadow-[0_18px_60px_rgba(0,0,0,0.45)]">
           {options.map((option) => (
             <button
               key={option.value}
@@ -1375,10 +1519,14 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
   const [consoleStatusFilter, setConsoleStatusFilter] = useState("all");
   const [selectedConsoleKey, setSelectedConsoleKey] = useState<string | null>(null);
   const [logsRefreshing, setLogsRefreshing] = useState(false);
+  const [logsClearing, setLogsClearing] = useState(false);
   const [sidebarSearchText, setSidebarSearchText] = useState("");
   const [selectedFile, setSelectedFile] = useState<VpsFileNode | null>(null);
+  const [loadedFile, setLoadedFile] = useState<LoadedVpsFile | null>(null);
   const [fileContent, setFileContent] = useState("");
   const [fileDirty, setFileDirty] = useState(false);
+  const [filePreviewMode, setFilePreviewMode] = useState<"preview" | "code">("code");
+  const [imageZoom, setImageZoom] = useState(1);
   const [filesBusy, setFilesBusy] = useState(false);
   const [fileQuery, setFileQuery] = useState("");
   const [fileEditorViewport, setFileEditorViewport] = useState({ scrollTop: 0, scrollLeft: 0, height: 720 });
@@ -1411,6 +1559,12 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
   const [envFilter, setEnvFilter] = useState("all");
   const [envSort, setEnvSort] = useState("updated");
   const [envMenuId, setEnvMenuId] = useState<number | null>(null);
+  const [deploymentBranchFilter, setDeploymentBranchFilter] = useState("all");
+  const [deploymentAuthorFilter, setDeploymentAuthorFilter] = useState("all");
+  const [deploymentEnvironmentFilter, setDeploymentEnvironmentFilter] = useState("all");
+  const [deploymentStatusFilter, setDeploymentStatusFilter] = useState("all");
+  const [deploymentDateFilter, setDeploymentDateFilter] = useState("all");
+  const [deploymentMenuId, setDeploymentMenuId] = useState<number | null>(null);
   const [visibleEnvValues, setVisibleEnvValues] = useState<Record<number, boolean>>({});
   const [envDrawerOpen, setEnvDrawerOpen] = useState(false);
   const [envDrawerMode, setEnvDrawerMode] = useState<"create" | "edit">("create");
@@ -1439,11 +1593,13 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const fileContextMenuRef = useRef<HTMLDivElement | null>(null);
   const autoSyncedFilesRef = useRef(false);
+  const autoSyncedDeploymentsRef = useRef(false);
   const initializedExplorerRef = useRef(false);
+  const logsClearedAtRef = useRef<number | null>(null);
   const currentAccount = snapshot.account;
   const latestMetric = snapshot.metrics[snapshot.metrics.length - 1] || null;
   const shouldShowTabSkeleton = Boolean(pendingTab && pendingTab === tab);
-  const centeredMainTabs = tab === "overview" || tab === "metrics" || tab === "deploys" || tab === "env";
+  const centeredMainTabs = tab === "overview" || tab === "metrics" || tab === "env";
   const flowQuotaPercent = Math.min(100, Math.max(0, (flowChatQuota.used / Math.max(1, flowChatQuota.limit)) * 100));
   const flowQuotaResetLabel = flowChatQuota.blockedUntil || flowChatQuota.resetAt
     ? formatDate(flowChatQuota.blockedUntil || flowChatQuota.resetAt)
@@ -1451,6 +1607,19 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
   const fileLines = useMemo(() => (fileContent ? fileContent.split(/\r\n|\r|\n/) : [""]), [fileContent]);
   const lineCount = Math.max(32, fileLines.length);
   const highlightedLanguage = useMemo(() => resolveHighlightLanguage(selectedFile), [selectedFile]);
+  const selectedFileIsSvg = useMemo(() => isSvgFile(selectedFile), [selectedFile]);
+  const selectedFileIsRasterImage = useMemo(() => isRasterImageFile(selectedFile), [selectedFile]);
+  const selectedFileIsPreviewableImage = selectedFileIsSvg || selectedFileIsRasterImage;
+  const showingImagePreview = selectedFileIsPreviewableImage && filePreviewMode === "preview";
+  const selectedFileRawPath = selectedFile
+    ? buildVpsFileRawPath(snapshot.project.vpsCode, selectedFile.path)
+    : "";
+  const selectedImagePreviewSrc = selectedFileIsSvg && fileDirty && fileContent.trim()
+    ? buildSvgDataUrl(fileContent)
+    : selectedFileRawPath;
+  const loadedFileSizeLabel = typeof loadedFile?.size === "number" && Number.isFinite(loadedFile.size)
+    ? `${Math.max(1, Math.round(loadedFile.size / 1024))} KB`
+    : null;
   const visibleLineStart = Math.max(
     0,
     Math.floor(fileEditorViewport.scrollTop / FILE_EDITOR_LINE_HEIGHT) - FILE_EDITOR_OVERSCAN_LINES,
@@ -1615,6 +1784,11 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
         logs?: VpsLog[];
         actions?: Array<Record<string, unknown>>;
       };
+      const incomingLogs = (payload.logs || []).filter((log) => {
+        if (!logsClearedAtRef.current) return true;
+        const emittedAt = Date.parse(log.emitted_at || "");
+        return Number.isFinite(emittedAt) && emittedAt >= logsClearedAtRef.current;
+      });
       setSnapshot((current) => ({
         ...current,
         project: {
@@ -1623,7 +1797,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
           runtimeLastSeenAt: payload.project?.runtime_last_seen_at || current.project.runtimeLastSeenAt,
         },
         metrics: payload.metric ? [...current.metrics.slice(-47), payload.metric] : current.metrics,
-        logs: logsPaused ? current.logs : mergeUniqueLogs(current.logs, payload.logs || []),
+        logs: logsPaused ? current.logs : mergeUniqueLogs(current.logs, incomingLogs),
         actions: payload.actions || current.actions,
       }));
     });
@@ -1635,7 +1809,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
 
   useEffect(() => {
     if (!logsPaused) {
-      consoleRef.current?.scrollTo({ top: consoleRef.current.scrollHeight, behavior: "smooth" });
+      consoleRef.current?.scrollTo({ top: 0, behavior: "smooth" });
     }
   }, [logsPaused, snapshot.logs.length, tab]);
 
@@ -1687,7 +1861,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     () =>
       consoleEntries.filter((entry) =>
         consoleStatusFilter === "all" ? true : entry.family === consoleStatusFilter,
-      ),
+      ).reverse(),
     [consoleEntries, consoleStatusFilter],
   );
 
@@ -1724,6 +1898,61 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     appRam: metricValue(latestMetric, "app_ram_mb"),
     appCpu: metricValue(latestMetric, "app_cpu_percent"),
   };
+
+  const deploymentBranchOptions = useMemo(() => {
+    const branches = Array.from(new Set(snapshot.deployments.map((deploy) => deploy.branch).filter(Boolean))).sort();
+    return [{ value: "all", label: "All Branches..." }, ...branches.map((branch) => ({ value: branch, label: branch }))];
+  }, [snapshot.deployments]);
+  const deploymentAuthorOptions = useMemo(() => {
+    const authors = Array.from(new Set(snapshot.deployments.map((deploy) => deploy.commit_author || "Unknown").filter(Boolean))).sort();
+    return [{ value: "all", label: "All Authors..." }, ...authors.map((author) => ({ value: author, label: author }))];
+  }, [snapshot.deployments]);
+  const deploymentEnvironmentOptions = useMemo(() => {
+    const environments = Array.from(new Set(snapshot.deployments.map((deploy) => deploy.environment).filter(Boolean))).sort();
+    return [
+      { value: "all", label: "All Environments" },
+      ...environments.map((environment) => ({ value: environment, label: deploymentEnvironmentLabel(environment) })),
+    ];
+  }, [snapshot.deployments]);
+  const deploymentStatusOptions = useMemo(() => {
+    const statuses = Array.from(new Set(snapshot.deployments.map((deploy) => deploymentStatusFamily(deploy.status)))).sort();
+    const readyCount = snapshot.deployments.filter((deploy) => deploymentStatusFamily(deploy.status) === "ready").length;
+    return [
+      { value: "all", label: `Status ${readyCount}/${snapshot.deployments.length || 0}` },
+      ...statuses.map((status) => ({
+        value: status,
+        label: status === "ready" ? "Ready" : status === "failed" ? "Failed" : status === "building" ? "Building" : "Other",
+      })),
+    ];
+  }, [snapshot.deployments]);
+  const filteredDeployments = useMemo(() => {
+    const now = Date.now();
+    const dateWindowMs = deploymentDateFilter === "24h"
+      ? 24 * 60 * 60 * 1000
+      : deploymentDateFilter === "7d"
+        ? 7 * 24 * 60 * 60 * 1000
+        : deploymentDateFilter === "30d"
+          ? 30 * 24 * 60 * 60 * 1000
+          : null;
+    return snapshot.deployments.filter((deploy) => {
+      if (deploymentBranchFilter !== "all" && deploy.branch !== deploymentBranchFilter) return false;
+      if (deploymentAuthorFilter !== "all" && (deploy.commit_author || "Unknown") !== deploymentAuthorFilter) return false;
+      if (deploymentEnvironmentFilter !== "all" && deploy.environment !== deploymentEnvironmentFilter) return false;
+      if (deploymentStatusFilter !== "all" && deploymentStatusFamily(deploy.status) !== deploymentStatusFilter) return false;
+      if (dateWindowMs) {
+        const value = Date.parse(deploy.deployed_at || deploy.created_at || "");
+        if (!Number.isFinite(value) || now - value > dateWindowMs) return false;
+      }
+      return true;
+    });
+  }, [
+    deploymentAuthorFilter,
+    deploymentBranchFilter,
+    deploymentDateFilter,
+    deploymentEnvironmentFilter,
+    deploymentStatusFilter,
+    snapshot.deployments,
+  ]);
 
   const filteredEnvVars = useMemo(() => {
     const query = envSearch.trim().toLowerCase();
@@ -1779,6 +2008,27 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     URL.revokeObjectURL(url);
   }
 
+  async function clearConsoleLogs() {
+    if (logsClearing) return;
+    setLogsClearing(true);
+    try {
+      const response = await fetch(`/api/auth/me/hosting/vps/${snapshot.project.vpsCode}/logs`, {
+        method: "DELETE",
+        cache: "no-store",
+      });
+      const payload = await response.json().catch(() => ({})) as { ok?: boolean; message?: string };
+      if (!response.ok || !payload.ok) throw new Error(payload.message || "Nao consegui limpar os logs.");
+      logsClearedAtRef.current = Date.now();
+      setSelectedConsoleKey(null);
+      setSnapshot((current) => ({ ...current, logs: [] }));
+      notify("success", "Logs removidos permanentemente.", "Console");
+    } catch (error) {
+      notify("error", error instanceof Error ? error.message : "Falha ao limpar console.", "Console");
+    } finally {
+      setLogsClearing(false);
+    }
+  }
+
   async function runAction(action: "start" | "stop" | "restart" | "sync") {
     if (busyAction) return;
     setBusyAction(action);
@@ -1810,6 +2060,45 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
       setBusyAction(null);
     }
   }
+
+  const syncDeployments = useCallback(async (options?: { silent?: boolean }) => {
+    if (busyAction) return;
+    setBusyAction("sync");
+    try {
+      const response = await fetch(`/api/auth/me/hosting/vps/${snapshot.project.vpsCode}/deploys?sync=1`, {
+        cache: "no-store",
+      });
+      const payload = await response.json().catch(() => ({})) as {
+        ok?: boolean;
+        message?: string;
+        deployments?: VpsDeployment[];
+        sync?: {
+          ok?: boolean;
+          message?: string;
+          synced?: number;
+        } | null;
+      };
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.message || "Nao consegui sincronizar deployments.");
+      }
+      setSnapshot((current) => ({ ...current, deployments: payload.deployments || [] }));
+      if (!options?.silent) {
+        if (payload.sync?.ok === false) {
+          notify("error", payload.sync.message || "Deployments locais carregados, mas o GitHub nao sincronizou.");
+        } else {
+          notify("success", payload.sync?.synced
+            ? `${payload.sync.synced} commit(s) sincronizados.`
+            : "Deployments sincronizados.");
+        }
+      }
+    } catch (error) {
+      if (!options?.silent) {
+        notify("error", error instanceof Error ? error.message : "Falha ao sincronizar deployments.");
+      }
+    } finally {
+      setBusyAction(null);
+    }
+  }, [busyAction, notify, snapshot.project.vpsCode]);
 
   const syncFiles = useCallback(async (options?: { silent?: boolean }) => {
     if (filesBusy) return;
@@ -1896,20 +2185,45 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
 
   const openGithubReconnectPopup = useCallback(() => {
     if (githubReconnectBusy) return;
+    const installTarget = githubReconnectInstallUrl && snapshot.project.githubConnected
+      ? githubReconnectInstallUrl
+      : null;
     setGithubReconnectBusy(true);
     setGithubReconnectSsoUrl(null);
-    setGithubReconnectInstallUrl(null);
-    setGithubReconnectMessage("Abrindo GitHub em uma janela segura...");
+    if (!installTarget) setGithubReconnectInstallUrl(null);
+    setGithubReconnectMessage(
+      installTarget
+        ? "Abrindo instalacao do GitHub App em uma janela segura..."
+        : "Abrindo GitHub em uma janela segura...",
+    );
 
     const popup = window.open(
-      "/api/auth/github/hosting/start",
+      installTarget || "/api/auth/github/hosting/start",
       "flowdesk-hosting-github",
       "width=980,height=760,menubar=no,toolbar=no,location=no,status=no",
     );
 
     if (!popup) {
       setGithubReconnectBusy(false);
-      setGithubReconnectMessage("Permita popups para conectar o GitHub.");
+      setGithubReconnectMessage(
+        installTarget
+          ? "Permita popups para instalar o GitHub App."
+          : "Permita popups para conectar o GitHub.",
+      );
+      return;
+    }
+
+    if (installTarget) {
+      const intervalId = window.setInterval(() => {
+        if (!popup.closed) return;
+        window.clearInterval(intervalId);
+        setGithubReconnectBusy(false);
+        setGithubReconnectOpen(false);
+        setGithubReconnectInstallUrl(null);
+        setGithubReconnectMessage("");
+        notify("success", "GitHub App atualizado. Tente salvar novamente.");
+        if (tab === "files") void syncFiles({ silent: true });
+      }, 500);
       return;
     }
 
@@ -1959,7 +2273,16 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     }, 500);
 
     window.addEventListener("message", handleMessage);
-  }, [completeGithubReconnect, githubReconnectBusy, refreshGithubReconnectStatus]);
+  }, [
+    completeGithubReconnect,
+    githubReconnectBusy,
+    githubReconnectInstallUrl,
+    notify,
+    refreshGithubReconnectStatus,
+    snapshot.project.githubConnected,
+    syncFiles,
+    tab,
+  ]);
 
   useEffect(() => {
     if (tab === "files" && !snapshot.fileTree.length && !autoSyncedFilesRef.current) {
@@ -1967,6 +2290,13 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
       void syncFiles({ silent: true });
     }
   }, [snapshot.fileTree.length, syncFiles, tab]);
+
+  useEffect(() => {
+    if (tab === "deploys" && !autoSyncedDeploymentsRef.current) {
+      autoSyncedDeploymentsRef.current = true;
+      void syncDeployments({ silent: true });
+    }
+  }, [syncDeployments, tab]);
 
   useEffect(() => {
     if (initializedExplorerRef.current || !snapshot.fileTree.length) return;
@@ -1995,7 +2325,10 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
   async function loadFile(node: VpsFileNode) {
     if (node.type !== "file") return;
     setSelectedFile(node);
+    setLoadedFile(null);
     setFileDirty(false);
+    setFilePreviewMode(isPreviewableImageFile(node) ? "preview" : "code");
+    setImageZoom(1);
     setFileEditorViewport((current) => ({ ...current, scrollTop: 0, scrollLeft: 0 }));
     if (fileEditorTextareaRef.current) {
       fileEditorTextareaRef.current.scrollTop = 0;
@@ -2007,8 +2340,15 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
       highlightedCodeRef.current.scrollLeft = 0;
     }
     const response = await fetch(`/api/auth/me/hosting/vps/${snapshot.project.vpsCode}/files?path=${encodeURIComponent(node.path)}`);
-    const payload = await response.json().catch(() => ({})) as { file?: { content?: string } };
-    setFileContent(payload.file?.content || "");
+    const payload = await response.json().catch(() => ({})) as { file?: LoadedVpsFile; message?: string };
+    if (!response.ok) {
+      notify("error", payload.message || "Nao consegui abrir o arquivo.", "Arquivos");
+      setFileContent("");
+      return;
+    }
+    const file = payload.file || null;
+    setLoadedFile(file ? { ...file, path: file.path || node.path, name: file.name || node.name } : null);
+    setFileContent(typeof file?.content === "string" ? file.content : "");
   }
 
   async function saveFile() {
@@ -2044,6 +2384,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
       "success",
       payload.message || (payload.source === "github" ? "Arquivo commitado no GitHub." : "Arquivo salvo com seguranca."),
     );
+    void syncDeployments({ silent: true });
   }
 
   async function loadFlowChatHistory(chatId?: number | null) {
@@ -2153,8 +2494,11 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     }));
     if (draft.type === "file") {
       setSelectedFile(node);
+      setLoadedFile(null);
       setFileContent("");
       setFileDirty(false);
+      setFilePreviewMode(isPreviewableImageFile(node) ? "preview" : "code");
+      setImageZoom(1);
     }
     const ok = await runFileOperation({ action: draft.type === "file" ? "create-file" : "create-folder", path, type: draft.type });
     if (ok) notify("success", `${draft.type === "file" ? "Arquivo" : "Pasta"} criado.`, "Arquivos");
@@ -2178,6 +2522,8 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     }));
     if (selectedFile?.path === node.path) {
       setSelectedFile({ ...node, name, path: targetPath, language: node.type === "file" ? languageFromFilePath(targetPath) : null });
+      setLoadedFile((current) => current ? { ...current, name, path: targetPath } : current);
+      setFilePreviewMode(isPreviewableImageFile({ ...node, name, path: targetPath, language: node.type === "file" ? languageFromFilePath(targetPath) : null }) ? "preview" : "code");
     }
     const ok = await runFileOperation({ action: "rename", path: node.path, targetPath, type: node.type });
     if (ok) notify("success", "Renomeado com sucesso.", "Arquivos");
@@ -2191,8 +2537,11 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     }));
     if (selectedFile?.path === node.path || selectedFile?.path.startsWith(`${node.path}/`)) {
       setSelectedFile(null);
+      setLoadedFile(null);
       setFileContent("");
       setFileDirty(false);
+      setFilePreviewMode("code");
+      setImageZoom(1);
     }
     const ok = await runFileOperation({ action: "delete", path: node.path, type: node.type });
     if (ok) notify("success", `${node.type === "directory" ? "Pasta" : "Arquivo"} removido.`, "Arquivos");
@@ -2206,7 +2555,11 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
       ...current,
       fileTree: updateFileTree(current.fileTree, (nodes) => moveNodeInTree(nodes, path, targetParentPath)),
     }));
-    if (selectedFile?.path === path) setSelectedFile({ ...node, path: targetPath });
+    if (selectedFile?.path === path) {
+      setSelectedFile({ ...node, path: targetPath });
+      setLoadedFile((current) => current ? { ...current, path: targetPath } : current);
+      setFilePreviewMode(isPreviewableImageFile({ ...node, path: targetPath }) ? "preview" : "code");
+    }
     const ok = await runFileOperation({ action: "move", path, targetPath, type: node.type });
     if (ok) notify("success", "Movido com sucesso.", "Arquivos");
   }
@@ -2216,6 +2569,28 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     navigator.clipboard?.writeText(node.path).then(
       () => notify("success", "Caminho copiado.", "Arquivos"),
       () => notify("error", "Nao consegui copiar.", "Arquivos"),
+    );
+  }
+
+  function imageLinkForNode(node: VpsFileNode) {
+    const rawPath = buildVpsFileRawPath(snapshot.project.vpsCode, node.path);
+    if (typeof window === "undefined") return rawPath;
+    return new URL(rawPath, window.location.origin).toString();
+  }
+
+  function copyImageLink(node: VpsFileNode) {
+    setFileContextMenu(null);
+    navigator.clipboard?.writeText(imageLinkForNode(node)).then(
+      () => notify("success", "Link da imagem copiado.", "Arquivos"),
+      () => notify("error", "Nao consegui copiar o link.", "Arquivos"),
+    );
+  }
+
+  function copySelectedSvgCode() {
+    setFileContextMenu(null);
+    navigator.clipboard?.writeText(fileContent).then(
+      () => notify("success", "Codigo SVG copiado.", "Arquivos"),
+      () => notify("error", "Nao consegui copiar o SVG.", "Arquivos"),
     );
   }
 
@@ -2445,6 +2820,21 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     reader.readAsText(file);
   }
 
+  async function pasteEnvFromClipboard() {
+    try {
+      const text = await navigator.clipboard?.readText();
+      const rows = parseDotEnv(text || "");
+      if (!rows.length) {
+        notify("error", "Clipboard nao contem variaveis .env validas.", "Variaveis");
+        return;
+      }
+      setEnvRows((current) => [...current.filter((item) => item.key.trim() || item.value.trim()), ...rows]);
+      notify("success", `${rows.length} variaveis coladas para revisao.`, "Variaveis");
+    } catch {
+      notify("error", "Nao consegui ler o clipboard.", "Variaveis");
+    }
+  }
+
   function updateEnvKey(rowId: string, value: string) {
     if (value.includes("=") && (value.includes("\n") || value.includes("\\n"))) {
       const rows = parseDotEnv(value.replace(/\\n/g, "\n"));
@@ -2497,7 +2887,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
   }, [fileQuery, snapshot.fileTree]);
 
   return (
-    <main className="min-h-screen bg-[#050505] text-[#F1F1F1]">
+    <main className="flowdesk-vps-ui min-h-screen bg-[#050505] text-[#F1F1F1]">
       <div className="flex h-screen min-h-screen overflow-hidden">
         <aside className="hidden h-screen w-[318px] shrink-0 lg:block">
           <div className={`${vpsSidebarShellClass} h-full rounded-none border-y-0 border-l-0 border-r-[#151515]`}>
@@ -2751,9 +3141,9 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
               </div>
             </div>
           </div>
-          <div className={tab === "files" || tab === "console" ? "min-h-0 flex-1 overflow-hidden" : "min-h-0 flex-1 overflow-auto p-[18px] lg:p-[24px]"}>
+          <div className={tab === "files" ? "min-h-0 flex-1 overflow-hidden" : "min-h-0 flex-1 overflow-auto p-[18px] lg:p-[24px]"}>
             {shouldShowTabSkeleton ? (
-              <div className={centeredMainTabs ? "mx-auto w-full max-w-[1180px]" : tab === "console" ? "h-full p-[18px] lg:p-[24px]" : ""}>
+              <div className={centeredMainTabs ? "mx-auto w-full max-w-[1180px]" : ""}>
                 <TabMainSkeleton tab={tab} />
               </div>
             ) : (
@@ -2961,7 +3351,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
         ) : null}
 
         {tab === "console" ? (
-          <section className={`grid h-full min-h-0 overflow-hidden border border-[#171717] bg-[#050505] ${
+          <section className={`grid h-[calc(100vh-136px)] min-h-[620px] w-full overflow-hidden bg-[#050505] ${
             selectedConsoleEntry ? "xl:grid-cols-[minmax(0,1fr)_352px]" : "xl:grid-cols-1"
           }`}>
             <div className="flex min-h-0 min-w-0 flex-col">
@@ -2972,9 +3362,9 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                 </div>
                 <div className="flex flex-wrap items-center gap-[8px]">
                   <CustomSelect value={logLevel} onChange={setLogLevel} options={[...LOG_OPTIONS]} className="w-[154px]" />
-                  <button onClick={() => setLogsPaused((current) => !current)} className={`inline-flex h-[38px] items-center gap-[7px] rounded-[10px] border px-[12px] text-[12px] font-semibold transition-colors ${logsPaused ? "border-[#292929] bg-[#111111] text-[#DADADA]" : "border-[#1E3425] bg-[#07140B] text-[#9BE7AC]"}`}>
-                    {logsPaused ? <Play className="h-[14px] w-[14px]" /> : <span className="h-[7px] w-[7px] rounded-full bg-[#34A853]" />}
-                    {logsPaused ? "Retomar" : "Live"}
+                  <button onClick={() => setLogsPaused((current) => !current)} className={`inline-flex h-[38px] items-center gap-[8px] rounded-[10px] border px-[12px] text-[12px] font-semibold transition-all ${logsPaused ? "border-[#292929] bg-[#111111] text-[#DADADA]" : "border-[#1E3425] bg-[#07140B] text-[#9BE7AC] shadow-[0_0_22px_rgba(52,168,83,0.08)]"}`}>
+                    {logsPaused ? <Pause className="h-[14px] w-[14px]" /> : <span className="h-[7px] w-[7px] rounded-full bg-[#34A853] shadow-[0_0_0_4px_rgba(52,168,83,0.12)]" />}
+                    {logsPaused ? "Live desativado" : "Live ativo"}
                   </button>
                   <button onClick={refreshConsoleLogs} disabled={logsRefreshing} className="inline-flex h-[38px] w-[38px] items-center justify-center rounded-[10px] border border-[#1B1B1B] bg-[#0B0B0B] text-[#DADADA] transition-colors hover:border-[#2A2A2A] disabled:cursor-not-allowed disabled:opacity-60" title="Atualizar logs">
                     <RefreshCw className={`h-[15px] w-[15px] ${logsRefreshing ? "animate-spin" : ""}`} />
@@ -2982,8 +3372,8 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                   <button onClick={exportConsoleLogs} className="inline-flex h-[38px] w-[38px] items-center justify-center rounded-[10px] border border-[#1B1B1B] bg-[#0B0B0B] text-[#DADADA] transition-colors hover:border-[#2A2A2A]" title="Exportar logs">
                     <Upload className="h-[15px] w-[15px]" />
                   </button>
-                  <button onClick={() => setSnapshot((current) => ({ ...current, logs: [] }))} className="inline-flex h-[38px] w-[38px] items-center justify-center rounded-[10px] border border-[#1B1B1B] bg-[#0B0B0B] text-[#DADADA] transition-colors hover:border-[#2A2A2A]" title="Limpar console">
-                    <Trash2 className="h-[15px] w-[15px]" />
+                  <button onClick={() => void clearConsoleLogs()} disabled={logsClearing} className="inline-flex h-[38px] w-[38px] items-center justify-center rounded-[10px] border border-[#1B1B1B] bg-[#0B0B0B] text-[#DADADA] transition-colors hover:border-[#2A2A2A] disabled:cursor-not-allowed disabled:opacity-60" title="Limpar console">
+                    {logsClearing ? <Loader2 className="h-[15px] w-[15px] animate-spin" /> : <Trash2 className="h-[15px] w-[15px]" />}
                   </button>
                 </div>
               </div>
@@ -3271,11 +3661,56 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                     <p className="min-w-0 truncate font-mono text-[13px] text-[#DADADA]">{selectedFile?.path || "Selecione um arquivo"}</p>
                     {selectedFile ? (
                       <p className="mt-[2px] text-[10px] font-bold uppercase tracking-[0.12em] text-[#555555]">
-                        {highlightedLanguage}
+                        {showingImagePreview
+                          ? `${selectedFileIsSvg ? "SVG preview" : "Imagem"}${loadedFileSizeLabel ? ` / ${loadedFileSizeLabel}` : ""}`
+                          : highlightedLanguage}
                       </p>
                     ) : null}
                   </div>
                   <div className="flex shrink-0 items-center gap-[8px]">
+                    {selectedFileIsPreviewableImage ? (
+                      <div className="hidden items-center gap-[4px] md:flex">
+                        <button
+                          type="button"
+                          onClick={() => setFilePreviewMode("preview")}
+                          className={`flex h-[30px] w-[30px] items-center justify-center rounded-[8px] border transition-colors ${
+                            filePreviewMode === "preview"
+                              ? "border-[#2A2A2A] bg-[#171717] text-white"
+                              : "border-[#202020] bg-[#0B0B0B] text-[#9B9B9B] hover:bg-[#111111] hover:text-white"
+                          }`}
+                          title="Preview"
+                        >
+                          <ImageIcon className="h-[14px] w-[14px]" />
+                        </button>
+                        {selectedFileIsSvg ? (
+                          <button
+                            type="button"
+                            onClick={() => setFilePreviewMode("code")}
+                            className={`flex h-[30px] w-[30px] items-center justify-center rounded-[8px] border transition-colors ${
+                              filePreviewMode === "code"
+                                ? "border-[#2A2A2A] bg-[#171717] text-white"
+                                : "border-[#202020] bg-[#0B0B0B] text-[#9B9B9B] hover:bg-[#111111] hover:text-white"
+                            }`}
+                            title="Codigo SVG"
+                          >
+                            <Code2 className="h-[14px] w-[14px]" />
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {showingImagePreview ? (
+                      <div className="hidden items-center gap-[4px] md:flex">
+                        <button type="button" onClick={() => setImageZoom((value) => clampImageZoom(value - 0.25))} className="flex h-[30px] w-[30px] items-center justify-center rounded-[8px] border border-[#202020] bg-[#0B0B0B] text-[#9B9B9B] hover:bg-[#111111] hover:text-white" title="Diminuir zoom">
+                          <ZoomOut className="h-[14px] w-[14px]" />
+                        </button>
+                        <button type="button" onClick={() => setImageZoom(1)} className="h-[30px] min-w-[54px] rounded-[8px] border border-[#202020] bg-[#0B0B0B] px-[8px] font-mono text-[11px] font-semibold text-[#DADADA] hover:bg-[#111111]" title="Resetar zoom">
+                          {Math.round(imageZoom * 100)}%
+                        </button>
+                        <button type="button" onClick={() => setImageZoom((value) => clampImageZoom(value + 0.25))} className="flex h-[30px] w-[30px] items-center justify-center rounded-[8px] border border-[#202020] bg-[#0B0B0B] text-[#9B9B9B] hover:bg-[#111111] hover:text-white" title="Aumentar zoom">
+                          <ZoomIn className="h-[14px] w-[14px]" />
+                        </button>
+                      </div>
+                    ) : null}
                     <button
                       type="button"
                       onClick={() => {
@@ -3298,68 +3733,175 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                     </button>
                   </div>
                 </div>
-                <div className="grid min-h-0 flex-1 grid-cols-[48px_minmax(0,1fr)]">
-                  <div
-                    ref={lineNumbersRef}
-                    className="select-none overflow-hidden border-r border-[#111111] bg-[#070707] py-[12px] text-right font-mono text-[13px] leading-[22.1px] text-[#444444]"
-                  >
-                    <div style={{ height: editorVirtualHeight }}>
-                      <div style={{ transform: `translateY(${visibleLineStart * FILE_EDITOR_LINE_HEIGHT}px)` }}>
-                        {Array.from({ length: visibleLineEnd - visibleLineStart }).map((_, index) => {
-                          const lineNumber = visibleLineStart + index + 1;
-                          return (
-                            <div key={lineNumber} className="h-[22.1px] pr-[10px] leading-[22.1px]">
-                              {lineNumber}
-                            </div>
-                          );
-                        })}
+                {!selectedFile ? (
+                  <div className="relative min-h-0 flex-1 overflow-hidden bg-[#050505]">
+                    <div className="relative flex h-full min-h-[520px] items-center justify-center px-[28px] py-[34px]">
+                      <div className="grid w-full max-w-[1040px] gap-[28px] lg:grid-cols-[minmax(0,0.9fr)_minmax(360px,1fr)]">
+                        <div className="flex min-w-0 flex-col justify-center">
+                          <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-[#666666]">Flowdesk Files</p>
+                          <h2 className="mt-[10px] text-[34px] font-semibold tracking-[-0.055em] text-[#EDEDED]">Painel de arquivos</h2>
+                          <p className="mt-[6px] text-[14px] leading-[1.6] text-[#8D8D8D]">
+                            {snapshot.project.repository.fullName}
+                          </p>
+                          <div className="mt-[24px] grid gap-[10px] sm:grid-cols-2">
+                            <button type="button" onClick={() => startCreateFile("", "file")} className="group flex h-[52px] items-center gap-[12px] rounded-[14px] border border-[#202020] bg-[#0B0B0B] px-[14px] text-left text-[13px] font-semibold text-[#E8E8E8] shadow-[0_18px_60px_rgba(0,0,0,0.18)] transition-all hover:border-[#303030] hover:bg-[#111111]">
+                              <FilePlus2 className="h-[17px] w-[17px] text-[#9BC2FF] transition-transform group-hover:scale-110" />
+                              Novo arquivo
+                            </button>
+                            <button type="button" onClick={() => startCreateFile("", "directory")} className="group flex h-[52px] items-center gap-[12px] rounded-[14px] border border-[#202020] bg-[#0B0B0B] px-[14px] text-left text-[13px] font-semibold text-[#E8E8E8] shadow-[0_18px_60px_rgba(0,0,0,0.18)] transition-all hover:border-[#303030] hover:bg-[#111111]">
+                              <FolderPlus className="h-[17px] w-[17px] text-[#9BE7AC] transition-transform group-hover:scale-110" />
+                              Nova pasta
+                            </button>
+                            <button type="button" onClick={() => void syncFiles()} disabled={filesBusy} className="group flex h-[52px] items-center gap-[12px] rounded-[14px] border border-[#202020] bg-[#0B0B0B] px-[14px] text-left text-[13px] font-semibold text-[#E8E8E8] shadow-[0_18px_60px_rgba(0,0,0,0.18)] transition-all hover:border-[#303030] hover:bg-[#111111] disabled:opacity-60">
+                              {filesBusy ? <Loader2 className="h-[17px] w-[17px] animate-spin text-[#9BC2FF]" /> : <RefreshCw className="h-[17px] w-[17px] text-[#9BC2FF] transition-transform group-hover:rotate-45" />}
+                              Sincronizar GitHub
+                            </button>
+                            <button type="button" onClick={() => navigateToTab("env")} className="group flex h-[52px] items-center gap-[12px] rounded-[14px] border border-[#202020] bg-[#0B0B0B] px-[14px] text-left text-[13px] font-semibold text-[#E8E8E8] shadow-[0_18px_60px_rgba(0,0,0,0.18)] transition-all hover:border-[#303030] hover:bg-[#111111]">
+                              <KeyRound className="h-[17px] w-[17px] text-[#FFD28A] transition-transform group-hover:scale-110" />
+                              Variaveis
+                            </button>
+                          </div>
+                        </div>
+                        <div className="grid gap-[10px]">
+                          {[
+                            { icon: <Search className="h-[16px] w-[16px]" />, title: "Busca rapida", value: `${flattenFileTreePaths(snapshot.fileTree).length} itens indexados` },
+                            { icon: <ImageIcon className="h-[16px] w-[16px]" />, title: "Preview de imagens", value: "PNG, JPG, GIF, WEBP, SVG" },
+                            { icon: <Terminal className="h-[16px] w-[16px]" />, title: "Console live", value: logsPaused ? "desativado" : "ativo" },
+                            { icon: <Sparkles className="h-[16px] w-[16px]" />, title: "Flow", value: flowChatOpen ? "aberto" : "pronto" },
+                          ].map((item) => (
+                            <article key={item.title} className="group flex min-h-[70px] items-center gap-[14px] rounded-[16px] border border-[#1B1B1B] bg-[rgba(11,11,11,0.78)] px-[15px] shadow-[0_20px_70px_rgba(0,0,0,0.20)] backdrop-blur transition-all hover:border-[#2A2A2A] hover:bg-[#101010]">
+                              <span className="flex h-[36px] w-[36px] shrink-0 items-center justify-center rounded-[12px] border border-[#242424] bg-[#050505] text-[#9B9B9B] transition-colors group-hover:text-white">
+                                {item.icon}
+                              </span>
+                              <div className="min-w-0">
+                                <p className="truncate text-[13px] font-semibold text-[#E8E8E8]">{item.title}</p>
+                                <p className="mt-[3px] truncate text-[12px] text-[#777777]">{item.value}</p>
+                              </div>
+                            </article>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFlowChatOpen(true);
+                              void loadFlowChatHistory();
+                            }}
+                            className="mt-[4px] flex h-[46px] items-center justify-center gap-[9px] rounded-[14px] bg-[#F2F2F2] px-[14px] text-[13px] font-semibold text-[#050505] transition-all hover:bg-white"
+                          >
+                            <Sparkles className="h-[16px] w-[16px]" />
+                            Falar com Flow
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
-                  <div className="relative min-h-0 min-w-0 bg-[#050505]">
-                    <div
-                      ref={highlightedCodeRef}
-                      aria-hidden="true"
-                      className="pointer-events-none absolute inset-0 overflow-hidden p-[12px] font-mono text-[13px] leading-[22.1px]"
-                    >
-                      <pre className="m-0 min-w-max whitespace-pre" style={{ height: editorVirtualHeight }}>
-                        <div style={{ transform: `translateY(${visibleLineStart * FILE_EDITOR_LINE_HEIGHT}px)` }}>
-                          {visibleLines.map((line, index) => (
-                          <div key={visibleLineStart + index} className="h-[22.1px] leading-[22.1px]">
-                            {line ? renderHighlightedLine(line, highlightedLanguage) : " "}
+                ) : showingImagePreview ? (
+                  <div
+                    className="relative min-h-0 flex-1 overflow-hidden bg-[#050505]"
+                    onContextMenu={(event) => {
+                      if (!selectedFile) return;
+                      event.preventDefault();
+                      setFileContextMenu({ kind: "preview", x: event.clientX, y: event.clientY, node: selectedFile });
+                    }}
+                    onWheel={(event) => {
+                      event.preventDefault();
+                      setImageZoom((value) => clampImageZoom(value + (event.deltaY > 0 ? -0.12 : 0.12)));
+                    }}
+                  >
+                    <div className="h-full overflow-auto [scrollbar-color:#2A2A2A_#050505] [scrollbar-gutter:stable] [scrollbar-width:thin]">
+                      <div
+                        className="flex min-h-full min-w-full items-center justify-center p-[28px]"
+                        style={{
+                          minWidth: `${Math.max(100, imageZoom * 100)}%`,
+                          minHeight: `${Math.max(100, imageZoom * 100)}%`,
+                        }}
+                      >
+                        {selectedImagePreviewSrc ? (
+                          <img
+                            src={selectedImagePreviewSrc}
+                            alt={selectedFile?.name || "Preview da imagem"}
+                            draggable={false}
+                            className="select-none rounded-[6px] border border-[#1A1A1A] bg-[#0B0B0B] shadow-[0_18px_60px_rgba(0,0,0,0.28)]"
+                            style={{
+                              maxWidth: "min(100%, 1120px)",
+                              maxHeight: "calc(100vh - 236px)",
+                              transform: `scale(${imageZoom})`,
+                              transformOrigin: "center",
+                              imageRendering: imageZoom >= 3 ? "pixelated" : "auto",
+                            }}
+                          />
+                        ) : (
+                          <div className="rounded-[12px] border border-[#1A1A1A] bg-[#080808] px-[16px] py-[14px] text-center">
+                            <ImageIcon className="mx-auto h-[20px] w-[20px] text-[#777777]" />
+                            <p className="mt-[8px] text-[13px] font-semibold text-[#DADADA]">Preview indisponivel</p>
                           </div>
-                          ))}
-                        </div>
-                      </pre>
+                        )}
+                      </div>
                     </div>
-                    <textarea
-                      ref={fileEditorTextareaRef}
-                      value={fileContent}
-                      onChange={(event) => {
-                        setFileContent(event.target.value);
-                        setFileDirty(true);
-                      }}
-                      onScroll={(event) => {
-                        if (lineNumbersRef.current) {
-                          lineNumbersRef.current.scrollTop = event.currentTarget.scrollTop;
-                        }
-                        if (highlightedCodeRef.current) {
-                          highlightedCodeRef.current.scrollTop = event.currentTarget.scrollTop;
-                          highlightedCodeRef.current.scrollLeft = event.currentTarget.scrollLeft;
-                        }
-                        setFileEditorViewport({
-                          scrollTop: event.currentTarget.scrollTop,
-                          scrollLeft: event.currentTarget.scrollLeft,
-                          height: event.currentTarget.clientHeight || fileEditorViewport.height,
-                        });
-                      }}
-                      spellCheck={false}
-                      wrap="off"
-                      className="absolute inset-0 h-full min-h-0 w-full resize-none overflow-auto border-0 bg-transparent p-[12px] font-mono text-[13px] leading-[22.1px] text-transparent caret-[#E8E8E8] outline-none selection:bg-[rgba(15,98,254,0.35)] placeholder:text-[#5A5A5A]"
-                      placeholder="O conteudo real aparece quando um arquivo sincronizado for selecionado."
-                    />
                   </div>
-                </div>
+                ) : (
+                  <div className="grid min-h-0 flex-1 grid-cols-[48px_minmax(0,1fr)]">
+                    <div
+                      ref={lineNumbersRef}
+                      className="select-none overflow-hidden border-r border-[#111111] bg-[#070707] py-[12px] text-right font-mono text-[13px] leading-[22.1px] text-[#444444]"
+                    >
+                      <div style={{ height: editorVirtualHeight }}>
+                        <div style={{ transform: `translateY(${visibleLineStart * FILE_EDITOR_LINE_HEIGHT}px)` }}>
+                          {Array.from({ length: visibleLineEnd - visibleLineStart }).map((_, index) => {
+                            const lineNumber = visibleLineStart + index + 1;
+                            return (
+                              <div key={lineNumber} className="h-[22.1px] pr-[10px] leading-[22.1px]">
+                                {lineNumber}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="relative min-h-0 min-w-0 bg-[#050505]">
+                      <div
+                        ref={highlightedCodeRef}
+                        aria-hidden="true"
+                        className="pointer-events-none absolute inset-0 overflow-hidden p-[12px] font-mono text-[13px] leading-[22.1px]"
+                      >
+                        <pre className="m-0 min-w-max whitespace-pre" style={{ height: editorVirtualHeight }}>
+                          <div style={{ transform: `translateY(${visibleLineStart * FILE_EDITOR_LINE_HEIGHT}px)` }}>
+                            {visibleLines.map((line, index) => (
+                            <div key={visibleLineStart + index} className="h-[22.1px] leading-[22.1px]">
+                              {line ? renderHighlightedLine(line, highlightedLanguage) : " "}
+                            </div>
+                            ))}
+                          </div>
+                        </pre>
+                      </div>
+                      <textarea
+                        ref={fileEditorTextareaRef}
+                        value={fileContent}
+                        onChange={(event) => {
+                          setFileContent(event.target.value);
+                          setFileDirty(true);
+                        }}
+                        onScroll={(event) => {
+                          if (lineNumbersRef.current) {
+                            lineNumbersRef.current.scrollTop = event.currentTarget.scrollTop;
+                          }
+                          if (highlightedCodeRef.current) {
+                            highlightedCodeRef.current.scrollTop = event.currentTarget.scrollTop;
+                            highlightedCodeRef.current.scrollLeft = event.currentTarget.scrollLeft;
+                          }
+                          setFileEditorViewport({
+                            scrollTop: event.currentTarget.scrollTop,
+                            scrollLeft: event.currentTarget.scrollLeft,
+                            height: event.currentTarget.clientHeight || fileEditorViewport.height,
+                          });
+                        }}
+                        spellCheck={false}
+                        wrap="off"
+                        className="absolute inset-0 h-full min-h-0 w-full resize-none overflow-auto border-0 bg-transparent p-[12px] font-mono text-[13px] leading-[22.1px] text-transparent caret-[#E8E8E8] outline-none selection:bg-[rgba(15,98,254,0.35)] placeholder:text-[#5A5A5A]"
+                        placeholder="O conteudo real aparece quando um arquivo sincronizado for selecionado."
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
               {flowChatOpen ? (
                 <aside
@@ -3546,10 +4088,21 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
         {fileContextMenu ? (
           <div
             ref={fileContextMenuRef}
-            className="fixed z-[80] w-[196px] overflow-hidden rounded-[14px] border border-[#242424] bg-[#0B0B0B] p-[6px] shadow-[0_18px_60px_rgba(0,0,0,0.48)]"
+            className="fixed z-[220] w-[196px] overflow-hidden rounded-[14px] border border-[#242424] bg-[#0B0B0B] p-[6px] shadow-[0_18px_60px_rgba(0,0,0,0.48)]"
             style={{ left: fileContextMenu.x, top: fileContextMenu.y }}
           >
-            {fileContextMenu.kind === "empty" ? (
+            {fileContextMenu.kind === "preview" ? (
+              <>
+                <button onClick={() => copyImageLink(fileContextMenu.node)} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
+                  <Copy className="h-[14px] w-[14px]" /> Copiar
+                </button>
+                {isSvgFile(fileContextMenu.node) ? (
+                  <button onClick={copySelectedSvgCode} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
+                    <Code2 className="h-[14px] w-[14px]" /> Copiar Codigo
+                  </button>
+                ) : null}
+              </>
+            ) : fileContextMenu.kind === "empty" ? (
               <>
                 <button onClick={() => startCreateFile(fileContextMenu.parentPath, "file")} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
                   <FilePlus2 className="h-[14px] w-[14px]" /> New File
@@ -3568,9 +4121,16 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                   <Pencil className="h-[14px] w-[14px]" /> Rename
                 </button>
                 {fileContextMenu.node.type === "file" ? (
-                  <button onClick={() => copyFileNode(fileContextMenu.node)} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
-                    <Copy className="h-[14px] w-[14px]" /> Copy
-                  </button>
+                  <>
+                    <button onClick={() => isPreviewableImageFile(fileContextMenu.node) ? copyImageLink(fileContextMenu.node) : copyFileNode(fileContextMenu.node)} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
+                      <Copy className="h-[14px] w-[14px]" /> {isPreviewableImageFile(fileContextMenu.node) ? "Copiar" : "Copy"}
+                    </button>
+                    {isSvgFile(fileContextMenu.node) && selectedFile?.path === fileContextMenu.node.path ? (
+                      <button onClick={copySelectedSvgCode} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
+                        <Code2 className="h-[14px] w-[14px]" /> Copiar Codigo
+                      </button>
+                    ) : null}
+                  </>
                 ) : (
                   <>
                     <button onClick={() => startCreateFile(fileContextMenu.node.path, "file")} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
@@ -3591,38 +4151,171 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
         ) : null}
 
         {tab === "deploys" ? (
-          <section className="rounded-[24px] border border-[#171717] bg-[#080808] p-[16px]">
-            <div className="flex flex-col gap-[8px] md:flex-row md:items-center md:justify-between">
-              <div>
-                <h2 className="text-[20px] font-semibold text-white">Deployments</h2>
-                <p className="mt-[4px] text-[13px] text-[#777777]">Status espelhados dos commits, branches e ambientes do GitHub.</p>
+          <section className="flex h-[calc(100vh-136px)] min-h-[620px] w-full flex-col overflow-hidden bg-[#050505]">
+            <div className="shrink-0 border-b border-[#151515] bg-[#080808] p-[12px]">
+              <div className="flex flex-col gap-[12px] xl:flex-row xl:items-center xl:justify-between">
+                <div className="min-w-0">
+                  <h2 className="text-[18px] font-semibold tracking-[-0.035em] text-white">Deployments</h2>
+                  <p className="mt-[4px] truncate text-[12px] text-[#777777]">
+                    Commits, previews e producao sincronizados de {snapshot.project.repository.fullName}.
+                  </p>
+                </div>
+                <button onClick={() => void syncDeployments()} disabled={Boolean(busyAction)} className="inline-flex h-[36px] shrink-0 items-center justify-center gap-[8px] rounded-[10px] border border-[#202020] bg-[#101010] px-[12px] text-[12px] font-semibold text-[#DADADA] transition-colors hover:bg-[#151515] disabled:cursor-not-allowed disabled:opacity-60">
+                  {busyAction === "sync" ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <RefreshCw className="h-[14px] w-[14px]" />}
+                  Sincronizar
+                </button>
               </div>
-              <button onClick={() => void runAction("sync")} disabled={Boolean(busyAction)} className="inline-flex h-[40px] items-center gap-[8px] rounded-[12px] border border-[#1F1F1F] bg-[#101010] px-[12px] text-[13px] font-semibold text-[#DADADA]">
-                {busyAction === "sync" ? <Loader2 className="h-[15px] w-[15px] animate-spin" /> : <RefreshCw className="h-[15px] w-[15px]" />}
-                Sincronizar
-              </button>
+              <div className="mt-[12px] grid gap-[8px] xl:grid-cols-[minmax(190px,1fr)_minmax(190px,1fr)_220px_210px_180px_42px]">
+                <CustomSelect value={deploymentBranchFilter} onChange={setDeploymentBranchFilter} options={deploymentBranchOptions} icon={<GitBranch className="h-[14px] w-[14px]" />} />
+                <CustomSelect value={deploymentAuthorFilter} onChange={setDeploymentAuthorFilter} options={deploymentAuthorOptions} icon={<Search className="h-[14px] w-[14px]" />} />
+                <CustomSelect value={deploymentEnvironmentFilter} onChange={setDeploymentEnvironmentFilter} options={deploymentEnvironmentOptions} icon={<Globe2 className="h-[14px] w-[14px]" />} />
+                <CustomSelect
+                  value={deploymentDateFilter}
+                  onChange={setDeploymentDateFilter}
+                  options={[
+                    { value: "all", label: "Select Date Range" },
+                    { value: "24h", label: "Last 24 hours" },
+                    { value: "7d", label: "Last 7 days" },
+                    { value: "30d", label: "Last 30 days" },
+                  ]}
+                  icon={<History className="h-[14px] w-[14px]" />}
+                />
+                <CustomSelect value={deploymentStatusFilter} onChange={setDeploymentStatusFilter} options={deploymentStatusOptions} icon={<Activity className="h-[14px] w-[14px]" />} />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeploymentBranchFilter("all");
+                    setDeploymentAuthorFilter("all");
+                    setDeploymentEnvironmentFilter("all");
+                    setDeploymentStatusFilter("all");
+                    setDeploymentDateFilter("all");
+                  }}
+                  className="flex h-[42px] items-center justify-center rounded-[12px] border border-[#202020] bg-[#080808] text-[#9B9B9B] transition-colors hover:border-[#303030] hover:text-white"
+                  title="Limpar filtros"
+                >
+                  <X className="h-[15px] w-[15px]" />
+                </button>
+              </div>
             </div>
-            <div className="mt-[16px] space-y-[10px]">
-              {snapshot.deployments.length ? snapshot.deployments.map((deploy) => (
-                <article key={deploy.id} className="rounded-[18px] border border-[#151515] bg-[#0B0B0B] p-[14px]">
-                  <div className="flex flex-col gap-[10px] md:flex-row md:items-center md:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-[8px]">
-                        <span className={`rounded-full border px-[10px] py-[5px] text-[12px] font-semibold ${deploymentStatusClasses(deploy.status)}`}>{deploy.status}</span>
-                        <span className="rounded-full border border-[#242424] bg-[#101010] px-[10px] py-[5px] text-[12px] font-semibold text-[#DADADA]">{deploy.environment}</span>
+
+            <div className="min-h-0 flex-1 overflow-auto [scrollbar-color:#2A2A2A_#050505] [scrollbar-gutter:stable] [scrollbar-width:thin]">
+              <div className="min-w-[1180px]">
+                <div className="grid grid-cols-[minmax(360px,1.8fr)_132px_116px_112px_minmax(190px,0.9fr)_120px_54px] border-b border-[#101010] bg-[#060606] px-[12px] py-[9px] text-[10px] font-bold uppercase tracking-[0.12em] text-[#565656]">
+                  <span>Deployment</span>
+                  <span>Status</span>
+                  <span>Environment</span>
+                  <span>Commit</span>
+                  <span>Branch</span>
+                  <span className="text-right">Updated</span>
+                  <span />
+                </div>
+                {filteredDeployments.length ? filteredDeployments.map((deploy) => {
+                  const commitUrl = deploymentMetadataString(deploy, "commitUrl") ||
+                    (deploy.commit_sha ? `${snapshot.project.repository.htmlUrl}/commit/${deploy.commit_sha}` : null);
+                  const pullRequestUrl = deploymentMetadataString(deploy, "pullRequestUrl");
+                  const authorAvatarUrl = deploymentMetadataString(deploy, "authorAvatarUrl");
+                  const statusBadge = deploymentPrimaryBadge(deploy);
+                  const environmentBadges = deploymentEnvironmentBadges(deploy, snapshot.project.repository.branch);
+                  return (
+                    <article key={deploy.id} className={`relative grid min-h-[56px] grid-cols-[minmax(360px,1.8fr)_132px_116px_112px_minmax(190px,0.9fr)_120px_54px] items-center border-b border-[#101010] px-[12px] text-[12px] transition-colors hover:bg-[#0B0B0B] ${deploymentMenuId === deploy.id ? "z-[170]" : "z-0"}`}>
+                      <div className="min-w-0 pr-[18px]">
+                        <p className="truncate text-[13px] font-semibold text-[#F2F2F2]">
+                          {deploy.commit_message || `Deploy ${deploy.branch}`}
+                        </p>
+                        <div className="mt-[4px] flex min-w-0 items-center gap-[8px] text-[11px] text-[#777777]">
+                          <span className="truncate">{deploy.commit_author || "GitHub"}</span>
+                          {pullRequestUrl ? (
+                            <>
+                              <span className="text-[#303030]">/</span>
+                              <span className="truncate text-[#9B9B9B]">Pull request preparado</span>
+                            </>
+                          ) : null}
+                        </div>
                       </div>
-                      <p className="mt-[10px] truncate text-[14px] font-semibold text-white">{deploy.commit_message || `Branch ${deploy.branch}`}</p>
-                      <p className="mt-[4px] text-[12px] text-[#777777]">{deploy.commit_sha?.slice(0, 8) || "sem commit"} - {deploy.commit_author || "autor desconhecido"} - {formatDate(deploy.created_at)}</p>
-                    </div>
-                    <div className="text-left md:text-right">
-                      <p className="text-[12px] font-semibold text-[#DADADA]">{deploy.branch}</p>
-                      <p className="mt-[4px] text-[12px] text-[#777777]">{deploy.duration_ms ? `${Math.round(deploy.duration_ms / 1000)}s` : "Aguardando build"}</p>
+                      <div className="flex min-w-0 items-center gap-[7px]">
+                        <span className={`inline-flex h-[24px] shrink-0 items-center rounded-full border px-[9px] text-[11px] font-semibold ${statusBadge.className}`}>
+                          {statusBadge.label}
+                        </span>
+                        <span className="whitespace-nowrap text-[11px] text-[#777777]">{deploymentDurationLabel(deploy)}</span>
+                      </div>
+                      <div className="flex min-w-0 flex-wrap items-center gap-[5px]">
+                        {environmentBadges.map((badge) => (
+                          <span key={badge.label} className={`inline-flex h-[22px] items-center gap-[6px] whitespace-nowrap rounded-full border px-[8px] text-[11px] font-semibold ${badge.className}`}>
+                            <span className="h-[6px] w-[6px] rounded-full bg-current opacity-80" />
+                            {badge.label}
+                          </span>
+                        ))}
+                      </div>
+                      <a
+                        href={commitUrl || undefined}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(event) => {
+                          if (!commitUrl) event.preventDefault();
+                        }}
+                        className={`inline-flex min-w-0 items-center gap-[7px] font-mono text-[12px] font-semibold ${commitUrl ? "text-[#E8E8E8] hover:text-white" : "text-[#777777]"}`}
+                      >
+                        <GitBranch className="h-[13px] w-[13px] shrink-0 text-[#777777]" />
+                        <span className="truncate">{deploymentShortSha(deploy.commit_sha)}</span>
+                      </a>
+                      <div className="flex min-w-0 items-center gap-[8px] font-mono text-[12px] font-semibold text-[#DADADA]">
+                        <GitBranch className="h-[13px] w-[13px] shrink-0 text-[#777777]" />
+                        <span className="truncate">{deploy.branch || "main"}</span>
+                      </div>
+                      <div className="flex items-center justify-end gap-[8px] text-right text-[12px] text-[#9B9B9B]">
+                        <span className="whitespace-nowrap">{formatRelative(deploy.deployed_at || deploy.created_at)}</span>
+                        {authorAvatarUrl ? (
+                          <img src={authorAvatarUrl} alt="" className="h-[20px] w-[20px] rounded-full border border-[#242424]" />
+                        ) : (
+                          <span className="flex h-[20px] w-[20px] items-center justify-center rounded-full border border-[#242424] bg-[#111111] text-[9px] font-bold text-[#AFAFAF]">
+                            {deploymentAuthorInitials(deploy.commit_author)}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => setDeploymentMenuId((current) => current === deploy.id ? null : deploy.id)}
+                          className="flex h-[32px] w-[34px] items-center justify-center rounded-[9px] border border-transparent text-[#9B9B9B] transition-colors hover:border-[#242424] hover:bg-[#101010] hover:text-white"
+                          aria-label="Opcoes do deployment"
+                        >
+                          <MoreHorizontal className="h-[16px] w-[16px]" />
+                        </button>
+                      </div>
+                      {deploymentMenuId === deploy.id ? (
+                        <div className="absolute right-[10px] top-[42px] z-[180] w-[216px] overflow-hidden rounded-[14px] border border-[#242424] bg-[#0B0B0B] p-[6px] shadow-[0_18px_60px_rgba(0,0,0,0.48)]">
+                          <button onClick={() => { setDeploymentMenuId(null); if (commitUrl) window.open(commitUrl, "_blank", "noopener,noreferrer"); }} className="flex h-[36px] w-full items-center gap-[9px] rounded-[9px] px-[10px] text-left text-[12px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
+                            <GitBranch className="h-[14px] w-[14px]" /> Abrir commit
+                          </button>
+                          {pullRequestUrl ? (
+                            <button onClick={() => { setDeploymentMenuId(null); window.open(pullRequestUrl, "_blank", "noopener,noreferrer"); }} className="flex h-[36px] w-full items-center gap-[9px] rounded-[9px] px-[10px] text-left text-[12px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
+                              <GitBranch className="h-[14px] w-[14px]" /> Abrir pull request
+                            </button>
+                          ) : null}
+                          <button onClick={() => { setDeploymentMenuId(null); void navigator.clipboard?.writeText(deploy.commit_sha || ""); notify("success", "SHA copiado.", "Deployments"); }} className="flex h-[36px] w-full items-center gap-[9px] rounded-[9px] px-[10px] text-left text-[12px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
+                            <Copy className="h-[14px] w-[14px]" /> Copiar SHA
+                          </button>
+                          <button onClick={() => { setDeploymentMenuId(null); void syncDeployments(); }} className="flex h-[36px] w-full items-center gap-[9px] rounded-[9px] px-[10px] text-left text-[12px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
+                            <RefreshCw className="h-[14px] w-[14px]" /> Revalidar status
+                          </button>
+                        </div>
+                      ) : null}
+                    </article>
+                  );
+                }) : (
+                  <div className="flex min-h-[280px] items-center justify-center border-b border-[#101010] px-[18px] text-center">
+                    <div>
+                      <div className="mx-auto flex h-[42px] w-[42px] items-center justify-center rounded-[14px] border border-[#202020] bg-[#0B0B0B] text-[#777777]">
+                        <GitBranch className="h-[18px] w-[18px]" />
+                      </div>
+                      <p className="mt-[12px] text-[13px] font-semibold text-[#DADADA]">
+                        {snapshot.deployments.length ? "Nenhum deployment corresponde aos filtros." : "Nenhum commit/deploy sincronizado ainda."}
+                      </p>
+                      <p className="mt-[5px] text-[12px] text-[#777777]">Sincronize com o GitHub para carregar commits, previews e producao.</p>
                     </div>
                   </div>
-                </article>
-              )) : (
-                <div className="rounded-[18px] border border-[#151515] bg-[#0B0B0B] p-[18px] text-[13px] text-[#777777]">Nenhum commit/deploy sincronizado ainda.</div>
-              )}
+                )}
+              </div>
             </div>
           </section>
         ) : null}
@@ -3638,13 +4331,12 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                 <Plus className="h-[15px] w-[15px]" /> Adicionar Variavel
               </button>
             </div>
-            <div className="mt-[16px] grid gap-[8px] xl:grid-cols-[minmax(220px,1fr)_250px_250px_230px]">
+            <div className="mt-[16px] grid gap-[8px] xl:grid-cols-[minmax(220px,1fr)_250px_230px]">
               <div className="flex items-center gap-[10px] rounded-[14px] border border-[#202020] bg-[#080808] px-[12px]">
                 <Search className="h-[16px] w-[16px] text-[#777777]" />
                 <input value={envSearch} onChange={(event) => setEnvSearch(event.target.value)} placeholder="Search variables" className="h-[42px] min-w-0 flex-1 bg-transparent text-[13px] text-white outline-none" />
               </div>
               <CustomSelect value={envFilter} onChange={setEnvFilter} options={[{ value: "all", label: "All Environments" }, ...ENV_OPTIONS]} icon={<Layers className="h-[15px] w-[15px]" />} />
-              <CustomSelect value="all" onChange={() => undefined} options={[{ value: "all", label: "All Editors..." }]} icon={<Search className="h-[15px] w-[15px]" />} />
               <CustomSelect value={envSort} onChange={setEnvSort} options={[{ value: "updated", label: "Last Updated" }, { value: "name", label: "Name" }]} />
             </div>
 
@@ -3654,7 +4346,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                 const revealed = canReveal && visibleEnvValues[item.id];
                 const displayValue = revealed ? item.visible_value || item.value_preview || "" : "************";
                 return (
-                  <article key={`${item.environment}-${item.key}-${item.id}`} className="relative rounded-[16px] border border-[#202020] bg-[#090909]">
+                  <article key={`${item.environment}-${item.key}-${item.id}`} className={`relative rounded-[16px] border border-[#202020] bg-[#090909] ${envMenuId === item.id ? "z-[170]" : "z-0"}`}>
                     <div className="grid min-h-[86px] items-center gap-[12px] px-[18px] py-[14px] lg:grid-cols-[minmax(220px,1fr)_minmax(180px,360px)_220px_82px]">
                       <div className="flex min-w-0 items-center gap-[14px]">
                         <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full border border-[#242424] bg-[#050505] text-[#9B9B9B]">
@@ -3673,7 +4365,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                         ) : null}
                         <span className="truncate">{displayValue}</span>
                       </div>
-                      <div className="text-[13px] text-[#9B9B9B]">{formatRelative(item.updated_at)}</div>
+                      <div className="whitespace-nowrap text-[13px] text-[#9B9B9B]">{formatRelative(item.updated_at)}</div>
                       <div className="flex justify-end">
                         <button type="button" onClick={() => setEnvMenuId((current) => current === item.id ? null : item.id)} className="flex h-[36px] w-[42px] items-center justify-center rounded-[10px] bg-[#151515] text-[#DADADA] hover:bg-[#1C1C1C]">
                           <MoreHorizontal className="h-[18px] w-[18px]" />
@@ -3681,7 +4373,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                       </div>
                     </div>
                     {envMenuId === item.id ? (
-                      <div className="absolute right-[14px] top-[64px] z-30 w-[220px] overflow-hidden rounded-[16px] border border-[#242424] bg-[#0B0B0B] p-[6px] shadow-[0_18px_60px_rgba(0,0,0,0.48)]">
+                      <div className="absolute right-[14px] top-[64px] z-[180] w-[220px] overflow-hidden rounded-[16px] border border-[#242424] bg-[#0B0B0B] p-[6px] shadow-[0_18px_60px_rgba(0,0,0,0.48)]">
                         <button onClick={() => openEditEnvDrawer(item)} className="flex h-[40px] w-full items-center gap-[10px] rounded-[10px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]"><Code2 className="h-[15px] w-[15px]" /> Edit</button>
                         <button onClick={() => void copyEnvValue(item)} className="flex h-[40px] w-full items-center gap-[10px] rounded-[10px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]"><Copy className="h-[15px] w-[15px]" /> Copy to Clipboard</button>
                         <button onClick={() => { setEnvMenuId(null); notify("info", `Versao atual: v${item.version || 1}.`, "Historico"); }} className="flex h-[40px] w-full items-center gap-[10px] rounded-[10px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]"><History className="h-[15px] w-[15px]" /> View History</button>
@@ -3758,16 +4450,6 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                     Autorizar SSO
                   </a>
                 ) : null}
-                {githubReconnectInstallUrl ? (
-                  <a
-                    href={githubReconnectInstallUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex h-[42px] items-center justify-center rounded-[12px] border border-[#202020] bg-[#0D0D0D] px-[14px] text-[13px] font-semibold text-[#DADADA] hover:bg-[#121212] hover:text-white"
-                  >
-                    Instalar App
-                  </a>
-                ) : null}
                 <button
                   type="button"
                   onClick={openGithubReconnectPopup}
@@ -3791,55 +4473,80 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
               <button disabled={envSaving} onClick={() => setEnvDrawerOpen(false)} className="flex h-[36px] w-[36px] items-center justify-center rounded-[10px] text-[#DADADA] hover:bg-[#151515] disabled:cursor-not-allowed disabled:opacity-45"><X className="h-[18px] w-[18px]" /></button>
             </div>
             <div className="min-h-0 flex-1 overflow-auto px-[22px] py-[18px]">
-              <div className="mb-[18px] rounded-[16px] border border-[#1D1D1D] bg-[#0B0B0B] p-[14px]">
-                <div className="flex flex-wrap items-center gap-[8px]">
-                  <span className="rounded-full border border-[#242424] bg-[#101010] px-[9px] py-[5px] text-[11px] font-bold uppercase tracking-[0.12em] text-[#9BC2FF]">
-                    {envDrawerMode === "edit" ? "Editar" : "Novo"}
-                  </span>
-                  <span className="rounded-full border border-[#242424] bg-[#101010] px-[9px] py-[5px] text-[11px] font-bold uppercase tracking-[0.12em] text-[#BDBDBD]">
-                    {envEnvironment}
-                  </span>
-                  <span className="rounded-full border border-[#242424] bg-[#101010] px-[9px] py-[5px] text-[11px] font-bold uppercase tracking-[0.12em] text-[#BDBDBD]">
-                    {envRows.length} {envRows.length === 1 ? "variavel" : "variaveis"}
-                  </span>
+              <div className="mb-[18px] flex flex-col gap-[10px] rounded-[16px] border border-[#1D1D1D] bg-[#090909] p-[10px] lg:flex-row lg:items-center lg:justify-between">
+                <div className="grid gap-[7px] sm:grid-cols-3">
+                  {ENV_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      disabled={envSaving}
+                      onClick={() => setEnvEnvironment(option.value)}
+                      className={`h-[36px] rounded-[10px] border px-[12px] text-[12px] font-semibold transition-all ${
+                        envEnvironment === option.value
+                          ? "border-[#3A3A3A] bg-[#F2F2F2] text-[#050505]"
+                          : "border-[#242424] bg-[#0B0B0B] text-[#BDBDBD] hover:bg-[#111111] hover:text-white"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
                 </div>
-                <p className="mt-[10px] text-[13px] leading-[1.5] text-[#8E8E8E]">
-                  Variaveis sensiveis ficam protegidas permanentemente no painel. Desative Sensitive apenas para valores que podem ser vistos depois.
-                </p>
+                <div className="flex flex-wrap items-center gap-[8px]">
+                  {envDrawerMode === "create" ? (
+                    <>
+                      <button type="button" disabled={envSaving} onClick={() => void pasteEnvFromClipboard()} className="inline-flex h-[36px] items-center gap-[8px] rounded-[10px] border border-[#242424] bg-[#0B0B0B] px-[11px] text-[12px] font-semibold text-[#E8E8E8] hover:bg-[#111111] disabled:cursor-not-allowed disabled:opacity-45">
+                        <Copy className="h-[14px] w-[14px]" /> Paste .env
+                      </button>
+                      <button type="button" disabled={envSaving} onClick={() => fileInputRef.current?.click()} className="inline-flex h-[36px] items-center gap-[8px] rounded-[10px] border border-[#242424] bg-[#0B0B0B] px-[11px] text-[12px] font-semibold text-[#E8E8E8] hover:bg-[#111111] disabled:cursor-not-allowed disabled:opacity-45">
+                        <Upload className="h-[14px] w-[14px]" /> Import
+                      </button>
+                      <button type="button" disabled={envSaving} onClick={() => setEnvRows((current) => [...current, createDraftRow()])} className="inline-flex h-[36px] items-center gap-[8px] rounded-[10px] border border-[#242424] bg-[#0B0B0B] px-[11px] text-[12px] font-semibold text-[#E8E8E8] hover:bg-[#111111] disabled:cursor-not-allowed disabled:opacity-45">
+                        <Plus className="h-[14px] w-[14px]" /> Add
+                      </button>
+                    </>
+                  ) : null}
+                </div>
               </div>
               <div className="space-y-[22px]">
                 {envRows.map((row, index) => (
-                  <div key={row.id} className={index > 0 ? "border-t border-[#1D1D1D] pt-[22px]" : ""}>
+                  <div key={row.id} className={`rounded-[16px] border border-[#1D1D1D] bg-[#0A0A0A] p-[14px] ${index > 0 ? "" : ""}`}>
                     <div className="mb-[12px] flex items-center justify-between gap-[12px]">
                       <span className="text-[12px] font-bold uppercase tracking-[0.14em] text-[#606060]">Variable {index + 1}</span>
                       {envRows.length > 1 ? (
                         <button type="button" disabled={envSaving} onClick={() => setEnvRows((current) => current.filter((item) => item.id !== row.id))} className="text-[#DADADA] hover:text-[#FF8E8E] disabled:cursor-not-allowed disabled:opacity-45"><Trash2 className="h-[17px] w-[17px]" /></button>
                       ) : null}
                     </div>
-                    <label className="text-[13px] font-medium text-[#BDBDBD]">Key</label>
-                    <input value={row.key} onChange={(event) => updateEnvKey(row.id, event.target.value)} className="mt-[8px] h-[52px] w-full rounded-[12px] border border-[#2A2A2A] bg-[#070707] px-[14px] font-mono text-[14px] text-white outline-none transition-colors focus:border-[#3A3A3A]" />
-                    <label className="mt-[14px] block text-[13px] font-medium text-[#BDBDBD]">Value</label>
-                    <div className="mt-[8px] flex h-[52px] items-center rounded-[12px] border border-[#2A2A2A] bg-[#070707] px-[14px] transition-colors focus-within:border-[#3A3A3A]">
-                      <input
-                        value={row.value}
-                        type="text"
-                        name={`flowdesk_env_${row.id}`}
-                        autoComplete="new-password"
-                        autoCorrect="off"
-                        autoCapitalize="off"
-                        spellCheck={false}
-                        data-lpignore="true"
-                        data-1p-ignore="true"
-                        style={secureTextStyle(row.showValue)}
-                        onChange={(event) => setEnvRows((current) => current.map((item) => item.id === row.id ? { ...item, value: event.target.value } : item))}
-                        className="min-w-0 flex-1 bg-transparent font-mono text-[14px] text-white outline-none"
-                      />
-                      {!row.sensitive ? (
-                        <button type="button" onClick={() => setEnvRows((current) => current.map((item) => item.id === row.id ? { ...item, showValue: !item.showValue } : item))} className="text-[#8E8E8E] hover:text-white"><Eye className="h-[18px] w-[18px]" /></button>
-                      ) : null}
+                    <div className="grid gap-[12px] lg:grid-cols-[minmax(180px,0.7fr)_minmax(220px,1fr)]">
+                      <div>
+                        <label className="text-[13px] font-medium text-[#BDBDBD]">Key</label>
+                        <input value={row.key} onChange={(event) => updateEnvKey(row.id, event.target.value)} placeholder="DATABASE_URL" className="mt-[8px] h-[50px] w-full rounded-[12px] border border-[#2A2A2A] bg-[#070707] px-[14px] font-mono text-[14px] text-white outline-none transition-colors focus:border-[#3A3A3A]" />
+                      </div>
+                      <div>
+                        <label className="text-[13px] font-medium text-[#BDBDBD]">Value</label>
+                        <div className="mt-[8px] flex h-[50px] items-center rounded-[12px] border border-[#2A2A2A] bg-[#070707] px-[14px] transition-colors focus-within:border-[#3A3A3A]">
+                          <input
+                            value={row.value}
+                            type="text"
+                            name={`flowdesk_env_${row.id}`}
+                            autoComplete="new-password"
+                            autoCorrect="off"
+                            autoCapitalize="off"
+                            spellCheck={false}
+                            data-lpignore="true"
+                            data-1p-ignore="true"
+                            style={secureTextStyle(row.showValue)}
+                            onChange={(event) => setEnvRows((current) => current.map((item) => item.id === row.id ? { ...item, value: event.target.value } : item))}
+                            placeholder="valor"
+                            className="min-w-0 flex-1 bg-transparent font-mono text-[14px] text-white outline-none"
+                          />
+                          {!row.sensitive ? (
+                            <button type="button" onClick={() => setEnvRows((current) => current.map((item) => item.id === row.id ? { ...item, showValue: !item.showValue } : item))} className="text-[#8E8E8E] hover:text-white"><Eye className="h-[18px] w-[18px]" /></button>
+                          ) : null}
+                        </div>
+                      </div>
                     </div>
                     <label className="mt-[14px] block text-[13px] font-medium text-[#BDBDBD]">Note (Optional)</label>
-                    <input value={row.note} onChange={(event) => setEnvRows((current) => current.map((item) => item.id === row.id ? { ...item, note: event.target.value } : item))} placeholder="Where to rotate, or who to contact" className="mt-[8px] h-[52px] w-full rounded-[12px] border border-[#2A2A2A] bg-[#070707] px-[14px] text-[14px] text-white outline-none transition-colors focus:border-[#3A3A3A]" />
+                    <input value={row.note} onChange={(event) => setEnvRows((current) => current.map((item) => item.id === row.id ? { ...item, note: event.target.value } : item))} placeholder="Rotacao, dono ou contexto" className="mt-[8px] h-[48px] w-full rounded-[12px] border border-[#2A2A2A] bg-[#070707] px-[14px] text-[14px] text-white outline-none transition-colors focus:border-[#3A3A3A]" />
                     <div className="mt-[16px] flex items-start justify-between gap-[16px] rounded-[14px] border border-[#1D1D1D] bg-[#0B0B0B] p-[12px]">
                       <div>
                         <p className="text-[13px] font-semibold text-[#DADADA]">Sensitive</p>
@@ -3868,25 +4575,11 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                   </div>
                 ))}
               </div>
-              {envDrawerMode === "create" ? (
-                <button type="button" disabled={envSaving} onClick={() => setEnvRows((current) => [...current, createDraftRow()])} className="mt-[22px] inline-flex h-[42px] items-center gap-[9px] rounded-[12px] border border-[#2A2A2A] bg-[#0B0B0B] px-[13px] text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#111111] disabled:cursor-not-allowed disabled:opacity-45">
-                  <Plus className="h-[17px] w-[17px]" /> Add Another
-                </button>
-              ) : null}
-              <div className="mt-[28px] border-t border-[#1D1D1D] pt-[22px]">
-                <label className="mb-[8px] block text-[13px] font-medium text-[#BDBDBD]">Environments</label>
-                <CustomSelect value={envEnvironment} onChange={(value) => setEnvEnvironment(value as EnvName)} options={[...ENV_OPTIONS]} icon={<Layers className="h-[15px] w-[15px]" />} />
-              </div>
             </div>
             <div className="flex flex-col gap-[12px] border-t border-[#1D1D1D] px-[22px] py-[16px] sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-wrap items-center gap-[10px]">
                 <input ref={fileInputRef} type="file" accept=".env,text/plain" className="hidden" onChange={(event) => importEnvFile(event.target.files?.[0] || null)} />
-                {envDrawerMode === "create" ? (
-                  <button type="button" disabled={envSaving} onClick={() => fileInputRef.current?.click()} className="inline-flex h-[42px] items-center gap-[9px] rounded-[12px] border border-[#2A2A2A] bg-[#0B0B0B] px-[13px] text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#111111] disabled:cursor-not-allowed disabled:opacity-45">
-                    <Upload className="h-[16px] w-[16px]" /> Import
-                  </button>
-                ) : null}
-                <span className="text-[13px] text-[#9B9B9B]">or paste .env contents in Key input</span>
+                <span className="text-[13px] text-[#9B9B9B]">{envRows.length} {envRows.length === 1 ? "variavel" : "variaveis"} em {envEnvironment}</span>
               </div>
               <div className="flex justify-end gap-[10px]">
                 <button type="button" disabled={envSaving} onClick={() => setEnvDrawerOpen(false)} className="h-[42px] rounded-[12px] border border-[#2A2A2A] bg-[#0B0B0B] px-[16px] text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#111111] disabled:cursor-not-allowed disabled:opacity-45">Cancel</button>
@@ -3897,14 +4590,62 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
               </div>
             </div>
           </aside>
-          <style jsx global>{`
-            @keyframes flowdeskSlideIn {
-              from { transform: translateX(32px); opacity: 0; }
-              to { transform: translateX(0); opacity: 1; }
-            }
-          `}</style>
         </div>
       ) : null}
+      <style jsx global>{`
+        @keyframes flowdeskSlideIn {
+          from { transform: translateX(32px); opacity: 0; }
+          to { transform: translateX(0); opacity: 1; }
+        }
+
+        @keyframes flowdeskSoftIn {
+          from { transform: translateY(10px); opacity: 0; }
+          to { transform: translateY(0); opacity: 1; }
+        }
+
+        @keyframes flowdeskLivePulse {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(52, 168, 83, 0.22); }
+          50% { box-shadow: 0 0 0 6px rgba(52, 168, 83, 0); }
+        }
+
+        .flowdesk-vps-ui section,
+        .flowdesk-vps-ui article {
+          animation: flowdeskSoftIn 260ms ease-out both;
+        }
+
+        .flowdesk-vps-ui button,
+        .flowdesk-vps-ui a,
+        .flowdesk-vps-ui input,
+        .flowdesk-vps-ui textarea,
+        .flowdesk-vps-ui article {
+          transition-property: background-color, border-color, color, opacity, transform, box-shadow;
+          transition-duration: 170ms;
+          transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+        }
+
+        .flowdesk-vps-ui button:not(:disabled):hover,
+        .flowdesk-vps-ui article:hover {
+          transform: translateY(-1px);
+        }
+
+        .flowdesk-vps-ui input:focus,
+        .flowdesk-vps-ui textarea:focus {
+          box-shadow: 0 0 0 3px rgba(15, 98, 254, 0.12);
+        }
+
+        .flowdesk-vps-ui button span[class*="bg-[#34A853]"] {
+          animation: flowdeskLivePulse 1.6s ease-in-out infinite;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .flowdesk-vps-ui *,
+          .flowdesk-vps-ui *::before,
+          .flowdesk-vps-ui *::after {
+            animation-duration: 1ms !important;
+            transition-duration: 1ms !important;
+          }
+        }
+      `}</style>
     </main>
   );
 }

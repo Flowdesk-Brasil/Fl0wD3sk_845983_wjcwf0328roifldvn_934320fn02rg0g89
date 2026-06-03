@@ -86,6 +86,9 @@ type GitHubContentResponse = {
   name?: string;
   path?: string;
   sha?: string;
+  size?: number;
+  download_url?: string | null;
+  html_url?: string | null;
 };
 
 type GitHubCommitFileResponse = {
@@ -98,6 +101,30 @@ type GitHubCommitFileResponse = {
   commit?: {
     sha?: string;
     html_url?: string;
+  } | null;
+};
+
+type GitHubCommitListItem = {
+  sha?: string;
+  html_url?: string | null;
+  commit?: {
+    message?: string | null;
+    author?: {
+      name?: string | null;
+      date?: string | null;
+    } | null;
+    committer?: {
+      name?: string | null;
+      date?: string | null;
+    } | null;
+  } | null;
+  author?: {
+    login?: string | null;
+    avatar_url?: string | null;
+  } | null;
+  committer?: {
+    login?: string | null;
+    avatar_url?: string | null;
   } | null;
 };
 
@@ -117,6 +144,10 @@ type GitHubPullRequestResponse = {
 
 type GitHubInstallationResponse = {
   id?: number;
+  html_url?: string | null;
+  repository_selection?: string | null;
+  permissions?: Record<string, string | undefined> | null;
+  app_slug?: string | null;
 };
 
 type GitHubInstallationTokenResponse = {
@@ -688,12 +719,8 @@ export async function readHostingGitHubInstallationTokenForRepository(input: {
   if (!jwt) return null;
 
   try {
-    const installation = await githubAppRequest<GitHubInstallationResponse>({
-      jwt,
-      method: "GET",
-      path: `/repos/${encodeURIComponent(input.owner)}/${encodeURIComponent(input.repo)}/installation`,
-    });
-    if (!installation.id) return null;
+    const installation = await readHostingGitHubRepositoryInstallation(input, jwt);
+    if (!installation?.id) return null;
 
     const tokenPayload = await githubAppRequest<GitHubInstallationTokenResponse>({
       jwt,
@@ -723,12 +750,28 @@ export async function readHostingGitHubInstallationTokenForRepository(input: {
       ? {
           token: tokenPayload.token,
           installationId: installation.id,
+          installationUrl: installation.html_url || null,
+          permissions: installation.permissions || null,
+          permissionIssue: resolveHostingGitHubInstallationPermissionIssue(installation),
           expiresAt: tokenPayload.expires_at || null,
         }
       : null;
   } catch {
     return null;
   }
+}
+
+export async function readHostingGitHubRepositoryInstallation(input: {
+  owner: string;
+  repo: string;
+}, jwtOverride?: string | null) {
+  const jwt = jwtOverride || createHostingGitHubAppJwt();
+  if (!jwt) return null;
+  return await githubAppRequest<GitHubInstallationResponse>({
+    jwt,
+    method: "GET",
+    path: `/repos/${encodeURIComponent(input.owner)}/${encodeURIComponent(input.repo)}/installation`,
+  }).catch(() => null);
 }
 
 function mapUserToAccount(user: GitHubUser): HostingGitHubAccount {
@@ -971,6 +1014,21 @@ export function buildHostingGitHubAppInstallUrl() {
   return slug ? `https://github.com/apps/${encodeURIComponent(slug)}/installations/new` : null;
 }
 
+export function resolveHostingGitHubInstallationPermissionIssue(
+  installation: Pick<GitHubInstallationResponse, "permissions"> | null | undefined,
+) {
+  const permissions = installation?.permissions || {};
+  const required: Array<[string, string]> = [
+    ["contents", "write"],
+    ["pull_requests", "write"],
+    ["workflows", "write"],
+  ];
+  const missing = required.filter(([key, value]) => permissions[key] !== value);
+  if (!missing.length) return null;
+  const labels = missing.map(([key, value]) => `${key}: ${value}`).join(", ");
+  return `O GitHub App esta instalado, mas ainda nao recebeu permissao suficiente. Atualize as permissoes do app para: ${labels}.`;
+}
+
 export async function fetchHostingGitHubRepositoryFile(input: {
   token: string;
   owner: string;
@@ -985,12 +1043,42 @@ export async function fetchHostingGitHubRepositoryFile(input: {
   if (payload.type !== "file" || payload.encoding !== "base64" || !payload.content) {
     return null;
   }
+  const contentBase64 = payload.content.replace(/\s/g, "");
   return {
     name: payload.name || input.path.split("/").pop() || input.path,
     path: payload.path || input.path,
     sha: payload.sha || null,
-    content: Buffer.from(payload.content.replace(/\s/g, ""), "base64").toString("utf8"),
+    encoding: payload.encoding || null,
+    content: Buffer.from(contentBase64, "base64").toString("utf8"),
+    contentBase64,
+    size: typeof payload.size === "number" ? payload.size : null,
+    downloadUrl: payload.download_url || null,
+    htmlUrl: payload.html_url || null,
   };
+}
+
+export async function fetchHostingGitHubRepositoryCommits(input: {
+  token: string;
+  owner: string;
+  repo: string;
+  branch: string;
+  perPage?: number;
+}) {
+  const commits = await githubFetch<GitHubCommitListItem[]>(
+    `/repos/${encodeURIComponent(input.owner)}/${encodeURIComponent(input.repo)}/commits?sha=${encodeURIComponent(input.branch)}&per_page=${Math.min(100, Math.max(1, input.perPage || 30))}`,
+    input.token,
+  );
+
+  return commits
+    .filter((commit) => commit.sha)
+    .map((commit) => ({
+      sha: commit.sha || "",
+      htmlUrl: commit.html_url || null,
+      message: commit.commit?.message || "Commit sem mensagem",
+      author: commit.author?.login || commit.commit?.author?.name || commit.commit?.committer?.name || "GitHub",
+      authorAvatarUrl: commit.author?.avatar_url || commit.committer?.avatar_url || null,
+      committedAt: commit.commit?.committer?.date || commit.commit?.author?.date || null,
+    }));
 }
 
 async function readGitHubFileSha(input: {
