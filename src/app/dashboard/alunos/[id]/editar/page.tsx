@@ -67,8 +67,10 @@ function TextField({
 }
 
 import { supabase } from "@/lib/supabase";
+import { use } from "react";
 
-export default function EditarAlunoPage({ params }: { params: { id: string } }) {
+export default function EditarAlunoPage({ params }: { params: Promise<{ id: string }> }) {
+  const resolvedParams = use(params);
   const router = useRouter();
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
@@ -81,7 +83,7 @@ export default function EditarAlunoPage({ params }: { params: { id: string } }) 
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
   useEffect(() => {
-    supabase.from("students").select("*").eq("id", params.id).single().then(({ data }) => {
+    supabase.from("students").select("*").eq("id", resolvedParams.id).single().then(({ data }) => {
       if (data) {
         setForm({
           full_name: data.full_name || "",
@@ -119,7 +121,7 @@ export default function EditarAlunoPage({ params }: { params: { id: string } }) 
       }
       setLoadingInitial(false);
     });
-  }, [params.id]);
+  }, [resolvedParams.id]);
 
   useEffect(() => {
     const channel = supabase.channel("face-scan-channel", {
@@ -199,7 +201,7 @@ export default function EditarAlunoPage({ params }: { params: { id: string } }) 
     try {
       const weight = form.weight ? Number(form.weight) : null;
       const height = form.height ? Number(form.height) : null;
-      const student = await updateStudent(params.id, {
+      const student = await updateStudent(resolvedParams.id, {
         full_name: form.full_name,
         email: form.email || null,
         rg: form.rg || null,
