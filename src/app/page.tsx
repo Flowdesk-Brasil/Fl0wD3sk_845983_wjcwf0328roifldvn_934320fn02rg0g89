@@ -3,30 +3,13 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
-import {
-  Eye, EyeOff, Dumbbell, ArrowRight, Lock, Mail, AlertCircle,
-  Zap, Shield, Users, BarChart3
-} from "lucide-react";
-
-const features = [
-  { icon: Users, color: "#8b5cf6", label: "Gestão de Alunos", desc: "Cadastro completo e matrículas" },
-  { icon: Zap, color: "#22c55e", label: "Check-in por QR Code", desc: "Controle de acesso em tempo real" },
-  { icon: BarChart3, color: "#3b82f6", label: "Relatórios e Finanças", desc: "Dashboards e indicadores" },
-  { icon: Shield, color: "#f97316", label: "Contratos Digitais", desc: "Assinatura eletrônica segura" },
-];
-
-const demoAccounts = [
-  { role: "admin", label: "Administrador", email: "admin@corpoevolucao.com.br", pw: "admin123", color: "#8b5cf6" },
-  { role: "receptionist", label: "Recepção", email: "recepcao@corpoevolucao.com.br", pw: "recepcao123", color: "#22c55e" },
-  { role: "professor", label: "Professor", email: "professor@corpoevolucao.com.br", pw: "prof123", color: "#3b82f6" },
-];
+import { ArrowRight, Lock, Mail, AlertCircle, Dumbbell } from "lucide-react";
 
 export default function LoginPage() {
   const { login } = useAuth();
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [showPass, setShowPass] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -34,201 +17,129 @@ export default function LoginPage() {
     e.preventDefault();
     setError("");
     setLoading(true);
-    const ok = await login(email, password);
+    const { error: err } = await login(email, password);
     setLoading(false);
-    if (ok) router.push("/dashboard");
-    else setError("E-mail ou senha incorretos.");
+    
+    if (err) {
+      setError(err);
+    } else {
+      router.push("/dashboard");
+    }
   };
 
   return (
-    <div className="min-h-screen flex" style={{ background: "#000" }}>
-      {/* ── Left hero ── */}
-      <div
-        className="hidden lg:flex flex-1 flex-col justify-between p-12 relative overflow-hidden"
-        style={{ background: "#0a0a0a", borderRight: "1px solid #1a1a1a" }}
-      >
-        {/* Grid pattern */}
-        <div
-          className="absolute inset-0 opacity-20"
-          style={{
-            backgroundImage: "linear-gradient(#ffffff08 1px,transparent 1px),linear-gradient(90deg,#ffffff08 1px,transparent 1px)",
-            backgroundSize: "40px 40px",
-          }}
-        />
-        {/* Purple glow */}
-        <div
-          className="absolute bottom-0 left-0 w-[600px] h-[600px] rounded-full pointer-events-none"
-          style={{ background: "radial-gradient(circle, #8b5cf615 0%, transparent 70%)" }}
-        />
-
-        {/* Logo */}
-        <div className="relative z-10 flex items-center gap-3 anim-fadeUp">
-          <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center">
-            <Dumbbell className="w-5 h-5 text-black" />
-          </div>
-          <div>
-            <div className="font-bold text-white text-sm leading-tight">Studio Corpo e Evolução</div>
-            <div className="text-xs" style={{ color: "#52525b" }}>Sistema de Gestão</div>
-          </div>
-        </div>
-
-        {/* Main headline */}
-        <div className="relative z-10 anim-fadeUp stagger-2">
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium mb-6"
-            style={{ background: "#8b5cf620", color: "#a78bfa", border: "1px solid #8b5cf630" }}>
-            <span className="w-1.5 h-1.5 rounded-full bg-[#8b5cf6] anim-pulse inline-block" />
-            Sistema ativo • Versão 2.0
-          </div>
-          <h1 className="text-5xl font-black text-white leading-[1.1] tracking-tight mb-5">
-            Gerencie sua<br />
-            academia com<br />
-            <span style={{ color: "#8b5cf6" }}>inteligência.</span>
-          </h1>
-          <p className="text-base max-w-sm" style={{ color: "#71717a" }}>
-            Sistema completo para academias, studios fitness e centros de treinamento.
-            Automatize matrículas, pagamentos e check-ins.
-          </p>
-
-          {/* Features list */}
-          <div className="mt-10 space-y-3">
-            {features.map((f, i) => {
-              const Icon = f.icon;
-              return (
-                <div key={f.label}
-                  className={`flex items-center gap-3 anim-slideR stagger-${i + 3}`}
-                >
-                  <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
-                    style={{ background: f.color + "18" }}>
-                    <Icon className="w-4 h-4" style={{ color: f.color }} />
-                  </div>
-                  <div>
-                    <div className="text-sm font-medium text-white">{f.label}</div>
-                    <div className="text-xs" style={{ color: "#52525b" }}>{f.desc}</div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Footer stats */}
-        <div className="relative z-10 flex items-center gap-8 anim-fadeUp stagger-4">
-          {[
-            { v: "248+", l: "Alunos" },
-            { v: "R$38k", l: "Receita/mês" },
-            { v: "87", l: "Check-ins hoje" },
-          ].map((s) => (
-            <div key={s.l}>
-              <div className="text-2xl font-black text-white">{s.v}</div>
-              <div className="text-xs mt-0.5" style={{ color: "#52525b" }}>{s.l}</div>
+    <div className="min-h-screen flex" style={{ backgroundColor: "#f5f5f7" }}>
+      {/* ── Left side (Branding) ── */}
+      <div className="hidden lg:flex flex-1 flex-col justify-between p-16 relative overflow-hidden bg-white">
+        <div className="relative z-10 anim-fadeUp">
+          <div className="flex items-center gap-3 mb-16">
+            <div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{ background: "var(--brand-light)" }}>
+              <Dumbbell className="w-6 h-6" style={{ color: "var(--brand-primary)" }} />
             </div>
-          ))}
+            <div className="font-bold text-xl tracking-tight text-zinc-900">Corpo & Evolução</div>
+          </div>
+          
+          <h1 className="text-[56px] font-bold leading-[1.1] tracking-tight text-zinc-900 mb-6">
+            Gestão inteligente.<br />
+            <span style={{ color: "var(--brand-primary)" }}>Resultados reais.</span>
+          </h1>
+          <p className="text-lg text-zinc-500 max-w-md leading-relaxed">
+            A plataforma definitiva para automatizar seu Studio. Controle financeiro, acessos, treinos e comunicação em um único lugar.
+          </p>
+        </div>
+        
+        {/* Decorative elements */}
+        <div className="absolute right-0 bottom-0 translate-x-1/4 translate-y-1/4 w-[600px] h-[600px] rounded-full blur-[100px] pointer-events-none"
+          style={{ background: "rgba(130, 10, 209, 0.08)" }} />
+          
+        <div className="relative z-10 anim-fadeUp stagger-2">
+          <p className="text-sm text-zinc-400 font-medium tracking-wide uppercase">
+            © 2024 Studio Corpo & Evolução
+          </p>
         </div>
       </div>
 
-      {/* ── Right form ── */}
-      <div className="flex-1 flex items-center justify-center p-6" style={{ background: "#000" }}>
-        <div className="w-full max-w-[400px] anim-slideL">
+      {/* ── Right side (Form) ── */}
+      <div className="flex-1 flex items-center justify-center p-6">
+        <div className="w-full max-w-[420px] anim-fadeIn">
+          
           {/* Mobile logo */}
-          <div className="flex items-center gap-3 mb-10 lg:hidden">
-            <div className="w-9 h-9 rounded-xl bg-white flex items-center justify-center">
-              <Dumbbell className="w-4 h-4 text-black" />
+          <div className="flex lg:hidden items-center justify-center gap-3 mb-10">
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: "var(--brand-light)" }}>
+              <Dumbbell className="w-5 h-5" style={{ color: "var(--brand-primary)" }} />
             </div>
-            <span className="font-bold text-white text-sm">Studio Corpo e Evolução</span>
+            <div className="font-bold text-lg text-zinc-900">Corpo & Evolução</div>
           </div>
 
-          <div className="mb-8">
-            <h2 className="text-3xl font-black text-white tracking-tight">Entrar</h2>
-            <p className="mt-2 text-sm" style={{ color: "#71717a" }}>
-              Acesse o painel de gestão
-            </p>
-          </div>
-
-          {/* Demo pills */}
-          <div className="mb-6">
-            <p className="text-xs font-semibold uppercase tracking-widest mb-3" style={{ color: "#3f3f46" }}>
-              Acesso rápido
-            </p>
-            <div className="flex gap-2">
-              {demoAccounts.map((acc) => (
-                <button
-                  key={acc.role}
-                  onClick={() => { setEmail(acc.email); setPassword(acc.pw); }}
-                  className="flex-1 py-2 rounded-lg text-xs font-semibold transition-all hover:scale-105 active:scale-100"
-                  style={{
-                    background: acc.color + "12",
-                    color: acc.color,
-                    border: `1px solid ${acc.color}28`,
-                  }}
-                >
-                  {acc.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium mb-1.5 text-zinc-400">E-mail</label>
-              <div className="relative">
-                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: "#52525b" }} />
-                <input
-                  type="email" id="login-email" required
-                  value={email} onChange={e => setEmail(e.target.value)}
-                  placeholder="email@dominio.com"
-                  className="field pl-10"
-                />
-              </div>
+          <div className="card p-8 sm:p-10">
+            <div className="mb-8">
+              <h2 className="text-2xl font-bold text-zinc-900 mb-2 tracking-tight">Acesse sua conta</h2>
+              <p className="text-zinc-500 text-sm">Insira suas credenciais para continuar.</p>
             </div>
 
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-sm font-medium text-zinc-400">Senha</label>
-                <button type="button" className="text-xs font-medium" style={{ color: "#8b5cf6" }}>
-                  Esqueceu?
-                </button>
+            <form onSubmit={handleSubmit} className="space-y-5">
+              <div>
+                <label className="block text-sm font-semibold text-zinc-700 mb-2">E-mail</label>
+                <div className="relative">
+                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+                  <input
+                    type="email" 
+                    required
+                    value={email} 
+                    onChange={e => setEmail(e.target.value)}
+                    placeholder="voce@exemplo.com"
+                    className="field pl-11 py-3"
+                  />
+                </div>
               </div>
-              <div className="relative">
-                <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: "#52525b" }} />
-                <input
-                  type={showPass ? "text" : "password"} id="login-password" required
-                  value={password} onChange={e => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="field pl-10 pr-10"
-                />
-                <button type="button"
-                  onClick={() => setShowPass(v => !v)}
-                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
-                >
-                  {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
 
-            {error && (
-              <div className="flex items-center gap-2 p-3 rounded-xl text-sm anim-fadeUp"
-                style={{ background: "#ef444415", border: "1px solid #ef444428", color: "#f87171" }}>
-                <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                {error}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm font-semibold text-zinc-700">Senha</label>
+                  <button type="button" className="text-sm font-medium transition-colors" style={{ color: "var(--brand-primary)" }}>
+                    Esqueceu a senha?
+                  </button>
+                </div>
+                <div className="relative">
+                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+                  <input
+                    type="password" 
+                    required
+                    value={password} 
+                    onChange={e => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="field pl-11 py-3"
+                  />
+                </div>
               </div>
-            )}
 
-            <button
-              type="submit" disabled={loading} id="login-submit"
-              className="btn btn-primary w-full py-3 text-sm mt-2"
-            >
-              {loading ? (
-                <span className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full anim-spin" />
-              ) : (
-                <>Entrar no sistema <ArrowRight className="w-4 h-4" /></>
+              {error && (
+                <div className="flex items-center gap-2 p-4 rounded-xl text-sm anim-fadeUp"
+                  style={{ background: "var(--status-error-bg)", color: "var(--status-error)" }}>
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <span className="font-medium">{error}</span>
+                </div>
               )}
-            </button>
-          </form>
 
-          <p className="mt-8 text-center text-xs" style={{ color: "#3f3f46" }}>
-            Acesso registrado e monitorado · Studio Corpo e Evolução © 2024
-          </p>
+              <button
+                type="submit" 
+                disabled={loading}
+                className="btn btn-primary w-full py-3.5 text-base mt-4"
+              >
+                {loading ? (
+                  <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full anim-spin" />
+                ) : (
+                  <>Acessar Painel <ArrowRight className="w-4 h-4 ml-1" /></>
+                )}
+              </button>
+            </form>
+            
+            <div className="mt-8 text-center">
+              <p className="text-xs text-zinc-500">
+                Acesso seguro e criptografado via Supabase.
+              </p>
+            </div>
+          </div>
         </div>
       </div>
     </div>

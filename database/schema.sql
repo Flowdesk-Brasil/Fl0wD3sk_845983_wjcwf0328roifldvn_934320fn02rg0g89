@@ -1,60 +1,58 @@
--- ============================================================
--- BANCO DE DADOS - Studio Corpo e Evolução
--- Sistema SaaS de Gestão de Academia
--- ============================================================
+-- =================================================================================
+-- STUDIO CORPO E EVOLUÇÃO - SUPABASE SCHEMA (POSTGRESQL)
+-- =================================================================================
 
--- ROLES
-CREATE TABLE roles (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(50) NOT NULL UNIQUE,
-    description TEXT,
-    created_at TIMESTAMP DEFAULT NOW()
-);
+-- 1. EXTENSÕES
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
-INSERT INTO roles (name, description) VALUES
-('admin', 'Administrador com acesso total ao sistema'),
-('receptionist', 'Recepcionista com acesso a cadastros e check-in'),
-('professor', 'Professor com acesso a alunos e frequência'),
-('student', 'Aluno com acesso ao aplicativo móvel');
+-- 2. TIPOS CUSTOMIZADOS (ENUMS)
+CREATE TYPE user_role AS ENUM ('admin', 'receptionist', 'professor', 'student');
+CREATE TYPE student_status AS ENUM ('active', 'inactive', 'blocked');
+CREATE TYPE enrollment_status AS ENUM ('active', 'suspended', 'cancelled', 'expired');
+CREATE TYPE payment_status AS ENUM ('pending', 'paid', 'expired', 'cancelled', 'refunded');
+CREATE TYPE payment_method AS ENUM ('pix', 'credit_card', 'debit_card', 'cash');
+CREATE TYPE checkin_status AS ENUM ('allowed', 'denied');
 
--- USERS
-CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name VARCHAR(255) NOT NULL,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
-    role_id INTEGER REFERENCES roles(id),
-    avatar_url TEXT,
-    active BOOLEAN DEFAULT TRUE,
-    last_login TIMESTAMP,
-    reset_token VARCHAR(255),
-    reset_token_expires TIMESTAMP,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
-);
+-- =================================================================================
+-- 3. TABELAS
+-- =================================================================================
 
--- ACCESS LOGS
-CREATE TABLE access_logs (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id),
-    action VARCHAR(50) NOT NULL,
-    ip_address VARCHAR(50),
-    user_agent TEXT,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
--- STUDENTS
-CREATE TABLE students (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    -- Dados Pessoais
+-- PROFILES (Estende a tabela auth.users do Supabase)
+CREATE TABLE profiles (
+    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    role user_role NOT NULL DEFAULT 'student',
     full_name VARCHAR(255) NOT NULL,
-    birth_date DATE NOT NULL,
-    gender CHAR(1) CHECK (gender IN ('M', 'F', 'O')),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    avatar_url TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
+);
+
+-- PLANS (Planos da academia)
+CREATE TABLE plans (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    price DECIMAL(10, 2) NOT NULL,
+    duration_days INTEGER NOT NULL,
+    weekly_limit INTEGER NOT NULL DEFAULT 7,
+    color VARCHAR(20) DEFAULT '#820ad1',
+    active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
+);
+
+-- STUDENTS (Alunos)
+CREATE TABLE students (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    profile_id UUID REFERENCES profiles(id) ON DELETE SET NULL, -- Se tiver login no app
+    full_name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) UNIQUE,
     cpf VARCHAR(14) UNIQUE NOT NULL,
     rg VARCHAR(20),
-    phone VARCHAR(20),
+    birth_date DATE NOT NULL,
+    gender VARCHAR(20),
+    phone VARCHAR(20) NOT NULL,
     whatsapp VARCHAR(20),
-    email VARCHAR(255),
+    
     -- Endereço
     cep VARCHAR(10),
     street VARCHAR(255),
@@ -62,255 +60,160 @@ CREATE TABLE students (
     complement VARCHAR(100),
     neighborhood VARCHAR(100),
     city VARCHAR(100),
-    state CHAR(2),
+    state VARCHAR(2),
+    
     -- Dados Físicos
-    weight DECIMAL(5,2),
-    height INTEGER,
-    imc DECIMAL(4,1),
+    weight DECIMAL(5, 2),
+    height DECIMAL(5, 2),
+    imc DECIMAL(5, 2),
     objective TEXT,
-    -- Status
-    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'blocked')),
-    -- QR Code
-    qr_code VARCHAR(100) UNIQUE NOT NULL,
-    -- Metadados
+    
+    -- Emergência e Outros
     emergency_contact VARCHAR(255),
     emergency_phone VARCHAR(20),
     observations TEXT,
-    created_by UUID REFERENCES users(id),
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    
+    status student_status DEFAULT 'active',
+    qr_code VARCHAR(255) UNIQUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now()),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
 );
 
--- STUDENT DOCUMENTS
-CREATE TABLE student_documents (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    student_id UUID REFERENCES students(id) ON DELETE CASCADE,
-    document_type VARCHAR(50) NOT NULL,
-    file_url TEXT NOT NULL,
-    file_name VARCHAR(255),
-    file_size INTEGER,
-    uploaded_at TIMESTAMP DEFAULT NOW(),
-    uploaded_by UUID REFERENCES users(id)
-);
-
--- PLANS
-CREATE TABLE plans (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name VARCHAR(100) NOT NULL,
-    price DECIMAL(10,2) NOT NULL,
-    description TEXT,
-    duration_days INTEGER NOT NULL DEFAULT 30,
-    weekly_limit INTEGER DEFAULT 5,
-    allowed_hours JSONB DEFAULT '[]',
-    color VARCHAR(7) DEFAULT '#6c47ff',
-    active BOOLEAN DEFAULT TRUE,
-    created_by UUID REFERENCES users(id),
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
-);
-
--- ENROLLMENTS (MATRÍCULAS)
+-- ENROLLMENTS (Matrículas)
 CREATE TABLE enrollments (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    student_id UUID REFERENCES students(id),
-    plan_id UUID REFERENCES plans(id),
-    matricula_number VARCHAR(50) UNIQUE NOT NULL,
-    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'suspended', 'cancelled', 'expired')),
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    matricula_number VARCHAR(20) UNIQUE NOT NULL,
+    student_id UUID REFERENCES students(id) ON DELETE CASCADE,
+    plan_id UUID REFERENCES plans(id) ON DELETE RESTRICT,
+    status enrollment_status DEFAULT 'active',
     start_date DATE NOT NULL,
     end_date DATE NOT NULL,
-    notes TEXT,
-    created_by UUID REFERENCES users(id),
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
 );
 
--- ENROLLMENT HISTORY
-CREATE TABLE enrollment_history (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    enrollment_id UUID REFERENCES enrollments(id) ON DELETE CASCADE,
-    previous_status VARCHAR(20),
-    new_status VARCHAR(20) NOT NULL,
-    reason TEXT,
-    changed_by UUID REFERENCES users(id),
-    changed_at TIMESTAMP DEFAULT NOW()
-);
-
--- CONTRACTS
+-- CONTRACTS (Contratos)
 CREATE TABLE contracts (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    enrollment_id UUID REFERENCES enrollments(id),
-    student_id UUID REFERENCES students(id),
-    plan_id UUID REFERENCES plans(id),
-    template_content TEXT NOT NULL,
-    processed_content TEXT NOT NULL,
-    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'signed', 'cancelled')),
-    pdf_url TEXT,
-    sent_to_email BOOLEAN DEFAULT FALSE,
-    sent_at TIMESTAMP,
-    created_by UUID REFERENCES users(id),
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    student_id UUID REFERENCES students(id) ON DELETE CASCADE,
+    plan_id UUID REFERENCES plans(id) ON DELETE RESTRICT,
+    enrollment_id UUID REFERENCES enrollments(id) ON DELETE CASCADE,
+    document_text TEXT NOT NULL,
+    status VARCHAR(20) DEFAULT 'pending', -- pending, signed
+    ip_address VARCHAR(50),
+    signed_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
 );
 
--- CONTRACT SIGNATURES
-CREATE TABLE contract_signatures (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    contract_id UUID REFERENCES contracts(id) ON DELETE CASCADE,
-    signature_type VARCHAR(20) CHECK (signature_type IN ('electronic', 'drawn', 'digital')),
-    signature_data TEXT,
-    ip_address VARCHAR(50) NOT NULL,
-    user_agent TEXT,
-    signed_at TIMESTAMP DEFAULT NOW(),
-    signer_name VARCHAR(255) NOT NULL,
-    signer_cpf VARCHAR(14) NOT NULL
-);
-
--- PAYMENTS
+-- PAYMENTS (Pagamentos)
 CREATE TABLE payments (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    enrollment_id UUID REFERENCES enrollments(id),
-    student_id UUID REFERENCES students(id),
-    amount DECIMAL(10,2) NOT NULL,
-    discount DECIMAL(10,2) DEFAULT 0,
-    fine DECIMAL(10,2) DEFAULT 0,
-    total_amount DECIMAL(10,2) NOT NULL,
-    method VARCHAR(20) CHECK (method IN ('pix', 'credit_card', 'debit_card', 'cash')),
-    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'paid', 'expired', 'cancelled', 'refunded')),
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    reference VARCHAR(50) UNIQUE NOT NULL,
+    student_id UUID REFERENCES students(id) ON DELETE CASCADE,
+    enrollment_id UUID REFERENCES enrollments(id) ON DELETE CASCADE,
+    
+    amount DECIMAL(10, 2) NOT NULL,
+    discount DECIMAL(10, 2) DEFAULT 0,
+    fine DECIMAL(10, 2) DEFAULT 0,
+    total_amount DECIMAL(10, 2) NOT NULL,
+    
+    status payment_status DEFAULT 'pending',
+    method payment_method,
+    
     due_date DATE NOT NULL,
-    paid_at TIMESTAMP,
-    pix_qr_code TEXT,
+    paid_at TIMESTAMP WITH TIME ZONE,
+    
     pix_code TEXT,
-    reference VARCHAR(100) UNIQUE NOT NULL,
-    notes TEXT,
-    approved_by UUID REFERENCES users(id),
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
 );
 
--- PAYMENT TRANSACTIONS
-CREATE TABLE payment_transactions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    payment_id UUID REFERENCES payments(id) ON DELETE CASCADE,
-    gateway VARCHAR(50),
-    gateway_transaction_id VARCHAR(255),
-    amount DECIMAL(10,2) NOT NULL,
-    status VARCHAR(20) NOT NULL,
-    response_data JSONB,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
--- CHECK-INS
+-- CHECKINS (Controle de Acesso)
 CREATE TABLE checkins (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    student_id UUID REFERENCES students(id),
-    enrollment_id UUID REFERENCES enrollments(id),
-    checked_at TIMESTAMP DEFAULT NOW(),
-    unit VARCHAR(100) DEFAULT 'Unidade Central',
-    receptionist_id UUID REFERENCES users(id),
-    status VARCHAR(20) DEFAULT 'allowed' CHECK (status IN ('allowed', 'denied')),
-    denied_reason TEXT
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    student_id UUID REFERENCES students(id) ON DELETE CASCADE,
+    enrollment_id UUID REFERENCES enrollments(id) ON DELETE SET NULL,
+    status checkin_status NOT NULL,
+    reason VARCHAR(255),
+    unit VARCHAR(100) DEFAULT 'Matriz',
+    checked_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
 );
 
--- NOTIFICATIONS
+-- NOTIFICATIONS (Comunicados)
 CREATE TABLE notifications (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    target_id UUID,
-    target_type VARCHAR(20) CHECK (target_type IN ('student', 'all')),
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    target_type VARCHAR(20) NOT NULL, -- 'all', 'student'
+    target_id UUID REFERENCES students(id) ON DELETE CASCADE, -- null if all
     title VARCHAR(255) NOT NULL,
     message TEXT NOT NULL,
     read BOOLEAN DEFAULT FALSE,
-    created_by UUID REFERENCES users(id),
-    created_at TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
 );
 
--- AUDIT LOGS
+-- AUDIT_LOGS (Auditoria)
 CREATE TABLE audit_logs (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id),
-    user_name VARCHAR(255),
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
     action VARCHAR(50) NOT NULL,
-    entity VARCHAR(100) NOT NULL,
+    entity VARCHAR(50) NOT NULL,
     entity_id UUID,
     details TEXT,
     ip_address VARCHAR(50),
-    created_at TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
 );
 
--- ============================================================
--- ÍNDICES
--- ============================================================
+-- =================================================================================
+-- 4. FUNÇÕES E TRIGGERS
+-- =================================================================================
 
-CREATE INDEX idx_students_cpf ON students(cpf);
-CREATE INDEX idx_students_email ON students(email);
-CREATE INDEX idx_students_status ON students(status);
-CREATE INDEX idx_students_qr_code ON students(qr_code);
-CREATE INDEX idx_enrollments_student_id ON enrollments(student_id);
-CREATE INDEX idx_enrollments_status ON enrollments(status);
-CREATE INDEX idx_enrollments_matricula ON enrollments(matricula_number);
-CREATE INDEX idx_payments_student_id ON payments(student_id);
-CREATE INDEX idx_payments_status ON payments(status);
-CREATE INDEX idx_payments_due_date ON payments(due_date);
-CREATE INDEX idx_checkins_student_id ON checkins(student_id);
-CREATE INDEX idx_checkins_checked_at ON checkins(checked_at);
-CREATE INDEX idx_audit_logs_user_id ON audit_logs(user_id);
-CREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at);
-CREATE INDEX idx_notifications_target_id ON notifications(target_id);
-
--- ============================================================
--- FUNÇÕES E TRIGGERS
--- ============================================================
-
--- Atualiza updated_at automaticamente
-CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = NOW();
-    RETURN NEW;
-END;
-$$ language 'plpgsql';
-
-CREATE TRIGGER update_students_updated_at BEFORE UPDATE ON students FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_enrollments_updated_at BEFORE UPDATE ON enrollments FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_payments_updated_at BEFORE UPDATE ON payments FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_contracts_updated_at BEFORE UPDATE ON contracts FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
--- Calcula IMC automaticamente
+-- Calcula o IMC automaticamente antes de salvar o aluno
 CREATE OR REPLACE FUNCTION calculate_imc()
 RETURNS TRIGGER AS $$
 BEGIN
     IF NEW.weight IS NOT NULL AND NEW.height IS NOT NULL AND NEW.height > 0 THEN
-        NEW.imc = NEW.weight / POWER(NEW.height::DECIMAL / 100, 2);
+        -- assumindo altura em cm, converte para metros (NEW.height / 100.0)
+        NEW.imc := NEW.weight / ((NEW.height / 100.0) * (NEW.height / 100.0));
+    ELSE
+        NEW.imc := NULL;
     END IF;
     RETURN NEW;
 END;
-$$ language 'plpgsql';
+$$ LANGUAGE plpgsql;
 
-CREATE TRIGGER calculate_student_imc BEFORE INSERT OR UPDATE ON students FOR EACH ROW EXECUTE FUNCTION calculate_imc();
+CREATE TRIGGER calculate_imc_trigger
+BEFORE INSERT OR UPDATE ON students
+FOR EACH ROW
+EXECUTE FUNCTION calculate_imc();
 
--- Gera número de matrícula automaticamente
-CREATE OR REPLACE FUNCTION generate_matricula_number()
+-- Cria um QR Code único para o aluno
+CREATE OR REPLACE FUNCTION generate_student_qr()
 RETURNS TRIGGER AS $$
 BEGIN
-    IF NEW.matricula_number IS NULL OR NEW.matricula_number = '' THEN
-        NEW.matricula_number = 'MAT-' || EXTRACT(YEAR FROM NOW()) || '-' || LPAD(nextval('matricula_seq')::TEXT, 5, '0');
+    IF NEW.qr_code IS NULL THEN
+        NEW.qr_code := 'QR-' || SUBSTRING(NEW.id::text FROM 1 FOR 8) || '-' || FLOOR(RANDOM() * 10000)::text;
     END IF;
     RETURN NEW;
 END;
-$$ language 'plpgsql';
+$$ LANGUAGE plpgsql;
 
-CREATE SEQUENCE matricula_seq START 10001;
-CREATE TRIGGER generate_enrollment_matricula BEFORE INSERT ON enrollments FOR EACH ROW EXECUTE FUNCTION generate_matricula_number();
+CREATE TRIGGER generate_student_qr_trigger
+BEFORE INSERT ON students
+FOR EACH ROW
+EXECUTE FUNCTION generate_student_qr();
 
--- Registra histórico de mudança de status da matrícula
-CREATE OR REPLACE FUNCTION log_enrollment_status_change()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF OLD.status <> NEW.status THEN
-        INSERT INTO enrollment_history (enrollment_id, previous_status, new_status, changed_at)
-        VALUES (NEW.id, OLD.status, NEW.status, NOW());
-    END IF;
-    RETURN NEW;
-END;
-$$ language 'plpgsql';
+-- =================================================================================
+-- 5. SEGURANÇA (RLS - ROW LEVEL SECURITY)
+-- =================================================================================
 
-CREATE TRIGGER log_enrollment_status AFTER UPDATE ON enrollments FOR EACH ROW EXECUTE FUNCTION log_enrollment_status_change();
+-- Por padrão, os admins têm acesso total a tudo.
+-- Configuração de RLS pode ser expandida no Supabase Studio.
+
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE plans ENABLE ROW LEVEL SECURITY;
+ALTER TABLE students ENABLE ROW LEVEL SECURITY;
+ALTER TABLE enrollments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE contracts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE checkins ENABLE ROW LEVEL SECURITY;
+
+-- Políticas básicas (Exemplo: todos os usuários autenticados podem ler os planos)
+CREATE POLICY "Planos visíveis para todos os usuários logados" ON plans FOR SELECT USING (auth.role() = 'authenticated');
+-- (Adicione políticas RLS detalhadas de acordo com o nível de segurança exigido)
