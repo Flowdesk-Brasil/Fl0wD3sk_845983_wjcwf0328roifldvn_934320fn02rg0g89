@@ -126,9 +126,9 @@ export default function CheckinPage() {
             {!result ? <div><QrCode className="mx-auto h-10 w-10 text-[#c2cad7]" /><h3 className="mt-4 text-sm font-bold">Aguardando validação</h3><p className="mt-1 text-xs text-[#8d97aa]">O resultado da leitura aparecerá aqui.</p></div> : (
               <div className="max-w-sm px-5">
                 <div className={`mx-auto grid h-20 w-20 place-items-center rounded-full ${result.status === "allowed" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>{result.status === "allowed" ? <CheckCircle2 className="h-9 w-9" /> : <ShieldAlert className="h-9 w-9" />}</div>
-                <h2 className={`mt-5 text-2xl font-extrabold tracking-[-.04em] ${result.status === "allowed" ? "text-green-700" : "text-red-700"}`}>{result.duplicate ? "Check-in já realizado" : result.status === "allowed" ? "Acesso liberado" : "Acesso negado"}</h2>
-                <p className="mt-2 text-sm font-semibold text-[#172033]">{result.student?.full_name ?? "Código não identificado"}</p>
-                <p className="mt-1 text-xs text-[#657085]">{result.reason ?? "Matrícula ativa e acesso regular."}</p>
+                <h2 className={`mt-5 text-2xl font-extrabold tracking-[-.04em] ${result.status === "allowed" ? "text-green-700" : "text-red-700"}`}>{result.duplicate ? "Check-in já realizado" : result.status === "allowed" ? (result.student_id === "manual" ? "Seja bem-vindo(a)!" : "Acesso liberado") : "Acesso negado"}</h2>
+                <p className="mt-2 text-xl font-black text-[#172033]">{result.student?.full_name ?? "Código não identificado"}</p>
+                <p className="mt-1 text-sm text-[#657085]">{result.reason ?? "Matrícula ativa e acesso regular."}</p>
                 <button className="btn btn-secondary mt-6" onClick={() => { setResult(null); setCode(""); }}>Nova leitura</button>
               </div>
             )}
