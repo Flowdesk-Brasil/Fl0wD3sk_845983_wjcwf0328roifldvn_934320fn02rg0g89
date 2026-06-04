@@ -7,8 +7,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import {
   LayoutDashboard, Users, BookOpen, Package, ScrollText,
   CreditCard, QrCode, BarChart3, Bell, Shield, Activity,
-  Settings, LogOut, Dumbbell, Menu, X, ChevronRight,
-  Search
+  Settings, LogOut, Hexagon, Menu, X, Search
 } from "lucide-react";
 
 const NAV = [
@@ -51,13 +50,6 @@ const NAV = [
   },
 ];
 
-const ROLE_LABELS: Record<string, string> = {
-  admin: "Administrador",
-  receptionist: "Recepcionista",
-  professor: "Professor",
-  student: "Aluno",
-};
-
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { user, isLoading, logout, hasPermission } = useAuth();
   const router = useRouter();
@@ -70,8 +62,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   if (isLoading || !user) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-white">
-        <div className="w-8 h-8 border-4 border-zinc-200 border-t-[var(--brand-primary)] rounded-full animate-spin" />
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#000" }}>
+        <div className="w-8 h-8 border-2 border-[#333] border-t-white rounded-full animate-spin" />
       </div>
     );
   }
@@ -79,32 +71,32 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const handleLogout = () => { logout(); };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[var(--bg-app)]">
+    <div className="flex h-screen overflow-hidden bg-black text-[#ededed]">
       
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div 
-          className="fixed inset-0 z-40 lg:hidden bg-zinc-900/40 backdrop-blur-sm transition-opacity"
+          className="fixed inset-0 z-40 lg:hidden bg-black/80 backdrop-blur-md transition-opacity"
           onClick={() => setSidebarOpen(false)}
         />
       )}
 
       {/* Sidebar */}
       <aside
-        className={`fixed top-0 left-0 z-50 h-full flex flex-col bg-white border-r border-[var(--border-light)]
+        className={`fixed top-0 left-0 z-50 h-full flex flex-col bg-[#050505] border-r border-[#1f1f22]
           lg:static lg:translate-x-0 transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]
-          ${sidebarOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full"}`}
+          ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
         style={{ width: 260, flexShrink: 0 }}
       >
         {/* Logo */}
-        <div className="flex items-center justify-between px-6 py-6 border-b border-[var(--border-light)]">
+        <div className="flex items-center justify-between px-6 py-6 border-b border-[#1f1f22]">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: "var(--brand-light)" }}>
-              <Dumbbell className="w-5 h-5" style={{ color: "var(--brand-primary)" }} />
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-[#111] border border-[#222]">
+              <Hexagon className="w-5 h-5 text-white" />
             </div>
             <div>
-              <div className="font-bold text-zinc-900 tracking-tight">Studio</div>
-              <div className="text-[11px] font-medium text-zinc-500 uppercase tracking-widest">Gestão</div>
+              <div className="font-bold text-white tracking-tight">Studio</div>
+              <div className="text-[10px] font-semibold text-[#888] uppercase tracking-widest">Workspace</div>
             </div>
           </div>
           <button onClick={() => setSidebarOpen(false)} className="btn-icon lg:hidden">
@@ -119,21 +111,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             if (!visible.length) return null;
             return (
               <div key={section.title}>
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400 px-3 mb-2">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-[#555] px-3 mb-2">
                   {section.title}
                 </p>
-                <div className="space-y-1">
+                <div className="space-y-0.5">
                   {visible.map(item => {
                     const Icon = item.icon;
                     const active = pathname === item.href;
                     return (
                       <Link key={item.href} href={item.href} onClick={() => setSidebarOpen(false)}
-                        className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all
+                        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-medium transition-all
                           ${active 
-                            ? "bg-[var(--brand-light)] text-[var(--brand-primary)] shadow-sm" 
-                            : "text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900"}`}
+                            ? "bg-[#1a1a1a] text-white border border-[#333]" 
+                            : "text-[#888] hover:bg-[#111] hover:text-[#ccc] border border-transparent"}`}
                       >
-                        <Icon className={`w-4.5 h-4.5 ${active ? "text-[var(--brand-primary)]" : "text-zinc-400"}`} />
+                        <Icon className={`w-4 h-4 ${active ? "text-white" : "text-[#666]"}`} />
                         {item.label}
                       </Link>
                     );
@@ -145,48 +137,48 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </nav>
 
         {/* User Card */}
-        <div className="p-4 border-t border-[var(--border-light)] bg-zinc-50/50">
-          <div className="flex items-center gap-3 p-3 rounded-2xl bg-white border border-[var(--border-light)] shadow-sm">
-            <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold bg-[var(--brand-light)] text-[var(--brand-primary)] flex-shrink-0">
+        <div className="p-4 border-t border-[#1f1f22] bg-[#000]">
+          <div className="flex items-center gap-3 p-3 rounded-xl border border-[#222] bg-[#0a0a0a]">
+            <div className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold bg-[#222] text-white flex-shrink-0">
               {user.full_name?.[0]?.toUpperCase()}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-bold text-zinc-900 truncate">{user.full_name}</div>
-              <div className="text-xs text-zinc-500 truncate">{ROLE_LABELS[user.app_role] || 'Usuário'}</div>
+              <div className="text-[13px] font-bold text-white truncate">{user.full_name}</div>
+              <div className="text-[11px] text-[#888] uppercase tracking-wider truncate">{user.app_role}</div>
             </div>
-            <button onClick={handleLogout} className="btn-icon w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200" title="Sair">
-              <LogOut className="w-4 h-4 text-zinc-600" />
+            <button onClick={handleLogout} className="btn-icon w-8 h-8 rounded-lg bg-[#111] hover:bg-[#222] border border-[#222]" title="Sair">
+              <LogOut className="w-4 h-4 text-[#888]" />
             </button>
           </div>
         </div>
       </aside>
 
       {/* Main Content Area */}
-      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+      <div className="flex flex-col flex-1 min-w-0 overflow-hidden bg-black">
         
         {/* Topbar */}
-        <header className="flex items-center justify-between px-6 py-4 bg-white/80 backdrop-blur-md border-b border-[var(--border-light)] sticky top-0 z-30">
+        <header className="flex items-center justify-between px-6 py-4 bg-[#000]/80 backdrop-blur-xl border-b border-[#1f1f22] sticky top-0 z-30">
           <div className="flex items-center gap-4">
             <button onClick={() => setSidebarOpen(true)} className="btn-icon lg:hidden">
-              <Menu className="w-6 h-6 text-zinc-700" />
+              <Menu className="w-5 h-5 text-white" />
             </button>
             <div className="hidden sm:block">
-              <h1 className="text-xl font-bold text-zinc-900 tracking-tight capitalize">
-                {pathname.split("/").pop() === "dashboard" ? "Dashboard" : pathname.split("/").pop()?.replace("-", " ")}
+              <h1 className="text-[15px] font-semibold text-white tracking-wide capitalize">
+                {pathname.split("/").pop() === "dashboard" ? "Dashboard Geral" : pathname.split("/").pop()?.replace("-", " ")}
               </h1>
             </div>
           </div>
           
           <div className="flex items-center gap-4">
             <div className="relative hidden md:block">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
-              <input type="text" placeholder="Busca global..." 
-                className="pl-10 pr-4 py-2 bg-zinc-100 border-transparent rounded-full text-sm w-64 focus:bg-white focus:border-[var(--brand-primary)] focus:ring-2 focus:ring-[var(--brand-light)] transition-all outline-none" 
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#666]" />
+              <input type="text" placeholder="Buscar..." 
+                className="pl-9 pr-4 py-1.5 bg-[#111] border border-[#222] rounded-md text-[13px] w-64 focus:bg-[#000] focus:border-[#444] text-white transition-all outline-none" 
               />
             </div>
-            <button className="btn-icon relative bg-zinc-100 rounded-full w-10 h-10">
-              <Bell className="w-5 h-5 text-zinc-600" />
-              <span className="absolute top-2.5 right-2.5 w-2 h-2 rounded-full bg-red-500 border-2 border-zinc-100" />
+            <button className="btn-icon relative bg-[#111] border border-[#222] rounded-md w-8 h-8">
+              <Bell className="w-4 h-4 text-[#888]" />
+              <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-[#ef4444] border-2 border-black" />
             </button>
           </div>
         </header>
