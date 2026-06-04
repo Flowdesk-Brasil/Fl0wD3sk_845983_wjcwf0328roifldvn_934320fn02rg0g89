@@ -4,7 +4,7 @@ import { localDB } from "@/lib/localDB";
 import { shouldUseLocalData, supabase } from "@/lib/supabase";
 import type {
   AuditLog, Checkin, ClassBooking, ClassSession, ClassType, Contract, DashboardStats, Enrollment, LocalTables, NewRow,
-  Notification, Payment, Plan, Profile, RevenuePoint, Student, StudioSettings, TableName,
+  Notification, Payment, Plan, Profile, RevenuePoint, Student, StudioSettings, TableName, Product, Supplier,
 } from "@/lib/types";
 import { generateMatriculaNumber } from "@/lib/utils";
 
@@ -37,7 +37,7 @@ async function update<T extends TableName>(
 ): Promise<LocalTables[T]> {
   if (shouldUseLocalData()) {
     const row = localDB.update(table, id, values);
-    if (!row) throw new Error("Registro não encontrado.");
+    if (!row) throw new Error("Registro nÃ£o encontrado.");
     return row;
   }
   const { data, error } = await supabase.from(table).update(values as never).eq("id", id).select("*").single();
@@ -85,7 +85,7 @@ export async function releaseStudentPortal(id: string) {
     headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` },
   });
   const payload = await response.json() as { email?: string; profileId?: string; error?: string };
-  if (!response.ok) throw new Error(payload.error ?? "Não foi possível liberar o portal.");
+  if (!response.ok) throw new Error(payload.error ?? "NÃ£o foi possÃ­vel liberar o portal.");
   return payload;
 }
 
@@ -96,7 +96,7 @@ export async function resetStudentPassword(id: string) {
     headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` },
   });
   const payload = await response.json() as { email?: string; error?: string };
-  if (!response.ok) throw new Error(payload.error ?? "Não foi possível enviar o link de redefinição de senha.");
+  if (!response.ok) throw new Error(payload.error ?? "NÃ£o foi possÃ­vel enviar o link de redefiniÃ§Ã£o de senha.");
   return payload;
 }
 
@@ -163,7 +163,7 @@ export async function createEnrollment(values: {
     }
   }
 
-  if (!plan) throw new Error("Plano não encontrado.");
+  if (!plan) throw new Error("Plano nÃ£o encontrado.");
   const end = new Date(`${values.start_date}T12:00:00`);
   end.setDate(end.getDate() + plan.duration_days);
   const plain = await insert("enrollments", {
@@ -191,7 +191,7 @@ export async function createEnrollment(values: {
     student_id: values.student_id,
     plan_id: finalPlanId,
     enrollment_id: plain.id,
-    document_text: `Termo de adesão ao plano ${plan.name}.`,
+    document_text: `Termo de adesÃ£o ao plano ${plan.name}.`,
     status: "pending",
     signed_at: null,
   });
@@ -230,7 +230,7 @@ export async function editEnrollment(id: string, values: {
     }
   }
 
-  if (!plan) throw new Error("Plano não encontrado.");
+  if (!plan) throw new Error("Plano nÃ£o encontrado.");
   const end = new Date(`${values.start_date}T12:00:00`);
   end.setDate(end.getDate() + plan.duration_days);
 
@@ -278,7 +278,7 @@ export async function createPixPayment(id: string): Promise<Payment> {
     headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` },
   });
   const payload = await response.json() as { payment?: Payment; error?: string };
-  if (!response.ok || !payload.payment) throw new Error(payload.error ?? "Não foi possível gerar o PIX.");
+  if (!response.ok || !payload.payment) throw new Error(payload.error ?? "NÃ£o foi possÃ­vel gerar o PIX.");
   return payload.payment;
 }
 
@@ -329,16 +329,16 @@ export async function processCheckin(code: string): Promise<Checkin & { student?
         ...recent,
         student,
         duplicate: true,
-        reason: "Check-in já confirmado nos últimos 5 minutos. Nenhum novo registro foi criado.",
+        reason: "Check-in jÃ¡ confirmado nos Ãºltimos 5 minutos. Nenhum novo registro foi criado.",
       };
     }
   }
   const reason = !student
-    ? "Código não encontrado."
+    ? "CÃ³digo nÃ£o encontrado."
     : student.status !== "active"
       ? "Aluno inativo ou bloqueado."
       : !enrollment
-        ? "Aluno sem matrícula ativa."
+        ? "Aluno sem matrÃ­cula ativa."
         : null;
   const row = await insert("checkins", {
     student_id: student?.id ?? null,
@@ -387,7 +387,7 @@ export async function sendContractForSignature(id: string) {
     headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` },
   });
   const payload = await response.json() as { sentTo?: string; error?: string };
-  if (!response.ok) throw new Error(payload.error ?? "Não foi possível enviar o contrato.");
+  if (!response.ok) throw new Error(payload.error ?? "NÃ£o foi possÃ­vel enviar o contrato.");
   return payload;
 }
 
@@ -420,7 +420,7 @@ export async function createProfile(values: Pick<Profile, "full_name" | "email" 
     body: JSON.stringify(values),
   });
   const payload = (await response.json()) as { profile?: Profile; error?: string };
-  if (!response.ok || !payload.profile) throw new Error(payload.error ?? "Não foi possível criar o usuário.");
+  if (!response.ok || !payload.profile) throw new Error(payload.error ?? "NÃ£o foi possÃ­vel criar o usuÃ¡rio.");
   return payload.profile;
 }
 
@@ -432,7 +432,7 @@ export async function deleteProfile(id: string) {
     headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` },
   });
   const payload = await response.json() as { error?: string };
-  if (!response.ok) throw new Error(payload.error ?? "Não foi possível remover o usuário.");
+  if (!response.ok) throw new Error(payload.error ?? "NÃ£o foi possÃ­vel remover o usuÃ¡rio.");
   return true;
 }
 
@@ -475,7 +475,7 @@ export async function uploadContractTemplate(file: File) {
     body,
   });
   const payload = await response.json() as { path?: string; name?: string; error?: string };
-  if (!response.ok) throw new Error(payload.error ?? "Não foi possível enviar o PDF.");
+  if (!response.ok) throw new Error(payload.error ?? "NÃ£o foi possÃ­vel enviar o PDF.");
   return payload;
 }
 
@@ -521,7 +521,7 @@ export async function createClassSession(values: {
   notes?: string | null;
 }) {
   const type = (await getClassTypes()).find((item) => item.id === values.class_type_id);
-  if (!type) throw new Error("Tipo de aula não encontrado.");
+  if (!type) throw new Error("Tipo de aula nÃ£o encontrado.");
   const start = new Date(values.start_at);
   const end = new Date(start.getTime() + type.duration_minutes * 60 * 1000);
   return insert("class_sessions", {
@@ -544,9 +544,9 @@ export async function createClassBooking(sessionId: string, studentId: string): 
   }
   const sessions = await getClassSessions();
   const session = sessions.find((item) => item.id === sessionId);
-  if (!session) throw new Error("Horário não encontrado.");
+  if (!session) throw new Error("HorÃ¡rio nÃ£o encontrado.");
   const occupied = (session.bookings || []).filter((item) => item.status === "confirmed" || item.status === "attended").length;
-  if (occupied >= session.capacity) throw new Error(`A aula ${session.class_type?.name || ""} está lotada.`);
+  if (occupied >= session.capacity) throw new Error(`A aula ${session.class_type?.name || ""} estÃ¡ lotada.`);
   return insert("class_bookings", {
     session_id: sessionId,
     student_id: studentId,
@@ -589,4 +589,53 @@ export async function getRevenueSeries(): Promise<RevenuePoint[]> {
         .reduce((total, payment) => total + Number(payment.total_amount), 0),
     };
   });
+}
+
+// ==========================================
+// MÓDULO ERP (ESTOQUE E PDV)
+// ==========================================
+
+export async function getSuppliers(): Promise<Supplier[]> {
+  return sortDesc(await list("suppliers"));
+}
+
+export async function getProducts(): Promise<Product[]> {
+  if (!shouldUseLocalData()) {
+    const { data, error } = await supabase
+      .from("products")
+      .select("*, supplier:suppliers(*)")
+      .order("created_at", { ascending: false });
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Product[];
+  }
+  const products = localDB.get("products");
+  const suppliers = localDB.get("suppliers");
+  return sortDesc(products).map(p => ({
+    ...p,
+    supplier: relation(suppliers, p.supplier_id)
+  }));
+}
+
+export async function getProductById(id: string): Promise<Product | null> {
+  if (shouldUseLocalData()) return localDB.find("products", id);
+  const { data, error } = await supabase.from("products").select("*, supplier:suppliers(*)").eq("id", id).maybeSingle();
+  if (error) throw new Error(error.message);
+  return data as Product | null;
+}
+
+export async function createProduct(values: Omit<NewRow<"products">, "updated_at">): Promise<Product> {
+  return insert("products", {
+    ...values,
+    updated_at: new Date().toISOString(),
+  });
+}
+
+export async function updateProduct(id: string, values: Partial<Product>) {
+  return update("products", id, { ...values, updated_at: new Date().toISOString() });
+}
+
+export async function deleteProduct(id: string) {
+  const { error } = await supabase.from("products").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+  return true;
 }

@@ -248,6 +248,7 @@ export interface Product {
   cest?: string | null;
   active: boolean;
   supplier_id?: string | null;
+  photo_url?: string | null;
   created_at: string;
   updated_at: string;
 }

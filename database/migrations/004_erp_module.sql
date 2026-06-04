@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS public.products (
   cest text,
   active boolean DEFAULT true,
   supplier_id uuid REFERENCES public.suppliers(id) ON DELETE SET NULL,
+  photo_url text,
   created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
   updated_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
