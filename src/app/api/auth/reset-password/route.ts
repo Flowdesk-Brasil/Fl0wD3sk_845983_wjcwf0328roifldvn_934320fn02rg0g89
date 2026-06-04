@@ -27,17 +27,21 @@ export async function POST(request: Request) {
   });
 
   if (!linkError && linkData?.properties?.action_link) {
-    let actionLink = linkData.properties.action_link;
-    if (actionLink.includes("localhost")) {
-      actionLink = actionLink.replace(/http:\/\/localhost:\d+/, "https://corpoeevolucao.vercel.app");
-    }
+    const actionUrl = new URL(linkData.properties.action_link);
+    const token = actionUrl.searchParams.get("token") || actionUrl.searchParams.get("token_hash");
+    
+    // Constrói a URL forçando o domínio de produção com o token do Supabase
+    // Isso evita completamente o redirecionamento fantasma para localhost do Supabase Auth
+    const finalLink = token 
+      ? `https://corpoeevolucao.vercel.app/reset-password?token=${token}`
+      : `https://corpoeevolucao.vercel.app/reset-password`;
 
     await sendStudioEmail({
       to: email,
       subject: "Redefinição de Senha - Studio Corpo & Evolução",
       title: "Recuperação de Acesso",
       intro: `Olá, ${profile?.full_name || "Aluno(a)"}! Recebemos um pedido para redefinir a senha da sua conta no Studio Corpo & Evolução. Clique no botão abaixo para escolher uma nova senha:`,
-      action: { label: "Redefinir minha senha", href: actionLink },
+      action: { label: "Redefinir minha senha", href: finalLink },
       footer: "Se você não solicitou esta alteração, pode ignorar este e-mail em segurança.",
     });
   }

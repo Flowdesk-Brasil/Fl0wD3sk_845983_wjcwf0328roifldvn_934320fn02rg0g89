@@ -137,7 +137,19 @@ export default function PagamentosPage() {
           {pix.status === "paid" ? <div className="rounded-2xl bg-green-50 p-6 text-green-700"><CheckCircle2 className="mx-auto h-12 w-12" /><strong className="mt-3 block text-lg">Pagamento confirmado automaticamente</strong></div> : <>
             {pix.pix_qr_base64 && <Image unoptimized width={256} height={256} className="mx-auto rounded-2xl border border-[#e3e8f0] p-2" alt="QR Code PIX" src={`data:image/png;base64,${pix.pix_qr_base64}`} />}
             <p className="text-xs leading-5 text-[#657085]">A tela atualiza automaticamente quando o Mercado Pago confirmar o pagamento.</p>
-            <button className="btn btn-secondary" disabled={!pix.pix_code} onClick={() => void copyPix()}>{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />} {copied ? "Código copiado" : "Copiar PIX copia e cola"}</button>
+            <div className="flex flex-col gap-2 w-full mt-2">
+              <button className="btn btn-secondary w-full justify-center" disabled={!pix.pix_code} onClick={() => void copyPix()}>{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />} {copied ? "Código copiado" : "Copiar PIX copia e cola"}</button>
+              <button className="btn btn-primary w-full justify-center bg-indigo-600 hover:bg-indigo-700 border-indigo-600 text-white" onClick={() => {
+                const { supabase } = require("@/lib/supabase");
+                const channel = supabase.channel("pos-terminal-channel");
+                channel.subscribe((status: string) => {
+                  if (status === "SUBSCRIBED") {
+                    channel.send({ type: "broadcast", event: "SHOW_PIX", payload: { payment_id: pix.id } });
+                    alert("Sinal enviado para o celular admin!");
+                  }
+                });
+              }}>Espelhar na Máquina / Celular</button>
+            </div>
           </>}
         </div>}
       </Modal>

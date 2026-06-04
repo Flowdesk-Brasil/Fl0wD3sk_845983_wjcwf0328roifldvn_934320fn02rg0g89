@@ -78,6 +78,21 @@ export function PosTerminalListener({ email }: { email: string }) {
           }
         }
       )
+      .on(
+        "broadcast",
+        { event: "SHOW_PIX" },
+        async ({ payload }) => {
+          if (payload.payment_id) {
+            ignoredIds.current.delete(payload.payment_id);
+            const fullPayment = await fetchFullPayment(payload.payment_id);
+            if (fullPayment && fullPayment.status === "pending") {
+              setActivePayment(fullPayment);
+              activeIdRef.current = fullPayment.id;
+              setApprovedStatus(false);
+            }
+          }
+        }
+      )
       .subscribe();
 
     // Fallback de ultra-segurança (Polling): Se o WebSocket falhar no celular (3G/4G instável), o polling garante 100% de entrega

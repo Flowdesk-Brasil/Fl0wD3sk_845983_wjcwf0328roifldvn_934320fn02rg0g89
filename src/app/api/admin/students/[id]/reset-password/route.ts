@@ -31,16 +31,18 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       throw new ApiError("O serviço de autenticação não retornou um link válido.", 500);
     }
 
-    if (actionLink.includes("localhost")) {
-      actionLink = actionLink.replace(/http:\/\/localhost:\d+/, "https://corpoeevolucao.vercel.app");
-    }
+    const actionUrl = new URL(actionLink);
+    const token = actionUrl.searchParams.get("token") || actionUrl.searchParams.get("token_hash");
+    const finalLink = token 
+      ? `https://corpoeevolucao.vercel.app/reset-password?token=${token}`
+      : `https://corpoeevolucao.vercel.app/reset-password`;
 
     await sendStudioEmail({
       to: student.email,
       subject: "Redefinição de Senha - Portal do Aluno",
       title: "Redefinição de Senha",
       intro: `Olá, ${student.full_name}! Recebemos um pedido para redefinir a senha do seu Portal do Aluno no Studio Corpo & Evolução. Clique no botão abaixo para escolher sua nova senha de acesso:`,
-      action: { label: "Redefinir minha senha", href: actionLink },
+      action: { label: "Redefinir minha senha", href: finalLink },
       footer: "Se você não solicitou esta alteração, pode ignorar este e-mail em segurança.",
     });
 

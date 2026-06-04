@@ -41,17 +41,18 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     
     if (linkError || !linkData.properties?.action_link) throw new ApiError("Não foi possível gerar o link de acesso.", 500);
     
-    let actionLink = linkData.properties.action_link;
-    if (actionLink.includes("localhost")) {
-      actionLink = actionLink.replace(/http:\/\/localhost:\d+/, "https://corpoeevolucao.vercel.app");
-    }
+    const actionUrl = new URL(linkData.properties.action_link);
+    const token = actionUrl.searchParams.get("token") || actionUrl.searchParams.get("token_hash");
+    const finalLink = token 
+      ? `https://corpoeevolucao.vercel.app/reset-password?token=${token}`
+      : `https://corpoeevolucao.vercel.app/reset-password`;
 
     await sendStudioEmail({
       to: student.email,
       subject: "Corpo & Evolução | Acesso ao portal do aluno",
       title: "Seu portal do aluno foi liberado",
       intro: `Olá, ${student.full_name}. Seu portal acaba de ser criado! Para começar a usar e ver seu QR Code, agenda e contratos, você precisa cadastrar a sua senha.`,
-      action: { label: "Criar minha senha", href: actionLink },
+      action: { label: "Criar minha senha", href: finalLink },
       sections: [{ label: "Login", value: student.email }],
       footer: "O link é pessoal. Após criar a senha, você poderá acessar o portal normalmente.",
     });
