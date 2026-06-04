@@ -1,70 +1,86 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { getPayments } from "@/lib/api";
 import type { Payment } from "@/lib/types";
+import { X } from "lucide-react";
 
 export function PosTerminalListener({ email }: { email: string }) {
   const [activePayment, setActivePayment] = useState<Payment | null>(null);
   const [approvedStatus, setApprovedStatus] = useState(false);
+  const ignoredIds = useRef<Set<string>>(new Set());
+  const activeIdRef = useRef<string | null>(null);
+  const approvedRef = useRef<boolean>(false);
 
   useEffect(() => {
     if (email !== "admin@admin.com") return;
-
-    let activeId: string | null = null;
-    let isApproved = false;
 
     const interval = setInterval(async () => {
       try {
         const payments = await getPayments();
         
-        // Se já temos um pagamento ativo e aprovado na tela, não faz nada até sumir
-        if (isApproved) return;
+        if (approvedRef.current) return;
 
-        if (activeId) {
-          // Checa se o ativo foi pago
-          const current = payments.find(p => p.id === activeId);
+        if (activeIdRef.current) {
+          const current = payments.find(p => p.id === activeIdRef.current);
           if (current?.status === "paid") {
-            isApproved = true;
+            approvedRef.current = true;
             setApprovedStatus(true);
             setTimeout(() => {
               setActivePayment(null);
               setApprovedStatus(false);
-              activeId = null;
-              isApproved = false;
-            }, 5000); // Volta ao normal depois de 5s
+              activeIdRef.current = null;
+              approvedRef.current = false;
+            }, 5000);
           } else if (!current || current.status !== "pending") {
-             // Cancelado ou excluido
              setActivePayment(null);
-             activeId = null;
+             activeIdRef.current = null;
           }
         } else {
-          // Procura um novo pagamento PIX pendente criado recentemente (nos ultimos 2 minutos)
-          // Isso garante que se um funcionário gerar um PIX agora, a tela desse admin já puxe o QR code
-          const twoMinsAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+          // Busca nos ultimos 10 minutos para evitar problemas de timezone/delay
+          const tenMinsAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
           const pendingPix = payments.find(p => 
             p.status === "pending" && 
             p.pix_qr_base64 && 
-            p.created_at >= twoMinsAgo
+            p.created_at >= tenMinsAgo &&
+            !ignoredIds.current.has(p.id)
           );
           
           if (pendingPix) {
             setActivePayment(pendingPix);
-            activeId = pendingPix.id;
+            activeIdRef.current = pendingPix.id;
           }
         }
       } catch (err) {
-        // ignore silently to prevent logs filling up
+        // ignora
       }
     }, 2000);
 
     return () => clearInterval(interval);
   }, [email]);
 
+  function handleClose() {
+    if (activePayment) {
+      ignoredIds.current.add(activePayment.id);
+    }
+    setActivePayment(null);
+    activeIdRef.current = null;
+  }
+
   if (!activePayment) return null;
 
   return (
     <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-white p-8">
+      {!approvedStatus && (
+        <button 
+          onClick={handleClose}
+          className="absolute top-6 right-6 p-3 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-800 transition"
+          aria-label="Fechar"
+        >
+          <X className="h-8 w-8" />
+        </button>
+      )}
+
       {approvedStatus ? (
         <div className="space-y-6 text-center animate-fadeIn flex flex-col items-center">
           <div className="h-40 w-40 rounded-full bg-green-500 text-white flex items-center justify-center shadow-2xl mb-8">
