@@ -126,6 +126,7 @@ import {
 import { parseUtcTimestampMs } from "@/lib/time/utcTimestamp";
 import { runCoalescedPaymentRequest } from "@/lib/payments/requestCoalescing";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
+import { resolveDomainPurchaseContext } from "@/lib/domains/checkout";
 
 type CreatePixPaymentBody = {
   guildId?: unknown;
@@ -141,7 +142,8 @@ type CreatePixPaymentBody = {
 };
 
 type ResolvedPurchaseContext = {
-  type: "hosting";
+  type: "hosting" | "domain";
+  authUserId?: number;
   title: string;
   subtitle: string;
   amount: number;
@@ -335,6 +337,8 @@ function isHostingKind(value: unknown): value is HostingKind {
 }
 
 export function resolvePurchaseContext(value: unknown): ResolvedPurchaseContext | null {
+  const domainContext = resolveDomainPurchaseContext(value);
+  if (domainContext) return domainContext;
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   if (record.type !== "hosting") return null;
@@ -1972,6 +1976,12 @@ export async function POST(request: Request) {
       requestedBillingPeriodCode: body.billingPeriodCode,
     });
     const purchaseContext = resolvePurchaseContext(body.purchaseContext);
+    if (purchaseContext?.authUserId && purchaseContext.authUserId !== user.id) {
+      return respond(
+        { ok: false, message: "Este checkout de dominio pertence a outra conta." },
+        { status: 403 },
+      );
+    }
     const checkoutItemName = purchaseContext?.title || checkoutPlan.plan.name;
     const checkoutProviderPayload = purchaseContext?.providerPayload || {};
 
@@ -2054,15 +2064,26 @@ export async function POST(request: Request) {
     const pricing = await resolveDiscountPricing({
       baseAmount: purchaseContext?.amount ?? checkoutPlan.amount,
       currency: purchaseContext?.currency ?? checkoutPlan.currency,
-      couponCode: typeof body.couponCode === "string" ? body.couponCode : null,
-      giftCardCode: typeof body.giftCardCode === "string" ? body.giftCardCode : null,
+      couponCode:
+        purchaseContext?.type === "domain"
+          ? null
+          : typeof body.couponCode === "string"
+            ? body.couponCode
+            : null,
+      giftCardCode:
+        purchaseContext?.type === "domain"
+          ? null
+          : typeof body.giftCardCode === "string"
+            ? body.giftCardCode
+            : null,
       userId: user.id,
       planCode: checkoutPlan.plan.code,
       billingPeriodCode: checkoutPlan.plan.billingPeriodCode,
     });
     const flowPointsPreview = applyFlowPointsToAmount({
       amount: pricing.totalAmount,
-      flowPointsBalance: checkoutPlan.flowPointsBalance,
+      flowPointsBalance:
+        purchaseContext?.type === "domain" ? 0 : checkoutPlan.flowPointsBalance,
     });
     const pricingWithFlowPoints = {
       ...pricing,

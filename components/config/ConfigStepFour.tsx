@@ -1067,6 +1067,7 @@ function isApprovedPaymentBenefitDelivered(order: PixOrder | null | undefined) {
   if (!isTrustedApprovedPaymentOrder(order)) return false;
   if (!order) return false;
   if (order.finalizationStatus === "refunded") return false;
+  if (order.finalizationStatus === "pending") return false;
   if (order.method === "trial") return true;
   if (isCoveredByInternalCreditsApprovedOrder(order)) return true;
   return true;

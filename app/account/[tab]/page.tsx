@@ -6,6 +6,7 @@ import {
   getCurrentUserFromSessionCookie,
 } from "@/lib/auth/session";
 import { getSupportTicketsForDiscordUser } from "@/lib/account/supportTickets";
+import { resolveAuthUserAvatarUrl } from "@/lib/auth/avatar";
 
 export default async function AccountTabPage({
   params,
@@ -40,11 +41,7 @@ export default async function AccountTabPage({
     <TabRenderer 
       id={activeTab} 
       displayName={user.display_name}
-      avatarUrl={
-        user.avatar && user.discord_user_id
-          ? `https://cdn.discordapp.com/avatars/${user.discord_user_id}/${user.avatar}.png`
-          : null
-      }
+      avatarUrl={resolveAuthUserAvatarUrl(user)}
       initialTickets={initialTickets}
     />
   );

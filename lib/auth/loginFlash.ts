@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { buildCanonicalUrlFromInternalPath } from "@/lib/routing/subdomains";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import { buildLoginHref, type LoginIntentMode } from "@/lib/auth/paths";
+import type { TwoFactorMethod } from "@/lib/auth/twoFactor";
 
 export const LOGIN_ERROR_FLASH_COOKIE_NAME = "flowdesk_login_error_flash";
 export const LOGIN_ERROR_FLASH_HEADER_NAME = "x-flowdesk-login-error-flash";
@@ -104,6 +105,33 @@ export function buildLoginOtpRedirectLocation(
 
   if (input.provider) {
     url.searchParams.set("provider", input.provider);
+  }
+
+  return url.toString();
+}
+
+export function buildLoginTwoFactorRedirectLocation(
+  request: NextRequest,
+  input: {
+    challengeId: string;
+    methods: TwoFactorMethod[];
+    expiresAt?: string | null;
+    nextPath?: string | null;
+  },
+) {
+  const url = new URL(
+    buildLoginRedirectLocation(request, {
+      nextPath: input.nextPath,
+      mode: "login",
+    }),
+  );
+
+  url.searchParams.set("twoFactor", "1");
+  url.searchParams.set("challenge", input.challengeId);
+  url.searchParams.set("methods", input.methods.join(","));
+
+  if (input.expiresAt) {
+    url.searchParams.set("expiresAt", input.expiresAt);
   }
 
   return url.toString();

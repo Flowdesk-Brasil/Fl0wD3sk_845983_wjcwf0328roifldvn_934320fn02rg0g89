@@ -31,7 +31,9 @@ type LoginPageProps = {
     mode?: string | string[];
     error?: string | string[];
     otp?: string | string[];
+    twoFactor?: string | string[];
     challenge?: string | string[];
+    methods?: string | string[];
     maskedEmail?: string | string[];
     expiresAt?: string | string[];
     resendAt?: string | string[];
@@ -46,6 +48,18 @@ function takeFirstQueryValue(value: string | string[] | undefined) {
 }
 
 type OtpProvider = "discord" | "google" | "microsoft";
+type TwoFactorMethod = "totp" | "passkey";
+
+function resolveTwoFactorMethods(value: string | null) {
+  if (!value) return [] as TwoFactorMethod[];
+  return value
+    .split(",")
+    .map((method) => method.trim())
+    .filter(
+      (method): method is TwoFactorMethod =>
+        method === "totp" || method === "passkey",
+    );
+}
 
 function resolveLoginErrorMessage(
   errorCode: string | null,
@@ -121,6 +135,19 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           provider: initialOtpProvider,
         }
       : null;
+  const initialTwoFactorMethods = resolveTwoFactorMethods(
+    takeFirstQueryValue(query.methods),
+  );
+  const initialTwoFactorState =
+    takeFirstQueryValue(query.twoFactor) === "1" &&
+    initialOtpChallengeId &&
+    initialTwoFactorMethods.length
+      ? {
+          challengeId: initialOtpChallengeId,
+          methods: initialTwoFactorMethods,
+          expiresAt: takeFirstQueryValue(query.expiresAt),
+        }
+      : null;
   const loginErrorFlash = decodeLoginErrorFlashPayload(
     requestHeaders.get(LOGIN_ERROR_FLASH_HEADER_NAME),
   );
@@ -159,6 +186,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
               microsoftEnabled={microsoftEnabled}
               emailOtpLength={emailOtpLength}
               initialOtpState={initialOtpState}
+              initialTwoFactorState={initialTwoFactorState}
               currentSessionHint={
                 currentUser
                   ? {

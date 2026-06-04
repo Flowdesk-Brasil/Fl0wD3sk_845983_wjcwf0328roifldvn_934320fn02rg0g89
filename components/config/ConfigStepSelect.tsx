@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import Image from "next/image";
+import { ChevronDown } from "lucide-react";
 import { configStepTwoScale } from "@/components/config/configStepTwoScale";
 import { resolveConfigStepDropdownRect } from "@/components/config/configStepDropdownPosition";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
@@ -180,25 +180,12 @@ export function ConfigStepSelect({
               {selectedOption ? selectedOption.name : placeholder}
             </span>
 
-            <span
-              className="ml-auto inline-flex items-center justify-center"
-              style={{
-                width: `${configStepTwoScale.arrowSize}px`,
-                height: `${configStepTwoScale.arrowSize}px`,
-              }}
-            >
-              <Image
-                src="/icons/seta.png"
-                alt="Abrir lista"
-                width={configStepTwoScale.arrowSize}
-                height={configStepTwoScale.arrowSize}
-                className={
-                  isDropdownOpen
-                    ? "rotate-180 transition-transform duration-300 ease-out"
-                    : "rotate-0 transition-transform duration-300 ease-out"
-                }
-              />
-            </span>
+            <ChevronDown
+              className={`ml-auto h-[18px] w-[18px] shrink-0 text-[#8B8B8B] transition-transform duration-300 ease-out ${
+                isDropdownOpen ? "rotate-180" : "rotate-0"
+              }`}
+              strokeWidth={2.2}
+            />
           </>
         )}
       </button>

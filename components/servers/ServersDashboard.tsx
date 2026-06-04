@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
+import { ChevronDown } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ConfigLogoutButton } from "@/components/config/ConfigLogoutButton";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
@@ -616,16 +617,11 @@ export function ServersDashboard({
                   }}
                 >
                   <span>{FILTER_LABEL[statusFilter]}</span>
-                  <Image
-                    src="/icons/seta.png"
-                    alt="Status"
-                    width={serversScale.statusArrowSize}
-                    height={serversScale.statusArrowSize}
-                    className={
-                      isStatusOpen
-                        ? "rotate-180 transition-transform duration-300 ease-out"
-                        : "rotate-0 transition-transform duration-300 ease-out"
-                    }
+                  <ChevronDown
+                    className={`h-[18px] w-[18px] text-[#8B8B8B] transition-transform duration-300 ease-out ${
+                      isStatusOpen ? "rotate-180" : "rotate-0"
+                    }`}
+                    strokeWidth={2.2}
                   />
                 </button>
 

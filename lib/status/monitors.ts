@@ -1,5 +1,5 @@
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
-import { nameSiloClient } from "@/lib/namesilo/client";
+import { domainProviderOrchestrator } from "@/lib/domains/provider";
 import type { FlowAiHealthResponse } from "@/lib/flowai/service";
 import type { StatusCheckResult, SystemStatus } from "./types";
 import { getWorstSystemStatus } from "./types";
@@ -624,38 +624,29 @@ export async function checkScheduledTasksStatus(): Promise<ScheduledTasksStatusR
 export async function checkDomainsStatus(): Promise<DomainsStatusResponse> {
   const checkedAt = new Date().toISOString();
   const startedAt = Date.now();
-  const requestId = Math.random().toString(36).slice(2, 8);
 
   try {
-    const circuitBreaker = nameSiloClient.getCircuitBreakerStatus();
-
-    await Promise.race([
-      nameSiloClient.request(
-        "checkRegisterAvailability",
-        {
-          domains: "example.com,flowdeskstatus.net",
-        },
-        {
-          maxRetries: 0,
-          timeoutMs: 8000,
-          requestId,
-        },
-      ),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Timeout no health check de dominios.")), 8000),
-      ),
-    ]);
+    const providers = await domainProviderOrchestrator.health();
+    const healthyProviders = providers.filter((provider) => provider.ok);
+    if (!healthyProviders.length) {
+      throw new Error(
+        providers.map((provider) => `${provider.provider}: ${provider.message || "indisponivel"}`).join("; "),
+      );
+    }
 
     const latencyMs = Date.now() - startedAt;
     let status: SystemStatus = "operational";
-    let message: string | null = null;
+    let message: string | null =
+      healthyProviders.length < providers.filter((provider) => provider.configured).length
+        ? "Um registrador esta indisponivel; redundancia automatica ativa."
+        : null;
 
     if (latencyMs > 8000) {
       status = "partial_outage";
-      message = `Latencia critica na NameSilo: ${latencyMs}ms.`;
+      message = `Latencia critica no sistema de dominios: ${latencyMs}ms.`;
     } else if (latencyMs > 4500) {
       status = "degraded_performance";
-      message = `Resposta lenta da NameSilo: ${latencyMs}ms.`;
+      message = `Resposta lenta no sistema de dominios: ${latencyMs}ms.`;
     }
 
     return {
@@ -665,23 +656,30 @@ export async function checkDomainsStatus(): Promise<DomainsStatusResponse> {
       status,
       message,
       source: "domains",
-      circuitBreaker,
+      circuitBreaker: {
+        state: "closed",
+        failures: providers.length - healthyProviders.length,
+        lastFailureTime: 0,
+      },
     };
   } catch (error) {
-    const circuitBreaker = nameSiloClient.getCircuitBreakerStatus();
     const latencyMs = Date.now() - startedAt;
 
     return {
       ok: false,
       checkedAt,
       latencyMs,
-      status: circuitBreaker.state === "open" ? "major_outage" : "partial_outage",
+      status: "major_outage",
       message:
         error instanceof Error
           ? `Falha no provedor de dominios: ${error.message}`
           : "Falha no provedor de dominios.",
       source: "domains",
-      circuitBreaker,
+      circuitBreaker: {
+        state: "open",
+        failures: 3,
+        lastFailureTime: Date.now(),
+      },
     };
   }
 }

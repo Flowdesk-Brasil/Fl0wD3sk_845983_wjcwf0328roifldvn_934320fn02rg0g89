@@ -305,6 +305,12 @@ export function DomainSearchSection({ initialTab = "register" }: DomainSearchSec
   const [selectedAiName, setSelectedAiName] = useState<string | null>(null);
   const autoSearchKeyRef = useRef<string | null>(null);
   const activeRequestRef = useRef<AbortController | null>(null);
+  const openDashboardCheckout = useCallback(
+    (domain: string) => {
+      router.push(`/dashboard/domains/acquire?domain=${encodeURIComponent(domain)}`);
+    },
+    [router],
+  );
 
   const aiSelection = useMemo(() => {
     if (!aiData?.suggestions?.length) {
@@ -796,7 +802,7 @@ export function DomainSearchSection({ initialTab = "register" }: DomainSearchSec
                       {formatMoney(exactMatch.price, exactMatch.currency, exchangeRate)}
                     </div>
                     <p className="text-[11px] text-[#666]">
-                      preco aproximado em BRL com cambio de R$ {exchangeRate.toFixed(2)}
+                      preco final do primeiro ano em BRL
                     </p>
                   </div>
 
@@ -804,6 +810,7 @@ export function DomainSearchSection({ initialTab = "register" }: DomainSearchSec
                     variant={exactMatch.isAvailable ? "blue" : "dark"}
                     className="h-[42px] min-w-[148px] rounded-[12px] !px-[18px] text-[13px]"
                     disabled={!exactMatch.isAvailable}
+                    onClick={() => openDashboardCheckout(exactMatch.domain)}
                   >
                     {exactMatch.isAvailable ? "Registrar" : "Indisponivel"}
                   </LandingActionButton>
@@ -840,13 +847,17 @@ export function DomainSearchSection({ initialTab = "register" }: DomainSearchSec
                     <div className="flex items-baseline gap-1 text-[22px] leading-none font-medium tracking-[-0.05em] text-[#F1F1F1]">
                       {formatMoney(bundlePrice, bundleCurrency, exchangeRate)}
                     </div>
-                    <p className="text-[11px] text-[#666]">soma aproximada das extensoes mais fortes</p>
+                    <p className="text-[11px] text-[#666]">soma dos precos finais das extensoes</p>
                   </div>
 
                   <LandingActionButton
                     variant={bundleAvailableDomains.length > 0 ? "blue" : "dark"}
                     className="h-[42px] min-w-[148px] rounded-[12px] !px-[18px] text-[13px]"
                     disabled={bundleAvailableDomains.length === 0}
+                    onClick={() => {
+                      const domain = bundleAvailableDomains[0]?.domain;
+                      if (domain) openDashboardCheckout(domain);
+                    }}
                   >
                     {bundleAvailableDomains.length > 0 ? "Proteger marca" : "Sem opcoes"}
                   </LandingActionButton>
@@ -922,7 +933,7 @@ export function DomainSearchSection({ initialTab = "register" }: DomainSearchSec
                               <span className="ml-1 text-[12px] font-normal text-[#666]">/ano</span>
                             </div>
                           </div>
-                          <p className="mt-[4px] text-[11px] text-[#666]">estimativa para o primeiro ano</p>
+                          <p className="mt-[4px] text-[11px] text-[#666]">preco final do primeiro ano</p>
                         </div>
 
                         <div className="lg:justify-self-end">
@@ -934,6 +945,7 @@ export function DomainSearchSection({ initialTab = "register" }: DomainSearchSec
                                 : ""
                             }`}
                             disabled={!item.isAvailable}
+                            onClick={() => openDashboardCheckout(item.domain)}
                           >
                             {item.isAvailable ? "Comprar agora" : "Indisponivel"}
                           </LandingActionButton>

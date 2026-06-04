@@ -15,19 +15,39 @@
 import { NextResponse } from "next/server";
 import { getCurrentUserFromSessionCookie } from "@/lib/auth/session";
 import { quoteDomain } from "@/lib/domains/domainService";
+import { flowSecureDto, parseFlowSecureDto } from "@/lib/security/flowSecure";
+import { ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   try {
+    const originGuard = ensureSameOriginJsonMutationRequest(req);
+    if (originGuard) return originGuard;
     const user = await getCurrentUserFromSessionCookie();
     if (!user) {
       return NextResponse.json({ ok: false, message: "Não autenticado." }, { status: 401 });
     }
 
-    const body = await req.json().catch(() => ({})) as Record<string, unknown>;
-    const fqdn = String(body?.fqdn || "").trim().toLowerCase();
+    const body = parseFlowSecureDto(
+      await req.json().catch(() => ({})),
+      {
+        fqdn: flowSecureDto.string({
+          minLength: 4,
+          maxLength: 253,
+          pattern: /^(?!-)(?:[a-zA-Z0-9-]{1,63}\.)+[a-zA-Z0-9-]{2,63}$/,
+        }),
+        operation: flowSecureDto.optional(
+          flowSecureDto.enum(["register", "renew", "transfer", "restore"] as const),
+        ),
+        period_years: flowSecureDto.optional(
+          flowSecureDto.number({ integer: true, min: 1, max: 10 }),
+        ),
+      },
+      { rejectUnknown: true },
+    );
+    const fqdn = body.fqdn.toLowerCase();
 
     if (!fqdn || fqdn.length < 4) {
       return NextResponse.json(
@@ -36,13 +56,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const operation = ["register", "renew", "transfer", "restore"].includes(String(body?.operation))
-      ? (body.operation as "register" | "renew" | "transfer" | "restore")
-      : "register";
-
-    const periodYears = Number.isInteger(Number(body?.period_years)) && Number(body?.period_years) > 0
-      ? Math.min(Number(body.period_years), 10)
-      : 1;
+    const operation = body.operation || "register";
+    const periodYears = body.period_years || 1;
 
     const quote = await quoteDomain({
       authUserId: user.id,
@@ -51,7 +66,14 @@ export async function POST(req: Request) {
       periodYears,
     });
 
-    return NextResponse.json({ ok: true, quote });
+    const {
+      provider: _provider,
+      providerCost: _providerCost,
+      providerCurrency: _providerCurrency,
+      exchangeRateToBrl: _exchangeRateToBrl,
+      ...publicQuote
+    } = quote;
+    return NextResponse.json({ ok: true, quote: publicQuote });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro ao gerar cotação.";
     const status = message.includes("não está disponível") ? 409 : 500;

@@ -13,6 +13,8 @@ import {
 } from "@/lib/seo/flowCwv";
 import { RouteInteractionRecovery } from "@/components/RouteInteractionRecovery";
 import { RoutePrefetcher } from "@/components/RoutePrefetcher";
+import { SessionRevocationWatcher } from "@/components/auth/SessionRevocationWatcher";
+import { authConfig } from "@/lib/auth/config";
 
 import "./globals.css";
 
@@ -36,6 +38,9 @@ export default async function RootLayout({
   const cookieStore = await cookies();
   const initialConsentValue =
     cookieStore.get(COOKIE_CONSENT_COOKIE_NAME)?.value ?? null;
+  const hasSessionCookie = Boolean(
+    cookieStore.get(authConfig.sessionCookieName)?.value,
+  );
 
   return (
     <html
@@ -58,6 +63,7 @@ export default async function RootLayout({
         <NotificationsProvider>
           <RoutePrefetcher />
           <RouteInteractionRecovery />
+          <SessionRevocationWatcher enabled={hasSessionCookie} />
           {children}
           <CookieConsentManager initialConsentValue={initialConsentValue} />
         </NotificationsProvider>

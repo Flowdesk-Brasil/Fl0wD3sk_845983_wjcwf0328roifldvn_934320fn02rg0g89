@@ -10,7 +10,11 @@ import {
   normalizeVpsCode,
   readString,
 } from "@/lib/hosting/vpsRuntime";
-import { applyNoStoreHeaders } from "@/lib/security/http";
+import {
+  applyNoStoreHeaders,
+  ensureSameOriginJsonMutationRequest,
+} from "@/lib/security/http";
+import { flowSecureDto, parseFlowSecureDto } from "@/lib/security/flowSecure";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 type RouteProps = {
@@ -24,6 +28,38 @@ const FLOW_CHAT_FILE_PATH_PROMPT_LIMIT = 120;
 
 function trimText(value: unknown, maxLength: number) {
   return readString(value)?.slice(0, maxLength) || "";
+}
+
+function parseFlowChatBody(payload: unknown) {
+  return parseFlowSecureDto(
+    payload,
+    {
+      message: flowSecureDto.string({
+        maxLength: 6000,
+        rejectThreatPatterns: false,
+      }),
+      chatId: flowSecureDto.optional(flowSecureDto.unknown()),
+      repository: flowSecureDto.optional(
+        flowSecureDto.string({ maxLength: 260, rejectThreatPatterns: false }),
+      ),
+      branch: flowSecureDto.optional(
+        flowSecureDto.string({ maxLength: 120, rejectThreatPatterns: false }),
+      ),
+      runtime: flowSecureDto.optional(
+        flowSecureDto.string({ maxLength: 120, rejectThreatPatterns: false }),
+      ),
+      fileTreePaths: flowSecureDto.optional(
+        flowSecureDto.array(
+          flowSecureDto.string({ maxLength: 500, rejectThreatPatterns: false }),
+          { maxLength: 2000 },
+        ),
+      ),
+      attachments: flowSecureDto.optional(
+        flowSecureDto.array(flowSecureDto.record(), { maxLength: 6 }),
+      ),
+    },
+    { rejectUnknown: true },
+  );
 }
 
 function estimateTokens(value: string) {
@@ -310,6 +346,9 @@ export async function GET(_request: NextRequest, { params }: RouteProps) {
 }
 
 export async function POST(request: NextRequest, { params }: RouteProps) {
+  const originGuard = ensureSameOriginJsonMutationRequest(request);
+  if (originGuard) return applyNoStoreHeaders(originGuard);
+
   try {
     const { code } = await params;
     const loaded = await loadProject(code);
@@ -318,7 +357,14 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
     }
     const { session, project } = loaded;
 
-    const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+    let body: ReturnType<typeof parseFlowChatBody>;
+    try {
+      body = parseFlowChatBody(await request.json().catch(() => ({})));
+    } catch {
+      return applyNoStoreHeaders(
+        NextResponse.json({ ok: false, message: "Mensagem invalida." }, { status: 400 }),
+      );
+    }
     const message = trimText(body.message, 6000);
     if (!message) {
       return applyNoStoreHeaders(NextResponse.json({ ok: false, message: "Mensagem vazia." }, { status: 400 }));

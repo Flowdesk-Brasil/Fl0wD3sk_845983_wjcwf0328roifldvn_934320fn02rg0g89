@@ -261,7 +261,7 @@ export function ServerDiscordLinkModal({
     : "Depois do vinculo, seus servidores e permissoes sincronizam automaticamente.";
 
   return createPortal(
-    <div className="fixed inset-0 z-[5200] isolate overflow-y-auto overscroll-contain">
+    <div className="flowdesk-server-modal-nui fixed inset-0 z-[5200] isolate overflow-y-auto overscroll-contain">
       <button
         type="button"
         aria-label="Fechar modal"

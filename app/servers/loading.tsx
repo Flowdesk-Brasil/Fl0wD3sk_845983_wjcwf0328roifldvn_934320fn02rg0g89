@@ -1,3 +1,5 @@
+import { WorkspaceRouteAdaptiveLoading } from "@/components/workspace/WorkspaceRouteAdaptiveLoading";
+
 export default function ServersLoading() {
-  return null;
+  return <WorkspaceRouteAdaptiveLoading variant="dashboard" />;
 }

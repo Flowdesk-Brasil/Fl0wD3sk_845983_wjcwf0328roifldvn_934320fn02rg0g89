@@ -18,13 +18,14 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleHelp,
-  Code2,
+  Contact,
   Cog,
   CreditCard,
   History,
   Key,
   LifeBuoy,
   LogOut,
+  MonitorSmartphone,
   Palette,
   Plus,
   Search,
@@ -40,7 +41,6 @@ import {
 import { OFFICIAL_DISCORD_INVITE_URL } from "@/lib/discordLink/config";
 import { LandingReveal } from "@/components/landing/LandingReveal";
 import { setWorkspaceShellReadyState } from "@/components/workspace/WorkspaceRouteAdaptiveLoading";
-import { LandingGlowTag } from "@/components/landing/LandingGlowTag";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { useAccountStatus } from "@/hooks/useAccountData";
 import { AccountTabLoadingState } from "@/components/account/TabRegistry";
@@ -94,6 +94,8 @@ const NAV_GROUPS: NavGroup[] = [
     category: "Conta",
     items: [
       { id: "overview", label: "Visão Geral", icon: UserRound },
+      { id: "personal_data", label: "Meus dados", icon: Contact },
+      { id: "sessions", label: "Sessoes", icon: MonitorSmartphone },
     ],
   },
   {
@@ -108,7 +110,6 @@ const NAV_GROUPS: NavGroup[] = [
     category: "Ferramentas",
     items: [
       { id: "api_keys", label: "Chaves API", icon: Key },
-      { id: "dev_environment", label: "Ambiente Dev", icon: Code2 },
       { id: "teams", label: "Equipes e Membros", icon: Users },
       { id: "tickets", label: "Tickets de Suporte", icon: Ticket },
     ],
@@ -609,6 +610,16 @@ export function AccountWorkspace({
       title: "Visão Geral",
       subtitle: "Gerencie sua conta, cobrança, chaves de API e equipes em um único lugar.",
     },
+    personal_data: {
+      eyebrow: "Minha conta",
+      title: "Meus dados",
+      subtitle: "Gerencie sua identidade, acessos vinculados e segurança da conta.",
+    },
+    sessions: {
+      eyebrow: "Minha conta",
+      title: "Sessoes",
+      subtitle: "Veja dispositivos conectados e encerre acessos que voce nao reconhece.",
+    },
     plans: {
       eyebrow: "Cobrança",
       title: "Assinaturas",
@@ -628,11 +639,6 @@ export function AccountWorkspace({
       eyebrow: "Ferramentas",
       title: "Chaves de API",
       subtitle: "Crie e revogue chaves para integrar o Flowdesk com sistemas externos.",
-    },
-    dev_environment: {
-      eyebrow: "Ferramentas internas",
-      title: "Ambiente Dev",
-      subtitle: "Solicite credenciamento de IP, acompanhe grants e use o CLI oficial para Test Variables.",
     },
     teams: {
       eyebrow: "Ferramentas",
@@ -973,7 +979,7 @@ export function AccountWorkspace({
       <div className="hidden xl:block">
         <aside className="fixed inset-y-0 left-0 z-20 w-[318px]">
           <div className={`${sidebarShellClass} h-full rounded-none border-y-0 border-l-0 border-r-[#151515]`}>
-            <LandingReveal delay={24} duration={240}>
+            <LandingReveal delay={24} duration={240} className="h-full">
               {renderSidebarContent(desktopProfileMenuRef)}
             </LandingReveal>
           </div>
@@ -993,12 +999,12 @@ export function AccountWorkspace({
           <section className="min-w-0">
             <LandingReveal delay={36} duration={240}>
               <div className="flex flex-col gap-[14px] md:flex-row md:items-end md:justify-between">
-                <div>
-                  <LandingGlowTag className="px-[24px]">{meta.eyebrow}</LandingGlowTag>
-                  <h1 className="mt-[18px] bg-[linear-gradient(90deg,#DADADA_0%,#C1C1C1_100%)] bg-clip-text text-[34px] leading-[1.02] font-normal tracking-[-0.05em] text-transparent md:text-[42px]">
+                <div className="min-w-0">
+                  <p className="text-[12px] font-medium text-[#666666]">{meta.eyebrow}</p>
+                  <h1 className="mt-[7px] text-[24px] leading-[1.2] font-semibold text-[#EEEEEE] md:text-[28px]">
                     {meta.title}
                   </h1>
-                  <p className="mt-[14px] max-w-[760px] text-[14px] leading-[1.55] text-[#7D7D7D] md:text-[15px]">
+                  <p className="mt-[7px] max-w-[760px] text-[13px] leading-[1.55] text-[#737373]">
                     {meta.subtitle}
                   </p>
                 </div>
@@ -1006,7 +1012,7 @@ export function AccountWorkspace({
             </LandingReveal>
 
             <LandingReveal delay={52} duration={240}>
-              <div className="mt-[28px]">
+              <div className="mt-[20px]">
                 {/* Suspension Banner */}
                 {isSuspended && activeTab !== "status" && (
                   <div className="mb-[20px] flex items-start gap-[16px] rounded-[18px] border border-[#DB4646]/40 bg-[rgba(219,70,70,0.08)] px-[20px] py-[18px]">

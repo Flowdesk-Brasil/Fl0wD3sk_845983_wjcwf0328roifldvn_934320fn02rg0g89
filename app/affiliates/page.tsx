@@ -6,6 +6,7 @@ import { LandingFrameLines } from "@/components/landing/LandingFrameLines";
 import type { Metadata } from "next";
 import { buildFlowCwvMetadata } from "@/lib/seo/flowCwv";
 import { TopBetaBanner } from "@/components/landing/TopBetaBanner";
+import { resolveAuthUserAvatarUrl } from "@/lib/auth/avatar";
 
 export const metadata: Metadata = buildFlowCwvMetadata({
   title: "Programa de Afiliados - Flowdesk",
@@ -20,22 +21,13 @@ export const metadata: Metadata = buildFlowCwvMetadata({
   ],
 });
 
-function buildDiscordAvatarUrl(
-  discordUserId: string | null,
-  avatarHash: string | null,
-) {
-  if (!avatarHash || !discordUserId) return null;
-  const extension = avatarHash.startsWith("a_") ? "gif" : "png";
-  return `https://cdn.discordapp.com/avatars/${discordUserId}/${avatarHash}.${extension}?size=96`;
-}
-
 export default async function AffiliatesPage() {
   const user = await getCurrentUserFromSessionCookie();
 
   const authenticatedUser = user
     ? {
         username: user.username,
-        avatarUrl: buildDiscordAvatarUrl(user.discord_user_id, user.avatar),
+        avatarUrl: resolveAuthUserAvatarUrl(user),
         href: "/affiliates/dashboard",
       }
     : null;

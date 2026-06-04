@@ -60,6 +60,8 @@ export type AuthUserRecord = {
   global_name: string | null;
   display_name: string;
   avatar: string | null;
+  profile_avatar_url: string | null;
+  profile_avatar_source: string | null;
   email: string | null;
   email_normalized: string | null;
   email_verified_at: string | null;
@@ -111,14 +113,56 @@ function buildDisplayName(discordUser: DiscordUser) {
   return discordUser.global_name || discordUser.username;
 }
 
+async function upsertAuthProviderProfile(input: {
+  userId: number;
+  provider: "discord" | "google" | "microsoft";
+  providerUserId: string;
+  email: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+}) {
+  const supabase = getSupabaseAdminClientOrThrow();
+  await supabase
+    .from("auth_user_provider_profiles")
+    .upsert(
+      {
+        user_id: input.userId,
+        provider: input.provider,
+        provider_user_id: input.providerUserId,
+        provider_email: input.email,
+        provider_display_name: input.displayName,
+        provider_avatar_url: input.avatarUrl,
+      },
+      { onConflict: "user_id,provider" },
+    );
+}
+
 const AUTH_USER_SELECT_COLUMNS =
+  "id, discord_user_id, google_user_id, microsoft_user_id, username, global_name, display_name, avatar, profile_avatar_url, profile_avatar_source, email, email_normalized, email_verified_at, locale";
+const AUTH_USER_LEGACY_SELECT_COLUMNS =
   "id, discord_user_id, google_user_id, microsoft_user_id, username, global_name, display_name, avatar, email, email_normalized, email_verified_at, locale";
-const AUTH_SESSION_CACHE_TTL_MS = 15_000;
-const AUTH_SESSION_STALE_TTL_MS = 2 * 60_000;
+const AUTH_SESSION_CACHE_TTL_MS = 3_000;
+const AUTH_SESSION_STALE_TTL_MS = 30_000;
 const AUTH_SESSION_CACHE_MAX_ENTRIES = 1_500;
 const AUTH_SESSION_CIRCUIT_OPEN_MS = 12_000;
+const AUTH_SESSION_LAST_SEEN_TOUCH_INTERVAL_MS = 30_000;
 
 const authSessionCache = new Map<string, AuthSessionCacheEntry>();
+const authSessionLastSeenTouches = new Map<string, number>();
+
+function isMissingProfileAvatarSchemaError(error: { message?: string | null } | null | undefined) {
+  const message = error?.message?.toLowerCase() || "";
+  return message.includes("profile_avatar_url") || message.includes("profile_avatar_source");
+}
+
+function normalizeAuthUserRecord(user: Partial<AuthUserRecord> | null | undefined) {
+  if (!user) return null;
+  return {
+    ...user,
+    profile_avatar_url: user.profile_avatar_url || null,
+    profile_avatar_source: user.profile_avatar_source || null,
+  } as AuthUserRecord;
+}
 const authSessionInflight = new Map<string, Promise<CurrentAuthSession | null>>();
 let authSessionCircuitOpenUntilMs = 0;
 
@@ -245,9 +289,30 @@ function writeAuthSessionCache(
   });
 }
 
-function invalidateAuthSessionCache() {
+export function invalidateAuthSessionCache() {
   authSessionCache.clear();
   authSessionInflight.clear();
+}
+
+function scheduleAuthSessionLastSeenTouch(sessionId: string) {
+  const now = Date.now();
+  const lastTouch = authSessionLastSeenTouches.get(sessionId) || 0;
+  if (lastTouch + AUTH_SESSION_LAST_SEEN_TOUCH_INTERVAL_MS > now) {
+    return;
+  }
+
+  authSessionLastSeenTouches.set(sessionId, now);
+  void (async () => {
+    try {
+      await getSupabaseAdminClientOrThrow()
+        .from("auth_sessions")
+        .update({ last_seen_at: new Date(now).toISOString() })
+        .eq("id", sessionId)
+        .is("revoked_at", null);
+    } catch {
+      // A sessao continua valida mesmo antes da migracao de atividade ser aplicada.
+    }
+  })();
 }
 
 export function isAuthSessionAvailabilityError(error: unknown) {
@@ -405,11 +470,23 @@ async function selectAuthUserBy(
     .eq(column, value)
     .maybeSingle<AuthUserRecord>();
 
+  if (result.error && isMissingProfileAvatarSchemaError(result.error)) {
+    const legacyResult = await supabase
+      .from("auth_users")
+      .select(AUTH_USER_LEGACY_SELECT_COLUMNS)
+      .eq(column, value)
+      .maybeSingle<Partial<AuthUserRecord>>();
+    if (legacyResult.error) {
+      throw new Error(legacyResult.error.message);
+    }
+    return normalizeAuthUserRecord(legacyResult.data);
+  }
+
   if (result.error) {
     throw new Error(result.error.message);
   }
 
-  return result.data;
+  return normalizeAuthUserRecord(result.data);
 }
 
 export async function findAuthUserById(userId: number) {
@@ -498,6 +575,8 @@ type AuthUserMutationPayload = {
   global_name: string | null;
   display_name: string;
   avatar: string | null;
+  profile_avatar_url: string | null;
+  profile_avatar_source: string | null;
   email: string | null;
   email_normalized: string | null;
   email_verified_at: string | null;
@@ -527,7 +606,7 @@ async function insertAuthUserWithResolvedUsername(
 
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const username = await resolveAvailableAuthUsername(payload.username);
-    const result = await supabase
+    let result = await supabase
       .from("auth_users")
       .insert({
         ...payload,
@@ -536,11 +615,25 @@ async function insertAuthUserWithResolvedUsername(
       .select(AUTH_USER_SELECT_COLUMNS)
       .single<AuthUserRecord>();
 
+    if (result.error && isMissingProfileAvatarSchemaError(result.error)) {
+      const legacyPayload = { ...payload } as Record<string, unknown>;
+      delete legacyPayload.profile_avatar_url;
+      delete legacyPayload.profile_avatar_source;
+      result = await supabase
+        .from("auth_users")
+        .insert({
+          ...legacyPayload,
+          username,
+        })
+        .select(AUTH_USER_LEGACY_SELECT_COLUMNS)
+        .single<AuthUserRecord>();
+    }
+
     if (!result.error) {
       if (!options?.skipAccountCreatedEmail) {
         void sendAccountCreatedEmailSafe(result.data);
       }
-      return result.data;
+      return normalizeAuthUserRecord(result.data) as AuthUserRecord;
     }
 
     lastError = new Error(result.error.message);
@@ -550,6 +643,36 @@ async function insertAuthUserWithResolvedUsername(
   }
 
   throw lastError || new Error("Erro desconhecido ao criar usuario.");
+}
+
+async function updateAuthUserWithSchemaFallback(
+  userId: number,
+  payload: AuthUserMutationPayload,
+) {
+  const supabase = getSupabaseAdminClientOrThrow();
+  let result = await supabase
+    .from("auth_users")
+    .update(payload)
+    .eq("id", userId)
+    .select(AUTH_USER_SELECT_COLUMNS)
+    .single<AuthUserRecord>();
+
+  if (result.error && isMissingProfileAvatarSchemaError(result.error)) {
+    const legacyPayload = { ...payload } as Record<string, unknown>;
+    delete legacyPayload.profile_avatar_url;
+    delete legacyPayload.profile_avatar_source;
+    result = await supabase
+      .from("auth_users")
+      .update(legacyPayload)
+      .eq("id", userId)
+      .select(AUTH_USER_LEGACY_SELECT_COLUMNS)
+      .single<AuthUserRecord>();
+  }
+
+  return {
+    data: normalizeAuthUserRecord(result.data),
+    error: result.error,
+  };
 }
 
 function buildEmailUserPayload(email: string, emailVerifiedAt: string | null) {
@@ -566,6 +689,8 @@ function buildEmailUserPayload(email: string, emailVerifiedAt: string | null) {
     global_name: null,
     display_name: buildEmailDisplayName(normalizedEmail),
     avatar: null,
+    profile_avatar_url: null,
+    profile_avatar_source: null,
     email: normalizedEmail,
     email_normalized: normalizedEmail,
     email_verified_at: emailVerifiedAt,
@@ -632,22 +757,42 @@ async function saveDiscordUserToAuthUser(
     : null;
   const existingLinkedUser =
     typeof linkToUserId === "number" ? await findAuthUserById(linkToUserId) : null;
+  const preserveExistingIdentity = Boolean(existingLinkedUser);
+  const discordAvatarUrl =
+    discordUser.avatar
+      ? `https://cdn.discordapp.com/avatars/${discordUser.id}/${discordUser.avatar}.${discordUser.avatar.startsWith("a_") ? "gif" : "png"}?size=512`
+      : null;
 
   const payload = {
     discord_user_id: discordUser.id,
     google_user_id: existingLinkedUser?.google_user_id || null,
     microsoft_user_id: existingLinkedUser?.microsoft_user_id || null,
-    username: discordUser.username,
-    global_name: discordUser.global_name,
-    display_name: buildDisplayName(discordUser),
+    username: existingLinkedUser?.username || discordUser.username,
+    global_name:
+      preserveExistingIdentity
+        ? existingLinkedUser?.global_name || null
+        : discordUser.global_name,
+    display_name:
+      preserveExistingIdentity
+        ? existingLinkedUser?.display_name || buildDisplayName(discordUser)
+        : buildDisplayName(discordUser),
     avatar: discordUser.avatar,
-    email: normalizedEmail || existingLinkedUser?.email || null,
-    email_normalized: normalizedEmail || existingLinkedUser?.email_normalized || null,
+    profile_avatar_url: existingLinkedUser?.profile_avatar_url || discordAvatarUrl,
+    profile_avatar_source:
+      existingLinkedUser?.profile_avatar_url
+        ? existingLinkedUser.profile_avatar_source || "existing"
+        : discordAvatarUrl
+          ? "discord"
+          : null,
+    email: existingLinkedUser?.email || normalizedEmail || null,
+    email_normalized: existingLinkedUser?.email_normalized || normalizedEmail || null,
     email_verified_at:
-      normalizedEmail
-        ? existingLinkedUser?.email_verified_at || new Date().toISOString()
-        : existingLinkedUser?.email_verified_at || null,
-    locale: discordUser.locale || null,
+      existingLinkedUser?.email_verified_at ||
+      (normalizedEmail ? new Date().toISOString() : null),
+    locale:
+      preserveExistingIdentity
+        ? existingLinkedUser?.locale || discordUser.locale || null
+        : discordUser.locale || null,
     raw_user: {
       source: "discord",
       providers: {
@@ -656,27 +801,37 @@ async function saveDiscordUserToAuthUser(
     },
   };
 
-  const supabase = getSupabaseAdminClientOrThrow();
-
   if (typeof linkToUserId === "number") {
-    const result = await supabase
-      .from("auth_users")
-      .update(payload)
-      .eq("id", linkToUserId)
-      .select(AUTH_USER_SELECT_COLUMNS)
-      .single<AuthUserRecord>();
+    const result = await updateAuthUserWithSchemaFallback(linkToUserId, payload);
 
-    if (result.error) {
-      throw new Error(`Erro ao vincular usuario Discord: ${result.error.message}`);
+    if (result.error || !result.data) {
+      throw new Error(`Erro ao vincular usuario Discord: ${result.error?.message || "usuario_nao_encontrado"}`);
     }
 
+    await upsertAuthProviderProfile({
+      userId: result.data.id,
+      provider: "discord",
+      providerUserId: discordUser.id,
+      email: normalizedEmail,
+      displayName: buildDisplayName(discordUser),
+      avatarUrl: discordAvatarUrl,
+    }).catch(() => null);
     return result.data;
   }
 
   try {
-    return await insertAuthUserWithResolvedUsername(payload, {
+    const inserted = await insertAuthUserWithResolvedUsername(payload, {
       skipAccountCreatedEmail: options?.skipAccountCreatedEmail,
     });
+    await upsertAuthProviderProfile({
+      userId: inserted.id,
+      provider: "discord",
+      providerUserId: discordUser.id,
+      email: normalizedEmail,
+      displayName: buildDisplayName(discordUser),
+      avatarUrl: discordAvatarUrl,
+    }).catch(() => null);
+    return inserted;
   } catch (error) {
     const existingByDiscord = await findAuthUserByDiscordUserId(discordUser.id);
     if (existingByDiscord) {
@@ -968,7 +1123,7 @@ async function saveGoogleUserToAuthUser(
 
   const existingLinkedUser =
     typeof linkToUserId === "number" ? await findAuthUserById(linkToUserId) : null;
-  const preserveExistingIdentity = Boolean(existingLinkedUser?.discord_user_id);
+  const preserveExistingIdentity = Boolean(existingLinkedUser);
 
   const payload = {
     discord_user_id: existingLinkedUser?.discord_user_id || null,
@@ -986,8 +1141,15 @@ async function saveGoogleUserToAuthUser(
           existingLinkedUser?.display_name ||
           buildEmailDisplayName(normalizedEmail),
     avatar: existingLinkedUser?.avatar || null,
-    email: normalizedEmail,
-    email_normalized: normalizedEmail,
+    profile_avatar_url: existingLinkedUser?.profile_avatar_url || googleUser.picture || null,
+    profile_avatar_source:
+      existingLinkedUser?.profile_avatar_url
+        ? existingLinkedUser.profile_avatar_source || "existing"
+        : googleUser.picture
+          ? "google"
+          : null,
+    email: existingLinkedUser?.email || normalizedEmail,
+    email_normalized: existingLinkedUser?.email_normalized || normalizedEmail,
     email_verified_at:
       existingLinkedUser?.email_verified_at || new Date().toISOString(),
     locale:
@@ -1002,25 +1164,35 @@ async function saveGoogleUserToAuthUser(
     },
   };
 
-  const supabase = getSupabaseAdminClientOrThrow();
-
   if (typeof linkToUserId === "number") {
-    const result = await supabase
-      .from("auth_users")
-      .update(payload)
-      .eq("id", linkToUserId)
-      .select(AUTH_USER_SELECT_COLUMNS)
-      .single<AuthUserRecord>();
+    const result = await updateAuthUserWithSchemaFallback(linkToUserId, payload);
 
-    if (result.error) {
-      throw new Error(`Erro ao vincular usuario Google: ${result.error.message}`);
+    if (result.error || !result.data) {
+      throw new Error(`Erro ao vincular usuario Google: ${result.error?.message || "usuario_nao_encontrado"}`);
     }
 
+    await upsertAuthProviderProfile({
+      userId: result.data.id,
+      provider: "google",
+      providerUserId: googleUser.sub,
+      email: normalizedEmail,
+      displayName: googleUser.name?.trim() || null,
+      avatarUrl: googleUser.picture || null,
+    }).catch(() => null);
     return result.data;
   }
 
   try {
-    return await insertAuthUserWithResolvedUsername(payload);
+    const inserted = await insertAuthUserWithResolvedUsername(payload);
+    await upsertAuthProviderProfile({
+      userId: inserted.id,
+      provider: "google",
+      providerUserId: googleUser.sub,
+      email: normalizedEmail,
+      displayName: googleUser.name?.trim() || null,
+      avatarUrl: googleUser.picture || null,
+    }).catch(() => null);
+    return inserted;
   } catch (error) {
     const byGoogle = await findAuthUserByGoogleUserId(googleUser.sub);
     if (byGoogle) {
@@ -1100,7 +1272,7 @@ async function saveMicrosoftUserToAuthUser(
 
   const existingLinkedUser =
     typeof linkToUserId === "number" ? await findAuthUserById(linkToUserId) : null;
-  const preserveExistingIdentity = Boolean(existingLinkedUser?.discord_user_id);
+  const preserveExistingIdentity = Boolean(existingLinkedUser);
 
   const payload = {
     discord_user_id: existingLinkedUser?.discord_user_id || null,
@@ -1121,8 +1293,10 @@ async function saveMicrosoftUserToAuthUser(
           existingLinkedUser?.display_name ||
           buildEmailDisplayName(normalizedEmail),
     avatar: existingLinkedUser?.avatar || null,
-    email: normalizedEmail,
-    email_normalized: normalizedEmail,
+    profile_avatar_url: existingLinkedUser?.profile_avatar_url || null,
+    profile_avatar_source: existingLinkedUser?.profile_avatar_source || null,
+    email: existingLinkedUser?.email || normalizedEmail,
+    email_normalized: existingLinkedUser?.email_normalized || normalizedEmail,
     email_verified_at:
       existingLinkedUser?.email_verified_at || new Date().toISOString(),
     locale:
@@ -1137,25 +1311,35 @@ async function saveMicrosoftUserToAuthUser(
     },
   };
 
-  const supabase = getSupabaseAdminClientOrThrow();
-
   if (typeof linkToUserId === "number") {
-    const result = await supabase
-      .from("auth_users")
-      .update(payload)
-      .eq("id", linkToUserId)
-      .select(AUTH_USER_SELECT_COLUMNS)
-      .single<AuthUserRecord>();
+    const result = await updateAuthUserWithSchemaFallback(linkToUserId, payload);
 
-    if (result.error) {
-      throw new Error(`Erro ao vincular usuario Microsoft: ${result.error.message}`);
+    if (result.error || !result.data) {
+      throw new Error(`Erro ao vincular usuario Microsoft: ${result.error?.message || "usuario_nao_encontrado"}`);
     }
 
+    await upsertAuthProviderProfile({
+      userId: result.data.id,
+      provider: "microsoft",
+      providerUserId: microsoftUser.id,
+      email: normalizedEmail,
+      displayName: microsoftUser.displayName,
+      avatarUrl: null,
+    }).catch(() => null);
     return result.data;
   }
 
   try {
-    return await insertAuthUserWithResolvedUsername(payload);
+    const inserted = await insertAuthUserWithResolvedUsername(payload);
+    await upsertAuthProviderProfile({
+      userId: inserted.id,
+      provider: "microsoft",
+      providerUserId: microsoftUser.id,
+      email: normalizedEmail,
+      displayName: microsoftUser.displayName,
+      avatarUrl: null,
+    }).catch(() => null);
+    return inserted;
   } catch (error) {
     const byMicrosoft = await findAuthUserByMicrosoftUserId(microsoftUser.id);
     if (byMicrosoft) {
@@ -1260,6 +1444,9 @@ export async function getCurrentAuthSessionFromCookie(
   const cacheKey = buildAuthSessionCacheKey(primarySessionTokenHash, options);
   const cachedSession = readAuthSessionCache(cacheKey);
   if (cachedSession.hit) {
+    if (cachedSession.value?.id) {
+      scheduleAuthSessionLastSeenTouch(cachedSession.value.id);
+    }
     return cachedSession.value;
   }
 
@@ -1280,11 +1467,14 @@ export async function getCurrentAuthSessionFromCookie(
     const nowIso = new Date().toISOString();
 
     const selectColumns = options.fullContext
+      ? "id, session_token_hash, discord_access_token, discord_refresh_token, discord_token_expires_at, active_guild_id, discord_guilds_cache, discord_guilds_cached_at, config_current_step, config_draft, config_context_updated_at, user:auth_users(id, discord_user_id, google_user_id, microsoft_user_id, username, global_name, display_name, avatar, profile_avatar_url, profile_avatar_source, email, email_normalized, email_verified_at, locale)"
+      : "id, session_token_hash, discord_access_token, discord_refresh_token, discord_token_expires_at, active_guild_id, discord_guilds_cached_at, config_current_step, config_context_updated_at, user:auth_users(id, discord_user_id, google_user_id, microsoft_user_id, username, global_name, display_name, avatar, profile_avatar_url, profile_avatar_source, email, email_normalized, email_verified_at, locale)";
+    const legacySelectColumns = options.fullContext
       ? "id, session_token_hash, discord_access_token, discord_refresh_token, discord_token_expires_at, active_guild_id, discord_guilds_cache, discord_guilds_cached_at, config_current_step, config_draft, config_context_updated_at, user:auth_users(id, discord_user_id, google_user_id, microsoft_user_id, username, global_name, display_name, avatar, email, email_normalized, email_verified_at, locale)"
       : "id, session_token_hash, discord_access_token, discord_refresh_token, discord_token_expires_at, active_guild_id, discord_guilds_cached_at, config_current_step, config_context_updated_at, user:auth_users(id, discord_user_id, google_user_id, microsoft_user_id, username, global_name, display_name, avatar, email, email_normalized, email_verified_at, locale)";
 
     try {
-      const result = await supabase
+      let result = await supabase
         .from("auth_sessions")
         .select(selectColumns)
         .in("session_token_hash", sessionTokenHashes)
@@ -1292,6 +1482,17 @@ export async function getCurrentAuthSessionFromCookie(
         .gt("expires_at", nowIso)
         .limit(2)
         .returns<AuthSessionRecord[]>();
+
+      if (result.error && isMissingProfileAvatarSchemaError(result.error)) {
+        result = await supabase
+          .from("auth_sessions")
+          .select(legacySelectColumns)
+          .in("session_token_hash", sessionTokenHashes)
+          .is("revoked_at", null)
+          .gt("expires_at", nowIso)
+          .limit(2)
+          .returns<AuthSessionRecord[]>();
+      }
 
       if (result.error) {
         throw new Error(`Erro ao validar sessao: ${result.error.message}`);
@@ -1324,7 +1525,7 @@ export async function getCurrentAuthSessionFromCookie(
           .eq("session_token_hash", matchedRecord.session_token_hash);
       }
 
-      const user = unwrapUser(matchedRecord.user);
+      const user = normalizeAuthUserRecord(unwrapUser(matchedRecord.user));
       if (!user) {
         writeAuthSessionCache(cacheKey, null);
         return null;
@@ -1350,6 +1551,7 @@ export async function getCurrentAuthSessionFromCookie(
 
       authSessionCircuitOpenUntilMs = 0;
       writeAuthSessionCache(cacheKey, session);
+      scheduleAuthSessionLastSeenTouch(session.id);
       return session;
     } catch (error) {
       if (isAuthSessionAvailabilityError(error)) {
@@ -1591,5 +1793,6 @@ export async function revokeCurrentSessionFromCookie() {
     throw new Error(`Erro ao revogar sessao: ${result.error.message}`);
   }
 
+  invalidateAuthSessionCache();
   return true;
 }

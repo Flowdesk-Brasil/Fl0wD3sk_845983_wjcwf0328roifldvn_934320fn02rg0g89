@@ -19,6 +19,7 @@ import { exchangeGoogleCodeForToken, fetchGoogleUser } from "@/lib/auth/google";
 import {
   buildLoginOtpRedirectLocation,
   buildLoginRedirectResponse,
+  buildLoginTwoFactorRedirectLocation,
 } from "@/lib/auth/loginFlash";
 import { buildAuthOriginRedirectResponse } from "@/lib/auth/requestOrigin";
 import {
@@ -28,6 +29,7 @@ import {
   resolveAuthUserForGoogleLogin,
 } from "@/lib/auth/session";
 import { validateTrustedDevice } from "@/lib/auth/trustedDevice";
+import { createPendingTwoFactorLoginIfNeeded } from "@/lib/auth/twoFactor";
 import { buildCanonicalUrlFromInternalPath } from "@/lib/routing/subdomains";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import {
@@ -222,6 +224,48 @@ export async function handleGoogleAuthCallback(request: NextRequest) {
           oauthMode: oauthModeCookie,
           otpRequired: false,
           reusedSession: true,
+        },
+      });
+
+      return attachRequestId(response, initialRequestContext.requestId);
+    }
+
+    const pendingTwoFactor = await createPendingTwoFactorLoginIfNeeded({
+      userId: user.id,
+      redirectTo: nextPathCookie || fallbackNextPath,
+      rememberSession: false,
+      ipAddress: extractClientIp(request),
+      userAgent: request.headers.get("user-agent"),
+      sessionContext: {
+        authMethod: "google",
+        nextPath: nextPathCookie || fallbackNextPath,
+        discordAccessToken: null,
+        discordRefreshToken: null,
+        discordTokenExpiresAt: null,
+      },
+    });
+    if (pendingTwoFactor) {
+      const twoFactorLocation = buildLoginTwoFactorRedirectLocation(request, {
+        challengeId: pendingTwoFactor.challengeId,
+        methods: pendingTwoFactor.methods,
+        expiresAt: pendingTwoFactor.expiresAt,
+        nextPath: nextPathCookie || fallbackNextPath,
+      });
+      const response = redirectWithLocation(twoFactorLocation);
+      clearOAuthCookies(request, response);
+
+      const authenticatedContext = extendSecurityRequestContext(
+        initialRequestContext,
+        { userId: user.id },
+      );
+      await logSecurityAuditEventSafe(authenticatedContext, {
+        action: "auth_google_callback",
+        outcome: "succeeded",
+        metadata: {
+          redirectTo: twoFactorLocation,
+          oauthMode: oauthModeCookie,
+          twoFactorRequired: true,
+          twoFactorMethods: pendingTwoFactor.methods,
         },
       });
 
