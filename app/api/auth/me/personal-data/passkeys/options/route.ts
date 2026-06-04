@@ -6,7 +6,10 @@ import {
 } from "@simplewebauthn/server";
 import { getCurrentAuthSessionFromCookie } from "@/lib/auth/session";
 import { requireSensitiveActionProof } from "@/lib/auth/sensitiveAction";
-import { resolveWebAuthnRpId } from "@/lib/auth/webauthn";
+import {
+  normalizeWebAuthnCredentialId,
+  resolveWebAuthnRpId,
+} from "@/lib/auth/webauthn";
 import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
@@ -51,6 +54,22 @@ export async function POST(request: NextRequest) {
       .returns<PasskeyRow[]>();
     if (passkeys.error) throw new Error(passkeys.error.message);
 
+    const excludeCredentials = (passkeys.data || [])
+      .map((passkey) => {
+        const normalizedId = normalizeWebAuthnCredentialId(passkey.credential_id);
+        if (!normalizedId) return null;
+        return {
+          id: normalizedId as Base64URLString,
+          transports: passkey.transports as AuthenticatorTransportFuture[],
+        };
+      })
+      .filter(
+        (credential): credential is {
+          id: Base64URLString;
+          transports: AuthenticatorTransportFuture[];
+        } => Boolean(credential),
+      );
+
     const options = await generateRegistrationOptions({
       rpName: "Flowdesk",
       rpID: resolveWebAuthnRpId(request),
@@ -59,10 +78,7 @@ export async function POST(request: NextRequest) {
       userDisplayName: session.user.display_name,
       attestationType: "none",
       timeout: 60_000,
-      excludeCredentials: (passkeys.data || []).map((passkey) => ({
-        id: passkey.credential_id as Base64URLString,
-        transports: passkey.transports as AuthenticatorTransportFuture[],
-      })),
+      excludeCredentials,
       authenticatorSelection: {
         residentKey: "preferred",
         userVerification: "required",

@@ -89,6 +89,13 @@ export function getFriendlyWebAuthnError(
   }
 
   if (
+    fingerprint.includes("unsupported state") ||
+    fingerprint.includes("unable to authenticate data")
+  ) {
+    return "A Passkey nao conseguiu autenticar. Tente novamente ou use outro dispositivo.";
+  }
+
+  if (
     normalized.name === "ConstraintError" ||
     normalized.name === "UnknownError"
   ) {
