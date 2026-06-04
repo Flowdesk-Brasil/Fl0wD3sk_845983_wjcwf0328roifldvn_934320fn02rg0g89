@@ -15,18 +15,28 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const student = Array.isArray(payment.student) ? payment.student[0] : payment.student;
     if (!student?.email || student.cpf.replace(/\D/g, "").length !== 11) throw new ApiError("O aluno precisa ter e-mail e CPF válidos para gerar o PIX.");
 
-    const origin = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || new URL(request.url).origin).replace(/\/+$/, "");
+    let origin = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL;
+    if (!origin && process.env.VERCEL_URL) origin = `https://${process.env.VERCEL_URL}`;
+    if (!origin) origin = new URL(request.url).origin;
+    origin = origin.replace(/\/+$/, "");
+    
     const webhookToken = process.env.MERCADO_PAGO_WEBHOOK_TOKEN?.trim();
     const notificationUrl = `${origin}/api/webhooks/mercado-pago${webhookToken ? `?token=${encodeURIComponent(webhookToken)}` : ""}`;
-    const provider = await createMercadoPagoPix({
-      paymentId: payment.id,
-      amount: Number(payment.total_amount),
-      description: `Mensalidade ${payment.reference} - Corpo & Evolução`,
-      payerName: student.full_name,
-      payerEmail: student.email,
-      payerCpf: student.cpf,
-      notificationUrl,
-    });
+    let provider;
+    try {
+      provider = await createMercadoPagoPix({
+        paymentId: payment.id,
+        amount: Number(payment.total_amount),
+        description: `Mensalidade ${payment.reference} - Corpo & Evolução`,
+        payerName: student.full_name,
+        payerEmail: student.email,
+        payerCpf: student.cpf,
+        notificationUrl,
+      });
+    } catch (mpError: any) {
+      const errorMsg = mpError instanceof Error ? mpError.message : String(mpError);
+      throw new ApiError(`Erro Mercado Pago: ${errorMsg} (URL Enviada: ${notificationUrl})`, 400);
+    }
     const transaction = provider.point_of_interaction?.transaction_data;
     const { data: updated, error: updateError } = await admin.from("payments").update({
       method: "pix",
