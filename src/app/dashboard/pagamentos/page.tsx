@@ -141,13 +141,27 @@ export default function PagamentosPage() {
               <button className="btn btn-secondary w-full justify-center" disabled={!pix.pix_code} onClick={() => void copyPix()}>{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />} {copied ? "Código copiado" : "Copiar PIX copia e cola"}</button>
               <button className="btn btn-primary w-full justify-center bg-indigo-600 hover:bg-indigo-700 border-indigo-600 text-white" onClick={() => {
                 const { supabase } = require("@/lib/supabase");
-                const channel = supabase.channel("pos-terminal-channel");
-                channel.subscribe((status: string) => {
-                  if (status === "SUBSCRIBED") {
-                    channel.send({ type: "broadcast", event: "SHOW_PIX", payload: { payment_id: pix.id } });
-                    alert("Sinal enviado para o celular admin!");
-                  }
-                });
+                const channelName = "pos-terminal-channel";
+                
+                // Get existing channel if any
+                let channel = supabase.getChannels().find((c: any) => c.topic === `realtime:${channelName}`);
+                if (!channel) {
+                  channel = supabase.channel(channelName);
+                }
+
+                // If already joined, just send
+                if (channel.state === "joined") {
+                  channel.send({ type: "broadcast", event: "SHOW_PIX", payload: { payment_id: pix.id } });
+                  alert("Sinal re-enviado para o celular admin!");
+                } else {
+                  // Otherwise subscribe and wait for SUBSCRIBED
+                  channel.subscribe((status: string) => {
+                    if (status === "SUBSCRIBED") {
+                      channel.send({ type: "broadcast", event: "SHOW_PIX", payload: { payment_id: pix.id } });
+                      alert("Sinal enviado para o celular admin!");
+                    }
+                  });
+                }
               }}>Espelhar na Máquina / Celular</button>
             </div>
           </>}
