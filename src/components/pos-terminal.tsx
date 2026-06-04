@@ -56,9 +56,10 @@ export function PosTerminalListener({ email }: { email: string }) {
           const newData = payload.new as any;
           const oldData = payload.old as any;
 
-          const justGeneratedPix = newData.pix_qr_base64 && newData.pix_qr_base64 !== oldData.pix_qr_base64 && newData.status === "pending";
+          const justGeneratedPix = newData.status === "pending" && newData.pix_qr_base64 && (newData.pix_qr_base64 !== oldData.pix_qr_base64 || newData.provider_payment_id !== oldData.provider_payment_id);
           
-          if (justGeneratedPix && !ignoredIds.current.has(newData.id)) {
+          if (justGeneratedPix) {
+            ignoredIds.current.delete(newData.id);
             const fullPayment = await fetchFullPayment(newData.id);
             if (fullPayment) {
               setActivePayment(fullPayment);
