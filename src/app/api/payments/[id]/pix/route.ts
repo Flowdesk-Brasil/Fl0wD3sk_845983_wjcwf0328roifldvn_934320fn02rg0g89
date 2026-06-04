@@ -52,7 +52,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       status: "pending",
       method: "pix",
       provider_payment_id: String(provider.id),
-      provider_status: provider.status || "pending",
+      provider_status: profile.role === "student" ? "pending_student" : "pending_admin",
       pix_code: transaction?.qr_code || null,
       pix_qr_base64: transaction?.qr_code_base64 || null,
       pix_ticket_url: transaction?.ticket_url || null,

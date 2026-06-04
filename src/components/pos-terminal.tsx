@@ -36,6 +36,7 @@ export function PosTerminalListener({ email }: { email: string }) {
         const pendingPix = payments.find(p => 
           p.status === "pending" && 
           p.pix_qr_base64 && 
+          p.provider_status === "pending_admin" &&
           new Date(p.created_at).getTime() >= tenMinsAgo &&
           !ignoredIds.current.has(p.id)
         );
@@ -56,7 +57,10 @@ export function PosTerminalListener({ email }: { email: string }) {
           const newData = payload.new as any;
           const oldData = payload.old as any;
 
-          const justGeneratedPix = newData.status === "pending" && newData.pix_qr_base64 && (newData.pix_qr_base64 !== oldData.pix_qr_base64 || newData.provider_payment_id !== oldData.provider_payment_id);
+          const justGeneratedPix = newData.status === "pending" && 
+            newData.pix_qr_base64 && 
+            newData.provider_status === "pending_admin" && 
+            (newData.pix_qr_base64 !== oldData.pix_qr_base64 || newData.provider_payment_id !== oldData.provider_payment_id);
           
           if (justGeneratedPix) {
             ignoredIds.current.delete(newData.id);

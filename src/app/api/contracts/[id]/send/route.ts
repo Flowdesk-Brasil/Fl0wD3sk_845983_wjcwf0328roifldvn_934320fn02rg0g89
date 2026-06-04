@@ -32,7 +32,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       .single();
     if (signingError || !signingRequest) throw new ApiError("A migração operacional ainda não foi aplicada. Execute database/migrations/002_studio_operations.sql.", 503);
 
-    const origin = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || new URL(request.url).origin).replace(/\/+$/, "");
+    let origin = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL;
+    if (!origin && process.env.VERCEL_URL) origin = `https://${process.env.VERCEL_URL}`;
+    if (!origin) origin = new URL(request.url).origin;
+    if (origin.includes("localhost") || origin.includes("127.0.0.1")) {
+      origin = "https://corpoeevolucao.vercel.app";
+    }
+    origin = origin.replace(/\/+$/, "");
     const link = `${origin}/assinar/${rawToken}`;
     try {
       await sendStudioEmail({
