@@ -207,6 +207,120 @@ export interface RevenuePoint {
   receita: number;
 }
 
+// ==========================================
+// MÓDULO ERP (ESTOQUE E PDV)
+// ==========================================
+
+export interface Supplier {
+  id: string;
+  corporate_name: string;
+  trade_name?: string | null;
+  cnpj?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Product {
+  id: string;
+  internal_code?: string | null;
+  barcode?: string | null;
+  sku?: string | null;
+  name: string;
+  category?: string | null;
+  subcategory?: string | null;
+  brand?: string | null;
+  unit_measure: string;
+  weight?: number | null;
+  volume?: number | null;
+  average_cost: number;
+  current_cost: number;
+  selling_price: number;
+  minimum_stock: number;
+  maximum_stock: number;
+  current_stock: number;
+  physical_location?: string | null;
+  ncm?: string | null;
+  cfop?: string | null;
+  cest?: string | null;
+  active: boolean;
+  supplier_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Receiving {
+  id: string;
+  invoice_number?: string | null;
+  invoice_key?: string | null;
+  supplier_id?: string | null;
+  issue_date?: string | null;
+  expected_delivery_date?: string | null;
+  total_amount: number;
+  total_items: number;
+  status: "Aguardando Chegada" | "Recebido" | "Em Triagem" | "Triagem Concluída" | "Divergência" | "Finalizado";
+  observations?: string | null;
+  xml_url?: string | null;
+  pdf_url?: string | null;
+  operator_id?: string | null;
+  created_at: string;
+  updated_at: string;
+  supplier?: Supplier | null;
+}
+
+export interface ReceivingItem {
+  id: string;
+  receiving_id: string;
+  product_id: string;
+  expected_quantity: number;
+  checked_quantity: number;
+  unit_cost: number;
+  total_cost: number;
+  status: "Pendente" | "Conferido" | "Divergente";
+  created_at: string;
+  product?: Product | null;
+}
+
+export interface InventoryTransaction {
+  id: string;
+  product_id: string;
+  transaction_type: "IN" | "OUT" | "ADJ";
+  quantity: number;
+  previous_stock: number;
+  new_stock: number;
+  reason?: string | null;
+  reference_id?: string | null;
+  operator_id?: string | null;
+  created_at: string;
+  product?: Product | null;
+}
+
+export interface Sale {
+  id: string;
+  student_id?: string | null;
+  total_amount: number;
+  discount: number;
+  final_amount: number;
+  payment_method?: "pix" | "credit_card" | "debit_card" | "cash" | "mixed" | null;
+  status: "pending" | "completed" | "cancelled";
+  operator_id?: string | null;
+  created_at: string;
+}
+
+export interface SaleItem {
+  id: string;
+  sale_id: string;
+  product_id: string;
+  quantity: number;
+  unit_price: number;
+  total_price: number;
+  created_at: string;
+  product?: Product | null;
+}
+
 export interface LocalTables {
   profiles: Profile;
   students: Student;
@@ -221,6 +335,13 @@ export interface LocalTables {
   class_types: ClassType;
   class_sessions: Omit<ClassSession, "class_type" | "instructor" | "bookings">;
   class_bookings: Omit<ClassBooking, "student">;
+  suppliers: Supplier;
+  products: Omit<Product, "supplier">;
+  receivings: Omit<Receiving, "supplier">;
+  receiving_items: Omit<ReceivingItem, "product">;
+  inventory_transactions: Omit<InventoryTransaction, "product">;
+  sales: Sale;
+  sale_items: Omit<SaleItem, "product">;
 }
 
 export type TableName = keyof LocalTables;

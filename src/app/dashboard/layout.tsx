@@ -3,7 +3,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   Activity, BarChart3, Bell, BookOpen, CalendarDays, ChevronDown, CreditCard, Database, Dumbbell, LayoutDashboard,
-  LogOut, Menu, Package, QrCode, ScrollText, Search, Settings, Shield, Users, X,
+  LogOut, Menu, Package, QrCode, ScrollText, Search, Settings, Shield, Users, X, ShoppingCart, Boxes, Tag, Truck, ScanLine
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -48,6 +48,16 @@ const NAV: { title: string; items: NavItem[] }[] = [
     ],
   },
   {
+    title: "Logística & Loja",
+    items: [
+      { href: "/dashboard/pdv", label: "Caixa (PDV)", icon: ShoppingCart, roles: ["admin", "receptionist"] },
+      { href: "/dashboard/produtos", label: "Produtos", icon: Tag, roles: ["admin"] },
+      { href: "/dashboard/estoque", label: "Estoque", icon: Boxes, roles: ["admin"] },
+      { href: "/dashboard/recebimentos", label: "Recebimento", icon: Truck, roles: ["admin"] },
+      { href: "/dashboard/triagem", label: "Triagem", icon: ScanLine, roles: ["admin", "receptionist"] },
+    ],
+  },
+  {
     title: "Administração",
     items: [
       { href: "/dashboard/usuarios", label: "Equipe e acessos", icon: Shield, roles: ["admin"] },
@@ -67,6 +77,11 @@ const PAGE_NAMES: Record<string, string> = {
   pagamentos: "Financeiro",
   calendario: "Calendário",
   checkin: "Check-in",
+  pdv: "Caixa (PDV)",
+  produtos: "Produtos",
+  estoque: "Controle de Estoque",
+  recebimentos: "Recebimentos de Mercadorias",
+  triagem: "Triagem e Conferência",
   relatorios: "Relatórios",
   notificacoes: "Comunicados",
   usuarios: "Equipe e acessos",
