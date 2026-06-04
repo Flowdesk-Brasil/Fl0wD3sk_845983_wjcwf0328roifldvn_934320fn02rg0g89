@@ -52,7 +52,7 @@ export async function createMercadoPagoPix(input: {
   const names = input.payerName.trim().split(/\s+/);
   return requestMercadoPago<MercadoPagoPayment>("/v1/payments", {
     method: "POST",
-    headers: { "X-Idempotency-Key": `corpo-evolucao-${input.paymentId}` },
+    headers: { "X-Idempotency-Key": `corpo-evolucao-${input.paymentId}-${Date.now()}` },
     body: JSON.stringify({
       transaction_amount: Number(input.amount.toFixed(2)),
       description: input.description.slice(0, 250),

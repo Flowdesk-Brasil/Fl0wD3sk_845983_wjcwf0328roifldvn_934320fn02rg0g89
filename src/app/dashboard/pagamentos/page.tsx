@@ -30,11 +30,31 @@ export default function PagamentosPage() {
     setLoading(false);
   }, []);
   useEffect(() => { void load(); }, [load]);
+  
   useEffect(() => {
     if (!pix || pix.status === "paid") return;
+    
+    const { supabase } = require("@/lib/supabase");
+    const channel = supabase.channel(`pix-listener-${pix.id}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "payments", filter: `id=eq.${pix.id}` },
+        (payload: any) => {
+          if (payload.new && payload.new.status === "paid") {
+            setPix((current) => current ? { ...current, status: "paid" } : current);
+            void load(); // Refresh the full list silently
+          }
+        }
+      )
+      .subscribe();
+
+    // Mantém o polling como fallback de segurança
     const timer = window.setInterval(() => void load(), 5000);
-    return () => window.clearInterval(timer);
-  }, [load, pix]);
+    return () => {
+      window.clearInterval(timer);
+      supabase.removeChannel(channel);
+    };
+  }, [load, pix?.id, pix?.status]);
 
   const filtered = useMemo(() => {
     const query = search.toLowerCase();
