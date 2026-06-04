@@ -10,11 +10,7 @@ import {
   requestVpsAgent,
 } from "@/lib/hosting/vpsRuntime";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
-import {
-  applyNoStoreHeaders,
-  ensureSameOriginJsonMutationRequest,
-} from "@/lib/security/http";
-import { flowSecureDto, parseFlowSecureDto } from "@/lib/security/flowSecure";
+import { applyNoStoreHeaders } from "@/lib/security/http";
 
 type RouteProps = {
   params: Promise<{ code: string }>;
@@ -28,10 +24,6 @@ type NormalizedEnvVariableInput = {
   sensitive: boolean;
 };
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 7babcb8 (att)
 function buildDotEnvContent(variables: NormalizedEnvVariableInput[]) {
   return variables
     .map((variable) => {
@@ -45,11 +37,6 @@ function buildDotEnvContent(variables: NormalizedEnvVariableInput[]) {
     .join("\n");
 }
 
-<<<<<<< HEAD
-=======
->>>>>>> 9c6e756 (Att master)
-=======
->>>>>>> 7babcb8 (att)
 function normalizeEnvironment(value: unknown) {
   return value === "development" || value === "preview" || value === "production"
     ? value
@@ -77,30 +64,6 @@ function normalizeEnvVariableInput(
     note,
     sensitive,
   };
-}
-
-function parseEnvMutationBody(payload: unknown) {
-  return parseFlowSecureDto(
-    payload,
-    {
-      id: flowSecureDto.optional(
-        flowSecureDto.number({ integer: true, min: 1 }),
-      ),
-      environment: flowSecureDto.optional(
-        flowSecureDto.enum(["development", "preview", "production"] as const),
-      ),
-      variables: flowSecureDto.optional(
-        flowSecureDto.array(flowSecureDto.record(), { maxLength: 250 }),
-      ),
-      key: flowSecureDto.optional(
-        flowSecureDto.string({ maxLength: 81, pattern: /^[A-Z_][A-Z0-9_]{0,80}$/i }),
-      ),
-      value: flowSecureDto.optional(flowSecureDto.unknown()),
-      note: flowSecureDto.optional(flowSecureDto.unknown()),
-      sensitive: flowSecureDto.optional(flowSecureDto.boolean()),
-    },
-    { rejectUnknown: true },
-  );
 }
 
 async function load(code: string) {
@@ -136,9 +99,6 @@ export async function GET(_request: NextRequest, { params }: RouteProps) {
 }
 
 export async function POST(request: NextRequest, { params }: RouteProps) {
-  const originGuard = ensureSameOriginJsonMutationRequest(request);
-  if (originGuard) return applyNoStoreHeaders(originGuard);
-
   const { code } = await params;
   const loaded = await load(code);
   if (!loaded) {
@@ -146,14 +106,7 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
       NextResponse.json({ ok: false, message: "VPS nao encontrada." }, { status: 404 }),
     );
   }
-  let body: ReturnType<typeof parseEnvMutationBody>;
-  try {
-    body = parseEnvMutationBody(await request.json().catch(() => ({})));
-  } catch {
-    return applyNoStoreHeaders(
-      NextResponse.json({ ok: false, message: "Payload de variaveis invalido." }, { status: 400 }),
-    );
-  }
+  const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
   const variables = Array.isArray(body.variables)
     ? body.variables.map((item) => normalizeEnvVariableInput(item, body.environment))
     : [normalizeEnvVariableInput(body, body.environment)];
@@ -265,10 +218,6 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
     method: "POST",
     path: `/v1/vps/${loaded.project.vps_code}/env`,
     body: {
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 7babcb8 (att)
       mode: "dotenv",
       envFiles: Object.fromEntries(
         ["development", "preview", "production"].map((environment) => [
@@ -276,11 +225,6 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
           buildDotEnvContent(normalizedVariables.filter((item) => item.environment === environment)),
         ]),
       ),
-<<<<<<< HEAD
-=======
->>>>>>> 9c6e756 (Att master)
-=======
->>>>>>> 7babcb8 (att)
       variables: normalizedVariables.map((item) => ({
         environment: item.environment,
         key: item.key,
@@ -302,9 +246,6 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
 }
 
 export async function DELETE(request: NextRequest, { params }: RouteProps) {
-  const originGuard = ensureSameOriginJsonMutationRequest(request);
-  if (originGuard) return applyNoStoreHeaders(originGuard);
-
   const { code } = await params;
   const loaded = await load(code);
   if (!loaded) {
@@ -313,14 +254,7 @@ export async function DELETE(request: NextRequest, { params }: RouteProps) {
     );
   }
 
-  let body: ReturnType<typeof parseEnvMutationBody>;
-  try {
-    body = parseEnvMutationBody(await request.json().catch(() => ({})));
-  } catch {
-    return applyNoStoreHeaders(
-      NextResponse.json({ ok: false, message: "Variavel invalida." }, { status: 400 }),
-    );
-  }
+  const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
   const id = typeof body.id === "number" && Number.isFinite(body.id) ? body.id : null;
   const environment = normalizeEnvironment(body.environment);
   const key = readString(body.key);
