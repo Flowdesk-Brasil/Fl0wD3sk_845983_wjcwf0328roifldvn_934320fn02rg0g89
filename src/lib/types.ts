@@ -41,6 +41,7 @@ export interface Student {
   emergency_contact?: string | null;
   emergency_phone?: string | null;
   observations?: string | null;
+  photo_url?: string | null;
   status: StudentStatus;
   qr_code: string;
   created_at: string;

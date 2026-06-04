@@ -241,9 +241,16 @@ export default function EditarAlunoPage({ params }: { params: Promise<{ id: stri
             contentType: "image/jpeg",
             upsert: true
           });
+          const photo_url = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/student-photos/${student.id}.jpg?t=${Date.now()}`;
+          await supabase.from("students").update({ photo_url }).eq("id", student.id);
         } catch (e) {
           console.error("Failed to upload photo", e);
         }
+      } else if (!form.photo_base64) {
+        try {
+          await supabase.storage.from("student-photos").remove([`${student.id}.jpg`]);
+          await supabase.from("students").update({ photo_url: null }).eq("id", student.id);
+        } catch (e) {}
       }
 
       await Promise.all(selectedSessions.map((sessionId) => createClassBooking(sessionId, student.id)));
