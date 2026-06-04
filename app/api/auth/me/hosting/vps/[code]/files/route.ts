@@ -9,8 +9,6 @@ import {
   requestVpsAgent,
 } from "@/lib/hosting/vpsRuntime";
 import {
-<<<<<<< HEAD
-<<<<<<< HEAD
   buildHostingGitHubAppInstallUrl,
   commitHostingGitHubRepositoryFile,
   fetchHostingGitHubRepositoryFile,
@@ -22,22 +20,6 @@ import {
   readHostingGitHubStoredToken,
   readHostingGitHubToken,
   resolveHostingGitHubInstallationPermissionIssue,
-<<<<<<< HEAD
-=======
-=======
-  buildHostingGitHubAppInstallUrl,
-  commitHostingGitHubRepositoryFile,
->>>>>>> 76d40df (att)
-  fetchHostingGitHubRepositoryFile,
-  fetchHostingGitHubRepositoryTree,
-  HostingGitHubApiError,
-  isPermanentHostingGitHubAuthError,
-  readHostingGitHubInstallationTokenForRepository,
-  readHostingGitHubStoredToken,
-  readHostingGitHubToken,
->>>>>>> 9c6e756 (Att master)
-=======
->>>>>>> 2922bb1 (Atualização de hoje)
 } from "@/lib/hosting/github";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { applyNoStoreHeaders } from "@/lib/security/http";
@@ -54,10 +36,6 @@ async function load(code: string) {
   return project ? { session, project } : null;
 }
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 76d40df (att)
 function buildGitHubWritePermissionMessage(error?: unknown) {
   if (error instanceof HostingGitHubApiError) {
     if (error.ssoUrl) {
@@ -113,16 +91,8 @@ type FileTreeNode = {
   children?: FileTreeNode[];
 };
 
-<<<<<<< HEAD
-<<<<<<< HEAD
 type FilePayloadLike = Record<string, unknown>;
 
-=======
->>>>>>> 76d40df (att)
-=======
-type FilePayloadLike = Record<string, unknown>;
-
->>>>>>> 2922bb1 (Atualização de hoje)
 function languageFromFilePath(path: string) {
   const baseName = path.split("/").pop()?.toLowerCase() || "";
   const extension = baseName.includes(".") ? baseName.split(".").pop()?.toLowerCase() || "" : baseName;
@@ -227,10 +197,6 @@ function languageFromFilePath(path: string) {
   return languages[extension] || null;
 }
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 2922bb1 (Atualização de hoje)
 function fileExtensionFromPath(path: string) {
   const baseName = path.split("/").pop()?.toLowerCase() || "";
   return baseName.includes(".") ? baseName.split(".").pop()?.toLowerCase() || "" : "";
@@ -317,11 +283,6 @@ function buildRawFileResponse(path: string, file: FilePayloadLike | null) {
   );
 }
 
-<<<<<<< HEAD
-=======
->>>>>>> 76d40df (att)
-=======
->>>>>>> 2922bb1 (Atualização de hoje)
 function normalizeFilePath(value: unknown) {
   return (readString(value) || "").replace(/^\/+|\/+$/g, "").replace(/\\/g, "/");
 }
@@ -431,11 +392,6 @@ async function updateRuntimeFilesPayload(input: {
     .eq("id", input.projectId);
 }
 
-<<<<<<< HEAD
-=======
->>>>>>> 9c6e756 (Att master)
-=======
->>>>>>> 76d40df (att)
 export async function GET(request: NextRequest, { params }: RouteProps) {
   const { code } = await params;
   const loaded = await load(code);
@@ -446,24 +402,13 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
   }
   const path = request.nextUrl.searchParams.get("path") || "";
   const sync = request.nextUrl.searchParams.get("sync") === "1";
-<<<<<<< HEAD
-<<<<<<< HEAD
   const raw = request.nextUrl.searchParams.get("raw") === "1";
-=======
->>>>>>> 9c6e756 (Att master)
-=======
-  const raw = request.nextUrl.searchParams.get("raw") === "1";
->>>>>>> 2922bb1 (Atualização de hoje)
   try {
     const payload = await requestVpsAgent({
       project: loaded.project,
       path: `/v1/vps/${loaded.project.vps_code}/files?path=${encodeURIComponent(path)}${sync ? "&recursive=1" : ""}`,
       timeoutMs: 12_000,
     });
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 2922bb1 (Atualização de hoje)
     if (raw && path) {
       const response = buildRawFileResponse(path, extractFilePayload(payload));
       if (response) return response;
@@ -476,7 +421,6 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
         }),
       );
     }
-<<<<<<< HEAD
   } catch {
     const runtimePayload = isRecord(loaded.project.runtime_status_payload)
       ? loaded.project.runtime_status_payload
@@ -502,48 +446,6 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
     }
     const token = await readHostingGitHubToken(loaded.project.user_id);
     let githubFailed = false;
-=======
-    return applyNoStoreHeaders(
-      NextResponse.json({
-        ok: true,
-        ...(isRecord(payload) ? payload : { payload }),
-      }),
-    );
-=======
->>>>>>> 2922bb1 (Atualização de hoje)
-  } catch {
-<<<<<<< HEAD
-<<<<<<< HEAD
-    const token = await readHostingGitHubToken();
->>>>>>> 9c6e756 (Att master)
-=======
-=======
-    const runtimePayload = isRecord(loaded.project.runtime_status_payload)
-      ? loaded.project.runtime_status_payload
-      : {};
-    const fileContents = isRecord(runtimePayload.fileContents) ? runtimePayload.fileContents : {};
-    if (path && typeof fileContents[path] === "string") {
-      if (raw) {
-        const response = buildRawFileResponse(path, { content: fileContents[path] });
-        if (response) return response;
-      }
-      return applyNoStoreHeaders(
-        NextResponse.json({
-          ok: true,
-          file: {
-            path,
-            name: fileNameFromPath(path),
-            content: fileContents[path],
-          },
-          agentConnected: false,
-          source: "panel",
-        }),
-      );
-    }
->>>>>>> 76d40df (att)
-    const token = await readHostingGitHubToken(loaded.project.user_id);
-    let githubFailed = false;
->>>>>>> 7babcb8 (att)
     if (token && path) {
       const file = await fetchHostingGitHubRepositoryFile({
         token,
@@ -551,9 +453,6 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
         repo: loaded.project.github_repo,
         branch: loaded.project.github_branch,
         path,
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
       }).catch((error) => {
         githubFailed = isPermanentHostingGitHubAuthError(error);
         return null;
@@ -563,23 +462,6 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
           const response = buildRawFileResponse(path, file);
           if (response) return response;
         }
-<<<<<<< HEAD
-=======
-      }).catch(() => null);
-=======
-      }).catch(() => {
-        githubFailed = true;
-=======
-      }).catch((error) => {
-        githubFailed = isPermanentHostingGitHubAuthError(error);
->>>>>>> 76d40df (att)
-        return null;
-      });
->>>>>>> 7babcb8 (att)
-      if (file) {
->>>>>>> 9c6e756 (Att master)
-=======
->>>>>>> 2922bb1 (Atualização de hoje)
         return applyNoStoreHeaders(
           NextResponse.json({ ok: true, file, agentConnected: false, source: "github" }),
         );
@@ -592,26 +474,10 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
         owner: loaded.project.github_owner,
         repo: loaded.project.github_repo,
         branch: loaded.project.github_branch,
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
       }).catch((error) => {
         githubFailed = isPermanentHostingGitHubAuthError(error);
         return null;
       });
-=======
-      }).catch(() => null);
->>>>>>> 9c6e756 (Att master)
-=======
-      }).catch(() => {
-        githubFailed = true;
-=======
-      }).catch((error) => {
-        githubFailed = isPermanentHostingGitHubAuthError(error);
->>>>>>> 76d40df (att)
-        return null;
-      });
->>>>>>> 7babcb8 (att)
       if (tree) {
         const currentPayload = isRecord(loaded.project.runtime_status_payload)
           ? loaded.project.runtime_status_payload
@@ -633,11 +499,6 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
       }
     }
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 2922bb1 (Atualização de hoje)
     if (raw && path) {
       return applyNoStoreHeaders(
         NextResponse.json({ ok: false, message: "Arquivo nao encontrado para preview." }, { status: 404 }),
@@ -656,28 +517,6 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
           : githubFailed
             ? "Nao consegui validar o GitHub deste repositorio. Reconecte a conta."
             : undefined,
-=======
-    const payload = isRecord(loaded.project.runtime_status_payload)
-      ? loaded.project.runtime_status_payload
-      : {};
-=======
->>>>>>> 76d40df (att)
-    return applyNoStoreHeaders(
-      NextResponse.json({
-        ok: true,
-        tree: Array.isArray(runtimePayload.fileTree) ? runtimePayload.fileTree : [],
-        file: null,
-        agentConnected: false,
-<<<<<<< HEAD
->>>>>>> 9c6e756 (Att master)
-=======
-        reconnectRequired: !token || githubFailed,
-        message: !token
-          ? "Reconecte o GitHub para espelhar os arquivos."
-          : githubFailed
-            ? "Nao consegui validar o GitHub deste repositorio. Reconecte a conta."
-            : undefined,
->>>>>>> 7babcb8 (att)
       }),
     );
   }
@@ -692,10 +531,6 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
     );
   }
   const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 76d40df (att)
   const action = readString(body.action) || "";
   const path = normalizeFilePath(body.path);
   const targetPath = normalizeFilePath(body.targetPath);
@@ -753,7 +588,6 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
       currentPayload,
       tree: nextTree,
       fileContents,
-<<<<<<< HEAD
     });
     await appendVpsEvent({
       projectId: loaded.project.id,
@@ -767,278 +601,6 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
       NextResponse.json({ ok: true, tree: nextTree, agentConnected: agentOk }),
     );
   }
-
-=======
-  const path = readString(body.path);
->>>>>>> 9c6e756 (Att master)
-  const content = typeof body.content === "string" ? body.content : null;
-  if (!path || content === null) {
-    return applyNoStoreHeaders(
-      NextResponse.json({ ok: false, message: "Arquivo invalido." }, { status: 400 }),
-    );
-  }
-<<<<<<< HEAD
-  const fileContents = isRecord(currentPayload.fileContents)
-    ? { ...currentPayload.fileContents } as Record<string, string>
-    : {};
-  const token = await readHostingGitHubToken(loaded.project.user_id);
-  let githubCommit: Awaited<ReturnType<typeof commitHostingGitHubRepositoryFile>> | null = null;
-  let githubCommitSource: "oauth" | "github_app" = "oauth";
-  let appInstallUrl = buildHostingGitHubAppInstallUrl();
-  let appPermissionMessage: string | null = null;
-  const resolveAppInstallContext = async () => {
-    const installation = await readHostingGitHubRepositoryInstallation({
-      owner: loaded.project.github_owner,
-      repo: loaded.project.github_repo,
-    });
-    if (installation?.html_url) appInstallUrl = installation.html_url;
-    appPermissionMessage = resolveHostingGitHubInstallationPermissionIssue(installation);
-    return installation;
-  };
-  const commitWithToken = (nextToken: string) => commitHostingGitHubRepositoryFile(
-    buildGitHubCommitPayload({
-      token: nextToken,
-      owner: loaded.project.github_owner,
-      repo: loaded.project.github_repo,
-      branch: loaded.project.github_branch,
-      path,
-      content,
-      vpsCode: loaded.project.vps_code,
-    }),
-  );
-  const tryGitHubAppCommit = async () => {
-    await resolveAppInstallContext();
-    const installation = await readHostingGitHubInstallationTokenForRepository({
-      owner: loaded.project.github_owner,
-      repo: loaded.project.github_repo,
-    });
-    if (!installation?.token) return null;
-    if (installation.installationUrl) appInstallUrl = installation.installationUrl;
-    if (installation.permissionIssue) appPermissionMessage = installation.permissionIssue;
-    const commit = await commitWithToken(installation.token);
-    githubCommitSource = "github_app";
-    return commit;
-  };
-
-  if (token) {
-    try {
-      githubCommit = await commitWithToken(token);
-    } catch (error) {
-      if (error instanceof HostingGitHubApiError && error.status === 401) {
-        const refreshedToken = await readHostingGitHubStoredToken(loaded.project.user_id);
-        if (refreshedToken && refreshedToken !== token) {
-          try {
-            githubCommit = await commitWithToken(refreshedToken);
-          } catch (retryError) {
-            githubCommit = await tryGitHubAppCommit().catch(() => null);
-            if (!githubCommit) {
-              if (retryError instanceof HostingGitHubApiError && retryError.status === 403) {
-                return applyNoStoreHeaders(
-                  NextResponse.json(
-                    {
-                      ok: false,
-                      reconnectRequired: true,
-                      reauthorizeRequired: true,
-                      ssoUrl: retryError.ssoUrl,
-                      installAppUrl: appInstallUrl,
-                      message: appPermissionMessage || buildGitHubWritePermissionMessage(retryError),
-                    },
-                    { status: 403 },
-                  ),
-                );
-              }
-              return applyNoStoreHeaders(
-                NextResponse.json(
-                  { ok: false, reconnectRequired: true, installAppUrl: appInstallUrl, message: appPermissionMessage || "Reconecte o GitHub para renovar a permissao de escrita deste repositorio." },
-                  { status: 401 },
-                ),
-              );
-            }
-          }
-        }
-      }
-      if (githubCommit) {
-        // Retry with stored/refresh token succeeded.
-      } else if (error instanceof HostingGitHubApiError && error.status === 403) {
-        githubCommit = await tryGitHubAppCommit().catch(() => null);
-        if (githubCommit) {
-          // GitHub App installation token succeeded.
-        } else {
-        return applyNoStoreHeaders(
-          NextResponse.json(
-            {
-              ok: false,
-              reconnectRequired: true,
-              reauthorizeRequired: true,
-              ssoUrl: error.ssoUrl,
-              installAppUrl: appInstallUrl,
-              message: appPermissionMessage || buildGitHubWritePermissionMessage(error),
-            },
-            { status: 403 },
-          ),
-        );
-        }
-      } else
-      if (isPermanentHostingGitHubAuthError(error)) {
-        githubCommit = await tryGitHubAppCommit().catch(() => null);
-        if (githubCommit) {
-          // GitHub App installation token succeeded.
-        } else {
-        return applyNoStoreHeaders(
-          NextResponse.json(
-            { ok: false, reconnectRequired: true, installAppUrl: appInstallUrl, message: appPermissionMessage || "Reconecte o GitHub para enviar esta alteracao ao repositorio." },
-            { status: 401 },
-          ),
-        );
-        }
-      }
-      if (!githubCommit) {
-        return applyNoStoreHeaders(
-          NextResponse.json(
-            { ok: false, message: error instanceof Error ? error.message : "Nao consegui criar commit no GitHub." },
-            { status: 502 },
-          ),
-        );
-      }
-    }
-  } else {
-    githubCommit = await tryGitHubAppCommit().catch(() => null);
-    if (!githubCommit) {
-      return applyNoStoreHeaders(
-        NextResponse.json(
-          { ok: false, reconnectRequired: true, installAppUrl: appInstallUrl, message: appPermissionMessage || "Conecte o GitHub ou instale o GitHub App Flowdesk para salvar e commitar alteracoes no repositorio." },
-          { status: 401 },
-        ),
-      );
-    }
-  }
-
-  fileContents[path] = content;
-  await updateRuntimeFilesPayload({
-    projectId: loaded.project.id,
-    currentPayload,
-    tree: currentTree,
-    fileContents,
-  }).catch(() => null);
-
-  let agentOk = false;
-  try {
-    await requestVpsAgent({
-=======
-  try {
-    const payload = await requestVpsAgent({
->>>>>>> 9c6e756 (Att master)
-      project: loaded.project,
-      method: "POST",
-      path: `/v1/vps/${loaded.project.vps_code}/files`,
-      body: { path, content },
-      timeoutMs: 15_000,
-=======
->>>>>>> 76d40df (att)
-    });
-<<<<<<< HEAD
-    agentOk = true;
-  } catch {
-    agentOk = false;
-  }
-
-  const savedThroughBranch = githubCommit?.mode === "branch";
-  const successMessage = savedThroughBranch
-    ? githubCommit?.pullRequestUrl
-      ? `Alteracao enviada para a branch ${githubCommit.branch} e PR #${githubCommit.pullRequestNumber || ""} preparado.`
-      : `Alteracao enviada para a branch ${githubCommit.branch}.`
-    : githubCommit?.commitSha
-      ? `Commit ${githubCommit.commitSha.slice(0, 7)} enviado ao GitHub.`
-      : "Alteracao enviada ao GitHub.";
-
-  if (githubCommit?.commitSha) {
-    const environment = savedThroughBranch ? "preview" : "production";
-    const status = savedThroughBranch ? "preview" : "production";
-    const supabase = getSupabaseAdminClientOrThrow();
-    const existingDeployment = await supabase
-      .from("hosting_vps_deployments")
-      .select("id")
-      .eq("hosting_project_id", loaded.project.id)
-      .eq("commit_sha", githubCommit.commitSha)
-      .eq("branch", githubCommit.branch)
-      .eq("environment", environment)
-      .maybeSingle<{ id: number }>();
-    if (!existingDeployment.data) {
-      await supabase.from("hosting_vps_deployments").insert({
-        hosting_project_id: loaded.project.id,
-        environment,
-        status,
-        branch: githubCommit.branch,
-        commit_sha: githubCommit.commitSha,
-        commit_author: "Flowdesk",
-        commit_message: `Atualiza ${path} pelo painel Flowdesk`,
-        build_started_at: new Date().toISOString(),
-        build_finished_at: new Date().toISOString(),
-        deployed_at: new Date().toISOString(),
-        logs: [],
-        metadata: {
-          source: "panel_file_editor",
-          commitSource: githubCommitSource,
-          baseBranch: githubCommit.baseBranch,
-          commitUrl: githubCommit.commitUrl,
-          pullRequestUrl: githubCommit.pullRequestUrl,
-          pullRequestNumber: githubCommit.pullRequestNumber,
-          filePath: path,
-        },
-      });
-    }
-  }
-
-  await appendVpsEvent({
-    projectId: loaded.project.id,
-    userId: loaded.session.user.id,
-    action: "file_write",
-    status: "succeeded",
-    message: savedThroughBranch
-      ? `Arquivo ${path} salvo em branch Flowdesk por protecao da branch principal.`
-      : `Arquivo ${path} salvo e commitado no GitHub.`,
-    responsePayload: {
-      source: githubCommitSource,
-      agentConnected: agentOk,
-      commit: githubCommit,
-    },
-  });
-
-  if (!agentOk) {
-    await getSupabaseAdminClientOrThrow().from("hosting_vps_logs").insert({
-      hosting_project_id: loaded.project.id,
-      level: "warn",
-      source: "files",
-      message: `Arquivo ${path} commitado no GitHub, mas o agente VPS nao confirmou escrita local agora.`,
-      metadata: { path, commit: githubCommit, source: githubCommitSource },
-    });
-  }
-
-  return applyNoStoreHeaders(
-    NextResponse.json({
-      ok: true,
-      source: githubCommitSource,
-      agentConnected: agentOk,
-      commit: githubCommit,
-      message: successMessage,
-    }),
-  );
-=======
-    await appendVpsEvent({
-      projectId: loaded.project.id,
-      userId: loaded.session.user.id,
-      action: "file_write",
-      status: "succeeded",
-      message: `${action} ${path}${targetPath ? ` -> ${targetPath}` : ""}.`,
-      responsePayload: { agentConnected: agentOk },
-    });
-    return applyNoStoreHeaders(
-      NextResponse.json({ ok: true, tree: nextTree, agentConnected: agentOk }),
-    );
-  }
-<<<<<<< HEAD
->>>>>>> 9c6e756 (Att master)
-=======
 
   const content = typeof body.content === "string" ? body.content : null;
   if (!path || content === null) {
@@ -1284,5 +846,4 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
       message: successMessage,
     }),
   );
->>>>>>> 76d40df (att)
 }
