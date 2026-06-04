@@ -3,11 +3,12 @@ import QRCode from "qrcode";
 
 export async function GET(
   request: Request,
-  { params }: { params: { studentId: string } }
+  { params }: { params: Promise<{ studentId: string }> }
 ) {
   try {
+    const { studentId } = await params;
     const students = await getStudents();
-    const student = students.find((s) => s.id === params.studentId);
+    const student = students.find((s) => s.id === studentId);
 
     if (!student) {
       return new Response("Aluno não encontrado", { status: 404 });
@@ -17,13 +18,12 @@ export async function GET(
     const qrCodeData = student.qr_code || student.id;
     const qrCodeBuffer = await QRCode.toBuffer(qrCodeData, {
       errorCorrectionLevel: "H",
-      type: "image/png",
-      quality: 0.95,
+      type: "png",
       margin: 1,
       width: 300,
     });
 
-    return new Response(qrCodeBuffer, {
+    return new Response(qrCodeBuffer as unknown as BodyInit, {
       headers: {
         "Content-Type": "image/png",
         "Cache-Control": "public, max-age=86400",

@@ -99,7 +99,7 @@ export default function MobileAppPage() {
                 </>
               )}
             </button>
-            {navigator.share && (
+            {typeof navigator !== 'undefined' && typeof navigator.share === 'function' && (
               <button
                 onClick={handleShare}
                 className="w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white font-semibold py-3 rounded-xl transition"

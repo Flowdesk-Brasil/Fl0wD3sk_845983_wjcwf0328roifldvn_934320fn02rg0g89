@@ -12,6 +12,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { shouldUseLocalData, useLocalData } from "@/lib/supabase";
 import type { UserRole } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { PosTerminalListener } from "@/components/pos-terminal";
 
 interface NavItem {
   href: string;
@@ -112,6 +113,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#f7f9fc]">
+      <PosTerminalListener email={user.email} />
+
       {sidebarOpen && (
         <button className="fixed inset-0 z-40 bg-[#101827]/40 backdrop-blur-sm lg:hidden" onClick={() => setSidebarOpen(false)} aria-label="Fechar menu" />
       )}
