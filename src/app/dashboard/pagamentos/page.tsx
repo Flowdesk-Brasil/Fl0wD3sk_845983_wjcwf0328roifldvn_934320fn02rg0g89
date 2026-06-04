@@ -116,9 +116,9 @@ export default function PagamentosPage() {
               <td className="hide-mobile">{payment.method ? methodLabels[payment.method] : "Não informado"}</td>
               <td><StatusBadge tone={tones[payment.status]}>{labels[payment.status]}</StatusBadge></td>
               <td><div className="flex flex-wrap gap-2">
-                {payment.status === "pending" && <button className="btn btn-primary min-h-8 px-3 py-1.5 text-[10px]" disabled={working === payment.id} onClick={() => void generatePix(payment)}><QrCode className="h-3.5 w-3.5" /> Gerar PIX</button>}
+                {payment.status !== "paid" && <button className="btn btn-primary min-h-8 px-3 py-1.5 text-[10px]" disabled={working === payment.id} onClick={() => void generatePix(payment)}><QrCode className="h-3.5 w-3.5" /> Gerar PIX</button>}
                 {payment.status === "pending" && <button className="btn btn-success min-h-8 px-3 py-1.5 text-[10px]" disabled={working === payment.id} onClick={() => setSelected(payment)}>Receber manualmente</button>}
-                {payment.status === "paid" && <button className="btn btn-secondary min-h-8 px-3 py-1.5 text-[10px]" disabled={working === payment.id} onClick={() => void reopen(payment)}><RotateCcw className="h-3.5 w-3.5" /> Pendente</button>}
+                {payment.status !== "pending" && <button className="btn btn-secondary min-h-8 px-3 py-1.5 text-[10px]" disabled={working === payment.id} onClick={() => void reopen(payment)}><RotateCcw className="h-3.5 w-3.5" /> Pendente</button>}
               </div></td>
             </tr>
           ))}</tbody>

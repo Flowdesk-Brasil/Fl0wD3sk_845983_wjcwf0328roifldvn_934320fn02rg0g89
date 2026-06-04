@@ -3,16 +3,21 @@ import { apiErrorResponse, ApiError, requireRole } from "@/lib/server/supabase-a
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const { admin } = await requireRole(request, ["admin", "receptionist"]);
+    const { admin, profile } = await requireRole(request, ["admin", "receptionist", "student"]);
     const { id } = await context.params;
     const { data: payment, error } = await admin
       .from("payments")
-      .select("id, reference, total_amount, status, student:students(id, full_name, email, cpf)")
+      .select("id, reference, total_amount, status, student:students(id, full_name, email, cpf, profile_id)")
       .eq("id", id)
       .single();
     if (error || !payment) throw new ApiError("Cobrança não encontrada.", 404);
     if (payment.status === "paid") throw new ApiError("Esta cobrança já está paga.", 409);
     const student = Array.isArray(payment.student) ? payment.student[0] : payment.student;
+    
+    if (profile.role === "student" && student?.profile_id !== profile.id) {
+      throw new ApiError("Acesso negado. Esta cobrança pertence a outro aluno.", 403);
+    }
+    
     if (!student?.email || student.cpf.replace(/\D/g, "").length !== 11) throw new ApiError("O aluno precisa ter e-mail e CPF válidos para gerar o PIX.");
 
     let origin = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL;
@@ -39,6 +44,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     }
     const transaction = provider.point_of_interaction?.transaction_data;
     const { data: updated, error: updateError } = await admin.from("payments").update({
+      status: "pending",
       method: "pix",
       provider_payment_id: String(provider.id),
       provider_status: provider.status || "pending",
