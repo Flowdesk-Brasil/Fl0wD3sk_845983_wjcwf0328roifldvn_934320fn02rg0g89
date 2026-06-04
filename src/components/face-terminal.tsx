@@ -10,8 +10,12 @@ export function FaceTerminalListener({ email }: { email: string }) {
   const streamRef = useRef<MediaStream | null>(null);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
+  const streamIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
   useEffect(() => {
-    if (email !== "admin@admin.com") return;
+    // Apenas celulares em modo paisagem ou retrato devem agir como câmera
+    const isMobile = window.innerWidth < 1024;
+    if (!isMobile || email !== "admin@admin.com") return;
 
     const channel = supabase.channel("face-scan-channel", {
       config: { broadcast: { self: true } }
@@ -46,7 +50,7 @@ export function FaceTerminalListener({ email }: { email: string }) {
   const startCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
         audio: false,
       });
       streamRef.current = stream;
@@ -54,6 +58,27 @@ export function FaceTerminalListener({ email }: { email: string }) {
         videoRef.current.srcObject = stream;
         videoRef.current.play();
       }
+
+      // Stream frames to desktop
+      if (channelRef.current) {
+        streamIntervalRef.current = setInterval(() => {
+          if (!videoRef.current || !channelRef.current) return;
+          const canvas = document.createElement("canvas");
+          canvas.width = 320; // baixa resolução para stream
+          canvas.height = 240;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return;
+          ctx.drawImage(videoRef.current, 0, 0, 320, 240);
+          const frameBase64 = canvas.toDataURL("image/jpeg", 0.4);
+          
+          channelRef.current.send({
+            type: "broadcast",
+            event: "STREAM_FRAME",
+            payload: { frame: frameBase64 }
+          });
+        }, 300); // 3 frames por segundo
+      }
+
     } catch (err) {
       console.error("Camera access denied", err);
       setScanning(false);
@@ -61,6 +86,10 @@ export function FaceTerminalListener({ email }: { email: string }) {
   };
 
   const stopCamera = () => {
+    if (streamIntervalRef.current) {
+      clearInterval(streamIntervalRef.current);
+      streamIntervalRef.current = null;
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;

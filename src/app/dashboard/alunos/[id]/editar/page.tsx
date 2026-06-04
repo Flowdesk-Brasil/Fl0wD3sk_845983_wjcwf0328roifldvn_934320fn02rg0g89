@@ -79,6 +79,7 @@ export default function EditarAlunoPage({ params }: { params: Promise<{ id: stri
   const [selectedSessions, setSelectedSessions] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [facialScanActive, setFacialScanActive] = useState(false);
+  const [streamFrame, setStreamFrame] = useState<string | null>(null);
   const [loadingInitial, setLoadingInitial] = useState(true);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
@@ -131,6 +132,12 @@ export default function EditarAlunoPage({ params }: { params: Promise<{ id: stri
         if (payload.imageBase64) {
           setForm(prev => ({ ...prev, photo_base64: payload.imageBase64 }));
           setFacialScanActive(false);
+          setStreamFrame(null);
+        }
+      })
+      .on("broadcast", { event: "STREAM_FRAME" }, ({ payload }) => {
+        if (payload.frame) {
+          setStreamFrame(payload.frame);
         }
       })
       .subscribe();
@@ -308,14 +315,21 @@ export default function EditarAlunoPage({ params }: { params: Promise<{ id: stri
               
               <div className="flex-1">
                 {facialScanActive ? (
-                  <div className="p-4 rounded-2xl border-2 border-blue-500 bg-blue-50">
+                  <div className="p-4 rounded-2xl border-2 border-blue-500 bg-blue-50 relative overflow-hidden">
+                    {streamFrame && (
+                      <div className="absolute right-4 top-4 w-24 h-32 rounded-xl overflow-hidden border-2 border-white shadow-lg z-10">
+                        <img src={streamFrame} alt="Live Stream" className="w-full h-full object-cover scale-x-[-1]" />
+                      </div>
+                    )}
                     <h3 className="font-bold text-blue-800 flex items-center gap-2 mb-2">
                       <span className="relative flex h-3 w-3"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span></span>
-                      Aguardando câmera do celular...
+                      {streamFrame ? "Câmera Sincronizada" : "Aguardando câmera do celular..."}
                     </h3>
-                    <p className="text-xs text-blue-600 mb-4">Peça para o aluno olhar para a câmera do celular de recepção e clique em capturar.</p>
-                    <div className="flex gap-2">
-                      <button type="button" onClick={captureFacialScan} className="btn btn-primary flex-1"><Camera className="h-4 w-4" /> Tirar Foto</button>
+                    <p className="text-xs text-blue-600 mb-4 pr-28">
+                      {streamFrame ? "O vídeo ao lado é o que o celular está vendo. Clique em tirar foto quando estiver alinhado." : "Peça para o aluno olhar para a câmera do celular de recepção e aguarde o vídeo aparecer."}
+                    </p>
+                    <div className="flex gap-2 w-full max-w-[200px]">
+                      <button type="button" onClick={captureFacialScan} disabled={!streamFrame} className="btn btn-primary flex-1 disabled:opacity-50"><Camera className="h-4 w-4" /> Tirar Foto</button>
                       <button type="button" onClick={() => { setFacialScanActive(false); channelRef.current?.send({ type: "broadcast", event: "STOP_SCAN" }); }} className="btn btn-secondary flex-none">Cancelar</button>
                     </div>
                   </div>
