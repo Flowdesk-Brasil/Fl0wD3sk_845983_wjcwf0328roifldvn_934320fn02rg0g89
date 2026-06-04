@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { CheckCircle2, KeyRound } from "lucide-react";
 
-export default function ResetPasswordPage() {
+function ResetPasswordForm() {
   const router = useRouter();
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -13,21 +13,27 @@ export default function ResetPasswordPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
+  const searchParams = useSearchParams();
+  const token = searchParams.get("token");
+
   useEffect(() => {
-    // Escuta mudanças de hash na URL (o Supabase processa o token do recovery link)
     const handleAuth = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        // Tenta capturar do hash se ainda estiver processando
-        supabase.auth.onAuthStateChange((event, session) => {
-          if (event === "PASSWORD_RECOVERY") {
-            // O usuário está pronto para redefinir
-          }
-        });
+      if (token) {
+        const { error } = await supabase.auth.verifyOtp({ token_hash: token, type: "recovery" });
+        if (error) setError("O link de recuperação é inválido ou expirou.");
+      } else {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          supabase.auth.onAuthStateChange((event, session) => {
+            if (event === "PASSWORD_RECOVERY") {
+              // O usuário está pronto para redefinir
+            }
+          });
+        }
       }
     };
     void handleAuth();
-  }, []);
+  }, [token]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -131,5 +137,13 @@ export default function ResetPasswordPage() {
         </form>
       </div>
     </div>
+  );
+}
+
+export default function ResetPasswordPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Carregando...</div>}>
+      <ResetPasswordForm />
+    </Suspense>
   );
 }
