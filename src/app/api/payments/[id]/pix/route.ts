@@ -23,6 +23,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     let origin = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL;
     if (!origin && process.env.VERCEL_URL) origin = `https://${process.env.VERCEL_URL}`;
     if (!origin) origin = new URL(request.url).origin;
+    
+    if (origin.includes("localhost") || origin.includes("127.0.0.1")) {
+      origin = "https://corpoeevolucao.vercel.app";
+    }
+    
     origin = origin.replace(/\/+$/, "");
     
     const webhookToken = process.env.MERCADO_PAGO_WEBHOOK_TOKEN?.trim();
