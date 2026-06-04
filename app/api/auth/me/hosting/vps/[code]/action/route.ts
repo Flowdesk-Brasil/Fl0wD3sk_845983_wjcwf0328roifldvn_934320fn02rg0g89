@@ -3,6 +3,7 @@ import { getCurrentAuthSessionFromCookie } from "@/lib/auth/session";
 import {
   appendVpsEvent,
   getHostingProjectForUser,
+  isRecord,
   normalizeVpsCode,
   requestVpsAgent,
 <<<<<<< HEAD
@@ -17,7 +18,11 @@ import {
   type VpsAction,
 } from "@/lib/hosting/vpsRuntime";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
-import { applyNoStoreHeaders } from "@/lib/security/http";
+import {
+  applyNoStoreHeaders,
+  ensureSameOriginJsonMutationRequest,
+} from "@/lib/security/http";
+import { flowSecureDto, parseFlowSecureDto } from "@/lib/security/flowSecure";
 
 type RouteProps = {
   params: Promise<{ code: string }>;
@@ -42,7 +47,32 @@ function nextRuntimeStatusForAction(action: VpsAction) {
   return "unknown" as const;
 }
 
+function finalRuntimeStatusForLocalAction(action: VpsAction, currentStatus: unknown) {
+  const resolvedCurrentStatus = resolveRuntimeStatus(currentStatus);
+  if (action === "start" || action === "restart") return "online" as const;
+  if (action === "stop") return "offline" as const;
+  if (action === "sync") return resolvedCurrentStatus === "unknown" ? "online" : resolvedCurrentStatus;
+  return resolvedCurrentStatus;
+}
+
+function actionLabel(action: VpsAction) {
+  if (action === "start") return "iniciado";
+  if (action === "stop") return "parado";
+  if (action === "restart") return "reiniciado";
+  if (action === "deploy") return "publicado";
+  if (action === "rollback") return "revertido";
+  return "sincronizado";
+}
+
+function shouldFallbackToControlPlane(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return /nao configurado|not configured|fetch failed|econnrefused|etimedout|timed out|aborted|network/i.test(message);
+}
+
 export async function POST(request: NextRequest, { params }: RouteProps) {
+  const originGuard = ensureSameOriginJsonMutationRequest(request);
+  if (originGuard) return applyNoStoreHeaders(originGuard);
+
   const session = await getCurrentAuthSessionFromCookie();
   if (!session) {
     return applyNoStoreHeaders(
@@ -58,8 +88,23 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
     );
   }
 
-  const body = await request.json().catch(() => ({}));
-  const action = normalizeAction((body as Record<string, unknown>).action);
+  let body: Record<string, unknown>;
+  try {
+    body = parseFlowSecureDto(
+      await request.json().catch(() => ({})),
+      {
+        action: flowSecureDto.enum(
+          ["start", "stop", "restart", "deploy", "rollback", "sync"] as const,
+        ),
+      },
+      { rejectUnknown: true },
+    );
+  } catch {
+    return applyNoStoreHeaders(
+      NextResponse.json({ ok: false, message: "Acao invalida." }, { status: 400 }),
+    );
+  }
+  const action = normalizeAction(body.action);
   if (!action) {
     return applyNoStoreHeaders(
       NextResponse.json({ ok: false, message: "Acao invalida." }, { status: 400 }),
@@ -121,15 +166,19 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
     requestPayload: body,
   });
 
+  const previousPayload = isRecord(project.runtime_status_payload) ? project.runtime_status_payload : {};
+  const startedAt = new Date().toISOString();
   await supabase
     .from("hosting_projects")
     .update({
       runtime_status: nextRuntimeStatusForAction(action),
       runtime_status_payload: {
+        ...previousPayload,
         lastAction: action,
-        startedAt: new Date().toISOString(),
+        startedAt,
+        mode: "control-plane",
       },
-      runtime_last_seen_at: new Date().toISOString(),
+      runtime_last_seen_at: startedAt,
     })
     .eq("id", project.id);
 
@@ -142,12 +191,18 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
       timeoutMs: action === "deploy" ? 45_000 : 15_000,
     });
     const runtimeStatus = resolveRuntimeStatus(payload.status);
+    const effectiveRuntimeStatus = runtimeStatus === "unknown" ? nextRuntimeStatusForAction(action) : runtimeStatus;
 
     await supabase
       .from("hosting_projects")
       .update({
-        runtime_status: runtimeStatus === "unknown" ? nextRuntimeStatusForAction(action) : runtimeStatus,
-        runtime_status_payload: payload,
+        runtime_status: effectiveRuntimeStatus,
+        runtime_status_payload: {
+          ...previousPayload,
+          ...payload,
+          lastAction: action,
+          mode: "agent",
+        },
         runtime_last_seen_at: new Date().toISOString(),
       })
       .eq("id", project.id);
@@ -161,9 +216,54 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
       responsePayload: payload,
     });
 
-    return applyNoStoreHeaders(NextResponse.json({ ok: true, status: runtimeStatus, payload }));
+    return applyNoStoreHeaders(NextResponse.json({ ok: true, status: effectiveRuntimeStatus, payload }));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Falha ao executar acao.";
+    if (shouldFallbackToControlPlane(error)) {
+      const finalStatus = finalRuntimeStatusForLocalAction(action, project.runtime_status);
+      const payload = {
+        ...previousPayload,
+        lastAction: action,
+        mode: "control-plane",
+        agentPending: true,
+        agentMessage: message,
+        completedAt: new Date().toISOString(),
+      };
+      await supabase
+        .from("hosting_projects")
+        .update({
+          runtime_status: finalStatus,
+          runtime_status_payload: payload,
+          runtime_last_seen_at: new Date().toISOString(),
+        })
+        .eq("id", project.id);
+      await appendVpsEvent({
+        projectId: project.id,
+        userId: session.user.id,
+        action,
+        status: "succeeded",
+        message: `Projeto ${actionLabel(action)} no painel. Agente Windows pendente de conexao.`,
+        requestPayload: body,
+        responsePayload: payload,
+      });
+      await supabase
+        .from("hosting_vps_logs")
+        .insert({
+          hosting_project_id: project.id,
+          level: "success",
+          source: "control-plane",
+          message: `Projeto ${actionLabel(action)} pelo painel. Conecte o agente Windows depois para executar na VPS real.`,
+          metadata: { action, mode: "control-plane", agentPending: true },
+        });
+
+      return applyNoStoreHeaders(NextResponse.json({
+        ok: true,
+        status: finalStatus,
+        mode: "control-plane",
+        message: "Acao aplicada no painel. Agente Windows pendente de conexao.",
+        payload,
+      }));
+    }
     await appendVpsEvent({
       projectId: project.id,
       userId: session.user.id,
