@@ -2,7 +2,8 @@
 
 import type { LucideIcon } from "lucide-react";
 import { AlertCircle, Inbox, Loader2, Search, X } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 
 export function PageHeader({
@@ -95,8 +96,23 @@ export function Modal({
   children: ReactNode;
   size?: "sm" | "md" | "lg";
 }) {
-  if (!open) return null;
-  return (
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    if (open) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [open]);
+
+  if (!open || !mounted) return null;
+
+  return createPortal(
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <section
         className={cn("modal-box", size === "sm" && "max-w-md", size === "md" && "max-w-xl", size === "lg" && "max-w-3xl")}
@@ -116,7 +132,8 @@ export function Modal({
         </div>
         {children}
       </section>
-    </div>
+    </div>,
+    document.body
   );
 }
 
