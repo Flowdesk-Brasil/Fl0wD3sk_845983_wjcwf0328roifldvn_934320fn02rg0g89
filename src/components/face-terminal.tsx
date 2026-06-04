@@ -119,31 +119,35 @@ export function FaceTerminalListener({ email }: { email: string }) {
   if (!scanning) return null;
 
   return (
-    <div className="fixed inset-0 z-[10000] flex flex-col items-center justify-center bg-black text-white">
+    <div className="fixed inset-0 z-[10000] bg-black">
+      <video 
+        ref={videoRef} 
+        autoPlay 
+        playsInline 
+        muted 
+        className="w-full h-full object-cover scale-x-[-1]" 
+      />
+      
       <div className="absolute top-8 left-8 right-8 flex justify-between items-center z-10">
-        <h2 className="text-xl font-bold flex items-center gap-2"><Camera className="h-6 w-6" /> FACIAL SCAN</h2>
-        <button onClick={() => { setScanning(false); channelRef.current?.send({ type: "broadcast", event: "STOP_SCAN" }); }} className="p-3 bg-white/20 rounded-full">
+        <h2 className="text-xl font-bold flex items-center gap-2 text-white drop-shadow-md"><Camera className="h-6 w-6" /> SCAN FACIAL</h2>
+        <button onClick={() => { setScanning(false); channelRef.current?.send({ type: "broadcast", event: "STOP_SCAN" }); }} className="p-3 bg-black/40 text-white rounded-full backdrop-blur transition-colors hover:bg-red-500">
           <X className="h-6 w-6" />
         </button>
       </div>
 
-      <div className="relative w-full max-w-lg aspect-[3/4] overflow-hidden rounded-3xl border-4 border-blue-500 shadow-[0_0_50px_rgba(59,130,246,0.5)]">
-        <video 
-          ref={videoRef} 
-          autoPlay 
-          playsInline 
-          muted 
-          className="w-full h-full object-cover scale-x-[-1]" 
-        />
-        
-        {/* Face Frame Overlay */}
-        <div className="absolute inset-0 pointer-events-none">
-          <div className="w-full h-full border-[20px] border-black/40"></div>
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[70%] h-[60%] border-2 border-dashed border-white/50 rounded-[40px]"></div>
-          <p className="absolute bottom-12 w-full text-center text-sm font-bold animate-pulse text-white drop-shadow-md">
-            Alinhe o rosto. O atendente irá capturar.
-          </p>
-        </div>
+      {/* Face Frame Overlay - Egg Shape */}
+      <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center overflow-hidden">
+         {/* A shadow muito grande cria o overlay escuro ao redor do ovo */}
+         <div 
+           className="w-64 h-80 sm:w-80 sm:h-96 border-4 border-dashed border-white/70 shadow-[0_0_0_9999px_rgba(0,0,0,0.6)]" 
+           style={{ borderRadius: '50% 50% 50% 50% / 40% 40% 60% 60%' }}
+         />
+         <p className="absolute bottom-24 w-full text-center text-lg font-bold animate-pulse text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] px-6">
+           Alinhe o rosto no centro oval.
+         </p>
+         <p className="absolute bottom-16 w-full text-center text-sm font-semibold text-white/80 drop-shadow-md px-6">
+           O atendente irá capturar a foto.
+         </p>
       </div>
     </div>
   );
