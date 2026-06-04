@@ -20,7 +20,8 @@ export default function NovoAlunoPage() {
     setSaving(true);
     
     try {
-      const { error } = await supabase.from('students').insert([{
+      const isDummy = !process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL.includes("dummy.supabase.co");
+      const data = {
         full_name: form.full_name,
         email: form.email || null,
         cpf: form.cpf,
@@ -38,13 +39,21 @@ export default function NovoAlunoPage() {
         height: form.height ? parseFloat(form.height) : null,
         objective: form.objective || null,
         status: 'active'
-      }]);
-      
+      };
+
+      if (isDummy) {
+        import("@/lib/localDB").then(({ localDB }) => {
+          localDB.insert('students', data);
+          router.push('/dashboard/alunos');
+        });
+        return;
+      }
+
+      const { error } = await supabase.from('students').insert([data]);
       if (error) throw error;
       router.push('/dashboard/alunos');
     } catch (e: any) {
       alert("Erro ao salvar aluno: " + e.message);
-    } finally {
       setSaving(false);
     }
   };

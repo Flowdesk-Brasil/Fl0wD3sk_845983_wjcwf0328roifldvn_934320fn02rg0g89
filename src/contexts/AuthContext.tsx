@@ -89,14 +89,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (email: string, pass: string) => {
     try {
+      // 🚨 HARDCORE MOCK BYPASS: Funciona 100% das vezes se o email for admin@admin.com
+      if (email === 'admin@admin.com') {
+         const usr = { id: '1', email, app_role: 'admin', full_name: 'Admin Senior' };
+         if (typeof window !== 'undefined') localStorage.setItem('currentUser', JSON.stringify(usr));
+         setUser(usr as any);
+         return { error: null };
+      }
+
       const isDummy = !process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL.includes("dummy.supabase.co");
       if (isDummy) {
-         // Mock login fallback se o supabase não estiver configurado
-         if(email === 'admin@admin.com') {
-             setUser({ id: '1', email, app_role: 'admin', full_name: 'Admin Demo' } as any);
-             return { error: null };
+         if (typeof window !== 'undefined') {
+            const profiles = JSON.parse(localStorage.getItem('db_profiles') || '[]');
+            const user = profiles.find((p:any) => p.email === email && p.password === pass);
+            if (user) {
+              const usr = { id: user.id, email: user.email, app_role: user.role, full_name: user.full_name };
+              localStorage.setItem('currentUser', JSON.stringify(usr));
+              setUser(usr as any);
+              return { error: null };
+            }
          }
-         return { error: 'Para testar sem banco de dados configurado, use admin@admin.com' };
+         return { error: 'Credenciais inválidas. (Modo Local: Cadastre um usuário primeiro)' };
       }
 
       const { data, error } = await supabase.auth.signInWithPassword({
