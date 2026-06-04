@@ -2,6 +2,7 @@
 
 import { Camera, CameraOff, Loader2, ScanLine, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ErrorBanner } from "@/components/ui";
 
 type BarcodeResult = { rawValue: string };
@@ -61,7 +62,7 @@ export function QrScanner({
 
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
-          video: { facingMode: { ideal: "environment" } },
+          video: { facingMode: "user" },
         });
         if (!active) {
           stream.getTracks().forEach((track) => track.stop());
@@ -118,23 +119,63 @@ export function QrScanner({
     );
   }
 
-  return (
-    <div className="mt-4 grid gap-3">
-      <div className="flex items-center justify-between">
-        <div>
-          <strong className="block text-sm">Leitura por câmera</strong>
-          <span className="text-xs text-[#657085]">Centralize o QR Code do aluno dentro da moldura.</span>
+  const scannerContent = (
+    <div className="fixed inset-0 z-[999] bg-black">
+      <video 
+        ref={videoRef} 
+        className="h-full w-full object-cover" 
+        style={{ transform: "scaleX(-1)" }} 
+        muted 
+        playsInline 
+      />
+      
+      <div className="absolute top-6 right-6 z-10">
+        <button 
+          className="rounded-full bg-black/60 p-3 text-white backdrop-blur-md transition-colors hover:bg-red-500" 
+          onClick={close}
+          title="Fechar Câmera"
+        >
+          <X className="h-8 w-8" />
+        </button>
+      </div>
+      
+      {starting && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/90">
+          <div className="text-center text-white">
+            <Loader2 className="mx-auto h-14 w-14 animate-spin text-blue-500" />
+            <p className="mt-6 text-2xl font-bold tracking-wide">Iniciando câmera...</p>
+          </div>
         </div>
-        <button className="icon-btn" type="button" onClick={close} aria-label="Fechar câmera"><X className="h-4 w-4" /></button>
-      </div>
-      <ErrorBanner message={error} />
-      <div className="scanner-shell">
-        <video ref={videoRef} className="scanner-video" muted playsInline />
-        {!error && <div className="scanner-guide" />}
-        {starting && <div className="absolute inset-0 grid place-items-center bg-[#08111f]/80 text-white"><Loader2 className="h-6 w-6 animate-spin" /></div>}
-        {error && <div className="absolute inset-0 grid place-items-center px-8 text-center text-white/70"><CameraOff className="h-8 w-8" /></div>}
-      </div>
-      <div className="flex items-center justify-center gap-2 text-[11px] font-semibold text-[#657085]"><ScanLine className="h-4 w-4 text-blue-600" /> A leitura é automática e fecha após identificar o código.</div>
+      )}
+      
+      {error && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/95">
+          <div className="max-w-md p-8 text-center text-white">
+            <CameraOff className="mx-auto h-20 w-20 text-red-500 mb-6" />
+            <p className="text-xl font-bold tracking-tight mb-4">{error}</p>
+            <button onClick={close} className="btn mt-6 w-full bg-white text-black font-bold border-none hover:bg-slate-200 py-3">Fechar</button>
+          </div>
+        </div>
+      )}
+
+      {!error && !starting && (
+        <div className="absolute inset-0 pointer-events-none flex flex-col">
+           <div className="flex-1 bg-black/40 transition-colors" />
+           <div className="flex">
+             <div className="w-12 bg-black/40 sm:w-32" />
+             <div className="relative aspect-square flex-1 border-2 border-dashed border-white/60 rounded-3xl" />
+             <div className="w-12 bg-black/40 sm:w-32" />
+           </div>
+           <div className="flex-1 bg-black/40 flex items-center justify-center pb-10">
+             <div className="bg-black/60 px-6 py-3 rounded-full backdrop-blur flex items-center gap-2">
+                <ScanLine className="h-5 w-5 text-blue-400" />
+                <p className="text-sm text-white font-bold tracking-wider uppercase">Validação Automática</p>
+             </div>
+           </div>
+        </div>
+      )}
     </div>
   );
+
+  return createPortal(scannerContent, document.body);
 }
