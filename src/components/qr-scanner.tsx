@@ -4,6 +4,7 @@ import { Camera, CameraOff, Loader2, ScanLine, X, CheckCircle2, ShieldAlert } fr
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ErrorBanner } from "@/components/ui";
+import { supabase } from "@/lib/supabase";
 
 function getGreeting() {
   const hour = new Date().getHours();
@@ -48,6 +49,34 @@ export function QrScanner({
     setOpen(false);
     setStarting(false);
   }, [stop]);
+
+  const openRef = useRef(open);
+  useEffect(() => { openRef.current = open; }, [open]);
+  const interruptedRef = useRef(false);
+
+  useEffect(() => {
+    const channel = supabase.channel("face-scan-qr-interrupt", { config: { broadcast: { self: true } } })
+      .on("broadcast", { event: "START_SCAN" }, () => {
+        if (openRef.current) {
+          interruptedRef.current = true;
+          close();
+        }
+      })
+      .on("broadcast", { event: "STOP_SCAN" }, () => {
+        if (interruptedRef.current) {
+          interruptedRef.current = false;
+          setOpen(true);
+        }
+      })
+      .on("broadcast", { event: "SCAN_RESULT" }, () => {
+        if (interruptedRef.current) {
+          interruptedRef.current = false;
+          setOpen(true);
+        }
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [close]);
 
   useEffect(() => () => stop(), [stop]);
 
