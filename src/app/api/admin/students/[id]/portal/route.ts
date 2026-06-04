@@ -27,21 +27,33 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       await admin.from("students").update({ profile_id: profileId }).eq("id", student.id);
     }
 
-    const origin = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || new URL(request.url).origin).replace(/\/+$/, "");
+    let origin = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL;
+    if (!origin && process.env.VERCEL_URL) origin = `https://${process.env.VERCEL_URL}`;
+    if (!origin) origin = new URL(request.url).origin;
+    if (origin.includes("localhost") || origin.includes("127.0.0.1")) origin = "https://corpoeevolucao.vercel.app";
+    origin = origin.replace(/\/+$/, "");
+
     const { data: linkData, error: linkError } = await admin.auth.admin.generateLink({
-      type: "magiclink",
+      type: "recovery",
       email: student.email,
-      options: { redirectTo: `${origin}/portal` },
+      options: { redirectTo: `${origin}/reset-password` },
     });
+    
     if (linkError || !linkData.properties?.action_link) throw new ApiError("Não foi possível gerar o link de acesso.", 500);
+    
+    let actionLink = linkData.properties.action_link;
+    if (actionLink.includes("localhost")) {
+      actionLink = actionLink.replace(/http:\/\/localhost:\d+/, "https://corpoeevolucao.vercel.app");
+    }
+
     await sendStudioEmail({
       to: student.email,
       subject: "Corpo & Evolução | Acesso ao portal do aluno",
       title: "Seu portal do aluno foi liberado",
-      intro: `Olá, ${student.full_name}. Use o botão abaixo para acessar seu QR Code, agenda, contratos e pagamentos.`,
-      action: { label: "Acessar portal do aluno", href: linkData.properties.action_link },
-      sections: [{ label: "Conta", value: student.email }],
-      footer: "O link é pessoal. Não compartilhe com terceiros.",
+      intro: `Olá, ${student.full_name}. Seu portal acaba de ser criado! Para começar a usar e ver seu QR Code, agenda e contratos, você precisa cadastrar a sua senha.`,
+      action: { label: "Criar minha senha", href: actionLink },
+      sections: [{ label: "Login", value: student.email }],
+      footer: "O link é pessoal. Após criar a senha, você poderá acessar o portal normalmente.",
     });
     return Response.json({ ok: true, email: student.email, profileId });
   } catch (reason) {
