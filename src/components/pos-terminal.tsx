@@ -2,66 +2,73 @@
 
 import { useEffect, useState, useRef } from "react";
 import { getPayments } from "@/lib/api";
+import { supabase } from "@/lib/supabase";
 import type { Payment } from "@/lib/types";
 import { X } from "lucide-react";
 
 export function PosTerminalListener({ email }: { email: string }) {
   const [activePayment, setActivePayment] = useState<Payment | null>(null);
   const [approvedStatus, setApprovedStatus] = useState(false);
-  const ignoredIds = useRef<Set<string>>(new Set());
   const activeIdRef = useRef<string | null>(null);
-  const approvedRef = useRef<boolean>(false);
 
   useEffect(() => {
     if (email !== "admin@admin.com") return;
 
-    const interval = setInterval(async () => {
+    // Função para buscar os detalhes completos (como o nome do aluno)
+    // pois o payload do Supabase Realtime não traz as relações de tabela.
+    const fetchFullPayment = async (id: string) => {
       try {
-        const payments = await getPayments();
-        
-        if (approvedRef.current) return;
+        const { data } = await supabase
+          .from("payments")
+          .select("*, student:students(id, full_name)")
+          .eq("id", id)
+          .single();
+        return data as Payment;
+      } catch {
+        return null;
+      }
+    };
 
-        if (activeIdRef.current) {
-          const current = payments.find(p => p.id === activeIdRef.current);
-          if (current?.status === "paid") {
-            approvedRef.current = true;
+    // Inscreve no Supabase Realtime para ouvir mudanças na tabela de pagamentos
+    const channel = supabase.channel("pos-terminal-channel")
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "payments" },
+        async (payload) => {
+          const newData = payload.new as any;
+          const oldData = payload.old as any;
+
+          // Se um PIX foi gerado agora (pix_qr_base64 mudou para ter valor)
+          const justGeneratedPix = newData.pix_qr_base64 && !oldData.pix_qr_base64 && newData.status === "pending";
+          
+          if (justGeneratedPix) {
+            const fullPayment = await fetchFullPayment(newData.id);
+            if (fullPayment) {
+              setActivePayment(fullPayment);
+              activeIdRef.current = fullPayment.id;
+              setApprovedStatus(false);
+            }
+          }
+
+          // Se o pagamento ativo acabou de ser pago
+          if (activeIdRef.current && newData.id === activeIdRef.current && newData.status === "paid") {
             setApprovedStatus(true);
             setTimeout(() => {
               setActivePayment(null);
               setApprovedStatus(false);
               activeIdRef.current = null;
-              approvedRef.current = false;
             }, 5000);
-          } else if (!current || current.status !== "pending") {
-             setActivePayment(null);
-             activeIdRef.current = null;
-          }
-        } else {
-          const tenMinsAgo = Date.now() - 10 * 60 * 1000;
-          const pendingPix = payments.find(p => 
-            p.status === "pending" && 
-            p.pix_qr_base64 && 
-            new Date(p.created_at).getTime() >= tenMinsAgo &&
-            !ignoredIds.current.has(p.id)
-          );
-          
-          if (pendingPix) {
-            setActivePayment(pendingPix);
-            activeIdRef.current = pendingPix.id;
           }
         }
-      } catch (err) {
-        // ignora
-      }
-    }, 2000);
+      )
+      .subscribe();
 
-    return () => clearInterval(interval);
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [email]);
 
   function handleClose() {
-    if (activePayment) {
-      ignoredIds.current.add(activePayment.id);
-    }
     setActivePayment(null);
     activeIdRef.current = null;
   }

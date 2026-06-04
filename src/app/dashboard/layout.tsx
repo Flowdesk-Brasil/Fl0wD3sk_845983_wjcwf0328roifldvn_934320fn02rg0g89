@@ -86,18 +86,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   }, [isLoading, router, user]);
 
   useEffect(() => {
-    if (useLocalData) {
-      setLocalDataMode(true);
-      return;
-    }
     fetch("/api/auth/status", { cache: "no-store" })
-      .then((response) => response.json() as Promise<{ schemaReady: boolean; operationsReady?: boolean }>)
-      .then(({ schemaReady, operationsReady: nextOperationsReady }) => {
-        localStorage.setItem("corpoevolucao_data_mode", schemaReady ? "supabase" : "local");
-        setLocalDataMode(!schemaReady);
-        setOperationsReady(nextOperationsReady !== false);
-      })
-      .catch(() => setLocalDataMode(shouldUseLocalData()));
+      .catch(() => {});
   }, []);
 
   function submitSearch(event: FormEvent<HTMLFormElement>) {
@@ -196,11 +186,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            {localDataMode && !useLocalData && (
-              <span className="hidden items-center gap-2 rounded-full bg-amber-50 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 ring-1 ring-amber-200 xl:flex">
-                <Database className="h-3.5 w-3.5" /> Dados locais temporários
-              </span>
-            )}
+
             <form onSubmit={submitSearch} className="relative hidden md:block">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8d97aa]" />
               <input value={search} onChange={(event) => setSearch(event.target.value)} className="h-10 w-60 rounded-xl border border-[#e3e8f0] bg-[#f7f9fc] pl-9 pr-3 text-xs outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-100" placeholder="Buscar aluno..." />
@@ -218,7 +204,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
           <div className="mx-auto grid max-w-[1440px] gap-4">
-            {!operationsReady && !localDataMode && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs font-semibold leading-5 text-amber-800">Migração operacional pendente no Supabase. Execute <code>database/migrations/002_studio_operations.sql</code> para ativar agenda, contratos digitais e PIX.</div>}
+
             {children}
           </div>
         </main>
