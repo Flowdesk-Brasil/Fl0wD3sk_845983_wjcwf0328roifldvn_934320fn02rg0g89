@@ -1,123 +1,146 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { CreditCard, Search, CheckCircle2, Clock, XCircle, RefreshCw, QrCode, Banknote, Loader2 } from "lucide-react";
-import { getPayments } from "@/lib/api";
+import { Check, CheckCircle2, Copy, CreditCard, QrCode, RotateCcw, WalletCards } from "lucide-react";
+import Image from "next/image";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { EmptyState, ErrorBanner, FieldLabel, LoadingState, Modal, PageHeader, SearchInput, StatusBadge } from "@/components/ui";
+import { createPixPayment, getPayments, markPaymentPaid, updatePaymentStatus } from "@/lib/api";
+import type { Payment, PaymentMethod, PaymentStatus } from "@/lib/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
 
-const STATUS_CFG: Record<string, { label: string; badge: string }> = {
-  pending:  { label: "Pendente",  badge: "badge-yellow" },
-  paid:     { label: "Pago",      badge: "badge-green" },
-  expired:  { label: "Expirado",  badge: "badge-gray" },
-  cancelled:{ label: "Cancelado", badge: "badge-red" },
-  refunded: { label: "Estornado", badge: "badge-blue" },
-};
-
-const METHOD_LABEL: Record<string, string> = {
-  pix: "PIX", credit_card: "Crédito", debit_card: "Débito", cash: "Dinheiro",
-};
+const labels: Record<PaymentStatus, string> = { pending: "Pendente", paid: "Pago", expired: "Expirado", cancelled: "Cancelado", refunded: "Estornado" };
+const tones: Record<PaymentStatus, "yellow" | "green" | "gray" | "red" | "blue"> = { pending: "yellow", paid: "green", expired: "gray", cancelled: "red", refunded: "blue" };
+const methodLabels: Record<PaymentMethod, string> = { pix: "PIX", credit_card: "Cartão de crédito", debit_card: "Cartão de débito", cash: "Dinheiro" };
 
 export default function PagamentosPage() {
-  const [payments, setPayments] = useState<any[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [selected, setSelected] = useState<Payment | null>(null);
+  const [pix, setPix] = useState<Payment | null>(null);
+  const [method, setMethod] = useState<PaymentMethod>("pix");
+  const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
+  const [working, setWorking] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
-    async function load() {
-      const data = await getPayments();
-      setPayments(data);
-      setLoading(false);
-    }
-    load();
+  const load = useCallback(async () => {
+    const data = await getPayments();
+    setPayments(data);
+    setPix((current) => current ? data.find((item) => item.id === current.id) || current : current);
+    setLoading(false);
   }, []);
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (!pix || pix.status === "paid") return;
+    const timer = window.setInterval(() => void load(), 5000);
+    return () => window.clearInterval(timer);
+  }, [load, pix]);
 
-  if (loading) {
-    return (
-      <div className="min-h-[50vh] flex flex-col items-center justify-center anim-fadeIn">
-        <Loader2 className="w-10 h-10 animate-spin text-[var(--brand-primary)] mb-4" />
-        <p className="text-zinc-500 font-medium">Carregando pagamentos...</p>
-      </div>
-    );
+  const filtered = useMemo(() => {
+    const query = search.toLowerCase();
+    return payments.filter((item) => !query || item.reference.toLowerCase().includes(query) || item.student?.full_name.toLowerCase().includes(query));
+  }, [payments, search]);
+
+  async function receive() {
+    if (!selected) return;
+    setWorking(selected.id);
+    setError(null);
+    try {
+      await markPaymentPaid(selected.id, method);
+      setSelected(null);
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Não foi possível confirmar o recebimento.");
+    } finally {
+      setWorking(null);
+    }
   }
 
+  async function reopen(payment: Payment) {
+    if (!window.confirm(`Voltar ${payment.reference} para pendente? O recebimento atual será removido.`)) return;
+    setWorking(payment.id);
+    setError(null);
+    try {
+      await updatePaymentStatus(payment.id, "pending");
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Não foi possível voltar a cobrança.");
+    } finally {
+      setWorking(null);
+    }
+  }
+
+  async function generatePix(payment: Payment) {
+    setWorking(payment.id);
+    setError(null);
+    try {
+      const generated = await createPixPayment(payment.id);
+      setPix({ ...payment, ...generated });
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Não foi possível gerar o PIX.");
+    } finally {
+      setWorking(null);
+    }
+  }
+
+  async function copyPix() {
+    if (!pix?.pix_code) return;
+    await navigator.clipboard.writeText(pix.pix_code);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  }
+
+  if (loading) return <LoadingState label="Carregando financeiro..." />;
+  const receivable = payments.filter((item) => item.status === "pending").reduce((sum, item) => sum + Number(item.total_amount), 0);
+  const received = payments.filter((item) => item.status === "paid").reduce((sum, item) => sum + Number(item.total_amount), 0);
+
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
-      
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 anim-fadeUp">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-900 tracking-tight">Financeiro</h1>
-          <p className="text-zinc-500 text-sm mt-1">Controle de mensalidades e recebimentos</p>
-        </div>
+    <div className="page-stack">
+      <PageHeader eyebrow="Controle financeiro" title="Financeiro" description="Gere PIX, acompanhe aprovações automáticas e corrija recebimentos quando necessário." />
+      <ErrorBanner message={error} />
+      <div className="grid gap-4 sm:grid-cols-2">
+        <article className="card metric-card"><div className="metric-top"><div className="metric-icon badge-green"><CheckCircle2 className="h-5 w-5" /></div></div><strong>{formatCurrency(received)}</strong><p>Total recebido</p></article>
+        <article className="card metric-card"><div className="metric-top"><div className="metric-icon badge-yellow"><WalletCards className="h-5 w-5" /></div></div><strong>{formatCurrency(receivable)}</strong><p>Saldo pendente</p></article>
       </div>
+      <section className="card">
+        <div className="table-toolbar"><SearchInput value={search} onChange={setSearch} placeholder="Buscar referência ou aluno..." /><StatusBadge tone="blue">{payments.length} cobranças</StatusBadge></div>
+        {filtered.length ? <div className="table-wrap"><table className="data-table">
+          <thead><tr><th>Referência</th><th>Aluno</th><th>Valor</th><th className="hide-mobile">Vencimento</th><th className="hide-mobile">Método</th><th>Status</th><th>Ação</th></tr></thead>
+          <tbody>{filtered.map((payment) => (
+            <tr key={payment.id}>
+              <td><code className="rounded-lg bg-[#f3f6fb] px-2 py-1 text-[10px] font-bold text-blue-600">{payment.reference}</code></td>
+              <td><strong className="text-xs text-[#172033]">{payment.student?.full_name ?? "Aluno removido"}</strong></td>
+              <td><strong className="text-xs text-[#172033]">{formatCurrency(Number(payment.total_amount))}</strong></td>
+              <td className="hide-mobile">{formatDate(payment.due_date)}</td>
+              <td className="hide-mobile">{payment.method ? methodLabels[payment.method] : "Não informado"}</td>
+              <td><StatusBadge tone={tones[payment.status]}>{labels[payment.status]}</StatusBadge></td>
+              <td><div className="flex flex-wrap gap-2">
+                {payment.status === "pending" && <button className="btn btn-primary min-h-8 px-3 py-1.5 text-[10px]" disabled={working === payment.id} onClick={() => void generatePix(payment)}><QrCode className="h-3.5 w-3.5" /> Gerar PIX</button>}
+                {payment.status === "pending" && <button className="btn btn-success min-h-8 px-3 py-1.5 text-[10px]" disabled={working === payment.id} onClick={() => setSelected(payment)}>Receber manualmente</button>}
+                {payment.status === "paid" && <button className="btn btn-secondary min-h-8 px-3 py-1.5 text-[10px]" disabled={working === payment.id} onClick={() => void reopen(payment)}><RotateCcw className="h-3.5 w-3.5" /> Pendente</button>}
+              </div></td>
+            </tr>
+          ))}</tbody>
+        </table></div> : <EmptyState icon={CreditCard} title="Nenhuma cobrança encontrada" description="Cobranças são geradas automaticamente ao criar uma matrícula." />}
+      </section>
 
-      <div className="card anim-fadeUp stagger-1">
-        
-        <div className="p-4 border-b border-[var(--border-light)] flex flex-col sm:flex-row items-center gap-4">
-          <div className="relative flex-1 w-full max-w-md">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
-            <input type="text" placeholder="Buscar por referência ou aluno..." className="field pl-10" />
-          </div>
+      <Modal open={Boolean(selected)} onClose={() => setSelected(null)} title="Confirmar recebimento" description={selected ? `${selected.student?.full_name} · ${formatCurrency(Number(selected.total_amount))}` : ""} size="sm">
+        <div className="grid gap-4">
+          <label><FieldLabel>Método de pagamento</FieldLabel><select className="field" value={method} onChange={(event) => setMethod(event.target.value as PaymentMethod)}>{Object.entries(methodLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <div className="form-actions"><button className="btn btn-secondary" onClick={() => setSelected(null)}>Cancelar</button><button className="btn btn-primary" onClick={() => void receive()}>Confirmar recebimento</button></div>
         </div>
+      </Modal>
 
-        <div className="tbl-container">
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>Referência</th>
-                <th>Aluno</th>
-                <th className="hide-mobile">Valor</th>
-                <th className="hide-mobile">Vencimento</th>
-                <th className="hide-mobile">Método</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {payments.map(p => {
-                const cfg = STATUS_CFG[p.status] || { label: p.status, badge: 'badge-gray' };
-                const overdue = p.status === "pending" && new Date(p.due_date) < new Date();
-                
-                return (
-                  <tr key={p.id}>
-                    <td>
-                      <code className="px-2 py-1 bg-zinc-100 text-zinc-700 rounded-md font-mono text-xs font-bold">
-                        {p.reference}
-                      </code>
-                    </td>
-                    <td>
-                      <div className="font-bold text-zinc-900">{p.student?.full_name || "—"}</div>
-                    </td>
-                    <td className="hide-mobile">
-                      <div className="font-bold text-zinc-900">{formatCurrency(p.total_amount)}</div>
-                    </td>
-                    <td className="hide-mobile">
-                      <span className={`font-medium ${overdue ? 'text-red-500' : 'text-zinc-600'}`}>
-                        {formatDate(p.due_date)} {overdue && "⚠️"}
-                      </span>
-                    </td>
-                    <td className="hide-mobile text-sm text-zinc-600 font-medium">
-                      {METHOD_LABEL[p.method] || "—"}
-                    </td>
-                    <td>
-                      <div className={`badge ${cfg.badge}`}>
-                        {cfg.label}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-
-          {payments.length === 0 && (
-            <div className="p-16 flex flex-col items-center justify-center text-center">
-              <div className="w-16 h-16 rounded-full bg-zinc-50 flex items-center justify-center mb-4">
-                <CreditCard className="w-8 h-8 text-zinc-300" />
-              </div>
-              <h3 className="text-lg font-bold text-zinc-900 mb-1">Sem registros financeiros</h3>
-              <p className="text-zinc-500 text-sm max-w-sm">Os pagamentos gerados aparecerão aqui.</p>
-            </div>
-          )}
-        </div>
-      </div>
+      <Modal open={Boolean(pix)} onClose={() => setPix(null)} title={pix?.status === "paid" ? "PIX aprovado" : "PIX pronto para pagamento"} description={pix ? `${pix.student?.full_name} · ${formatCurrency(Number(pix.total_amount))}` : ""} size="sm">
+        {pix && <div className="grid gap-4 text-center">
+          {pix.status === "paid" ? <div className="rounded-2xl bg-green-50 p-6 text-green-700"><CheckCircle2 className="mx-auto h-12 w-12" /><strong className="mt-3 block text-lg">Pagamento confirmado automaticamente</strong></div> : <>
+            {pix.pix_qr_base64 && <Image unoptimized width={256} height={256} className="mx-auto rounded-2xl border border-[#e3e8f0] p-2" alt="QR Code PIX" src={`data:image/png;base64,${pix.pix_qr_base64}`} />}
+            <p className="text-xs leading-5 text-[#657085]">A tela atualiza automaticamente quando o Mercado Pago confirmar o pagamento.</p>
+            <button className="btn btn-secondary" disabled={!pix.pix_code} onClick={() => void copyPix()}>{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />} {copied ? "Código copiado" : "Copiar PIX copia e cola"}</button>
+          </>}
+        </div>}
+      </Modal>
     </div>
   );
 }

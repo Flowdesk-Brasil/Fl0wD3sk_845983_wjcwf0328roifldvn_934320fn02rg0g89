@@ -1,78 +1,54 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Search, Loader2 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
-import { localDB } from "@/lib/localDB";
+import { Activity, Eye, Fingerprint } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { EmptyState, LoadingState, Modal, PageHeader, SearchInput, StatusBadge } from "@/components/ui";
+import { getAuditLogs } from "@/lib/api";
+import type { AuditLog } from "@/lib/types";
 import { formatDateTime } from "@/lib/utils";
 
-const isDummy = !process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL.includes("dummy.supabase.co");
+function summary(details: string) {
+  try {
+    const value = JSON.parse(details) as { before?: Record<string, unknown>; after?: Record<string, unknown>; new?: Record<string, unknown> };
+    if (value.before && value.after) {
+      const changed = Object.keys(value.after).filter((key) => JSON.stringify(value.before?.[key]) !== JSON.stringify(value.after?.[key]) && !["updated_at"].includes(key));
+      return changed.length ? `Campos alterados: ${changed.slice(0, 5).join(", ")}${changed.length > 5 ? "..." : ""}` : "Registro atualizado sem alteração material.";
+    }
+    if (value.new) return `Registro criado com ${Object.keys(value.new).length} campos.`;
+  } catch {
+    return details;
+  }
+  return details;
+}
 
 export default function AuditoriaPage() {
-  const [logs, setLogs] = useState<any[]>([]);
+  const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [selected, setSelected] = useState<AuditLog | null>(null);
+  const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    async function load() {
-      if (isDummy) {
-        setLogs(localDB.get('audit_logs').sort((a:any, b:any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
-      } else {
-        const { data } = await supabase.from('audit_logs').select('*, profiles(full_name)').order('created_at', { ascending: false });
-        setLogs(data || []);
-      }
-      setLoading(false);
-    }
-    load();
-  }, []);
-
-  if (loading) return <div className="p-8 text-center"><Loader2 className="w-8 h-8 animate-spin mx-auto text-white" /></div>;
-
+  useEffect(() => { getAuditLogs().then((data) => { setLogs(data); setLoading(false); }); }, []);
+  const filtered = useMemo(() => {
+    const query = search.toLowerCase();
+    return logs.filter((log) => !query || [log.action, log.entity, log.entity_id, log.details, log.profiles?.full_name, log.ip_address].some((value) => value?.toLowerCase().includes(query)));
+  }, [logs, search]);
+  if (loading) return <LoadingState label="Carregando trilha de auditoria..." />;
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
-      <div className="card anim-fadeUp">
-        <div className="p-6 border-b border-[#1f1f22] flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold text-white tracking-tight">Auditoria</h1>
-            <p className="text-[#888] text-sm mt-1">Histórico completo de ações no sistema</p>
-          </div>
-          <div className="relative w-full sm:max-w-xs">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#666]" />
-            <input type="text" placeholder="Buscar..." className="field pl-10" />
-          </div>
-        </div>
-        
-        <div className="tbl-container">
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>Usuário</th>
-                <th>Ação</th>
-                <th>Entidade</th>
-                <th>Detalhes</th>
-                <th className="hide-mobile">Data/Hora</th>
-              </tr>
-            </thead>
-            <tbody>
-              {logs.map(l => (
-                <tr key={l.id}>
-                  <td>
-                    <div className="font-bold text-white">{l.profiles?.full_name || "Sistema"}</div>
-                  </td>
-                  <td><span className="badge badge-gray font-mono">{l.action}</span></td>
-                  <td>{l.entity}</td>
-                  <td className="text-sm text-[#888] max-w-xs truncate">{l.details}</td>
-                  <td className="hide-mobile text-xs text-[#666]">{formatDateTime(l.created_at)}</td>
-                </tr>
-              ))}
-              {logs.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="text-center p-16 text-[#666]">Nenhum log de auditoria encontrado. Realize alguma ação no sistema.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+    <div className="page-stack">
+      <PageHeader eyebrow="Governança" title="Auditoria" description="Rastreabilidade detalhada das alterações, responsáveis e dados envolvidos." />
+      <section className="card">
+        <div className="table-toolbar"><SearchInput value={search} onChange={setSearch} placeholder="Buscar ação, entidade, usuário ou ID..." /><StatusBadge tone="blue">{logs.length} eventos</StatusBadge></div>
+        {filtered.length ? <div className="table-wrap"><table className="data-table">
+          <thead><tr><th>Usuário</th><th>Ação</th><th>Entidade</th><th>Resumo</th><th className="hide-mobile">Data e hora</th><th>Detalhes</th></tr></thead>
+          <tbody>{filtered.map((log) => <tr key={log.id}><td><strong className="text-xs text-[#172033]">{log.profiles?.full_name ?? "Sistema"}</strong><small className="mt-1 block text-[10px] text-[#8d97aa]">{log.ip_address || "IP não registrado"}</small></td><td><StatusBadge tone={log.action === "DELETE" ? "red" : log.action === "UPDATE" ? "yellow" : "green"}>{log.action}</StatusBadge></td><td>{log.entity}<small className="mt-1 block max-w-40 truncate text-[10px] text-[#8d97aa]">{log.entity_id}</small></td><td className="max-w-sm">{summary(log.details)}</td><td className="hide-mobile">{formatDateTime(log.created_at)}</td><td><button className="icon-btn" aria-label="Ver detalhes" onClick={() => setSelected(log)}><Eye className="h-4 w-4" /></button></td></tr>)}</tbody>
+        </table></div> : <EmptyState icon={Activity} title="Nenhum evento encontrado" description="As alterações realizadas no sistema aparecerão aqui." />}
+      </section>
+      <Modal open={Boolean(selected)} onClose={() => setSelected(null)} title="Detalhes do evento" description={selected ? `${selected.action} em ${selected.entity}` : ""} size="lg">
+        {selected && <div className="grid gap-4">
+          <div className="grid gap-3 rounded-2xl bg-[#f7f9fc] p-4 text-xs sm:grid-cols-2"><div><span className="field-label">Responsável</span><strong>{selected.profiles?.full_name || "Sistema"}</strong></div><div><span className="field-label">Data e hora</span><strong>{formatDateTime(selected.created_at)}</strong></div><div><span className="field-label">Entidade / ID</span><strong>{selected.entity} · {selected.entity_id || "Sem ID"}</strong></div><div><span className="field-label">Endereço IP</span><strong>{selected.ip_address || "Não registrado"}</strong></div></div>
+          <div><span className="field-label">Carga registrada</span><pre className="max-h-[360px] overflow-auto rounded-2xl bg-[#111c2e] p-4 text-[11px] leading-5 text-blue-100">{(() => { try { return JSON.stringify(JSON.parse(selected.details), null, 2); } catch { return selected.details; } })()}</pre></div>
+          <p className="flex items-center gap-2 text-[11px] text-[#657085]"><Fingerprint className="h-4 w-4 text-blue-600" /> Evento imutável registrado pela camada de auditoria.</p>
+        </div>}
+      </Modal>
     </div>
   );
 }

@@ -1,132 +1,162 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter, usePathname } from "next/navigation";
-import Link from "next/link";
-import { useAuth } from "@/contexts/AuthContext";
+import type { LucideIcon } from "lucide-react";
 import {
-  LayoutDashboard, Users, BookOpen, Package, ScrollText,
-  CreditCard, QrCode, BarChart3, Bell, Shield, Activity,
-  Settings, LogOut, Hexagon, Menu, X, Search
+  Activity, BarChart3, Bell, BookOpen, CalendarDays, ChevronDown, CreditCard, Database, Dumbbell, LayoutDashboard,
+  LogOut, Menu, Package, QrCode, ScrollText, Search, Settings, Shield, Users, X,
 } from "lucide-react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useAuth } from "@/contexts/AuthContext";
+import { shouldUseLocalData, useLocalData } from "@/lib/supabase";
+import type { UserRole } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
-const NAV = [
+interface NavItem {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  roles: UserRole[];
+}
+
+const NAV: { title: string; items: NavItem[] }[] = [
   {
-    title: "Visão Geral",
-    items: [
-      { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["admin","receptionist","professor"] },
-    ],
+    title: "Visão geral",
+    items: [{ href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["admin", "receptionist", "professor"] }],
   },
   {
     title: "Gestão",
     items: [
-      { href: "/dashboard/alunos",     label: "Alunos",    icon: Users,      roles: ["admin","receptionist"] },
-      { href: "/dashboard/matriculas", label: "Matrículas",icon: BookOpen,   roles: ["admin","receptionist"] },
-      { href: "/dashboard/planos",     label: "Planos",    icon: Package,    roles: ["admin"] },
-      { href: "/dashboard/contratos",  label: "Contratos", icon: ScrollText, roles: ["admin","receptionist"] },
+      { href: "/dashboard/alunos", label: "Alunos", icon: Users, roles: ["admin", "receptionist"] },
+      { href: "/dashboard/matriculas", label: "Matrículas", icon: BookOpen, roles: ["admin", "receptionist"] },
+      { href: "/dashboard/planos", label: "Planos", icon: Package, roles: ["admin"] },
+      { href: "/dashboard/contratos", label: "Contratos", icon: ScrollText, roles: ["admin", "receptionist"] },
     ],
   },
   {
-    title: "Financeiro",
+    title: "Operação",
     items: [
-      { href: "/dashboard/pagamentos", label: "Pagamentos", icon: CreditCard, roles: ["admin","receptionist"] },
+      { href: "/dashboard/pagamentos", label: "Financeiro", icon: CreditCard, roles: ["admin", "receptionist"] },
+      { href: "/dashboard/calendario", label: "Calendário", icon: CalendarDays, roles: ["admin", "receptionist", "professor"] },
+      { href: "/dashboard/checkin", label: "Check-in", icon: QrCode, roles: ["admin", "receptionist"] },
+      { href: "/dashboard/relatorios", label: "Relatórios", icon: BarChart3, roles: ["admin"] },
+      { href: "/dashboard/notificacoes", label: "Comunicados", icon: Bell, roles: ["admin"] },
     ],
   },
   {
-    title: "Operações",
+    title: "Administração",
     items: [
-      { href: "/dashboard/checkin",       label: "Check-in",    icon: QrCode,     roles: ["admin","receptionist"] },
-      { href: "/dashboard/relatorios",    label: "Relatórios",  icon: BarChart3,  roles: ["admin"] },
-      { href: "/dashboard/notificacoes",  label: "Notificações",icon: Bell,       roles: ["admin"] },
-    ],
-  },
-  {
-    title: "Sistema",
-    items: [
-      { href: "/dashboard/usuarios",     label: "Usuários",    icon: Shield,   roles: ["admin"] },
-      { href: "/dashboard/auditoria",    label: "Auditoria",   icon: Activity, roles: ["admin"] },
-      { href: "/dashboard/configuracoes",label: "Configurações",icon: Settings, roles: ["admin"] },
+      { href: "/dashboard/usuarios", label: "Equipe e acessos", icon: Shield, roles: ["admin"] },
+      { href: "/dashboard/auditoria", label: "Auditoria", icon: Activity, roles: ["admin"] },
+      { href: "/dashboard/configuracoes", label: "Configurações", icon: Settings, roles: ["admin"] },
     ],
   },
 ];
 
-export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+const PAGE_NAMES: Record<string, string> = {
+  dashboard: "Visão geral",
+  alunos: "Alunos",
+  novo: "Novo aluno",
+  matriculas: "Matrículas",
+  planos: "Planos",
+  contratos: "Contratos",
+  pagamentos: "Financeiro",
+  calendario: "Calendário",
+  checkin: "Check-in",
+  relatorios: "Relatórios",
+  notificacoes: "Comunicados",
+  usuarios: "Equipe e acessos",
+  auditoria: "Auditoria",
+  configuracoes: "Configurações",
+};
+
+export default function DashboardLayout({ children }: { children: ReactNode }) {
   const { user, isLoading, logout, hasPermission } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [localDataMode, setLocalDataMode] = useState(useLocalData);
+  const [operationsReady, setOperationsReady] = useState(true);
 
   useEffect(() => {
-    if (!isLoading && !user) router.push("/");
-  }, [user, isLoading, router]);
+    if (!isLoading && !user) router.replace("/");
+  }, [isLoading, router, user]);
 
-  if (isLoading || !user) {
-    return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: "#000" }}>
-        <div className="w-8 h-8 border-2 border-[#333] border-t-white rounded-full animate-spin" />
-      </div>
-    );
+  useEffect(() => {
+    if (useLocalData) {
+      setLocalDataMode(true);
+      return;
+    }
+    fetch("/api/auth/status", { cache: "no-store" })
+      .then((response) => response.json() as Promise<{ schemaReady: boolean; operationsReady?: boolean }>)
+      .then(({ schemaReady, operationsReady: nextOperationsReady }) => {
+        localStorage.setItem("corpoevolucao_data_mode", schemaReady ? "supabase" : "local");
+        setLocalDataMode(!schemaReady);
+        setOperationsReady(nextOperationsReady !== false);
+      })
+      .catch(() => setLocalDataMode(shouldUseLocalData()));
+  }, []);
+
+  function submitSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (search.trim()) router.push(`/dashboard/alunos?q=${encodeURIComponent(search.trim())}`);
   }
 
-  const handleLogout = () => { logout(); };
+  if (isLoading || !user) {
+    return <div className="loading-state min-h-screen">Preparando seu workspace...</div>;
+  }
+
+  const segment = pathname.split("/").filter(Boolean).at(-1) ?? "dashboard";
 
   return (
-    <div className="flex h-screen overflow-hidden bg-black text-[#ededed]">
-      
-      {/* Mobile overlay */}
+    <div className="flex h-screen overflow-hidden bg-[#f7f9fc]">
       {sidebarOpen && (
-        <div 
-          className="fixed inset-0 z-40 lg:hidden bg-black/80 backdrop-blur-md transition-opacity"
-          onClick={() => setSidebarOpen(false)}
-        />
+        <button className="fixed inset-0 z-40 bg-[#101827]/40 backdrop-blur-sm lg:hidden" onClick={() => setSidebarOpen(false)} aria-label="Fechar menu" />
       )}
 
-      {/* Sidebar */}
-      <aside
-        className={`fixed top-0 left-0 z-50 h-full flex flex-col bg-[#050505] border-r border-[#1f1f22]
-          lg:static lg:translate-x-0 transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]
-          ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
-        style={{ width: 260, flexShrink: 0 }}
-      >
-        {/* Logo */}
-        <div className="flex items-center justify-between px-6 py-6 border-b border-[#1f1f22]">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-[#111] border border-[#222]">
-              <Hexagon className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <div className="font-bold text-white tracking-tight">Studio</div>
-              <div className="text-[10px] font-semibold text-[#888] uppercase tracking-widest">Workspace</div>
-            </div>
-          </div>
-          <button onClick={() => setSidebarOpen(false)} className="btn-icon lg:hidden">
-            <X className="w-5 h-5" />
+      <aside className={cn(
+        "fixed inset-y-0 left-0 z-50 flex w-[264px] flex-col bg-[#111c2e] text-white transition-transform duration-200 lg:static lg:translate-x-0",
+        sidebarOpen ? "translate-x-0" : "-translate-x-full",
+      )}>
+        <div className="flex h-[74px] items-center justify-between border-b border-white/[.07] px-5">
+          <Link href="/dashboard" className="flex items-center gap-3">
+            <span className="grid h-10 w-10 place-items-center rounded-xl bg-blue-500 text-white shadow-lg shadow-blue-500/20">
+              <Dumbbell className="h-5 w-5" />
+            </span>
+            <span>
+              <strong className="block text-sm tracking-[-.02em]">Corpo & Evolução</strong>
+              <small className="text-[10px] font-medium uppercase tracking-[.15em] text-white/40">Workspace</small>
+            </span>
+          </Link>
+          <button className="grid h-9 w-9 place-items-center rounded-lg text-white/50 hover:bg-white/10 lg:hidden" onClick={() => setSidebarOpen(false)} aria-label="Fechar menu">
+            <X className="h-4 w-4" />
           </button>
         </div>
 
-        {/* Navigation */}
-        <nav className="flex-1 overflow-y-auto p-4 space-y-6">
+        <nav className="flex-1 overflow-y-auto px-3 py-5">
           {NAV.map((section) => {
-            const visible = section.items.filter(item => hasPermission(item.roles));
-            if (!visible.length) return null;
+            const items = section.items.filter((item) => hasPermission(item.roles));
+            if (!items.length) return null;
             return (
-              <div key={section.title}>
-                <p className="text-[10px] font-bold uppercase tracking-widest text-[#555] px-3 mb-2">
-                  {section.title}
-                </p>
-                <div className="space-y-0.5">
-                  {visible.map(item => {
-                    const Icon = item.icon;
-                    const active = pathname === item.href;
+              <div className="mb-6" key={section.title}>
+                <p className="mb-2 px-3 text-[9px] font-bold uppercase tracking-[.16em] text-white/30">{section.title}</p>
+                <div className="grid gap-1">
+                  {items.map(({ href, label, icon: Icon }) => {
+                    const active = pathname === href || (href !== "/dashboard" && pathname.startsWith(`${href}/`));
                     return (
-                      <Link key={item.href} href={item.href} onClick={() => setSidebarOpen(false)}
-                        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-medium transition-all
-                          ${active 
-                            ? "bg-[#1a1a1a] text-white border border-[#333]" 
-                            : "text-[#888] hover:bg-[#111] hover:text-[#ccc] border border-transparent"}`}
+                      <Link
+                        key={href}
+                        href={href}
+                        onClick={() => setSidebarOpen(false)}
+                        className={cn(
+                          "flex items-center gap-3 rounded-xl px-3 py-2.5 text-[12px] font-semibold transition",
+                          active ? "bg-white text-[#162137] shadow-sm" : "text-white/55 hover:bg-white/[.07] hover:text-white",
+                        )}
                       >
-                        <Icon className={`w-4 h-4 ${active ? "text-white" : "text-[#666]"}`} />
-                        {item.label}
+                        <Icon className={cn("h-4 w-4", active ? "text-blue-600" : "text-white/35")} />
+                        {label}
                       </Link>
                     );
                   })}
@@ -136,56 +166,56 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           })}
         </nav>
 
-        {/* User Card */}
-        <div className="p-4 border-t border-[#1f1f22] bg-[#000]">
-          <div className="flex items-center gap-3 p-3 rounded-xl border border-[#222] bg-[#0a0a0a]">
-            <div className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold bg-[#222] text-white flex-shrink-0">
-              {user.full_name?.[0]?.toUpperCase()}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-[13px] font-bold text-white truncate">{user.full_name}</div>
-              <div className="text-[11px] text-[#888] uppercase tracking-wider truncate">{user.app_role}</div>
-            </div>
-            <button onClick={handleLogout} className="btn-icon w-8 h-8 rounded-lg bg-[#111] hover:bg-[#222] border border-[#222]" title="Sair">
-              <LogOut className="w-4 h-4 text-[#888]" />
+        <div className="border-t border-white/[.07] p-3">
+          <div className="flex items-center gap-3 rounded-xl bg-white/[.06] p-3">
+            <span className="grid h-9 w-9 place-items-center rounded-xl bg-white/10 text-xs font-bold">{user.full_name[0]?.toUpperCase()}</span>
+            <span className="min-w-0 flex-1">
+              <strong className="block truncate text-xs">{user.full_name}</strong>
+              <small className="block truncate text-[10px] uppercase tracking-wider text-white/35">{user.app_role}</small>
+            </span>
+            <button className="grid h-8 w-8 place-items-center rounded-lg text-white/40 hover:bg-white/10 hover:text-white" onClick={() => void logout()} title="Sair" aria-label="Sair">
+              <LogOut className="h-4 w-4" />
             </button>
           </div>
         </div>
       </aside>
 
-      {/* Main Content Area */}
-      <div className="flex flex-col flex-1 min-w-0 overflow-hidden bg-black">
-        
-        {/* Topbar */}
-        <header className="flex items-center justify-between px-6 py-4 bg-[#000]/80 backdrop-blur-xl border-b border-[#1f1f22] sticky top-0 z-30">
-          <div className="flex items-center gap-4">
-            <button onClick={() => setSidebarOpen(true)} className="btn-icon lg:hidden">
-              <Menu className="w-5 h-5 text-white" />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex h-[74px] shrink-0 items-center justify-between border-b border-[#e3e8f0] bg-white/90 px-4 backdrop-blur-xl sm:px-6">
+          <div className="flex items-center gap-3">
+            <button className="icon-btn lg:hidden" onClick={() => setSidebarOpen(true)} aria-label="Abrir menu">
+              <Menu className="h-4 w-4" />
             </button>
-            <div className="hidden sm:block">
-              <h1 className="text-[15px] font-semibold text-white tracking-wide capitalize">
-                {pathname.split("/").pop() === "dashboard" ? "Dashboard Geral" : pathname.split("/").pop()?.replace("-", " ")}
-              </h1>
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[.12em] text-[#8d97aa]">Workspace</p>
+              <h2 className="text-sm font-bold tracking-[-.02em] text-[#172033]">{PAGE_NAMES[segment] ?? segment}</h2>
             </div>
           </div>
-          
-          <div className="flex items-center gap-4">
-            <div className="relative hidden md:block">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#666]" />
-              <input type="text" placeholder="Buscar..." 
-                className="pl-9 pr-4 py-1.5 bg-[#111] border border-[#222] rounded-md text-[13px] w-64 focus:bg-[#000] focus:border-[#444] text-white transition-all outline-none" 
-              />
-            </div>
-            <button className="btn-icon relative bg-[#111] border border-[#222] rounded-md w-8 h-8">
-              <Bell className="w-4 h-4 text-[#888]" />
-              <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-[#ef4444] border-2 border-black" />
+
+          <div className="flex items-center gap-2 sm:gap-3">
+            {localDataMode && !useLocalData && (
+              <span className="hidden items-center gap-2 rounded-full bg-amber-50 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 ring-1 ring-amber-200 xl:flex">
+                <Database className="h-3.5 w-3.5" /> Dados locais temporários
+              </span>
+            )}
+            <form onSubmit={submitSearch} className="relative hidden md:block">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8d97aa]" />
+              <input value={search} onChange={(event) => setSearch(event.target.value)} className="h-10 w-60 rounded-xl border border-[#e3e8f0] bg-[#f7f9fc] pl-9 pr-3 text-xs outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-100" placeholder="Buscar aluno..." />
+            </form>
+            <Link href="/dashboard/notificacoes" className="icon-btn relative" aria-label="Comunicados">
+              <Bell className="h-4 w-4" />
+              <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-red-500 ring-2 ring-white" />
+            </Link>
+            <button className="hidden items-center gap-2 rounded-xl border border-[#e3e8f0] bg-white px-2.5 py-1.5 sm:flex">
+              <span className="grid h-7 w-7 place-items-center rounded-lg bg-blue-50 text-[10px] font-bold text-blue-600">{user.full_name[0]}</span>
+              <ChevronDown className="h-3.5 w-3.5 text-[#8d97aa]" />
             </button>
           </div>
         </header>
 
-        {/* Page Content */}
-        <main className="flex-1 overflow-y-auto p-4 lg:p-8">
-          <div className="mx-auto max-w-7xl">
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+          <div className="mx-auto grid max-w-[1440px] gap-4">
+            {!operationsReady && !localDataMode && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs font-semibold leading-5 text-amber-800">Migração operacional pendente no Supabase. Execute <code>database/migrations/002_studio_operations.sql</code> para ativar agenda, contratos digitais e PIX.</div>}
             {children}
           </div>
         </main>

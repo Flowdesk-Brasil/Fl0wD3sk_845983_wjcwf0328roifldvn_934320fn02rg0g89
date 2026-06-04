@@ -1,39 +1,34 @@
 "use client";
 
-import { BarChart3, TrendingUp, DollarSign } from "lucide-react";
+import { BarChart3, CreditCard, DollarSign, TrendingUp, Users } from "lucide-react";
+import { useEffect, useState } from "react";
+import { LoadingState, PageHeader, StatusBadge } from "@/components/ui";
+import { getDashboardStats, getPayments, getPlans } from "@/lib/api";
+import type { DashboardStats, Payment, Plan } from "@/lib/types";
+import { formatCurrency } from "@/lib/utils";
 
 export default function RelatoriosPage() {
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [plans, setPlans] = useState<Plan[]>([]);
+  useEffect(() => { Promise.all([getDashboardStats(), getPayments(), getPlans()]).then(([a, b, c]) => { setStats(a); setPayments(b); setPlans(c); }); }, []);
+  if (!stats) return <LoadingState label="Consolidando indicadores..." />;
+  const total = payments.reduce((sum, item) => sum + Number(item.total_amount), 0);
+  const paid = payments.filter((item) => item.status === "paid").reduce((sum, item) => sum + Number(item.total_amount), 0);
+  const defaultRate = total ? Math.round(((total - paid) / total) * 100) : 0;
+  const metrics = [
+    { label: "Receita no mês", value: formatCurrency(stats.monthlyRevenue), icon: DollarSign, tone: "green" },
+    { label: "Conversão em matrícula", value: `${stats.conversionRate}%`, icon: TrendingUp, tone: "blue" },
+    { label: "Inadimplência potencial", value: `${defaultRate}%`, icon: CreditCard, tone: "yellow" },
+    { label: "Alunos ativos", value: stats.activeStudents, icon: Users, tone: "purple" },
+  ];
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 anim-fadeUp">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-900 tracking-tight">Relatórios</h1>
-          <p className="text-zinc-500 text-sm mt-1">Análises financeiras e operacionais</p>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {[
-          { l:"Receita Mensal", v:"R$ 0,00", i:DollarSign, c:"#34c759" },
-          { l:"Novos Alunos", v:"0", i:TrendingUp, c:"#820ad1" },
-          { l:"Inadimplência", v:"0%", i:BarChart3, c:"#ff3b30" }
-        ].map((s, idx) => (
-          <div key={s.l} className={`card p-6 anim-fadeUp stagger-${idx+1}`}>
-            <div className="w-12 h-12 rounded-2xl flex items-center justify-center mb-4" style={{ background: `${s.c}15` }}>
-              <s.i className="w-6 h-6" style={{ color: s.c }} />
-            </div>
-            <div className="text-[32px] font-bold text-zinc-900 tracking-tight leading-none mb-1">{s.v}</div>
-            <div className="text-sm font-semibold text-zinc-600 mb-0.5">{s.l}</div>
-          </div>
-        ))}
-      </div>
-      
-      <div className="card p-16 flex flex-col items-center justify-center text-center anim-fadeUp stagger-4">
-        <div className="w-20 h-20 rounded-full bg-zinc-50 flex items-center justify-center mb-6">
-          <BarChart3 className="w-10 h-10 text-zinc-300" />
-        </div>
-        <h3 className="text-xl font-bold text-zinc-900 mb-2">Painel Analítico Completo</h3>
-        <p className="text-zinc-500 max-w-md">Os gráficos detalhados de faturamento, retenção e previsibilidade estarão disponíveis quando houver dados suficientes no Supabase.</p>
+    <div className="page-stack">
+      <PageHeader eyebrow="Inteligência operacional" title="Relatórios" description="Indicadores consolidados para apoiar decisões comerciais e financeiras." />
+      <div className="metric-grid">{metrics.map(({ label, value, icon: Icon, tone }) => <article className="card metric-card" key={label}><div className="metric-top"><div className={`metric-icon badge-${tone}`}><Icon className="h-5 w-5" /></div></div><strong>{value}</strong><p>{label}</p></article>)}</div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <section className="card"><div className="card-header"><div><h2>Resumo financeiro</h2><p>Valores consolidados da base atual</p></div><BarChart3 className="h-5 w-5 text-blue-600" /></div><div className="grid gap-3 p-5">{[["Valor total gerado", formatCurrency(total)], ["Valor recebido", formatCurrency(paid)], ["Saldo em aberto", formatCurrency(total - paid)]].map(([label, value]) => <div className="flex items-center justify-between rounded-xl bg-[#f7f9fc] p-4" key={label}><span className="text-xs text-[#657085]">{label}</span><strong className="text-sm">{value}</strong></div>)}</div></section>
+        <section className="card"><div className="card-header"><div><h2>Portfólio de planos</h2><p>Produtos disponíveis no workspace</p></div><StatusBadge tone="blue">{plans.length} planos</StatusBadge></div><div className="grid gap-3 p-5">{plans.map((plan) => <div className="flex items-center gap-3 rounded-xl border border-[#e3e8f0] p-4" key={plan.id}><i className="h-3 w-3 rounded-full" style={{ background: plan.color }} /><span className="flex-1 text-xs font-semibold">{plan.name}</span><strong className="text-xs">{formatCurrency(Number(plan.price))}</strong></div>)}</div></section>
       </div>
     </div>
   );

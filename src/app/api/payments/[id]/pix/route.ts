@@ -1,0 +1,44 @@
+import { createMercadoPagoPix } from "@/lib/server/mercado-pago";
+import { apiErrorResponse, ApiError, requireRole } from "@/lib/server/supabase-admin";
+
+export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
+  try {
+    const { admin } = await requireRole(request, ["admin", "receptionist"]);
+    const { id } = await context.params;
+    const { data: payment, error } = await admin
+      .from("payments")
+      .select("id, reference, total_amount, status, student:students(id, full_name, email, cpf)")
+      .eq("id", id)
+      .single();
+    if (error || !payment) throw new ApiError("Cobrança não encontrada.", 404);
+    if (payment.status === "paid") throw new ApiError("Esta cobrança já está paga.", 409);
+    const student = Array.isArray(payment.student) ? payment.student[0] : payment.student;
+    if (!student?.email || student.cpf.replace(/\D/g, "").length !== 11) throw new ApiError("O aluno precisa ter e-mail e CPF válidos para gerar o PIX.");
+
+    const origin = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || new URL(request.url).origin).replace(/\/+$/, "");
+    const webhookToken = process.env.MERCADO_PAGO_WEBHOOK_TOKEN?.trim();
+    const notificationUrl = `${origin}/api/webhooks/mercado-pago${webhookToken ? `?token=${encodeURIComponent(webhookToken)}` : ""}`;
+    const provider = await createMercadoPagoPix({
+      paymentId: payment.id,
+      amount: Number(payment.total_amount),
+      description: `Mensalidade ${payment.reference} - Corpo & Evolução`,
+      payerName: student.full_name,
+      payerEmail: student.email,
+      payerCpf: student.cpf,
+      notificationUrl,
+    });
+    const transaction = provider.point_of_interaction?.transaction_data;
+    const { data: updated, error: updateError } = await admin.from("payments").update({
+      method: "pix",
+      provider_payment_id: String(provider.id),
+      provider_status: provider.status || "pending",
+      pix_code: transaction?.qr_code || null,
+      pix_qr_base64: transaction?.qr_code_base64 || null,
+      pix_ticket_url: transaction?.ticket_url || null,
+    }).eq("id", payment.id).select("*").single();
+    if (updateError || !updated) throw new ApiError("A migração operacional ainda não foi aplicada. Execute database/migrations/002_studio_operations.sql.", 503);
+    return Response.json({ payment: updated });
+  } catch (reason) {
+    return apiErrorResponse(reason);
+  }
+}

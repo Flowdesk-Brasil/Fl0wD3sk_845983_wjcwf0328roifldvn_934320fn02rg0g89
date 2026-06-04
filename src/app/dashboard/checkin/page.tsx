@@ -1,117 +1,92 @@
 "use client";
 
-import { useState } from "react";
-import { QrCode, Search, CheckCircle2, Shield, Loader2 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { CheckCircle2, Clock3, QrCode, Search, ShieldAlert } from "lucide-react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { IconInput } from "@/components/form-controls";
+import { QrScanner } from "@/components/qr-scanner";
+import { LoadingState, PageHeader, StatusBadge } from "@/components/ui";
+import { getCheckins, processCheckin } from "@/lib/api";
+import type { Checkin, Student } from "@/lib/types";
+import { formatDateTime } from "@/lib/utils";
 
-export default function CheckInPage() {
-  const [qrInput, setQrInput] = useState("");
-  const [scanning, setScanning] = useState(false);
-  const [result, setResult] = useState<any | null>(null);
+type Result = Checkin & { student?: Student | null; duplicate?: boolean };
 
-  const processInput = async (code: string) => {
-    if (!code.trim()) return;
-    setScanning(true);
-    
+export default function CheckinPage() {
+  const [code, setCode] = useState("");
+  const [result, setResult] = useState<Result | null>(null);
+  const [history, setHistory] = useState<Checkin[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [processing, setProcessing] = useState(false);
+
+  const load = useCallback(async () => {
+    setHistory((await getCheckins()).slice(0, 12));
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const validateCode = useCallback(async (value: string) => {
+    if (!value.trim()) return;
+    setProcessing(true);
     try {
-      const { data: student } = await supabase
-        .from('students')
-        .select('*, enrollments(*, plans(*))')
-        .or(`qr_code.eq.${code.trim()},id.eq.${code.trim()}`)
-        .single();
-        
-      if (!student) {
-        setResult({ status: 'denied', reason: 'QR Code não encontrado.' });
-        return;
-      }
-      
-      if (student.status !== 'active') {
-        setResult({ status: 'denied', student, reason: 'Aluno inativo ou bloqueado.' });
-        return;
-      }
-      
-      // Validação simplificada para demonstração (Em prod, validaria financeiro tb)
-      setResult({ status: 'allowed', student });
-      
-      // Registrar o checkin real no Supabase
-      await supabase.from('checkins').insert([{
-        student_id: student.id,
-        status: 'allowed',
-        unit: 'Matriz'
-      }]);
-      
-    } catch (e) {
-      setResult({ status: 'denied', reason: 'Erro ao validar acesso.' });
+      const next = await processCheckin(value);
+      setCode(value);
+      setResult(next);
+      await load();
     } finally {
-      setScanning(false);
+      setProcessing(false);
     }
-  };
+  }, [load]);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await validateCode(code);
+  }
+
+  if (loading) return <LoadingState label="Preparando controle de acesso..." />;
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 anim-fadeUp">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-900 tracking-tight">Check-in</h1>
-          <p className="text-zinc-500 text-sm mt-1">Validação de acesso na catraca</p>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        
-        {/* Left - Scanner */}
-        <div className="card p-8 anim-fadeUp stagger-1 flex flex-col items-center justify-center min-h-[400px]">
-          <div className="w-20 h-20 rounded-full bg-[var(--brand-light)] flex items-center justify-center mb-6">
-            <QrCode className="w-10 h-10 text-[var(--brand-primary)]" />
+    <div className="page-stack">
+      <PageHeader eyebrow="Operação em tempo real" title="Check-in" description="Valide o acesso por câmera, QR Code ou código manual." />
+      <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+        <section className="card p-5 sm:p-7">
+          <div className="grid min-h-[360px] place-items-center text-center">
+            <div className="w-full max-w-md">
+              <div className="mx-auto grid h-20 w-20 place-items-center rounded-[24px] bg-blue-50 text-blue-600"><QrCode className="h-9 w-9" /></div>
+              <h2 className="mt-5 text-xl font-bold tracking-[-.035em]">Validar entrada</h2>
+              <p className="mx-auto mt-2 max-w-sm text-xs leading-5 text-[#657085]">Leia o QR Code exibido pelo aluno ou digite o código manualmente.</p>
+              <form className="mt-6 flex gap-2" onSubmit={submit}>
+                <label className="flex-1"><IconInput icon={Search} autoFocus value={code} onChange={(event) => setCode(event.target.value)} placeholder="Código do aluno" /></label>
+                <button className="btn btn-primary" disabled={processing}>{processing ? "Validando..." : "Validar"}</button>
+              </form>
+              <div className="mt-3"><QrScanner disabled={processing} onRead={validateCode} /></div>
+              <p className="mt-3 flex items-center justify-center gap-1.5 text-[11px] text-[#8d97aa]"><Clock3 className="h-3.5 w-3.5" /> Leituras repetidas em até 5 minutos não geram outro check-in.</p>
+            </div>
           </div>
-          <h2 className="text-xl font-bold text-zinc-900 mb-2">Leitor de QR Code</h2>
-          <p className="text-zinc-500 text-center text-sm mb-8 max-w-xs">
-            Aponte o celular do aluno para a câmera ou digite o código manualmente.
-          </p>
-          
-          <form onSubmit={e => { e.preventDefault(); processInput(qrInput); }} className="w-full flex gap-3">
-            <div className="relative flex-1">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
-              <input type="text" value={qrInput} onChange={e => setQrInput(e.target.value)}
-                placeholder="Código manual..." className="field pl-11" />
-            </div>
-            <button type="submit" disabled={scanning} className="btn btn-primary">
-              {scanning ? <Loader2 className="w-5 h-5 animate-spin" /> : "Validar"}
-            </button>
-          </form>
-        </div>
+        </section>
 
-        {/* Right - Result */}
-        <div className="card p-8 anim-fadeUp stagger-2 flex flex-col items-center justify-center min-h-[400px]">
-          {!result ? (
-            <div className="text-center">
-              <Shield className="w-16 h-16 text-zinc-200 mx-auto mb-4" />
-              <p className="text-zinc-500 font-medium">Aguardando leitura...</p>
-            </div>
-          ) : (
-            <div className={`w-full text-center p-8 rounded-2xl ${result.status === 'allowed' ? 'bg-green-50 border border-green-100' : 'bg-red-50 border border-red-100'} anim-fadeIn`}>
-              <div className={`w-24 h-24 rounded-full mx-auto flex items-center justify-center mb-6 ${result.status === 'allowed' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
-                {result.status === 'allowed' ? <CheckCircle2 className="w-12 h-12" /> : <Shield className="w-12 h-12" />}
+        <section className="card p-5 sm:p-7">
+          <div className={`grid min-h-[360px] place-items-center rounded-2xl border border-dashed text-center ${result?.status === "allowed" ? "border-green-200 bg-green-50/50" : result?.status === "denied" ? "border-red-200 bg-red-50/50" : "border-[#dce3ee] bg-[#fbfcfe]"}`}>
+            {!result ? <div><QrCode className="mx-auto h-10 w-10 text-[#c2cad7]" /><h3 className="mt-4 text-sm font-bold">Aguardando validação</h3><p className="mt-1 text-xs text-[#8d97aa]">O resultado da leitura aparecerá aqui.</p></div> : (
+              <div className="max-w-sm px-5">
+                <div className={`mx-auto grid h-20 w-20 place-items-center rounded-full ${result.status === "allowed" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>{result.status === "allowed" ? <CheckCircle2 className="h-9 w-9" /> : <ShieldAlert className="h-9 w-9" />}</div>
+                <h2 className={`mt-5 text-2xl font-extrabold tracking-[-.04em] ${result.status === "allowed" ? "text-green-700" : "text-red-700"}`}>{result.duplicate ? "Check-in já realizado" : result.status === "allowed" ? "Acesso liberado" : "Acesso negado"}</h2>
+                <p className="mt-2 text-sm font-semibold text-[#172033]">{result.student?.full_name ?? "Código não identificado"}</p>
+                <p className="mt-1 text-xs text-[#657085]">{result.reason ?? "Matrícula ativa e acesso regular."}</p>
+                <button className="btn btn-secondary mt-6" onClick={() => { setResult(null); setCode(""); }}>Nova leitura</button>
               </div>
-              
-              <h2 className={`text-3xl font-black tracking-tight mb-2 ${result.status === 'allowed' ? 'text-green-700' : 'text-red-700'}`}>
-                {result.status === 'allowed' ? 'ACESSO LIBERADO' : 'ACESSO NEGADO'}
-              </h2>
-              
-              {result.student && (
-                <div className="mt-6 p-4 bg-white rounded-xl shadow-sm text-left">
-                  <div className="font-bold text-zinc-900 text-lg">{result.student.full_name}</div>
-                  <div className="text-sm text-zinc-500 mt-1">{result.reason || "Matrícula regular."}</div>
-                </div>
-              )}
-              
-              <button onClick={() => {setResult(null); setQrInput("");}} className="mt-8 text-sm font-semibold text-zinc-500 hover:text-zinc-800">
-                Nova Leitura
-              </button>
-            </div>
-          )}
-        </div>
-        
+            )}
+          </div>
+        </section>
       </div>
+
+      <section className="card">
+        <div className="card-header"><div><h2>Histórico recente</h2><p>Últimas tentativas de acesso</p></div><StatusBadge tone="blue">{history.length} registros</StatusBadge></div>
+        <div className="table-wrap"><table className="data-table">
+          <thead><tr><th>Aluno</th><th>Situação</th><th className="hide-mobile">Motivo</th><th>Data e hora</th></tr></thead>
+          <tbody>{history.map((item) => <tr key={item.id}><td><strong className="text-xs text-[#172033]">{item.student?.full_name ?? "Não identificado"}</strong></td><td><StatusBadge tone={item.status === "allowed" ? "green" : "red"}>{item.status === "allowed" ? "Liberado" : "Negado"}</StatusBadge></td><td className="hide-mobile">{item.reason ?? "Acesso regular"}</td><td>{formatDateTime(item.checked_at)}</td></tr>)}</tbody>
+        </table></div>
+      </section>
     </div>
   );
 }

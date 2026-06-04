@@ -54,13 +54,34 @@ export function generateQRCode(studentId: string): string {
 }
 
 export function maskCPF(cpf: string): string {
-  return cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+  return digitsOnly(cpf)
+    .slice(0, 11)
+    .replace(/(\d{3})(\d)/, "$1.$2")
+    .replace(/(\d{3})(\d)/, "$1.$2")
+    .replace(/(\d{3})(\d{1,2})$/, "$1-$2");
 }
 
 export function maskPhone(phone: string): string {
-  const cleaned = phone.replace(/\D/g, "");
-  if (cleaned.length === 11) {
-    return cleaned.replace(/(\d{2})(\d{5})(\d{4})/, "($1) $2-$3");
-  }
-  return cleaned.replace(/(\d{2})(\d{4})(\d{4})/, "($1) $2-$3");
+  const cleaned = digitsOnly(phone).slice(0, 11);
+  if (cleaned.length <= 2) return cleaned.replace(/(\d{1,2})/, "($1");
+  if (cleaned.length <= 6) return cleaned.replace(/(\d{2})(\d+)/, "($1) $2");
+  if (cleaned.length <= 10) return cleaned.replace(/(\d{2})(\d{4})(\d+)/, "($1) $2-$3");
+  return cleaned.replace(/(\d{2})(\d{5})(\d+)/, "($1) $2-$3");
+}
+
+export function maskCEP(value: string): string {
+  return digitsOnly(value).slice(0, 8).replace(/(\d{5})(\d+)/, "$1-$2");
+}
+
+export function maskCNPJ(value: string): string {
+  return digitsOnly(value)
+    .slice(0, 14)
+    .replace(/(\d{2})(\d)/, "$1.$2")
+    .replace(/(\d{3})(\d)/, "$1.$2")
+    .replace(/(\d{3})(\d)/, "$1/$2")
+    .replace(/(\d{4})(\d{1,2})$/, "$1-$2");
+}
+
+export function digitsOnly(value: string): string {
+  return value.replace(/\D/g, "");
 }

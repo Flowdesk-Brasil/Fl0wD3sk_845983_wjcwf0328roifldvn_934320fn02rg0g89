@@ -1,123 +1,93 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { BookOpen, Plus, Search, Eye, AlertTriangle, CheckCircle2, XCircle, Clock, Loader2 } from "lucide-react";
-import { getEnrollments } from "@/lib/api";
+import { BookOpen, PauseCircle, Plus, RotateCcw } from "lucide-react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { EmptyState, ErrorBanner, FieldLabel, LoadingState, Modal, PageHeader, SearchInput, StatusBadge } from "@/components/ui";
+import { createEnrollment, getEnrollments, getPlans, getStudents, updateEnrollmentStatus } from "@/lib/api";
+import type { Enrollment, EnrollmentStatus, Plan, Student } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 
-const STATUS_CFG: Record<string, { label: string; badge: string; icon: React.ElementType }> = {
-  active:    { label: "Ativa",      badge: "badge-green",  icon: CheckCircle2 },
-  suspended: { label: "Suspensa",   badge: "badge-orange", icon: AlertTriangle },
-  cancelled: { label: "Cancelada",  badge: "badge-red",    icon: XCircle },
-  expired:   { label: "Expirada",   badge: "badge-gray",   icon: Clock },
-};
+const labels: Record<EnrollmentStatus, string> = { active: "Ativa", suspended: "Suspensa", cancelled: "Cancelada", expired: "Expirada" };
+const tones: Record<EnrollmentStatus, "green" | "yellow" | "red" | "gray"> = { active: "green", suspended: "yellow", cancelled: "red", expired: "gray" };
+const emptyForm = { student_id: "", plan_id: "", start_date: new Date().toISOString().slice(0, 10) };
 
 export default function MatriculasPage() {
-  const [enrollments, setEnrollments] = useState<any[]>([]);
+  const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
+  const [students, setStudents] = useState<Student[]>([]);
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [search, setSearch] = useState("");
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState(emptyForm);
+  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    async function load() {
-      const data = await getEnrollments();
-      setEnrollments(data);
-      setLoading(false);
-    }
-    load();
-  }, []);
+  async function load() {
+    const [nextEnrollments, nextStudents, nextPlans] = await Promise.all([getEnrollments(), getStudents(), getPlans()]);
+    setEnrollments(nextEnrollments);
+    setStudents(nextStudents.filter((student) => student.status === "active"));
+    setPlans(nextPlans.filter((plan) => plan.active));
+    setLoading(false);
+  }
+  useEffect(() => { void load(); }, []);
 
-  if (loading) {
-    return (
-      <div className="min-h-[50vh] flex flex-col items-center justify-center anim-fadeIn">
-        <Loader2 className="w-10 h-10 animate-spin text-[var(--brand-primary)] mb-4" />
-        <p className="text-zinc-500 font-medium">Carregando matrículas...</p>
-      </div>
-    );
+  const filtered = useMemo(() => {
+    const query = search.toLowerCase();
+    return enrollments.filter((item) => !query || item.matricula_number.toLowerCase().includes(query) || item.student?.full_name.toLowerCase().includes(query));
+  }, [enrollments, search]);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    try {
+      await createEnrollment(form);
+      setOpen(false);
+      setForm(emptyForm);
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Não foi possível criar a matrícula.");
+    }
   }
 
+  async function setStatus(id: string, status: EnrollmentStatus) {
+    await updateEnrollmentStatus(id, status);
+    await load();
+  }
+
+  if (loading) return <LoadingState label="Carregando matrículas..." />;
+
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
-      
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 anim-fadeUp">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-900 tracking-tight">Matrículas</h1>
-          <p className="text-zinc-500 text-sm mt-1">Gerencie os vínculos dos alunos com os planos</p>
-        </div>
-        <button className="btn btn-primary">
-          <Plus className="w-4 h-4" /> Nova Matrícula
-        </button>
-      </div>
-
-      <div className="card anim-fadeUp stagger-1">
-        
-        <div className="p-4 border-b border-[var(--border-light)] flex flex-col sm:flex-row items-center gap-4">
-          <div className="relative flex-1 w-full max-w-md">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
-            <input type="text" placeholder="Buscar por número ou aluno..." className="field pl-10" />
-          </div>
-        </div>
-
-        <div className="tbl-container">
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>Matrícula</th>
-                <th>Aluno</th>
-                <th className="hide-mobile">Plano</th>
-                <th className="hide-mobile">Período</th>
-                <th>Status</th>
-                <th className="text-right">Ações</th>
+    <div className="page-stack">
+      <PageHeader eyebrow="Ciclo comercial" title="Matrículas" description="Vincule alunos aos planos e acompanhe a vigência dos contratos." action={<button className="btn btn-primary" onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Nova matrícula</button>} />
+      <section className="card">
+        <div className="table-toolbar"><SearchInput value={search} onChange={setSearch} placeholder="Buscar matrícula ou aluno..." /><StatusBadge tone="blue">{enrollments.length} registros</StatusBadge></div>
+        {filtered.length ? (
+          <div className="table-wrap"><table className="data-table">
+            <thead><tr><th>Matrícula</th><th>Aluno</th><th className="hide-mobile">Plano</th><th className="hide-mobile">Vigência</th><th>Status</th><th>Ações</th></tr></thead>
+            <tbody>{filtered.map((item) => (
+              <tr key={item.id}>
+                <td><code className="rounded-lg bg-[#f3f6fb] px-2 py-1 text-[10px] font-bold text-blue-600">{item.matricula_number}</code></td>
+                <td><strong className="text-xs text-[#172033]">{item.student?.full_name ?? "Aluno removido"}</strong></td>
+                <td className="hide-mobile"><span className="flex items-center gap-2"><i className="h-2 w-2 rounded-full" style={{ background: item.plan?.color }} />{item.plan?.name ?? "Plano removido"}</span></td>
+                <td className="hide-mobile">{formatDate(item.start_date)} até {formatDate(item.end_date)}</td>
+                <td><StatusBadge tone={tones[item.status]}>{labels[item.status]}</StatusBadge></td>
+                <td><div className="flex gap-2">
+                  {item.status === "active" ? <button className="icon-btn" title="Suspender" onClick={() => void setStatus(item.id, "suspended")}><PauseCircle className="h-4 w-4" /></button> : <button className="icon-btn" title="Reativar" onClick={() => void setStatus(item.id, "active")}><RotateCcw className="h-4 w-4" /></button>}
+                </div></td>
               </tr>
-            </thead>
-            <tbody>
-              {enrollments.map(e => {
-                const cfg = STATUS_CFG[e.status] || { label: e.status, badge: 'badge-gray', icon: Clock };
-                const Icon = cfg.icon;
-                return (
-                  <tr key={e.id}>
-                    <td>
-                      <code className="px-2 py-1 bg-zinc-100 text-zinc-700 rounded-md font-mono text-xs font-bold">
-                        {e.matricula_number}
-                      </code>
-                    </td>
-                    <td>
-                      <div className="font-bold text-zinc-900">{e.student?.full_name || "—"}</div>
-                    </td>
-                    <td className="hide-mobile">
-                      <div className="flex items-center gap-2">
-                        <div className="w-2.5 h-2.5 rounded-full" style={{ background: e.plan?.color || '#ccc' }} />
-                        <span className="font-medium text-zinc-700">{e.plan?.name || "—"}</span>
-                      </div>
-                    </td>
-                    <td className="hide-mobile text-sm text-zinc-600">
-                      {formatDate(e.start_date)} até {formatDate(e.end_date)}
-                    </td>
-                    <td>
-                      <div className={`badge ${cfg.badge}`}>
-                        {cfg.label}
-                      </div>
-                    </td>
-                    <td>
-                      <div className="flex items-center justify-end">
-                        <button className="btn-icon bg-zinc-50 hover:bg-zinc-100"><Eye className="w-4 h-4 text-zinc-600" /></button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+            ))}</tbody>
+          </table></div>
+        ) : <EmptyState icon={BookOpen} title="Nenhuma matrícula encontrada" description="Crie uma matrícula para gerar cobrança e contrato automaticamente." />}
+      </section>
 
-          {enrollments.length === 0 && (
-            <div className="p-16 flex flex-col items-center justify-center text-center">
-              <div className="w-16 h-16 rounded-full bg-zinc-50 flex items-center justify-center mb-4">
-                <BookOpen className="w-8 h-8 text-zinc-300" />
-              </div>
-              <h3 className="text-lg font-bold text-zinc-900 mb-1">Nenhuma matrícula registrada</h3>
-              <p className="text-zinc-500 text-sm max-w-sm">Os vínculos dos alunos com os planos aparecerão aqui.</p>
-            </div>
-          )}
-        </div>
-      </div>
+      <Modal open={open} onClose={() => setOpen(false)} title="Nova matrícula" description="A cobrança inicial e o contrato serão gerados automaticamente.">
+        <form className="grid gap-4" onSubmit={submit}>
+          <ErrorBanner message={error} />
+          <label><FieldLabel required>Aluno</FieldLabel><select className="field" required value={form.student_id} onChange={(event) => setForm({ ...form, student_id: event.target.value })}><option value="">Selecione um aluno</option>{students.map((student) => <option value={student.id} key={student.id}>{student.full_name}</option>)}</select></label>
+          <label><FieldLabel required>Plano</FieldLabel><select className="field" required value={form.plan_id} onChange={(event) => setForm({ ...form, plan_id: event.target.value })}><option value="">Selecione um plano</option>{plans.map((plan) => <option value={plan.id} key={plan.id}>{plan.name}</option>)}</select></label>
+          <label><FieldLabel required>Data de início</FieldLabel><input className="field" type="date" required value={form.start_date} onChange={(event) => setForm({ ...form, start_date: event.target.value })} /></label>
+          <div className="form-actions"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancelar</button><button className="btn btn-primary" type="submit">Criar matrícula</button></div>
+        </form>
+      </Modal>
     </div>
   );
 }

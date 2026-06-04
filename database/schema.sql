@@ -1,219 +1,319 @@
--- =================================================================================
--- STUDIO CORPO E EVOLUÇÃO - SUPABASE SCHEMA (POSTGRESQL)
--- =================================================================================
+-- Corpo & Evolução - Supabase/PostgreSQL
+-- Execute em um projeto novo. O script mantém funções e políticas substituíveis.
 
--- 1. EXTENSÕES
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+create extension if not exists "pgcrypto";
 
--- 2. TIPOS CUSTOMIZADOS (ENUMS)
-CREATE TYPE user_role AS ENUM ('admin', 'receptionist', 'professor', 'student');
-CREATE TYPE student_status AS ENUM ('active', 'inactive', 'blocked');
-CREATE TYPE enrollment_status AS ENUM ('active', 'suspended', 'cancelled', 'expired');
-CREATE TYPE payment_status AS ENUM ('pending', 'paid', 'expired', 'cancelled', 'refunded');
-CREATE TYPE payment_method AS ENUM ('pix', 'credit_card', 'debit_card', 'cash');
-CREATE TYPE checkin_status AS ENUM ('allowed', 'denied');
+do $$ begin create type user_role as enum ('admin', 'receptionist', 'professor', 'student'); exception when duplicate_object then null; end $$;
+do $$ begin create type student_status as enum ('active', 'inactive', 'blocked'); exception when duplicate_object then null; end $$;
+do $$ begin create type enrollment_status as enum ('active', 'suspended', 'cancelled', 'expired'); exception when duplicate_object then null; end $$;
+do $$ begin create type payment_status as enum ('pending', 'paid', 'expired', 'cancelled', 'refunded'); exception when duplicate_object then null; end $$;
+do $$ begin create type payment_method as enum ('pix', 'credit_card', 'debit_card', 'cash'); exception when duplicate_object then null; end $$;
+do $$ begin create type checkin_status as enum ('allowed', 'denied'); exception when duplicate_object then null; end $$;
 
--- =================================================================================
--- 3. TABELAS
--- =================================================================================
-
--- PROFILES (Estende a tabela auth.users do Supabase)
-CREATE TABLE profiles (
-    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-    role user_role NOT NULL DEFAULT 'student',
-    full_name VARCHAR(255) NOT NULL,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    avatar_url TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
+create table if not exists profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  role user_role not null default 'student',
+  full_name varchar(255) not null,
+  email varchar(255) unique not null,
+  avatar_url text,
+  active boolean not null default true,
+  last_login timestamptz,
+  created_at timestamptz not null default now()
 );
 
--- PLANS (Planos da academia)
-CREATE TABLE plans (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    name VARCHAR(100) NOT NULL,
-    description TEXT,
-    price DECIMAL(10, 2) NOT NULL,
-    duration_days INTEGER NOT NULL,
-    weekly_limit INTEGER NOT NULL DEFAULT 7,
-    color VARCHAR(20) DEFAULT '#820ad1',
-    active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
+create table if not exists plans (
+  id uuid primary key default gen_random_uuid(),
+  name varchar(100) not null,
+  description text,
+  price numeric(10,2) not null check (price >= 0),
+  duration_days integer not null check (duration_days > 0),
+  weekly_limit integer not null default 7 check (weekly_limit between 1 and 7),
+  color varchar(20) not null default '#1a73e8',
+  active boolean not null default true,
+  created_at timestamptz not null default now()
 );
 
--- STUDENTS (Alunos)
-CREATE TABLE students (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    profile_id UUID REFERENCES profiles(id) ON DELETE SET NULL, -- Se tiver login no app
-    full_name VARCHAR(255) NOT NULL,
-    email VARCHAR(255) UNIQUE,
-    cpf VARCHAR(14) UNIQUE NOT NULL,
-    rg VARCHAR(20),
-    birth_date DATE NOT NULL,
-    gender VARCHAR(20),
-    phone VARCHAR(20) NOT NULL,
-    whatsapp VARCHAR(20),
-    
-    -- Endereço
-    cep VARCHAR(10),
-    street VARCHAR(255),
-    number VARCHAR(20),
-    complement VARCHAR(100),
-    neighborhood VARCHAR(100),
-    city VARCHAR(100),
-    state VARCHAR(2),
-    
-    -- Dados Físicos
-    weight DECIMAL(5, 2),
-    height DECIMAL(5, 2),
-    imc DECIMAL(5, 2),
-    objective TEXT,
-    
-    -- Emergência e Outros
-    emergency_contact VARCHAR(255),
-    emergency_phone VARCHAR(20),
-    observations TEXT,
-    
-    status student_status DEFAULT 'active',
-    qr_code VARCHAR(255) UNIQUE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now()),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
+create table if not exists students (
+  id uuid primary key default gen_random_uuid(),
+  profile_id uuid unique references profiles(id) on delete set null,
+  full_name varchar(255) not null,
+  email varchar(255) unique,
+  cpf varchar(14) unique not null,
+  rg varchar(20),
+  birth_date date not null,
+  gender varchar(30),
+  phone varchar(20) not null,
+  whatsapp varchar(20),
+  cep varchar(10),
+  street varchar(255),
+  number varchar(20),
+  complement varchar(100),
+  neighborhood varchar(100),
+  city varchar(100),
+  state varchar(2),
+  weight numeric(5,2) check (weight is null or weight > 0),
+  height numeric(5,2) check (height is null or height > 0),
+  imc numeric(5,2),
+  objective text,
+  emergency_contact varchar(255),
+  emergency_phone varchar(20),
+  observations text,
+  status student_status not null default 'active',
+  qr_code varchar(255) unique,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
--- ENROLLMENTS (Matrículas)
-CREATE TABLE enrollments (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    matricula_number VARCHAR(20) UNIQUE NOT NULL,
-    student_id UUID REFERENCES students(id) ON DELETE CASCADE,
-    plan_id UUID REFERENCES plans(id) ON DELETE RESTRICT,
-    status enrollment_status DEFAULT 'active',
-    start_date DATE NOT NULL,
-    end_date DATE NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
+create table if not exists enrollments (
+  id uuid primary key default gen_random_uuid(),
+  matricula_number varchar(30) unique not null,
+  student_id uuid not null references students(id) on delete cascade,
+  plan_id uuid not null references plans(id) on delete restrict,
+  status enrollment_status not null default 'active',
+  start_date date not null,
+  end_date date not null check (end_date >= start_date),
+  created_at timestamptz not null default now()
 );
 
--- CONTRACTS (Contratos)
-CREATE TABLE contracts (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    student_id UUID REFERENCES students(id) ON DELETE CASCADE,
-    plan_id UUID REFERENCES plans(id) ON DELETE RESTRICT,
-    enrollment_id UUID REFERENCES enrollments(id) ON DELETE CASCADE,
-    document_text TEXT NOT NULL,
-    status VARCHAR(20) DEFAULT 'pending', -- pending, signed
-    ip_address VARCHAR(50),
-    signed_at TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
+create table if not exists contracts (
+  id uuid primary key default gen_random_uuid(),
+  student_id uuid not null references students(id) on delete cascade,
+  plan_id uuid not null references plans(id) on delete restrict,
+  enrollment_id uuid not null references enrollments(id) on delete cascade,
+  document_text text not null,
+  status varchar(20) not null default 'pending' check (status in ('pending', 'signed', 'cancelled')),
+  ip_address varchar(50),
+  signed_at timestamptz,
+  created_at timestamptz not null default now()
 );
 
--- PAYMENTS (Pagamentos)
-CREATE TABLE payments (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    reference VARCHAR(50) UNIQUE NOT NULL,
-    student_id UUID REFERENCES students(id) ON DELETE CASCADE,
-    enrollment_id UUID REFERENCES enrollments(id) ON DELETE CASCADE,
-    
-    amount DECIMAL(10, 2) NOT NULL,
-    discount DECIMAL(10, 2) DEFAULT 0,
-    fine DECIMAL(10, 2) DEFAULT 0,
-    total_amount DECIMAL(10, 2) NOT NULL,
-    
-    status payment_status DEFAULT 'pending',
-    method payment_method,
-    
-    due_date DATE NOT NULL,
-    paid_at TIMESTAMP WITH TIME ZONE,
-    
-    pix_code TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
+create table if not exists payments (
+  id uuid primary key default gen_random_uuid(),
+  reference varchar(50) unique not null,
+  student_id uuid not null references students(id) on delete cascade,
+  enrollment_id uuid not null references enrollments(id) on delete cascade,
+  amount numeric(10,2) not null check (amount >= 0),
+  discount numeric(10,2) not null default 0 check (discount >= 0),
+  fine numeric(10,2) not null default 0 check (fine >= 0),
+  total_amount numeric(10,2) not null check (total_amount >= 0),
+  status payment_status not null default 'pending',
+  method payment_method,
+  due_date date not null,
+  paid_at timestamptz,
+  pix_code text,
+  created_at timestamptz not null default now()
 );
 
--- CHECKINS (Controle de Acesso)
-CREATE TABLE checkins (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    student_id UUID REFERENCES students(id) ON DELETE CASCADE,
-    enrollment_id UUID REFERENCES enrollments(id) ON DELETE SET NULL,
-    status checkin_status NOT NULL,
-    reason VARCHAR(255),
-    unit VARCHAR(100) DEFAULT 'Matriz',
-    checked_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
+create table if not exists checkins (
+  id uuid primary key default gen_random_uuid(),
+  student_id uuid references students(id) on delete set null,
+  enrollment_id uuid references enrollments(id) on delete set null,
+  status checkin_status not null,
+  reason varchar(255),
+  unit varchar(100) not null default 'Matriz',
+  checked_at timestamptz not null default now()
 );
 
--- NOTIFICATIONS (Comunicados)
-CREATE TABLE notifications (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    target_type VARCHAR(20) NOT NULL, -- 'all', 'student'
-    target_id UUID REFERENCES students(id) ON DELETE CASCADE, -- null if all
-    title VARCHAR(255) NOT NULL,
-    message TEXT NOT NULL,
-    read BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
+create table if not exists notifications (
+  id uuid primary key default gen_random_uuid(),
+  target_type varchar(20) not null check (target_type in ('all', 'student')),
+  target_id uuid references students(id) on delete cascade,
+  title varchar(255) not null,
+  message text not null,
+  read boolean not null default false,
+  created_at timestamptz not null default now(),
+  check ((target_type = 'all' and target_id is null) or (target_type = 'student' and target_id is not null))
 );
 
--- AUDIT_LOGS (Auditoria)
-CREATE TABLE audit_logs (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
-    action VARCHAR(50) NOT NULL,
-    entity VARCHAR(50) NOT NULL,
-    entity_id UUID,
-    details TEXT,
-    ip_address VARCHAR(50),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc', now())
+create table if not exists audit_logs (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references profiles(id) on delete set null,
+  action varchar(50) not null,
+  entity varchar(50) not null,
+  entity_id text,
+  details text not null,
+  ip_address varchar(50),
+  created_at timestamptz not null default now()
 );
 
--- =================================================================================
--- 4. FUNÇÕES E TRIGGERS
--- =================================================================================
+create table if not exists settings (
+  id text primary key default 'studio',
+  studio_name varchar(255) not null,
+  cnpj varchar(24),
+  phone varchar(24),
+  email varchar(255),
+  address text,
+  updated_at timestamptz not null default now()
+);
 
--- Calcula o IMC automaticamente antes de salvar o aluno
-CREATE OR REPLACE FUNCTION calculate_imc()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF NEW.weight IS NOT NULL AND NEW.height IS NOT NULL AND NEW.height > 0 THEN
-        -- assumindo altura em cm, converte para metros (NEW.height / 100.0)
-        NEW.imc := NEW.weight / ((NEW.height / 100.0) * (NEW.height / 100.0));
-    ELSE
-        NEW.imc := NULL;
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
+-- Compatibilidade com versões anteriores do schema.
+alter table profiles add column if not exists active boolean not null default true;
+alter table profiles add column if not exists last_login timestamptz;
+alter table audit_logs alter column entity_id type text using entity_id::text;
 
-CREATE TRIGGER calculate_imc_trigger
-BEFORE INSERT OR UPDATE ON students
-FOR EACH ROW
-EXECUTE FUNCTION calculate_imc();
+create index if not exists idx_students_status on students(status);
+create index if not exists idx_students_name on students(lower(full_name));
+create index if not exists idx_enrollments_student_status on enrollments(student_id, status);
+create index if not exists idx_payments_status_due_date on payments(status, due_date);
+create index if not exists idx_checkins_checked_at on checkins(checked_at desc);
+create index if not exists idx_audit_logs_created_at on audit_logs(created_at desc);
 
--- Cria um QR Code único para o aluno
-CREATE OR REPLACE FUNCTION generate_student_qr()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF NEW.qr_code IS NULL THEN
-        NEW.qr_code := 'QR-' || SUBSTRING(NEW.id::text FROM 1 FOR 8) || '-' || FLOOR(RANDOM() * 10000)::text;
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
+create or replace function set_updated_at()
+returns trigger language plpgsql as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
 
-CREATE TRIGGER generate_student_qr_trigger
-BEFORE INSERT ON students
-FOR EACH ROW
-EXECUTE FUNCTION generate_student_qr();
+create or replace function calculate_student_imc()
+returns trigger language plpgsql as $$
+begin
+  if new.weight is not null and new.height is not null and new.height > 0 then
+    new.imc = round(new.weight / power(new.height / 100.0, 2), 2);
+  else
+    new.imc = null;
+  end if;
+  return new;
+end;
+$$;
 
--- =================================================================================
--- 5. SEGURANÇA (RLS - ROW LEVEL SECURITY)
--- =================================================================================
+create or replace function generate_student_qr()
+returns trigger language plpgsql as $$
+begin
+  if new.qr_code is null then
+    new.qr_code = 'CE-' || upper(substr(new.id::text, 1, 8));
+  end if;
+  return new;
+end;
+$$;
 
--- Por padrão, os admins têm acesso total a tudo.
--- Configuração de RLS pode ser expandida no Supabase Studio.
+create or replace function handle_new_auth_user()
+returns trigger
+security definer set search_path = public
+language plpgsql as $$
+begin
+  insert into profiles (id, full_name, email, role)
+  values (
+    new.id,
+    coalesce(new.raw_user_meta_data ->> 'full_name', split_part(new.email, '@', 1)),
+    new.email,
+    'student'
+  )
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
 
-ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE plans ENABLE ROW LEVEL SECURITY;
-ALTER TABLE students ENABLE ROW LEVEL SECURITY;
-ALTER TABLE enrollments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE contracts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE checkins ENABLE ROW LEVEL SECURITY;
+create or replace function current_app_role()
+returns user_role
+stable security definer set search_path = public
+language sql as $$
+  select role from profiles where id = auth.uid() and active = true;
+$$;
 
--- Políticas básicas (Exemplo: todos os usuários autenticados podem ler os planos)
-CREATE POLICY "Planos visíveis para todos os usuários logados" ON plans FOR SELECT USING (auth.role() = 'authenticated');
--- (Adicione políticas RLS detalhadas de acordo com o nível de segurança exigido)
+create or replace function is_staff()
+returns boolean stable language sql as $$
+  select coalesce(current_app_role() in ('admin', 'receptionist', 'professor'), false);
+$$;
+
+create or replace function is_admin()
+returns boolean stable language sql as $$
+  select coalesce(current_app_role() = 'admin', false);
+$$;
+
+create or replace function audit_row_change()
+returns trigger
+security definer set search_path = public
+language plpgsql as $$
+declare
+  row_id text;
+begin
+  row_id = case when tg_op = 'DELETE' then old.id::text else new.id::text end;
+  insert into audit_logs (user_id, action, entity, entity_id, details)
+  values (auth.uid(), tg_op, tg_table_name, row_id, 'Mutation recorded by database trigger');
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists trg_students_updated_at on students;
+create trigger trg_students_updated_at before update on students for each row execute function set_updated_at();
+drop trigger if exists trg_settings_updated_at on settings;
+create trigger trg_settings_updated_at before update on settings for each row execute function set_updated_at();
+drop trigger if exists trg_students_imc on students;
+drop trigger if exists calculate_imc_trigger on students;
+create trigger trg_students_imc before insert or update of weight, height on students for each row execute function calculate_student_imc();
+drop trigger if exists trg_students_qr on students;
+drop trigger if exists generate_student_qr_trigger on students;
+create trigger trg_students_qr before insert on students for each row execute function generate_student_qr();
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created after insert on auth.users for each row execute function handle_new_auth_user();
+
+do $$
+declare table_name text;
+begin
+  foreach table_name in array array['profiles','plans','students','enrollments','contracts','payments','checkins','notifications','settings']
+  loop
+    execute format('drop trigger if exists trg_audit_%I on %I', table_name, table_name);
+    execute format('create trigger trg_audit_%I after insert or update or delete on %I for each row execute function audit_row_change()', table_name, table_name);
+  end loop;
+end $$;
+
+alter table profiles enable row level security;
+alter table plans enable row level security;
+alter table students enable row level security;
+alter table enrollments enable row level security;
+alter table contracts enable row level security;
+alter table payments enable row level security;
+alter table checkins enable row level security;
+alter table notifications enable row level security;
+alter table audit_logs enable row level security;
+alter table settings enable row level security;
+
+drop policy if exists profiles_select on profiles;
+create policy profiles_select on profiles for select to authenticated using (id = auth.uid() or is_staff());
+drop policy if exists profiles_admin_write on profiles;
+create policy profiles_admin_write on profiles for all to authenticated using (is_admin()) with check (is_admin());
+
+drop policy if exists plans_read on plans;
+create policy plans_read on plans for select to authenticated using (true);
+drop policy if exists plans_admin_write on plans;
+create policy plans_admin_write on plans for all to authenticated using (is_admin()) with check (is_admin());
+
+drop policy if exists students_staff_write on students;
+create policy students_staff_write on students for all to authenticated using (is_staff()) with check (is_staff());
+drop policy if exists students_own_read on students;
+create policy students_own_read on students for select to authenticated using (profile_id = auth.uid() or is_staff());
+
+drop policy if exists enrollments_staff_write on enrollments;
+create policy enrollments_staff_write on enrollments for all to authenticated using (is_staff()) with check (is_staff());
+drop policy if exists enrollments_own_read on enrollments;
+create policy enrollments_own_read on enrollments for select to authenticated using (exists (select 1 from students s where s.id = student_id and s.profile_id = auth.uid()) or is_staff());
+
+drop policy if exists contracts_staff_write on contracts;
+create policy contracts_staff_write on contracts for all to authenticated using (is_staff()) with check (is_staff());
+drop policy if exists contracts_own_read on contracts;
+create policy contracts_own_read on contracts for select to authenticated using (exists (select 1 from students s where s.id = student_id and s.profile_id = auth.uid()) or is_staff());
+
+drop policy if exists payments_staff_write on payments;
+create policy payments_staff_write on payments for all to authenticated using (is_staff()) with check (is_staff());
+drop policy if exists payments_own_read on payments;
+create policy payments_own_read on payments for select to authenticated using (exists (select 1 from students s where s.id = student_id and s.profile_id = auth.uid()) or is_staff());
+
+drop policy if exists checkins_staff_write on checkins;
+create policy checkins_staff_write on checkins for all to authenticated using (is_staff()) with check (is_staff());
+drop policy if exists checkins_own_read on checkins;
+create policy checkins_own_read on checkins for select to authenticated using (exists (select 1 from students s where s.id = student_id and s.profile_id = auth.uid()) or is_staff());
+
+drop policy if exists notifications_staff_access on notifications;
+create policy notifications_staff_access on notifications for all to authenticated using (is_staff()) with check (is_staff());
+drop policy if exists audit_admin_read on audit_logs;
+create policy audit_admin_read on audit_logs for select to authenticated using (is_admin());
+drop policy if exists settings_staff_read on settings;
+create policy settings_staff_read on settings for select to authenticated using (is_staff());
+drop policy if exists settings_admin_write on settings;
+create policy settings_admin_write on settings for all to authenticated using (is_admin()) with check (is_admin());
+
+insert into settings (id, studio_name, cnpj, phone, email, address)
+values ('studio', 'Studio Corpo & Evolução', '', '', '', '')
+on conflict (id) do nothing;

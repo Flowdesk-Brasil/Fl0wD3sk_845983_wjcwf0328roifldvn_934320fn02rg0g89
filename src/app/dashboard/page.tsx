@@ -1,183 +1,120 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import {
-  Users, DollarSign, QrCode, TrendingUp, AlertTriangle,
-  UserCheck, ArrowUpRight, ArrowDownRight
+  Activity, ArrowRight, BookOpen, CreditCard, DollarSign, QrCode, TrendingUp, UserCheck, Users,
 } from "lucide-react";
-import { getDashboardStats, getCheckins, getStudents } from "@/lib/api";
-import { formatCurrency, formatDateTime } from "@/lib/utils";
 import Link from "next/link";
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-
-interface StatCardProps {
-  title: string; value: string | number; subtitle: string;
-  icon: React.ElementType; animDelayClass: string;
-  trend?: "up"|"down"; trendVal?: string;
-}
-
-function StatCard({ title, value, subtitle, icon: Icon, animDelayClass, trend, trendVal }: StatCardProps) {
-  return (
-    <div className={`card p-6 anim-fadeUp ${animDelayClass}`}>
-      <div className="flex items-start justify-between mb-6">
-        <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-[#111] border border-[#222]">
-          <Icon className="w-5 h-5 text-white" />
-        </div>
-        {trend && trendVal && (
-          <div className={`flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded bg-[#111] border border-[#222]
-            ${trend === "up" ? "text-[#10b981]" : "text-[#ef4444]"}`}>
-            {trend === "up" ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
-            {trendVal}
-          </div>
-        )}
-      </div>
-      <div className="text-[28px] font-bold text-white tracking-tight leading-none mb-2">{value}</div>
-      <div className="text-[13px] font-medium text-[#888] mb-0.5">{title}</div>
-      <div className="text-[11px] text-[#555] uppercase tracking-wider">{subtitle}</div>
-    </div>
-  );
-}
+import { useEffect, useState } from "react";
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { LoadingState, PageHeader, StatusBadge } from "@/components/ui";
+import { getCheckins, getDashboardStats, getRevenueSeries } from "@/lib/api";
+import type { Checkin, DashboardStats, RevenuePoint } from "@/lib/types";
+import { formatCurrency, formatDateTime } from "@/lib/utils";
 
 export default function DashboardPage() {
-  const [stats, setStats] = useState<any>(null);
-  const [recentCheckins, setRecentCheckins] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [checkins, setCheckins] = useState<Checkin[]>([]);
+  const [series, setSeries] = useState<RevenuePoint[]>([]);
 
   useEffect(() => {
-    async function loadData() {
-      try {
-        const [dashboardStats, checkins] = await Promise.all([
-          getDashboardStats(),
-          getCheckins(),
-        ]);
-        setStats(dashboardStats);
-        setRecentCheckins(checkins.slice(0, 5));
-      } catch (e) {
-        console.error("Erro ao carregar dados", e);
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
+    Promise.all([getDashboardStats(), getCheckins(), getRevenueSeries()]).then(([nextStats, nextCheckins, nextSeries]) => {
+      setStats(nextStats);
+      setCheckins(nextCheckins.slice(0, 6));
+      setSeries(nextSeries);
+    });
   }, []);
 
-  if (loading || !stats) {
-    return (
-      <div className="min-h-[50vh] flex flex-col items-center justify-center anim-fadeIn">
-        <div className="w-8 h-8 border-2 border-[#333] border-t-white rounded-full animate-spin mb-4" />
-        <p className="text-[#888] text-sm font-medium">Carregando painel...</p>
-      </div>
-    );
-  }
+  if (!stats) return <LoadingState label="Montando visão geral..." />;
 
-  const pendingCount = stats.pendingPayments || 0;
-
-  const STAT_CARDS: StatCardProps[] = [
-    { title: "Total de Alunos",      value: stats.totalStudents,          subtitle: "Cadastrados no sistema", icon: Users,      animDelayClass: "stagger-1", trend: "up",   trendVal: "+12%" },
-    { title: "Alunos Ativos",        value: stats.activeStudents,         subtitle: "Com matrícula regular",  icon: UserCheck,  animDelayClass: "stagger-2", trend: "up",   trendVal: "+5%"  },
-    { title: "Receita Mensal",       value: formatCurrency(stats.monthlyRevenue), subtitle: "Este mês", icon: DollarSign, animDelayClass: "stagger-3", trend: "up",   trendVal: "+8%"  },
-    { title: "Acessos Hoje",         value: stats.todayCheckins,          subtitle: "Catraca / QR Code",      icon: QrCode,     animDelayClass: "stagger-4", trend: "up",   trendVal: "+15%" },
-  ];
-
-  const fakeChartData = [
-    { name: "Seg", receita: 4000 },
-    { name: "Ter", receita: 3000 },
-    { name: "Qua", receita: 2000 },
-    { name: "Qui", receita: 2780 },
-    { name: "Sex", receita: 1890 },
-    { name: "Sáb", receita: 2390 },
-    { name: "Dom", receita: 3490 },
+  const metrics = [
+    { label: "Alunos ativos", value: stats.activeStudents, detail: `${stats.totalStudents} cadastros totais`, icon: Users, color: "blue" },
+    { label: "Matrículas ativas", value: stats.activeEnrollments, detail: `${stats.conversionRate}% de conversão`, icon: BookOpen, color: "purple" },
+    { label: "Receita no mês", value: formatCurrency(stats.monthlyRevenue), detail: `${stats.pendingPayments} cobranças pendentes`, icon: DollarSign, color: "green" },
+    { label: "Check-ins hoje", value: stats.todayCheckins, detail: "Acessos registrados", icon: QrCode, color: "yellow" },
   ];
 
   return (
-    <div className="space-y-6">
-      {/* Alert Component */}
-      {pendingCount > 0 && (
-        <div className="flex items-center gap-4 p-4 rounded-xl bg-[#1a0505] border border-[#ef4444]/20 anim-fadeUp">
-          <div className="w-10 h-10 rounded-lg bg-[#ef4444]/10 flex items-center justify-center flex-shrink-0 border border-[#ef4444]/20">
-            <AlertTriangle className="w-5 h-5 text-[#ef4444]" />
-          </div>
-          <div>
-            <h4 className="text-[13px] font-bold text-[#ff8888]">Atenção Financeira</h4>
-            <p className="text-[12px] text-[#cc6666] mt-0.5">Existem {pendingCount} pagamentos em atraso ou pendentes.</p>
-          </div>
-          <Link href="/dashboard/pagamentos" className="ml-auto px-4 py-2 bg-[#ef4444]/10 hover:bg-[#ef4444]/20 text-[#ef4444] font-semibold text-xs rounded-lg transition-all border border-[#ef4444]/20">
-            Ver detalhes
-          </Link>
-        </div>
-      )}
+    <div className="page-stack">
+      <PageHeader
+        eyebrow="Performance operacional"
+        title="Visão geral"
+        description="Acompanhe os indicadores essenciais e as ações que precisam da sua atenção."
+        action={<Link href="/dashboard/alunos/novo" className="btn btn-primary"><UserCheck className="h-4 w-4" /> Novo aluno</Link>}
+      />
 
-      {/* Primary Stats Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {STAT_CARDS.map(c => <StatCard key={c.title} {...c} />)}
+      <div className="metric-grid">
+        {metrics.map(({ label, value, detail, icon: Icon, color }) => (
+          <article className="card metric-card" key={label}>
+            <div className="metric-top">
+              <div className={`metric-icon badge-${color}`}><Icon className="h-5 w-5" /></div>
+              <TrendingUp className="h-4 w-4 text-[#0f9d58]" />
+            </div>
+            <strong>{value}</strong>
+            <p>{label} · {detail}</p>
+          </article>
+        ))}
       </div>
 
-      {/* Main Content Area */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        
-        {/* Main Chart */}
-        <div className="card p-6 lg:col-span-2 anim-fadeUp stagger-2">
-          <div className="flex items-center justify-between mb-8">
-            <div>
-              <h2 className="text-[15px] font-bold text-white tracking-wide">Faturamento Semanal</h2>
-              <p className="text-[12px] text-[#666] mt-1">Análise de receita dos últimos 7 dias</p>
-            </div>
-            <div className="badge badge-gray px-3 py-1.5 text-[11px]">+8% vs Semana Anterior</div>
+      <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
+        <section className="card">
+          <div className="card-header">
+            <div><h2>Receita recebida</h2><p>Movimentação dos últimos sete dias</p></div>
+            <StatusBadge tone="blue">Atualizado agora</StatusBadge>
           </div>
-          <div className="h-[260px]">
+          <div className="card-body h-[320px]">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={fakeChartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+              <AreaChart data={series} margin={{ top: 10, right: 10, left: -18, bottom: 0 }}>
                 <defs>
-                  <linearGradient id="colorReceita" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#ffffff" stopOpacity={0.15}/>
-                    <stop offset="95%" stopColor="#ffffff" stopOpacity={0}/>
+                  <linearGradient id="revenue" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#1a73e8" stopOpacity={0.22} />
+                    <stop offset="100%" stopColor="#1a73e8" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1f1f22" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#666', fontSize: 11}} dy={10} />
-                <YAxis axisLine={false} tickLine={false} tick={{fill: '#666', fontSize: 11}} tickFormatter={(v) => `R$${v}`} />
-                <Tooltip 
-                  contentStyle={{ backgroundColor: '#000', borderRadius: '8px', border: '1px solid #333', boxShadow: '0 10px 30px rgba(0,0,0,0.5)', color: '#fff', fontSize: '12px' }}
-                  itemStyle={{ color: '#fff' }}
-                  cursor={{ stroke: '#333', strokeWidth: 1, strokeDasharray: '4 4' }}
-                />
-                <Area type="monotone" dataKey="receita" stroke="#ffffff" strokeWidth={2} fillOpacity={1} fill="url(#colorReceita)" />
+                <CartesianGrid vertical={false} stroke="#edf1f6" />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: "#8d97aa", fontSize: 11 }} />
+                <YAxis axisLine={false} tickLine={false} tick={{ fill: "#8d97aa", fontSize: 11 }} />
+                <Tooltip formatter={(value) => formatCurrency(Number(value))} contentStyle={{ border: "1px solid #e3e8f0", borderRadius: 12, boxShadow: "0 12px 30px rgba(30,42,62,.1)", fontSize: 12 }} />
+                <Area type="monotone" dataKey="receita" stroke="#1a73e8" strokeWidth={2.5} fill="url(#revenue)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
-        </div>
+        </section>
 
-        {/* Recent Activity */}
-        <div className="card p-6 anim-fadeUp stagger-3 flex flex-col">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-[15px] font-bold text-white tracking-wide">Últimos Acessos</h2>
-            <div className="w-2 h-2 rounded-full bg-[#10b981] shadow-[0_0_8px_#10b981] animate-pulse" title="Ao vivo" />
+        <section className="card">
+          <div className="card-header">
+            <div><h2>Acessos recentes</h2><p>Últimas validações de entrada</p></div>
+            <Activity className="h-4 w-4 text-[#0f9d58]" />
           </div>
-          
-          <div className="space-y-4 flex-1">
-            {recentCheckins.length === 0 ? (
-              <div className="text-center py-10 text-[13px] text-[#555]">Nenhum acesso registrado hoje.</div>
-            ) : recentCheckins.map(ci => (
-              <div key={ci.id} className="flex items-center gap-3">
-                <div className={`w-1.5 h-1.5 rounded-full ${ci.status === 'allowed' ? 'bg-[#10b981] shadow-[0_0_5px_#10b981]' : 'bg-[#ef4444] shadow-[0_0_5px_#ef4444]'}`} />
-                <div className="flex-1 min-w-0">
-                  <div className="text-[13px] font-bold text-[#ddd] truncate">
-                    {ci.student?.full_name?.split(" ").slice(0,2).join(" ") || "Aluno Desconhecido"}
-                  </div>
-                  <div className="text-[11px] text-[#666]">
-                    {formatDateTime(ci.checked_at)}
-                  </div>
+          <div className="divide-y divide-[#e3e8f0] px-5">
+            {checkins.length ? checkins.map((checkin) => (
+              <div className="flex items-center gap-3 py-4" key={checkin.id}>
+                <div className="avatar">{checkin.student?.full_name?.[0] ?? "?"}</div>
+                <div className="min-w-0 flex-1">
+                  <strong className="block truncate text-xs text-[#172033]">{checkin.student?.full_name ?? "Código não identificado"}</strong>
+                  <span className="mt-1 block text-[10px] text-[#8d97aa]">{formatDateTime(checkin.checked_at)}</span>
                 </div>
+                <StatusBadge tone={checkin.status === "allowed" ? "green" : "red"}>
+                  {checkin.status === "allowed" ? "Liberado" : "Negado"}
+                </StatusBadge>
               </div>
-            ))}
+            )) : <p className="py-16 text-center text-xs text-[#8d97aa]">Nenhum acesso registrado.</p>}
           </div>
-          
-          <Link href="/dashboard/checkin" className="mt-4 pt-4 border-t border-[#1f1f22] text-[12px] font-medium text-[#888] hover:text-white transition-colors flex items-center justify-center gap-1">
-            Ver controle de acesso <ArrowUpRight className="w-3 h-3" />
+          <Link href="/dashboard/checkin" className="flex items-center justify-center gap-2 border-t border-[#e3e8f0] p-4 text-xs font-semibold text-blue-600 hover:bg-blue-50">
+            Abrir controle de acesso <ArrowRight className="h-3.5 w-3.5" />
           </Link>
-        </div>
-
+        </section>
       </div>
+
+      {(stats.pendingPayments > 0 || stats.overduePayments > 0) && (
+        <section className="card flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
+          <div className="grid h-11 w-11 place-items-center rounded-xl bg-[#fef7e0] text-[#b06000]"><CreditCard className="h-5 w-5" /></div>
+          <div className="flex-1">
+            <h3 className="text-sm font-bold">Financeiro requer atenção</h3>
+            <p className="mt-1 text-xs text-[#657085]">{stats.pendingPayments} cobranças pendentes e {stats.overduePayments} vencidas.</p>
+          </div>
+          <Link href="/dashboard/pagamentos" className="btn btn-secondary">Revisar cobranças <ArrowRight className="h-4 w-4" /></Link>
+        </section>
+      )}
     </div>
   );
 }

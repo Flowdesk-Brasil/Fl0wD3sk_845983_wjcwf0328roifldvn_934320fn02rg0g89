@@ -1,99 +1,84 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Package, Plus, Edit, X, CheckCircle2, Calendar, Clock, Loader2 } from "lucide-react";
-import { getPlans } from "@/lib/api";
+import { CalendarDays, Edit3, Package, Plus, Users } from "lucide-react";
+import { useEffect, useState, type FormEvent } from "react";
+import { EmptyState, ErrorBanner, FieldLabel, LoadingState, Modal, PageHeader, StatusBadge } from "@/components/ui";
+import { getPlans, savePlan } from "@/lib/api";
+import type { Plan } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
 
+type PlanForm = Pick<Plan, "name" | "description" | "price" | "duration_days" | "weekly_limit" | "color" | "active"> & { id?: string };
+const emptyPlan: PlanForm = { name: "", description: "", price: 0, duration_days: 30, weekly_limit: 7, color: "#1a73e8", active: true };
+
 export default function PlanosPage() {
-  const [plans, setPlans] = useState<any[]>([]);
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [form, setForm] = useState<PlanForm>(emptyPlan);
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    async function load() {
-      const data = await getPlans();
-      setPlans(data);
-      setLoading(false);
-    }
-    load();
-  }, []);
+  async function load() { setPlans(await getPlans()); setLoading(false); }
+  useEffect(() => { void load(); }, []);
 
-  if (loading) {
-    return (
-      <div className="min-h-[50vh] flex flex-col items-center justify-center anim-fadeIn">
-        <Loader2 className="w-10 h-10 animate-spin text-[var(--brand-primary)] mb-4" />
-        <p className="text-zinc-500 font-medium">Carregando planos...</p>
-      </div>
-    );
+  function show(plan?: Plan) {
+    setForm(plan ? { ...plan } : emptyPlan);
+    setError(null);
+    setOpen(true);
   }
 
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    try {
+      await savePlan(form);
+      setOpen(false);
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Não foi possível salvar o plano.");
+    }
+  }
+
+  if (loading) return <LoadingState label="Carregando planos..." />;
+
   return (
-    <div className="space-y-8 max-w-7xl mx-auto">
-      
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 anim-fadeUp">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-900 tracking-tight">Planos</h1>
-          <p className="text-zinc-500 text-sm mt-1">Configure os pacotes do seu Studio</p>
+    <div className="page-stack">
+      <PageHeader eyebrow="Catálogo comercial" title="Planos" description="Configure produtos claros e consistentes para sua equipe vender." action={<button className="btn btn-primary" onClick={() => show()}><Plus className="h-4 w-4" /> Novo plano</button>} />
+      {plans.length ? (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {plans.map((plan) => (
+            <article className="card overflow-hidden" key={plan.id}>
+              <div className="h-1.5" style={{ background: plan.color }} />
+              <div className="p-5">
+                <div className="flex items-start justify-between">
+                  <div className="grid h-11 w-11 place-items-center rounded-xl" style={{ background: `${plan.color}18`, color: plan.color }}><Package className="h-5 w-5" /></div>
+                  <button className="icon-btn" onClick={() => show(plan)} aria-label="Editar plano"><Edit3 className="h-4 w-4" /></button>
+                </div>
+                <div className="mt-5 flex items-center gap-2"><h2 className="text-base font-bold tracking-[-.02em]">{plan.name}</h2><StatusBadge tone={plan.active ? "green" : "gray"}>{plan.active ? "Ativo" : "Inativo"}</StatusBadge></div>
+                <p className="mt-2 min-h-10 text-xs leading-5 text-[#657085]">{plan.description || "Plano sem descrição."}</p>
+                <strong className="mt-6 block text-3xl tracking-[-.05em]">{formatCurrency(Number(plan.price))}</strong>
+                <div className="mt-5 grid grid-cols-2 gap-2 border-t border-[#e3e8f0] pt-4 text-[11px] text-[#657085]">
+                  <span className="flex items-center gap-2"><CalendarDays className="h-3.5 w-3.5 text-blue-600" /> {plan.duration_days} dias</span>
+                  <span className="flex items-center gap-2"><Users className="h-3.5 w-3.5 text-blue-600" /> {plan.weekly_limit}x / semana</span>
+                </div>
+              </div>
+            </article>
+          ))}
         </div>
-        <button className="btn btn-primary">
-          <Plus className="w-4 h-4" /> Criar Plano
-        </button>
-      </div>
+      ) : <section className="card"><EmptyState icon={Package} title="Nenhum plano cadastrado" description="Crie seu primeiro produto para iniciar matrículas." action={<button className="btn btn-primary" onClick={() => show()}>Criar plano</button>} /></section>}
 
-      {/* Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {plans.map((p, i) => (
-          <div key={p.id} className={`card card-hover p-6 relative overflow-hidden anim-fadeUp stagger-${(i%4)+1} ${!p.active && 'opacity-60 grayscale'}`}>
-            
-            {/* Top color accent */}
-            <div className="absolute top-0 left-0 right-0 h-1.5" style={{ backgroundColor: p.color || 'var(--brand-primary)' }} />
-            
-            <div className="flex justify-between items-start mb-6 mt-2">
-              <div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{ backgroundColor: `${p.color}15` || 'var(--brand-light)' }}>
-                <Package className="w-6 h-6" style={{ color: p.color || 'var(--brand-primary)' }} />
-              </div>
-              <div className="flex items-center gap-2">
-                <button className="btn-icon bg-zinc-50 hover:bg-zinc-100"><Edit className="w-4 h-4 text-zinc-600" /></button>
-              </div>
-            </div>
-
-            <div className="mb-2">
-              <h3 className="text-lg font-bold text-zinc-900">{p.name}</h3>
-              <p className="text-[13px] text-zinc-500 line-clamp-2 mt-1 h-10">{p.description || "Sem descrição definida"}</p>
-            </div>
-
-            <div className="my-6">
-              <div className="flex items-baseline gap-1">
-                <span className="text-[32px] font-bold tracking-tight text-zinc-900">{formatCurrency(p.price)}</span>
-                <span className="text-sm font-medium text-zinc-500">/mês</span>
-              </div>
-            </div>
-
-            <div className="space-y-3 pt-6 border-t border-[var(--border-light)]">
-              <div className="flex items-center gap-3">
-                <Calendar className="w-4 h-4 text-zinc-400" />
-                <span className="text-sm font-medium text-zinc-600">Duração: {p.duration_days} dias</span>
-              </div>
-              <div className="flex items-center gap-3">
-                <Clock className="w-4 h-4 text-zinc-400" />
-                <span className="text-sm font-medium text-zinc-600">Limite: {p.weekly_limit}x por semana</span>
-              </div>
-            </div>
-            
-          </div>
-        ))}
-
-        {/* Add New Card */}
-        <button className="card card-hover p-6 flex flex-col items-center justify-center min-h-[340px] anim-fadeUp group border-dashed border-2 border-zinc-200 bg-transparent hover:border-[var(--brand-primary)] hover:bg-[var(--brand-light)] transition-all">
-          <div className="w-16 h-16 rounded-full bg-zinc-100 group-hover:bg-white flex items-center justify-center mb-4 shadow-sm transition-all group-hover:scale-110">
-            <Plus className="w-8 h-8 text-zinc-400 group-hover:text-[var(--brand-primary)]" />
-          </div>
-          <h3 className="text-lg font-bold text-zinc-900 mb-1 group-hover:text-[var(--brand-primary)]">Novo Plano</h3>
-          <p className="text-sm text-zinc-500">Clique para adicionar um novo pacote</p>
-        </button>
-      </div>
-
+      <Modal open={open} onClose={() => setOpen(false)} title={form.id ? "Editar plano" : "Novo plano"} description="Defina preço, duração e disponibilidade.">
+        <form className="form-grid" onSubmit={submit}>
+          <div className="col-span-full"><ErrorBanner message={error} /></div>
+          <label><FieldLabel required>Nome</FieldLabel><input className="field" required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
+          <label><FieldLabel required>Preço</FieldLabel><input className="field" type="number" min="0" step="0.01" required value={form.price} onChange={(event) => setForm({ ...form, price: Number(event.target.value) })} /></label>
+          <label><FieldLabel required>Duração (dias)</FieldLabel><input className="field" type="number" min="1" required value={form.duration_days} onChange={(event) => setForm({ ...form, duration_days: Number(event.target.value) })} /></label>
+          <label><FieldLabel required>Limite semanal</FieldLabel><input className="field" type="number" min="1" max="7" required value={form.weekly_limit} onChange={(event) => setForm({ ...form, weekly_limit: Number(event.target.value) })} /></label>
+          <label><FieldLabel>Cor de identificação</FieldLabel><input className="field h-[42px] p-1" type="color" value={form.color} onChange={(event) => setForm({ ...form, color: event.target.value })} /></label>
+          <label><FieldLabel>Situação</FieldLabel><select className="field" value={String(form.active)} onChange={(event) => setForm({ ...form, active: event.target.value === "true" })}><option value="true">Ativo</option><option value="false">Inativo</option></select></label>
+          <label className="col-span-full"><FieldLabel>Descrição</FieldLabel><textarea className="field" value={form.description ?? ""} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label>
+          <div className="form-actions col-span-full"><button className="btn btn-secondary" type="button" onClick={() => setOpen(false)}>Cancelar</button><button className="btn btn-primary" type="submit">Salvar plano</button></div>
+        </form>
+      </Modal>
     </div>
   );
 }

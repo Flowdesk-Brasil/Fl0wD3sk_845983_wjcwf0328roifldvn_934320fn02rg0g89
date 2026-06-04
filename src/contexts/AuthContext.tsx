@@ -1,147 +1,166 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { User } from "@supabase/supabase-js";
-import { supabase } from "@/lib/supabase";
+import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { useRouter } from "next/navigation";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import { localDB } from "@/lib/localDB";
+import { supabase, useLocalData } from "@/lib/supabase";
+import type { UserRole } from "@/lib/types";
 
-interface UserProfile extends User {
-  app_role: 'admin' | 'receptionist' | 'professor' | 'student';
+export interface AuthUser {
+  id: string;
+  email: string;
   full_name: string;
+  app_role: UserRole;
 }
 
-interface AuthContextType {
-  user: UserProfile | null;
+interface AuthContextValue {
+  user: AuthUser | null;
   isLoading: boolean;
-  login: (email: string, pass: string) => Promise<{ error: string | null }>;
+  login: (email: string, password: string) => Promise<{ error: string | null }>;
   logout: () => Promise<void>;
-  hasPermission: (roles: string[]) => boolean;
+  hasPermission: (roles: UserRole[]) => boolean;
 }
 
-const AuthContext = createContext<AuthContextType>({} as AuthContextType);
+const AuthContext = createContext<AuthContextValue | null>(null);
+
+function authErrorMessage(message?: string) {
+  if (!message) return null;
+  const normalized = message.toLowerCase();
+  if (normalized.includes("invalid login credentials")) return "E-mail ou senha incorretos.";
+  if (normalized.includes("email not confirmed")) return "Confirme seu e-mail antes de entrar.";
+  if (normalized.includes("too many requests")) return "Muitas tentativas. Aguarde alguns minutos e tente novamente.";
+  if (normalized.includes("failed to fetch")) return "Não foi possível conectar ao servidor de autenticação.";
+  return "Não foi possível entrar. Revise os dados e tente novamente.";
+}
+
+function readLocalSession(): AuthUser | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return JSON.parse(localStorage.getItem("currentUser") ?? "null") as AuthUser | null;
+  } catch {
+    return null;
+  }
+}
+
+function storeSession(user: AuthUser | null) {
+  if (typeof window === "undefined") return;
+  if (user) localStorage.setItem("currentUser", JSON.stringify(user));
+  else localStorage.removeItem("currentUser");
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<UserProfile | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
 
-  useEffect(() => {
-    const fetchSession = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
-          await loadProfile(session.user);
+  const loadProfile = useCallback(async (authUser: SupabaseUser, accessToken?: string) => {
+    const response = accessToken
+      ? await fetch("/api/auth/profile", { headers: { Authorization: `Bearer ${accessToken}` } })
+      : null;
+    const payload = response?.ok
+      ? await response.json() as { profile: { id: string; full_name: string; email: string; role: UserRole } }
+      : null;
+
+    const profile: AuthUser = !payload
+      ? {
+          id: authUser.id,
+          email: authUser.email ?? "",
+          full_name: authUser.user_metadata.full_name ?? authUser.email?.split("@")[0] ?? "Usuário",
+          app_role: "student",
         }
-      } catch (e) {
-        console.error("Supabase not configured or error fetching session");
-      } finally {
-        setIsLoading(false);
-      }
-    };
+      : {
+          id: payload.profile.id,
+          email: payload.profile.email,
+          full_name: payload.profile.full_name,
+          app_role: payload.profile.role,
+        };
 
-    fetchSession();
-
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (session?.user) {
-          await loadProfile(session.user);
-        } else {
-          setUser(null);
-        }
-      }
-    );
-
-    return () => {
-      authListener.subscription.unsubscribe();
-    };
+    storeSession(profile);
+    setUser(profile);
   }, []);
 
-  const loadProfile = async (supabaseUser: User) => {
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', supabaseUser.id)
-        .single();
-        
-      if (data) {
-        setUser({
-          ...supabaseUser,
-          app_role: data.role,
-          full_name: data.full_name
-        } as UserProfile);
-      } else {
-        // Fallback se não tiver profile criado
-        setUser({
-          ...supabaseUser,
-          app_role: 'admin', // default admin for testing if no profile
-          full_name: supabaseUser.email?.split('@')[0] || 'User'
-        } as UserProfile);
-      }
-    } catch (e) {
-       setUser({
-          ...supabaseUser,
-          app_role: 'admin',
-          full_name: 'Admin'
-        } as UserProfile);
+  useEffect(() => {
+    if (useLocalData) {
+      setUser(readLocalSession());
+      setIsLoading(false);
+      return;
     }
-  };
 
-  const login = async (email: string, pass: string) => {
-    try {
-      // 🚨 HARDCORE MOCK BYPASS: Funciona 100% das vezes se o email for admin@admin.com
-      if (email === 'admin@admin.com') {
-         const usr = { id: '1', email, app_role: 'admin', full_name: 'Admin Senior' };
-         if (typeof window !== 'undefined') localStorage.setItem('currentUser', JSON.stringify(usr));
-         setUser(usr as any);
-         return { error: null };
+    let active = true;
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (active && data.session?.user) await loadProfile(data.session.user, data.session.access_token);
+      if (active) setIsLoading(false);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) void loadProfile(session.user, session.access_token);
+      else {
+        storeSession(null);
+        setUser(null);
       }
+    });
 
-      const isDummy = !process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL.includes("dummy.supabase.co");
-      if (isDummy) {
-         if (typeof window !== 'undefined') {
-            const profiles = JSON.parse(localStorage.getItem('db_profiles') || '[]');
-            const user = profiles.find((p:any) => p.email === email && p.password === pass);
-            if (user) {
-              const usr = { id: user.id, email: user.email, app_role: user.role, full_name: user.full_name };
-              localStorage.setItem('currentUser', JSON.stringify(usr));
-              setUser(usr as any);
-              return { error: null };
-            }
-         }
-         return { error: 'Credenciais inválidas. (Modo Local: Cadastre um usuário primeiro)' };
-      }
+    return () => {
+      active = false;
+      listener.subscription.unsubscribe();
+    };
+  }, [loadProfile]);
 
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password: pass,
-      });
+  const login = useCallback(async (email: string, password: string) => {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (useLocalData) {
+      const profile = localDB
+        .get("profiles")
+        .find((item) => item.email.toLowerCase() === normalizedEmail && item.password === password && item.active);
+      if (!profile) return { error: "E-mail ou senha incorretos." };
 
-      if (error) throw error;
+      const session: AuthUser = {
+        id: profile.id,
+        email: profile.email,
+        full_name: profile.full_name,
+        app_role: profile.role,
+      };
+      storeSession(session);
+      setUser(session);
       return { error: null };
-    } catch (err: any) {
-      return { error: err.message };
     }
-  };
 
-  const logout = async () => {
-    if (process.env.NEXT_PUBLIC_SUPABASE_URL) {
-        await supabase.auth.signOut();
-    }
+    const { error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
+    return { error: authErrorMessage(error?.message) };
+  }, []);
+
+  const logout = useCallback(async () => {
+    storeSession(null);
+    if (!useLocalData) await supabase.auth.signOut();
     setUser(null);
-    router.push("/");
-  };
+    router.replace("/");
+  }, [router]);
 
-  const hasPermission = (roles: string[]) => {
-    if (!user) return false;
-    return roles.includes(user.app_role);
-  };
-
-  return (
-    <AuthContext.Provider value={{ user, isLoading, login, logout, hasPermission }}>
-      {children}
-    </AuthContext.Provider>
+  const value = useMemo<AuthContextValue>(
+    () => ({
+      user,
+      isLoading,
+      login,
+      logout,
+      hasPermission: (roles) => Boolean(user && roles.includes(user.app_role)),
+    }),
+    [isLoading, login, logout, user],
   );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-export const useAuth = () => useContext(AuthContext);
+export function useAuth() {
+  const context = useContext(AuthContext);
+  if (!context) throw new Error("useAuth deve ser usado dentro de AuthProvider.");
+  return context;
+}
