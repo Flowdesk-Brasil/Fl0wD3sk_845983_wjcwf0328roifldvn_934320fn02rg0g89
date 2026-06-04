@@ -89,13 +89,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (email: string, pass: string) => {
     try {
-      if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
+      const isDummy = !process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL.includes("dummy.supabase.co");
+      if (isDummy) {
          // Mock login fallback se o supabase não estiver configurado
          if(email === 'admin@admin.com') {
-             setUser({ id: '1', email, app_role: 'admin', full_name: 'Admin Mock' } as any);
+             setUser({ id: '1', email, app_role: 'admin', full_name: 'Admin Demo' } as any);
              return { error: null };
          }
-         return { error: 'Supabase não configurado. Use admin@admin.com no modo mock.' };
+         return { error: 'Para testar sem banco de dados configurado, use admin@admin.com' };
       }
 
       const { data, error } = await supabase.auth.signInWithPassword({
