@@ -1,4 +1,4 @@
-import { createHash, createHmac } from "crypto";
+﻿import { createHash, createHmac } from "crypto";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import type { HostingKind } from "@/lib/hosting/catalog";
 import {
@@ -249,8 +249,8 @@ export async function requestVpsAgent<T = unknown>(input: AgentRequestInput): Pr
 
 export function maskSecretPreview(value: string) {
   if (!value) return "";
-  if (value.length <= 4) return "••••";
-  return `${value.slice(0, 2)}••••${value.slice(-2)}`;
+  if (value.length <= 4) return "ÔÇóÔÇóÔÇóÔÇó";
+  return `${value.slice(0, 2)}ÔÇóÔÇóÔÇóÔÇó${value.slice(-2)}`;
 }
 
 function resolveEnvSecret() {
@@ -283,3 +283,4 @@ export function decryptEnvValue(value: string | null | undefined) {
     allowPlaintextFallback: false,
   });
 }
+

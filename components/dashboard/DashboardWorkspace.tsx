@@ -231,13 +231,6 @@ const SECONDARY_ITEMS: DashboardSidebarItem[] = [
     icon: HardDrive,
     viewIds: ["hosting"],
   },
-  {
-    id: "flowai_api",
-    label: "FlowAI API",
-    href: "/dashboard/flowai-api",
-    icon: PlugZap,
-    viewIds: ["flowai_api"],
-  },
 ];
 
 const DOMAIN_ITEMS: DashboardSidebarItem[] = [

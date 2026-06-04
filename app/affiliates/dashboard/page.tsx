@@ -3,6 +3,7 @@ import { getCurrentUserFromSessionCookie } from "@/lib/auth/session";
 import { AffiliatesWorkspace } from "@/components/affiliates/AffiliatesWorkspace";
 import type { Metadata } from "next";
 import { buildFlowCwvMetadata } from "@/lib/seo/flowCwv";
+import { resolveAuthUserAvatarUrl } from "@/lib/auth/avatar";
 
 export const metadata: Metadata = buildFlowCwvMetadata({
   title: "Dashboard de Afiliado - Flowdesk",
@@ -12,15 +13,6 @@ export const metadata: Metadata = buildFlowCwvMetadata({
   noIndex: true,
   keywords: ["dashboard", "afiliados", "comissoes", "saques"],
 });
-
-function buildDiscordAvatarUrl(
-  discordUserId: string | null,
-  avatarHash: string | null,
-) {
-  if (!avatarHash || !discordUserId) return null;
-  const extension = avatarHash.startsWith("a_") ? "gif" : "png";
-  return `https://cdn.discordapp.com/avatars/${discordUserId}/${avatarHash}.${extension}?size=96`;
-}
 
 export default async function AffiliatesDashboardPage({
   searchParams,
@@ -56,7 +48,7 @@ export default async function AffiliatesDashboardPage({
     <AffiliatesWorkspace
       displayName={user.username}
       username={user.username}
-      avatarUrl={buildDiscordAvatarUrl(user.discord_user_id, user.avatar)}
+      avatarUrl={resolveAuthUserAvatarUrl(user)}
       initialTab={activeTab}
     />
   );

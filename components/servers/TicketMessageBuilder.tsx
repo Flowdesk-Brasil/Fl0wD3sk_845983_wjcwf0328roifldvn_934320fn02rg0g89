@@ -820,8 +820,8 @@ function Menu<T extends string>({ items, onSelect, align = "left", anchor }: { i
         {items.map((item) => {
           const Icon = item.icon;
           return (
-            <button key={item.value} type="button" onClick={() => onSelect(item.value)} className="flex w-full items-start gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-colors duration-200 hover:bg-[#101010] active:bg-[#141414]">
-              <span className="mt-[1px] inline-flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[10px] border border-[#171717] bg-[#0D0D0D] text-[#BDBDBD]"><Icon className="h-[15px] w-[15px]" strokeWidth={2.1} /></span>
+            <button key={item.value} type="button" onClick={() => onSelect(item.value)} className="group flex w-full items-start gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-colors duration-200 hover:bg-[#101010] active:bg-[#141414]">
+              <span className="mt-[2px] inline-flex shrink-0 items-center justify-center text-[#8B8B8B] transition-all duration-300 group-hover:text-[#E8E8E8]"><Icon className="h-[18px] w-[18px]" strokeWidth={2.2} /></span>
               <span className="min-w-0">
                 <span className="block text-[14px] font-medium text-[#E8E8E8]">{item.label}</span>
                 <span className="mt-[2px] block text-[12px] leading-[1.45] text-[#7B7B7B]">{item.description}</span>

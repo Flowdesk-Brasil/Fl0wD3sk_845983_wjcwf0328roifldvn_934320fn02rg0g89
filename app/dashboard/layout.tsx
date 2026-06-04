@@ -6,15 +6,7 @@ import { ensureUserPaymentDeliveryReady } from "@/lib/payments/paymentReadiness"
 import { getPanelManagedServersForCurrentSession } from "@/lib/servers/managedServers";
 import { resolveDashboardWorkspaceAlertMessage } from "@/lib/servers/workspaceAlerts";
 import { getUserTeamsSnapshotForUser } from "@/lib/teams/userTeams";
-
-function buildDiscordAvatarUrl(
-  discordUserId: string | null,
-  avatarHash: string | null,
-) {
-  if (!avatarHash || !discordUserId) return null;
-  const extension = avatarHash.startsWith("a_") ? "gif" : "png";
-  return `https://cdn.discordapp.com/avatars/${discordUserId}/${avatarHash}.${extension}?size=96`;
-}
+import { resolveAuthUserAvatarUrl } from "@/lib/auth/avatar";
 
 async function DashboardLayoutContent({
   children,
@@ -51,7 +43,7 @@ async function DashboardLayoutContent({
         discordUserId: user.discord_user_id,
         displayName: user.display_name,
         username: user.username,
-        avatarUrl: buildDiscordAvatarUrl(user.discord_user_id, user.avatar),
+        avatarUrl: resolveAuthUserAvatarUrl(user),
       }}
       initialServers={managedServers}
       initialTeams={teamsSnapshot.teams}

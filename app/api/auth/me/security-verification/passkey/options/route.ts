@@ -1,0 +1,82 @@
+import { NextRequest, NextResponse } from "next/server";
+import {
+  generateAuthenticationOptions,
+  type AuthenticatorTransportFuture,
+  type Base64URLString,
+} from "@simplewebauthn/server";
+import { readSensitiveActionChallenge } from "@/lib/auth/sensitiveAction";
+import { getCurrentAuthSessionFromCookie } from "@/lib/auth/session";
+import { resolveWebAuthnRpId } from "@/lib/auth/webauthn";
+import {
+  applyNoStoreHeaders,
+  ensureSameOriginJsonMutationRequest,
+} from "@/lib/security/http";
+import { flowSecureDto, parseFlowSecureDto } from "@/lib/security/flowSecure";
+import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
+
+export async function POST(request: NextRequest) {
+  const originGuard = ensureSameOriginJsonMutationRequest(request);
+  if (originGuard) return originGuard;
+
+  const session = await getCurrentAuthSessionFromCookie();
+  if (!session) {
+    return applyNoStoreHeaders(
+      NextResponse.json({ ok: false, message: "Sessao expirada." }, { status: 401 }),
+    );
+  }
+
+  try {
+    const body = parseFlowSecureDto(
+      await request.json().catch(() => ({})),
+      {
+        challengeId: flowSecureDto.string({
+          minLength: 8,
+          maxLength: 120,
+          rejectThreatPatterns: false,
+        }),
+      },
+      { rejectUnknown: true },
+    );
+    const challengeId = body.challengeId;
+
+    const challenge = await readSensitiveActionChallenge(session.user.id, challengeId);
+    const supabase = getSupabaseAdminClientOrThrow();
+    const passkeys = await supabase
+      .from("auth_user_passkeys")
+      .select("credential_id, transports")
+      .eq("user_id", session.user.id)
+      .returns<Array<{ credential_id: string; transports: string[] }>>();
+    if (passkeys.error || !passkeys.data?.length) {
+      throw new Error("Nenhuma Passkey disponivel para esta conta.");
+    }
+
+    const options = await generateAuthenticationOptions({
+      rpID: resolveWebAuthnRpId(request),
+      timeout: 60_000,
+      userVerification: "required",
+      allowCredentials: passkeys.data.map((passkey) => ({
+        id: passkey.credential_id as Base64URLString,
+        transports: passkey.transports as AuthenticatorTransportFuture[],
+      })),
+    });
+    const update = await supabase
+      .from("auth_security_challenges")
+      .update({ challenge: options.challenge })
+      .eq("id", challenge.id)
+      .is("consumed_at", null);
+    if (update.error) throw new Error(update.error.message);
+
+    return applyNoStoreHeaders(NextResponse.json({ ok: true, options }));
+  } catch (error) {
+    return applyNoStoreHeaders(
+      NextResponse.json(
+        {
+          ok: false,
+          message:
+            error instanceof Error ? error.message : "Nao foi possivel iniciar a Passkey.",
+        },
+        { status: 400 },
+      ),
+    );
+  }
+}

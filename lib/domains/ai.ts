@@ -1,4 +1,4 @@
-import { searchDomains } from "@/lib/namesilo/domains";
+import { searchDomains } from "@/lib/domains/search";
 import type { DomainSearchResponse } from "@/lib/domains/searchTypes";
 import { runFlowAiJson } from "@/lib/flowai/service";
 

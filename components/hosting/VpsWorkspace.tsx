@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
@@ -4030,7 +4030,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                             void sendFlowChatMessage();
                           }
                         }}
-                        placeholder="Pergunte, peça review ou uma alteração no arquivo..."
+                        placeholder="Pergunte, pe├ºa review ou uma altera├º├úo no arquivo..."
                         disabled={flowChatQuota.blocked}
                         className="max-h-[160px] min-h-[76px] w-full resize-none bg-transparent text-[13px] leading-[1.5] text-white outline-none placeholder:text-[#5F5F5F] disabled:cursor-not-allowed disabled:opacity-55"
                       />
@@ -4849,3 +4849,4 @@ function InlineFileDraft({
     </div>
   );
 }
+

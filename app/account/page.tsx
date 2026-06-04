@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getCurrentUserFromSessionCookie, getCurrentAuthSessionFromCookie } from "@/lib/auth/session";
 import { TabRenderer } from "@/components/account/TabRegistry";
 import { getAccountSummary } from "@/lib/account/summary";
+import { resolveAuthUserAvatarUrl } from "@/lib/auth/avatar";
 
 export default async function AccountSettingsPage() {
   const user = await getCurrentUserFromSessionCookie();
@@ -23,11 +24,7 @@ export default async function AccountSettingsPage() {
     <TabRenderer 
       id="overview" 
       displayName={user.display_name} 
-      avatarUrl={
-        user.avatar && user.discord_user_id
-          ? `https://cdn.discordapp.com/avatars/${user.discord_user_id}/${user.avatar}.png`
-          : null
-      }
+      avatarUrl={resolveAuthUserAvatarUrl(user)}
       initialSummary={initialSummary}
     />
   );

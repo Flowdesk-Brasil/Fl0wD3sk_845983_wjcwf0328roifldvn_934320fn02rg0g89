@@ -17,6 +17,7 @@ import {
 import {
   buildLoginOtpRedirectLocation,
   buildLoginRedirectResponse,
+  buildLoginTwoFactorRedirectLocation,
 } from "@/lib/auth/loginFlash";
 import { buildAuthOriginRedirectResponse } from "@/lib/auth/requestOrigin";
 import {
@@ -27,6 +28,7 @@ import {
   updateSessionDiscordTokens,
 } from "@/lib/auth/session";
 import { validateTrustedDevice } from "@/lib/auth/trustedDevice";
+import { createPendingTwoFactorLoginIfNeeded } from "@/lib/auth/twoFactor";
 import {
   buildCanonicalUrlFromInternalPath,
   getRequestHostname,
@@ -216,6 +218,48 @@ export async function handleDiscordAuthCallback(request: NextRequest) {
           oauthMode: oauthModeCookie,
           otpRequired: false,
           reusedSession: true,
+        },
+      });
+
+      return attachRequestId(response, initialRequestContext.requestId);
+    }
+
+    const pendingTwoFactor = await createPendingTwoFactorLoginIfNeeded({
+      userId: user.id,
+      redirectTo: nextPathCookie || fallbackNextPath,
+      rememberSession: false,
+      ipAddress: extractClientIp(request),
+      userAgent: request.headers.get("user-agent"),
+      sessionContext: {
+        authMethod: "discord",
+        nextPath: nextPathCookie || fallbackNextPath,
+        discordAccessToken: tokenPayload.access_token,
+        discordRefreshToken: tokenPayload.refresh_token || null,
+        discordTokenExpiresAt,
+      },
+    });
+    if (pendingTwoFactor) {
+      const twoFactorLocation = buildLoginTwoFactorRedirectLocation(request, {
+        challengeId: pendingTwoFactor.challengeId,
+        methods: pendingTwoFactor.methods,
+        expiresAt: pendingTwoFactor.expiresAt,
+        nextPath: nextPathCookie || fallbackNextPath,
+      });
+      const response = redirectWithLocation(twoFactorLocation);
+      clearOAuthCookies(request, response);
+
+      const authenticatedContext = extendSecurityRequestContext(
+        initialRequestContext,
+        { userId: user.id },
+      );
+      await logSecurityAuditEventSafe(authenticatedContext, {
+        action: "auth_discord_callback",
+        outcome: "succeeded",
+        metadata: {
+          redirectTo: twoFactorLocation,
+          oauthMode: oauthModeCookie,
+          twoFactorRequired: true,
+          twoFactorMethods: pendingTwoFactor.methods,
         },
       });
 

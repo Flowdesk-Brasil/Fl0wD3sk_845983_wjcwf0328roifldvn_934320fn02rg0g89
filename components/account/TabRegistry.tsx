@@ -9,10 +9,11 @@ import {
   Activity,
   BadgePercent,
   Coins,
+  Contact,
   CreditCard,
   History,
   Key,
-  TerminalSquare,
+  MonitorSmartphone,
   Ticket,
   Users,
   type LucideIcon,
@@ -61,11 +62,12 @@ type AccountTabComponentProps = {
 };
 
 const ACCOUNT_TAB_IMPORTERS = {
+  personal_data: () => import("@/components/account/tabs/PersonalDataTab"),
+  sessions: () => import("@/components/account/tabs/SessionsTab"),
   plans: () => import("@/components/account/tabs/PlansTab"),
   payment_methods: () => import("@/components/account/tabs/PaymentMethodsTab"),
   payment_history: () => import("@/components/account/tabs/PaymentHistoryTab"),
   api_keys: () => import("@/components/account/tabs/ApiKeysTab"),
-  dev_environment: () => import("@/components/account/tabs/DevEnvironmentTab"),
   teams: () => import("@/components/account/tabs/TeamsTab"),
   tickets: () => import("@/components/account/tabs/TicketsTab"),
   status: () => import("@/components/account/tabs/StatusTab"),
@@ -97,11 +99,12 @@ const TAB_COMPONENTS: Record<
   Exclude<AccountTab, "overview">,
   ComponentType<AccountTabComponentProps>
 > = {
+  personal_data: dynamic<AccountTabComponentProps>(() => ACCOUNT_TAB_IMPORTERS.personal_data().then((m) => m.PersonalDataTab), { ssr: false, loading: AccountTabLoadingState }),
+  sessions: dynamic<AccountTabComponentProps>(() => ACCOUNT_TAB_IMPORTERS.sessions().then((m) => m.SessionsTab), { ssr: false, loading: AccountTabLoadingState }),
   plans: dynamic<AccountTabComponentProps>(() => ACCOUNT_TAB_IMPORTERS.plans().then((m) => m.PlansTab), { ssr: false, loading: AccountTabLoadingState }),
   payment_methods: dynamic<AccountTabComponentProps>(() => ACCOUNT_TAB_IMPORTERS.payment_methods().then((m) => m.PaymentMethodsTab), { ssr: false, loading: AccountTabLoadingState }),
   payment_history: dynamic<AccountTabComponentProps>(() => ACCOUNT_TAB_IMPORTERS.payment_history().then((m) => m.PaymentHistoryTab), { ssr: false, loading: AccountTabLoadingState }),
   api_keys: dynamic<AccountTabComponentProps>(() => ACCOUNT_TAB_IMPORTERS.api_keys().then((m) => m.ApiKeysTab), { ssr: false, loading: AccountTabLoadingState }),
-  dev_environment: dynamic<AccountTabComponentProps>(() => ACCOUNT_TAB_IMPORTERS.dev_environment().then((m) => m.DevEnvironmentTab), { ssr: false, loading: AccountTabLoadingState }),
   teams: dynamic<AccountTabComponentProps>(() => ACCOUNT_TAB_IMPORTERS.teams().then((m) => m.TeamsTab), { ssr: false, loading: AccountTabLoadingState }),
   tickets: dynamic<AccountTabComponentProps>(() => ACCOUNT_TAB_IMPORTERS.tickets().then((m) => m.TicketsTab), { ssr: false, loading: AccountTabLoadingState }),
   status: dynamic<AccountTabComponentProps>(() => ACCOUNT_TAB_IMPORTERS.status().then((m) => m.StatusTab), { ssr: false, loading: AccountTabLoadingState }),
@@ -157,12 +160,14 @@ export function TabRenderer({
 
   if (id === "overview") {
     return (
-      <OverviewContent
-        initialSummary={initialSummary}
-        displayName={displayName}
-        avatarUrl={avatarUrl}
-        {...props}
-      />
+      <div className="flowdesk-account-nui" data-account-tab={id}>
+        <OverviewContent
+          initialSummary={initialSummary}
+          displayName={displayName}
+          avatarUrl={avatarUrl}
+          {...props}
+        />
+      </div>
     );
   }
 
@@ -175,13 +180,15 @@ export function TabRenderer({
   }
 
   return (
-    <Component
-      initialTickets={initialTickets ?? initialSummary?.initialTickets}
-      displayName={displayName}
-      avatarUrl={avatarUrl}
-      {...props}
-      {...extraProps}
-    />
+    <div className="flowdesk-account-nui" data-account-tab={id}>
+      <Component
+        initialTickets={initialTickets ?? initialSummary?.initialTickets}
+        displayName={displayName}
+        avatarUrl={avatarUrl}
+        {...props}
+        {...extraProps}
+      />
+    </div>
   );
 }
 
@@ -193,11 +200,12 @@ type QuickCard = {
 };
 
 const QUICK_CARDS: QuickCard[] = [
+  { id: "personal_data", icon: Contact, title: "Meus dados", description: "Atualize sua identidade, acessos vinculados e segurança." },
+  { id: "sessions", icon: MonitorSmartphone, title: "Sessoes", description: "Revise dispositivos conectados e encerre acessos." },
   { id: "plans", icon: BadgePercent, title: "Assinaturas", description: "Visualize sua assinatura atual, status e opcoes disponiveis." },
   { id: "payment_methods", icon: CreditCard, title: "Metodos de Pagamento", description: "Adicione ou remova cartoes e metodos de pagamento." },
   { id: "payment_history", icon: History, title: "Historico de Pagamentos", description: "Timeline de cobrancas e transacoes aprovadas." },
   { id: "api_keys", icon: Key, title: "Chaves de API", description: "Crie chaves para integrar o Flowdesk externamente." },
-  { id: "dev_environment", icon: TerminalSquare, title: "Ambiente Dev", description: "Solicite IP, acompanhe grants e use o CLI oficial do Flowdesk." },
   { id: "teams", icon: Users, title: "Equipes e Membros", description: "Gerencie equipes, convites e ajuste permissoes." },
   { id: "tickets", icon: Ticket, title: "Tickets de Suporte", description: "Historico de atendimentos e novos chamados." },
 ];

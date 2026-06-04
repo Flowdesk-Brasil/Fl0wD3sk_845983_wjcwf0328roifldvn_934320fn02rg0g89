@@ -50,7 +50,7 @@ export function BotMissingModal({
     scope === "parent"
       ? "absolute inset-0 z-[80] isolate overflow-y-auto overscroll-contain px-[18px] py-[28px]"
       : scope === "workspace-main"
-        ? "fixed inset-y-0 left-0 right-0 z-[2600] isolate overflow-y-auto overscroll-contain xl:left-[318px]"
+        ? "flowdesk-server-modal-nui fixed inset-y-0 left-0 right-0 z-[2600] isolate overflow-y-auto overscroll-contain xl:left-[318px]"
         : "fixed inset-0 z-[2600] isolate overflow-y-auto overscroll-contain";
   const contentShellClassName =
     scope === "workspace-main"

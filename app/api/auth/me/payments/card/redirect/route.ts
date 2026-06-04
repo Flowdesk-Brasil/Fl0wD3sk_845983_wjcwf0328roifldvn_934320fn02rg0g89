@@ -372,6 +372,12 @@ export async function POST(request: Request) {
           requestedBillingPeriodCode: payload.billingPeriodCode,
         });
         const purchaseContext = resolvePurchaseContext(payload.purchaseContext);
+        if (purchaseContext?.authUserId && purchaseContext.authUserId !== user.id) {
+          return respond(
+            { ok: false, message: "Este checkout de dominio pertence a outra conta." },
+            { status: 403 },
+          );
+        }
         const checkoutItemName = purchaseContext?.title || checkoutPlan.plan.name;
         const checkoutProviderPayload = purchaseContext?.providerPayload || {};
 
@@ -437,8 +443,8 @@ export async function POST(request: Request) {
         const pricing = await resolveDiscountPricing({
           baseAmount: purchaseContext?.amount ?? checkoutPlan.amount,
           currency: purchaseContext?.currency ?? checkoutPlan.currency,
-          couponCode: payload.couponCode || null,
-          giftCardCode: payload.giftCardCode || null,
+          couponCode: purchaseContext?.type === "domain" ? null : payload.couponCode || null,
+          giftCardCode: purchaseContext?.type === "domain" ? null : payload.giftCardCode || null,
           userId: user.id,
           planCode: checkoutPlan.plan.code,
           billingPeriodCode: checkoutPlan.plan.billingPeriodCode,
@@ -446,7 +452,8 @@ export async function POST(request: Request) {
 
         const flowPointsPreview = applyFlowPointsToAmount({
           amount: pricing.totalAmount,
-          flowPointsBalance: checkoutPlan.flowPointsBalance,
+          flowPointsBalance:
+            purchaseContext?.type === "domain" ? 0 : checkoutPlan.flowPointsBalance,
         });
         const pricingWithFlowPoints = {
           ...pricing,

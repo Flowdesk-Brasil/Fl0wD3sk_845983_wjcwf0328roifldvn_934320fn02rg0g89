@@ -787,10 +787,12 @@ export function ServerSettingsEditorSkeleton({
   settingsSection = "overview",
 }: ServerSettingsEditorSkeletonProps) {
   const resolvedSettingsSection = settingsSection ?? "overview";
+  const useUpdatedNui =
+    tab === "settings" && !resolvedSettingsSection.startsWith("sales_");
 
   return (
     <section
-      className="flowdesk-fade-up-soft"
+      className={`flowdesk-fade-up-soft ${useUpdatedNui ? "flowdesk-servers-nui" : ""}`}
       style={{
         marginTop: standalone ? "0px" : `${serversScale.cardsTopSpacing}px`,
       }}

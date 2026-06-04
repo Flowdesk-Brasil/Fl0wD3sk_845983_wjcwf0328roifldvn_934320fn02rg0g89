@@ -22,7 +22,7 @@ type PasswordCredentialRow = {
 
 export type EmailAuthNextStep = "password" | "set_password";
 
-async function getPasswordCredentialForUser(userId: number) {
+export async function getPasswordCredentialForUser(userId: number) {
   const supabase = getSupabaseAdminClientOrThrow();
   const result = await supabase
     .from("auth_user_credentials")
@@ -204,6 +204,40 @@ export async function authenticateEmailPasswordAndIssueOtp(input: {
 
 export async function resendEmailLoginOtp(challengeId: string) {
   return resendLoginOtpChallenge(challengeId);
+}
+
+export async function updatePasswordCredential(input: {
+  userId: number;
+  currentPassword?: unknown;
+  newPassword: unknown;
+  confirmPassword: unknown;
+}) {
+  const newPassword =
+    typeof input.newPassword === "string" ? input.newPassword : "";
+  const confirmPassword =
+    typeof input.confirmPassword === "string" ? input.confirmPassword : "";
+  const passwordError = validatePasswordPolicy(newPassword, confirmPassword);
+  if (passwordError) throw new Error(passwordError);
+
+  const credential = await getPasswordCredentialForUser(input.userId);
+  if (credential) {
+    const currentPassword =
+      typeof input.currentPassword === "string" ? input.currentPassword : "";
+    if (!currentPassword) throw new Error("Informe sua senha atual.");
+    const currentPasswordValid = await verifyPasswordDetailed(
+      currentPassword,
+      credential.password_hash,
+    );
+    if (!currentPasswordValid.ok) throw new Error("A senha atual esta incorreta.");
+    const samePassword = await verifyPasswordDetailed(
+      newPassword,
+      credential.password_hash,
+    );
+    if (samePassword.ok) throw new Error("Escolha uma senha diferente da atual.");
+  }
+
+  await upsertPasswordCredential(input.userId, newPassword);
+  return { created: !credential };
 }
 
 type VerifiedEmailLoginOtpResult = Awaited<ReturnType<typeof verifyLoginOtpChallenge>> & {

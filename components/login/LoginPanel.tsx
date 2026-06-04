@@ -2,7 +2,9 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { ChevronLeft, Eye, EyeOff } from "lucide-react";
+import { ChevronLeft, Eye, EyeOff, KeyRound, LockKeyhole } from "lucide-react";
+import { startAuthentication } from "@simplewebauthn/browser";
+import { getFriendlyWebAuthnError } from "@/lib/auth/webauthnClient";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { DiscordLoginButton } from "@/components/login/DiscordLoginButton";
 import { GoogleLoginButton } from "@/components/login/GoogleLoginButton";
@@ -43,6 +45,11 @@ type LoginPanelProps = {
     source: "social";
     provider?: "discord" | "google" | "microsoft" | null;
   } | null;
+  initialTwoFactorState?: {
+    challengeId: string;
+    methods: Array<"totp" | "passkey">;
+    expiresAt?: string | null;
+  } | null;
   currentSessionHint?: {
     displayName: string;
     email: string | null;
@@ -74,9 +81,13 @@ type EmailOtpResponse = {
   ok: boolean;
   message?: string;
   redirectTo?: string;
+  requiresTwoFactor?: boolean;
+  twoFactorChallengeId?: string;
+  twoFactorMethods?: Array<"totp" | "passkey">;
+  twoFactorExpiresAt?: string;
 };
 
-type LoginStage = "chooser" | "password" | "otp";
+type LoginStage = "chooser" | "password" | "otp" | "two_factor";
 type OtpSource = "email" | "social";
 
 const inputShellClassName =
@@ -163,13 +174,16 @@ export function LoginPanel({
   microsoftEnabled = false,
   emailOtpLength = 6,
   initialOtpState = null,
+  initialTwoFactorState = null,
   currentSessionHint = null,
   initialEmail = null,
 }: LoginPanelProps) {
   const notifications = useNotifications();
   const termsUrl = process.env.NEXT_PUBLIC_TERMS_URL || TERMS_PATH;
   const privacyUrl = process.env.NEXT_PUBLIC_PRIVACY_URL || PRIVACY_PATH;
-  const [stage, setStage] = useState<LoginStage>(initialOtpState ? "otp" : "chooser");
+  const [stage, setStage] = useState<LoginStage>(
+    initialTwoFactorState ? "two_factor" : initialOtpState ? "otp" : "chooser",
+  );
   const [email, setEmail] = useState(initialEmail || "");
   const [maskedEmail, setMaskedEmail] = useState(initialOtpState?.maskedEmail || "");
   const [password, setPassword] = useState("");
@@ -196,6 +210,21 @@ export function LoginPanel({
   const [isSubmittingPassword, setIsSubmittingPassword] = useState(false);
   const [isSubmittingOtp, setIsSubmittingOtp] = useState(false);
   const [isResendingOtp, setIsResendingOtp] = useState(false);
+  const [twoFactorChallengeId, setTwoFactorChallengeId] = useState(
+    initialTwoFactorState?.challengeId || "",
+  );
+  const [twoFactorMethods, setTwoFactorMethods] = useState<Array<"totp" | "passkey">>(
+    initialTwoFactorState?.methods || [],
+  );
+  const [selectedTwoFactorMethod, setSelectedTwoFactorMethod] = useState<
+    "totp" | "passkey" | null
+  >(
+    initialTwoFactorState?.methods.length === 1
+      ? initialTwoFactorState.methods[0]
+      : null,
+  );
+  const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [isSubmittingTwoFactor, setIsSubmittingTwoFactor] = useState(false);
   const [rememberSession, setRememberSession] = useState(false);
   const [isEmbeddedAuthBrowser, setIsEmbeddedAuthBrowser] = useState(false);
   const [passwordCooldownUntil, setPasswordCooldownUntil] = useState<number | null>(null);
@@ -355,6 +384,22 @@ export function LoginPanel({
     setOtpSource(initialOtpState.source);
     setOtpCode("");
   }, [initialOtpState]);
+
+  useEffect(() => {
+    if (!initialTwoFactorState?.challengeId || !initialTwoFactorState.methods.length) {
+      return;
+    }
+
+    setStage("two_factor");
+    setTwoFactorChallengeId(initialTwoFactorState.challengeId);
+    setTwoFactorMethods(initialTwoFactorState.methods);
+    setSelectedTwoFactorMethod(
+      initialTwoFactorState.methods.length === 1
+        ? initialTwoFactorState.methods[0]
+        : null,
+    );
+    setTwoFactorCode("");
+  }, [initialTwoFactorState]);
 
   useEffect(() => {
     if (stage !== "otp") {
@@ -681,10 +726,34 @@ export function LoginPanel({
       });
       const payload = (await response.json()) as EmailOtpResponse;
 
-      if (!response.ok || !payload.ok || !payload.redirectTo) {
+      if (!response.ok || !payload.ok) {
         throw new Error(payload.message || "Nao foi possivel validar o codigo.");
       }
 
+      if (
+        payload.requiresTwoFactor &&
+        payload.twoFactorChallengeId &&
+        payload.twoFactorMethods?.length
+      ) {
+        setTwoFactorChallengeId(payload.twoFactorChallengeId);
+        setTwoFactorMethods(payload.twoFactorMethods);
+        setSelectedTwoFactorMethod(
+          payload.twoFactorMethods.length === 1
+            ? payload.twoFactorMethods[0]
+            : null,
+        );
+        setTwoFactorCode("");
+        setStage("two_factor");
+        showInfoNotification(
+          "Confirme a segunda etapa para concluir o login.",
+          "Conta protegida",
+        );
+        return;
+      }
+
+      if (!payload.redirectTo) {
+        throw new Error(payload.message || "Nao foi possivel concluir o login.");
+      }
       window.location.replace(payload.redirectTo);
     } catch (error) {
       showErrorNotification(
@@ -693,6 +762,79 @@ export function LoginPanel({
       );
     } finally {
       setIsSubmittingOtp(false);
+    }
+  }
+
+  async function handleTotpTwoFactor() {
+    if (isSubmittingTwoFactor || twoFactorCode.length !== 6) return;
+    setIsSubmittingTwoFactor(true);
+    try {
+      const response = await fetch("/api/auth/two-factor/totp", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          challengeId: twoFactorChallengeId,
+          code: twoFactorCode,
+        }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as EmailOtpResponse;
+      if (!response.ok || !payload.ok || !payload.redirectTo) {
+        throw new Error(payload.message || "Nao foi possivel validar o autenticador.");
+      }
+      window.location.replace(payload.redirectTo);
+    } catch (error) {
+      showErrorNotification(
+        error instanceof Error ? error.message : "Nao foi possivel validar o autenticador.",
+        "Segunda etapa invalida",
+      );
+    } finally {
+      setIsSubmittingTwoFactor(false);
+    }
+  }
+
+  async function handlePasskeyTwoFactor() {
+    if (isSubmittingTwoFactor) return;
+    setIsSubmittingTwoFactor(true);
+    try {
+      const optionsResponse = await fetch("/api/auth/two-factor/passkey/options", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ challengeId: twoFactorChallengeId }),
+      });
+      const optionsPayload = (await optionsResponse.json().catch(() => ({}))) as {
+        ok?: boolean;
+        message?: string;
+        options?: Parameters<typeof startAuthentication>[0]["optionsJSON"];
+      };
+      if (!optionsResponse.ok || !optionsPayload.ok || !optionsPayload.options) {
+        throw new Error(optionsPayload.message || "Nao foi possivel iniciar a Passkey.");
+      }
+      const credential = await startAuthentication({
+        optionsJSON: optionsPayload.options,
+      });
+      const verifyResponse = await fetch("/api/auth/two-factor/passkey/verify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          challengeId: twoFactorChallengeId,
+          response: credential,
+        }),
+      });
+      const verifyPayload = (await verifyResponse.json().catch(() => ({}))) as EmailOtpResponse;
+      if (!verifyResponse.ok || !verifyPayload.ok || !verifyPayload.redirectTo) {
+        throw new Error(verifyPayload.message || "Nao foi possivel validar a Passkey.");
+      }
+      window.location.replace(verifyPayload.redirectTo);
+    } catch (error) {
+      showErrorNotification(
+        getFriendlyWebAuthnError(error),
+        "Passkey nao validada",
+      );
+    } finally {
+      setIsSubmittingTwoFactor(false);
     }
   }
 
@@ -751,6 +893,15 @@ export function LoginPanel({
         setStage("password");
       }
       setOtpCode("");
+      return;
+    }
+
+    if (stage === "two_factor") {
+      setStage("chooser");
+      setTwoFactorChallengeId("");
+      setTwoFactorMethods([]);
+      setSelectedTwoFactorMethod(null);
+      setTwoFactorCode("");
       return;
     }
 
@@ -1104,11 +1255,147 @@ export function LoginPanel({
     </>
   );
 
+  const twoFactorView = (
+    <>
+      <button
+        type="button"
+        onClick={handleGoBack}
+        className="mt-[18px] inline-flex items-center gap-[8px] text-[13px] font-medium text-[#A9A9A9] transition-colors hover:text-[#F2F2F2]"
+      >
+        <ChevronLeft className="h-[16px] w-[16px]" strokeWidth={2.1} />
+        Voltar
+      </button>
+
+      <div className="mt-[18px] rounded-[20px] border border-[rgba(255,255,255,0.06)] bg-[#080808] px-[16px] py-[14px]">
+        <div className="flex items-start gap-[12px]">
+          <span className="inline-flex h-[36px] w-[36px] shrink-0 items-center justify-center rounded-[12px] border border-[rgba(255,255,255,0.07)] bg-[#0C0C0C] text-[#D0D0D0]">
+            <LockKeyhole className="h-[17px] w-[17px]" />
+          </span>
+          <div>
+            <p className="text-[14px] font-medium text-[#EDEDED]">
+              {twoFactorMethods.length > 1 && !selectedTwoFactorMethod
+                ? "Escolha como confirmar"
+                : "Segunda etapa"}
+            </p>
+            <p className="mt-[4px] text-[12px] leading-[1.6] text-[#777777]">
+              {twoFactorMethods.length > 1 && !selectedTwoFactorMethod
+                ? "Selecione um dos metodos ativos para concluir seu login."
+                : "Confirme sua identidade com o metodo selecionado."}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {twoFactorMethods.length > 1 && !selectedTwoFactorMethod ? (
+        <div className="mt-[14px] grid gap-[10px] sm:grid-cols-2">
+          {twoFactorMethods.includes("totp") ? (
+            <button
+              type="button"
+              onClick={() => setSelectedTwoFactorMethod("totp")}
+              className="flex min-h-[92px] items-start gap-[12px] rounded-[16px] border border-[rgba(255,255,255,0.08)] bg-[#0A0A0A] p-[14px] text-left transition-colors hover:border-[rgba(255,255,255,0.16)] hover:bg-[#0D0D0D]"
+            >
+              <LockKeyhole className="mt-[1px] h-[18px] w-[18px] shrink-0 text-[#D4D4D4]" />
+              <span>
+                <span className="block text-[13px] font-medium text-[#E8E8E8]">
+                  Authenticator
+                </span>
+                <span className="mt-[4px] block text-[11px] leading-[1.5] text-[#777777]">
+                  Codigo temporario de 6 digitos
+                </span>
+              </span>
+            </button>
+          ) : null}
+          {twoFactorMethods.includes("passkey") ? (
+            <button
+              type="button"
+              onClick={() => setSelectedTwoFactorMethod("passkey")}
+              className="flex min-h-[92px] items-start gap-[12px] rounded-[16px] border border-[rgba(255,255,255,0.08)] bg-[#0A0A0A] p-[14px] text-left transition-colors hover:border-[rgba(255,255,255,0.16)] hover:bg-[#0D0D0D]"
+            >
+              <KeyRound className="mt-[1px] h-[18px] w-[18px] shrink-0 text-[#D4D4D4]" />
+              <span>
+                <span className="block text-[13px] font-medium text-[#E8E8E8]">
+                  Passkey
+                </span>
+                <span className="mt-[4px] block text-[11px] leading-[1.5] text-[#777777]">
+                  Biometria, Windows Hello ou dispositivo
+                </span>
+              </span>
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {selectedTwoFactorMethod && twoFactorMethods.length > 1 ? (
+        <button
+          type="button"
+          onClick={() => {
+            setSelectedTwoFactorMethod(null);
+            setTwoFactorCode("");
+          }}
+          className="mt-[12px] text-[12px] font-medium text-[#929292] transition-colors hover:text-white"
+        >
+          Trocar metodo
+        </button>
+      ) : null}
+
+      {selectedTwoFactorMethod === "totp" ? (
+        <form
+          className="mt-[14px]"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void handleTotpTwoFactor();
+          }}
+        >
+          <div className={inputShellClassName}>
+            <LockKeyhole className="mr-[12px] h-[18px] w-[18px] shrink-0 text-[#777777]" />
+            <input
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              value={twoFactorCode}
+              onChange={(event) =>
+                setTwoFactorCode(event.currentTarget.value.replace(/\D+/g, "").slice(0, 6))
+              }
+              placeholder="Codigo do autenticador"
+              className="min-w-0 flex-1 bg-transparent text-[15px] text-[#F1F1F1] outline-none placeholder:text-[#5A5A5A]"
+            />
+          </div>
+          <div className="mt-[12px]">
+            <WhiteActionButton
+              label="Confirmar autenticador"
+              type="submit"
+              loading={isSubmittingTwoFactor}
+              disabled={twoFactorCode.length !== 6}
+            />
+          </div>
+        </form>
+      ) : null}
+
+      {selectedTwoFactorMethod === "passkey" ? (
+        <>
+          <button
+            type="button"
+            onClick={() => void handlePasskeyTwoFactor()}
+            disabled={isSubmittingTwoFactor}
+            className="mt-[20px] flex h-[54px] w-full items-center justify-center gap-[10px] rounded-[16px] border border-[rgba(255,255,255,0.08)] bg-[#0A0A0A] text-[14px] font-medium text-[#E4E4E4] transition-colors hover:border-[rgba(255,255,255,0.14)] hover:bg-[#0D0D0D] disabled:cursor-not-allowed disabled:opacity-55"
+          >
+            <KeyRound className="h-[18px] w-[18px]" />
+            Usar Passkey
+          </button>
+        </>
+      ) : null}
+    </>
+  );
+
   const title =
     loginMode === "link"
       ? "Vincular conta Discord"
       : stage === "otp"
         ? "Confirme o codigo"
+        : stage === "two_factor"
+          ? twoFactorMethods.length > 1 && !selectedTwoFactorMethod
+            ? "Escolha a verificacao"
+            : "Confirme sua seguranca"
         : "Entre em sua conta";
 
   return (
@@ -1194,6 +1481,7 @@ export function LoginPanel({
                   {stage === "chooser" ? chooserView : null}
                   {stage === "password" ? passwordView : null}
                   {stage === "otp" ? otpView : null}
+                  {stage === "two_factor" ? twoFactorView : null}
                 </div>
               </LandingReveal>
             )}

@@ -1,10 +1,11 @@
 export type AccountTab =
   | "overview"
+  | "personal_data"
+  | "sessions"
   | "plans"
   | "payment_methods"
   | "payment_history"
   | "api_keys"
-  | "dev_environment"
   | "teams"
   | "tickets"
   | "status"
@@ -12,11 +13,12 @@ export type AccountTab =
 
 export const ACCOUNT_TABS: AccountTab[] = [
   "overview",
+  "personal_data",
+  "sessions",
   "plans",
   "payment_methods",
   "payment_history",
   "api_keys",
-  "dev_environment",
   "teams",
   "tickets",
   "status",

@@ -6,15 +6,11 @@ import {
   type HostingKind,
 } from "@/lib/hosting/catalog";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
-import { applyNoStoreHeaders } from "@/lib/security/http";
-
-type ProvisionBody = {
-  orderNumber?: unknown;
-  kind?: unknown;
-  planId?: unknown;
-  regionId?: unknown;
-  repository?: unknown;
-};
+import {
+  applyNoStoreHeaders,
+  ensureSameOriginJsonMutationRequest,
+} from "@/lib/security/http";
+import { flowSecureDto, parseFlowSecureDto } from "@/lib/security/flowSecure";
 
 function isHostingKind(value: unknown): value is HostingKind {
   return value === "site" || value === "bot" || value === "cdn";
@@ -70,9 +66,22 @@ function addDaysIso(base: string | null | undefined, days: number) {
 }
 
 export async function POST(request: NextRequest) {
-  let body: ProvisionBody;
+  const originGuard = ensureSameOriginJsonMutationRequest(request);
+  if (originGuard) return applyNoStoreHeaders(originGuard);
+
+  let body: Record<string, unknown>;
   try {
-    body = await request.json() as ProvisionBody;
+    body = parseFlowSecureDto(
+      await request.json().catch(() => ({})),
+      {
+        orderNumber: flowSecureDto.unknown(),
+        kind: flowSecureDto.enum(["site", "bot", "cdn"] as const),
+        planId: flowSecureDto.string({ maxLength: 80 }),
+        regionId: flowSecureDto.string({ maxLength: 80 }),
+        repository: flowSecureDto.unknown(),
+      },
+      { rejectUnknown: true },
+    );
   } catch {
     return applyNoStoreHeaders(
       NextResponse.json({ ok: false, message: "Payload invalido." }, { status: 400 }),

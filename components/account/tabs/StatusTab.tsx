@@ -70,7 +70,7 @@ function ViolationDetailModal({
   if (!portalTarget) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-[2600] isolate flex items-center justify-center p-4">
+    <div className="flowdesk-account-modal-nui fixed inset-0 z-[2600] isolate flex items-center justify-center p-4">
       {/* Overlay matched to Security/Logs style */}
       <motion.div
         initial={{ opacity: 0 }}

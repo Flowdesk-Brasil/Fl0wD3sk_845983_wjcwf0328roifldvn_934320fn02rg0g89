@@ -1503,7 +1503,7 @@ export function TeamsTab() {
         if (typeof document === "undefined") return null;
 
         return createPortal(
-          <div className="fixed inset-0 z-[2700] flex items-center justify-center bg-[rgba(0,0,0,0.85)] backdrop-blur-[8px] px-[20px] py-[40px]">
+          <div className="flowdesk-account-modal-nui fixed inset-0 z-[2700] flex items-center justify-center bg-[rgba(0,0,0,0.85)] backdrop-blur-[8px] px-[20px] py-[40px]">
             <button
               onClick={() => setMemberPermsToEdit(null)}
               className="absolute inset-0 cursor-default"

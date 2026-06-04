@@ -6147,7 +6147,9 @@ export function ServerSettingsEditor({
       }
     >
       <section
-        className="flowdesk-servers-ui flowdesk-fade-up-soft relative"
+        className={`flowdesk-servers-ui flowdesk-fade-up-soft relative ${
+          activeTab === "settings" && !isSalesSection ? "flowdesk-servers-nui" : ""
+        }`}
         style={{
           marginTop: standalone ? "0px" : `${serversScale.cardsTopSpacing}px`,
         }}
@@ -8750,7 +8752,7 @@ export function ServerSettingsEditor({
       activeSecurityLogModalEvent &&
       activeSecurityLogModalOption
         ? createPortal(
-        <div className="fixed inset-y-0 left-0 right-0 z-[2600] isolate overflow-y-auto overscroll-contain xl:left-[318px]">
+        <div className="flowdesk-server-modal-nui fixed inset-y-0 left-0 right-0 z-[2600] isolate overflow-y-auto overscroll-contain xl:left-[318px]">
           <button
             type="button"
             aria-label="Fechar modal de canal"
@@ -8871,7 +8873,7 @@ export function ServerSettingsEditor({
       ) : null}
 
       {isPortalMounted && isVariablesModalOpen ? createPortal(
-        <div className="fixed inset-y-0 left-0 right-0 z-[2600] isolate overflow-y-auto overscroll-contain xl:left-[318px]">
+        <div className="flowdesk-server-modal-nui fixed inset-y-0 left-0 right-0 z-[2600] isolate overflow-y-auto overscroll-contain xl:left-[318px]">
           <button
             type="button"
             aria-label="Fechar modal de variaveis"
@@ -8990,7 +8992,7 @@ export function ServerSettingsEditor({
       />
 
       {isPortalMounted && isAiRulesModalOpen ? createPortal(
-        <div className="fixed inset-y-0 left-0 right-0 z-[2600] isolate overflow-y-auto overscroll-contain xl:left-[318px]">
+        <div className="flowdesk-server-modal-nui fixed inset-y-0 left-0 right-0 z-[2600] isolate overflow-y-auto overscroll-contain xl:left-[318px]">
           <button
             type="button"
             aria-label="Fechar modal de regras"
@@ -9122,7 +9124,7 @@ export function ServerSettingsEditor({
         document.body,
       ) : null}
       {isPortalMounted && isFlowAiUpgradeModalOpen ? createPortal(
-        <div className="fixed inset-y-0 left-0 right-0 z-[2600] isolate overflow-y-auto overscroll-contain xl:left-[318px]">
+        <div className="flowdesk-server-modal-nui fixed inset-y-0 left-0 right-0 z-[2600] isolate overflow-y-auto overscroll-contain xl:left-[318px]">
           <button
             type="button"
             aria-label="Fechar modal do FlowAI"

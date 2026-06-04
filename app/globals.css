@@ -832,7 +832,305 @@ html.lenis body {
   animation: flowdesk-card-rise 340ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+@keyframes flowdesk-nui-enter {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.flowdesk-account-nui,
+.flowdesk-servers-nui {
+  --flowdesk-nui-panel: #090909;
+  --flowdesk-nui-elevated: #0d0d0d;
+  --flowdesk-nui-border: #141414;
+  --flowdesk-nui-border-hover: #242424;
+  --flowdesk-nui-text: #eeeeee;
+  --flowdesk-nui-muted: #737373;
+  letter-spacing: 0;
+}
+
+.flowdesk-account-nui > [class*="mt-[32px]"] {
+  margin-top: 0 !important;
+}
+
+.flowdesk-account-nui :where(
+  [class*="rounded-[22px]"][class*="border-[#141414]"],
+  [class*="rounded-[24px]"][class*="border-[#141414]"],
+  [class*="rounded-[24px]"][class*="border-[#161616]"]
+) {
+  border-radius: 20px !important;
+  border-color: var(--flowdesk-nui-border) !important;
+  background: var(--flowdesk-nui-panel) !important;
+  box-shadow: none !important;
+}
+
+.flowdesk-account-nui :where(
+  [class*="rounded-[3px]"],
+  [class*="rounded-[4px]"],
+  [class*="rounded-[6px]"]
+) {
+  border-radius: 10px !important;
+}
+
+.flowdesk-account-nui :where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"])[class*="border"],
+  textarea[class*="border"],
+  select[class*="border"]
+) {
+  border-color: #1a1a1a !important;
+  border-radius: 12px !important;
+  background: var(--flowdesk-nui-elevated) !important;
+  color: #e7e7e7 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  caret-color: #ededed;
+}
+
+.flowdesk-account-nui :where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"])[class*="border"]:focus,
+  textarea[class*="border"]:focus,
+  select[class*="border"]:focus
+) {
+  border-color: #333333 !important;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.025) !important;
+}
+
+.flowdesk-account-nui :where(button, a, input, textarea, select, [role="button"]) {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.flowdesk-account-nui :where(button, a, input, textarea, select, [role="button"]):focus-visible {
+  outline: none !important;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.055);
+}
+
+.flowdesk-account-nui :where(button:not(:disabled), [role="button"]):active {
+  transform: translateY(1px) scale(0.994);
+}
+
+.flowdesk-account-nui > div > :where(section, article, div[class*="border"]) {
+  animation: flowdesk-nui-enter 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.flowdesk-account-nui > div > :nth-child(2) {
+  animation-delay: 28ms;
+}
+
+.flowdesk-account-nui > div > :nth-child(3) {
+  animation-delay: 52ms;
+}
+
+.flowdesk-account-nui > div > :nth-child(n + 4) {
+  animation-delay: 72ms;
+}
+
+.flowdesk-account-nui :where(
+  [class*="border-[#141414]"][class*="bg-[#0A0A0A]"],
+  [class*="border-[#141414]"][class*="bg-[#090909]"],
+  [class*="border-[#131313]"][class*="bg-[#0A0A0A]"]
+) {
+  border-color: var(--flowdesk-nui-border) !important;
+  background: var(--flowdesk-nui-panel) !important;
+  box-shadow: none !important;
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    transform 180ms ease;
+}
+
+.flowdesk-account-nui :where(
+  button[class*="bg-[#F1F1F1]"],
+  button[class*="bg-[#EDEDED]"],
+  button[class*="bg-[#EEEEEE]"],
+  button[class*="bg-[#D8D8D8]"]
+) {
+  border-color: rgba(0, 98, 255, 0.45) !important;
+  background: #0062ff !important;
+  color: #ffffff !important;
+}
+
+.flowdesk-account-nui :where(
+  button[class*="bg-[#F1F1F1]"],
+  button[class*="bg-[#EDEDED]"],
+  button[class*="bg-[#EEEEEE]"],
+  button[class*="bg-[#D8D8D8]"]
+):hover {
+  background: #146fff !important;
+}
+
+.flowdesk-servers-nui :where(
+  [class*="rounded-[30px]"][class*="border-[#121212]"],
+  [class*="rounded-[24px]"][class*="border-[#141414]"],
+  [class*="rounded-[24px]"][class*="border-[#161616]"],
+  [class*="rounded-[24px]"][class*="border-[#171717]"]
+) {
+  border-radius: 20px !important;
+  border-color: var(--flowdesk-nui-border) !important;
+  background: var(--flowdesk-nui-panel) !important;
+  box-shadow: none !important;
+}
+
+.flowdesk-servers-nui :where(h3[class*="text-[22px]"]) {
+  margin-top: 6px !important;
+  color: var(--flowdesk-nui-text) !important;
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  line-height: 1.35 !important;
+  letter-spacing: 0 !important;
+}
+
+.flowdesk-servers-nui :where(h4[class*="text-[24px]"]) {
+  color: var(--flowdesk-nui-text) !important;
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  line-height: 1.35 !important;
+  letter-spacing: 0 !important;
+}
+
+.flowdesk-servers-nui
+  button
+  > span[aria-hidden="true"][class*="#FFFFFF"] {
+  background: #0062ff !important;
+}
+
+.flowdesk-servers-nui
+  button:has(> span[aria-hidden="true"][class*="#FFFFFF"])
+  > span:last-child {
+  color: #ffffff !important;
+}
+
+.flowdesk-servers-nui :where(
+  p[class*="uppercase"][class*="tracking"],
+  span[class*="uppercase"][class*="tracking"],
+  [class*="tracking-[-"]
+) {
+  letter-spacing: 0 !important;
+}
+
+.flowdesk-servers-nui :where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"])[class*="border"],
+  textarea[class*="border"],
+  select[class*="border"]
+) {
+  border-color: #1a1a1a !important;
+  border-radius: 12px !important;
+  background: var(--flowdesk-nui-elevated) !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.flowdesk-servers-nui :where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"])[class*="border"]:focus,
+  textarea[class*="border"]:focus,
+  select[class*="border"]:focus
+) {
+  border-color: #333333 !important;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.025) !important;
+}
+
+.flowdesk-servers-nui :where(
+  [class*="space-y-[14px]"] > [class*="rounded-[24px]"],
+  section[class*="space-y-[20px]"] > [class*="rounded-[30px]"]
+) {
+  animation: flowdesk-nui-enter 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.flowdesk-account-modal-nui [role="dialog"],
+.flowdesk-account-modal-nui .flowdesk-stage-fade,
+.flowdesk-server-modal-nui [role="dialog"],
+.flowdesk-server-modal-nui .flowdesk-stage-fade {
+  border: 1px solid #1b1b1b !important;
+  border-radius: 20px !important;
+  background: #080808 !important;
+  box-shadow: 0 30px 110px rgba(0, 0, 0, 0.72) !important;
+}
+
+.flowdesk-account-modal-nui .flowdesk-stage-fade > span[aria-hidden="true"],
+.flowdesk-server-modal-nui .flowdesk-stage-fade > span[aria-hidden="true"] {
+  display: none;
+}
+
+.flowdesk-server-modal-nui
+  .flowdesk-stage-fade
+  div[class*="inline-flex"][class*="h-[40px]"][class*="rounded-full"][class*="bg-transparent"] {
+  height: auto !important;
+  overflow: visible !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+}
+
+.flowdesk-server-modal-nui
+  .flowdesk-stage-fade
+  div[class*="inline-flex"][class*="h-[40px]"][class*="rounded-full"][class*="bg-transparent"]
+  > span[aria-hidden="true"] {
+  display: none;
+}
+
+.flowdesk-server-modal-nui
+  .flowdesk-stage-fade
+  div[class*="inline-flex"][class*="h-[40px]"][class*="rounded-full"][class*="bg-transparent"]
+  > span:last-child {
+  color: #666666 !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0 !important;
+}
+
+.flowdesk-account-modal-nui
+  button
+  > span[aria-hidden="true"][class*="#FFFFFF"],
+.flowdesk-server-modal-nui
+  button
+  > span[aria-hidden="true"][class*="#FFFFFF"] {
+  background: #0062ff !important;
+}
+
+.flowdesk-account-modal-nui
+  button:has(> span[aria-hidden="true"][class*="#FFFFFF"])
+  > span:last-child,
+.flowdesk-server-modal-nui
+  button:has(> span[aria-hidden="true"][class*="#FFFFFF"])
+  > span:last-child {
+  color: #ffffff !important;
+}
+
+.flowdesk-account-modal-nui :where(h2, h3),
+.flowdesk-server-modal-nui :where(h2, h3) {
+  background: none !important;
+  color: #eeeeee !important;
+  -webkit-text-fill-color: #eeeeee !important;
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  line-height: 1.35 !important;
+  letter-spacing: 0 !important;
+}
+
+.flowdesk-account-modal-nui :where(input, textarea, select),
+.flowdesk-server-modal-nui :where(input, textarea, select) {
+  border-radius: 12px !important;
+  outline: none !important;
+}
+
+.flowdesk-account-modal-nui :where(input, textarea, select):focus,
+.flowdesk-server-modal-nui :where(input, textarea, select):focus {
+  border-color: #333333 !important;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.025) !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .flowdesk-account-nui > div > :where(section, article, div[class*="border"]),
+  .flowdesk-servers-nui :where(
+    [class*="space-y-[14px]"] > [class*="rounded-[24px]"],
+    section[class*="space-y-[20px]"] > [class*="rounded-[30px]"]
+  ) {
+    animation: none;
+  }
+
   .flowdesk-servers-ui :where(.flowdesk-server-reveal) {
     animation: none;
   }

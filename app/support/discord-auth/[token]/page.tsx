@@ -1,8 +1,7 @@
-import crypto from "node:crypto";
+import { createHash } from "node:crypto";
 import type { Metadata } from "next";
 import Image from "next/image";
 import { redirect } from "next/navigation";
-import { cookies } from "next/headers";
 import { buildDiscordAuthStartHref } from "@/lib/auth/paths";
 import { getCurrentAuthSessionFromCookie } from "@/lib/auth/session";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
@@ -38,8 +37,7 @@ function isValidRefundAuthToken(token: string) {
 }
 
 function hashRefundAuthToken(token: string) {
-  return crypto
-    .createHash("sha256")
+  return createHash("sha256")
     .update(token.trim(), "utf8")
     .digest("hex");
 }
@@ -262,9 +260,12 @@ export default async function DiscordSupportAuthPage({
               <div className="relative flex-shrink-0">
                 {userAvatarUrl ? (
                   <div className="w-13 h-13 rounded-full overflow-hidden border border-[#2a2a2c] group-hover:border-[#444] transition-colors duration-300">
-                    <img
+                    <Image
                       src={userAvatarUrl}
                       alt={displayName}
+                      width={52}
+                      height={52}
+                      unoptimized
                       className="w-full h-full object-cover"
                     />
                   </div>

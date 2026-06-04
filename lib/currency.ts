@@ -85,3 +85,42 @@ export async function getUSDToBRLRate(): Promise<number> {
     revalidating = false;
   }
 }
+
+const currencyRateCache = new Map<string, { value: number; expiresAt: number }>();
+
+export async function getCurrencyToBRLRate(currency: string): Promise<number> {
+  const normalized = String(currency || "USD").trim().toUpperCase();
+  if (normalized === "BRL") return 1;
+  if (normalized === "USD") return getUSDToBRLRate();
+
+  const cached = currencyRateCache.get(normalized);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), RATE_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(
+      `https://open.er-api.com/v6/latest/${encodeURIComponent(normalized)}`,
+      { signal: controller.signal, cache: "no-store" },
+    );
+    if (!response.ok) throw new Error(`Cambio ${normalized}/BRL indisponivel.`);
+    const data = (await response.json()) as { rates?: Record<string, number> };
+    const rate = data.rates?.BRL;
+    if (typeof rate !== "number" || !Number.isFinite(rate) || rate <= 0) {
+      throw new Error(`Cambio ${normalized}/BRL invalido.`);
+    }
+    currencyRateCache.set(normalized, {
+      value: rate,
+      expiresAt: Date.now() + CACHE_DURATION_MS,
+    });
+    return rate;
+  } catch {
+    const usdToBrl = await getUSDToBRLRate();
+    if (normalized === "EUR") {
+      return usdToBrl * 1.1;
+    }
+    return usdToBrl;
+  } finally {
+    clearTimeout(timer);
+  }
+}

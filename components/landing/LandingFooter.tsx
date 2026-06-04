@@ -53,11 +53,11 @@ const FOOTER_GROUPS: FooterGroup[] = [
   {
     title: "Pagamentos",
     links: [
-      { label: "Assinaturas", href: "/dashboard/billing/subscriptions" },
+        { label: "Assinaturas", href: "/account/plans" },
       { label: "Cargos automaticos", href: "#" },
       { label: "PIX", href: "/payment/flow-pro/mensal" },
       { label: "Cartao", href: "/payment/flow-pro/mensal" },
-      { label: "Renovacao", href: "/dashboard/billing/payment-history" },
+        { label: "Renovacao", href: "/account/payment_history" },
     ],
   },
   {

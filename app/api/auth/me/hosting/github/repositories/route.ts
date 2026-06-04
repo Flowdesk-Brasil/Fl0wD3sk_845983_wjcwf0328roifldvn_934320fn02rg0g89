@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import {
   fetchHostingGitHubRepositories,
   isHostingGitHubConfigured,
@@ -77,3 +77,4 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+

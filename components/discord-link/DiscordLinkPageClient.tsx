@@ -529,11 +529,6 @@ export function DiscordLinkPageClient({
     }),
     [],
   );
-  const shouldHideAuthenticatedUserCard =
-    state.phase === "error" &&
-    (state.description.includes("link seguro") ||
-      state.description.includes("nao esta mais disponivel") ||
-      state.description.includes("expirou"));
   const shouldRenderHumanCheck =
     initialStatus !== "linked" &&
     state.phase !== "error" &&
@@ -546,33 +541,6 @@ export function DiscordLinkPageClient({
       state.description.includes("nao esta mais disponivel") ||
       state.description.includes("expirou"));
   const officialDiscordHref = buildOfficialDiscordChannelUrl();
-  const humanCheckSolveSeconds = Math.max(
-    1,
-    Math.ceil(humanCheckMinimumSolveMs / 1000),
-  );
-  const panelEyebrow = shouldRenderHumanCheck
-    ? "Solicitacao de vinculacao"
-    : state.phase === "success"
-      ? "Conta vinculada"
-      : state.phase === "error"
-        ? "Falha na vinculacao"
-        : state.phase === "redirecting"
-          ? "Reconectando sessao"
-          : "Sincronizando";
-  const panelTitle = shouldRenderHumanCheck
-    ? "Flowdesk quer vincular esta conta ao Discord oficial"
-    : state.phase === "success"
-      ? "Conta vinculada com sucesso"
-      : state.phase === "syncing"
-        ? "Aguardando confirmacao do Discord"
-        : state.title;
-  const panelDescription = shouldRenderHumanCheck
-    ? "Confirme a verificacao humana para autorizar a sincronizacao da mesma conta autenticada no Flowdesk."
-    : state.phase === "success"
-      ? state.description
-      : state.phase === "syncing"
-        ? state.description
-        : state.description;
   const shouldRenderSwitchAccountAction = state.phase !== "success";
   const accountDisplayName = authenticatedUser?.displayName || "Sua conta";
   const accountSubtitle = authenticatedUser
@@ -733,9 +701,12 @@ export function DiscordLinkPageClient({
                   <div className="relative flex-shrink-0">
                     {authenticatedUser?.avatarUrl ? (
                       <div className="w-13 h-13 rounded-full overflow-hidden border border-[#2a2a2c] group-hover:border-[#444] transition-colors duration-300">
-                        <img
+                        <Image
                           src={authenticatedUser.avatarUrl}
                           alt={accountDisplayName}
+                          width={52}
+                          height={52}
+                          unoptimized
                           className="w-full h-full object-cover"
                         />
                       </div>

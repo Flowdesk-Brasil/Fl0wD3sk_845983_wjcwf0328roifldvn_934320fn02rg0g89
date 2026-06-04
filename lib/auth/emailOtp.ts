@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { maskAuthEmail, normalizeAuthEmail } from "@/lib/auth/email";
 import { sendLoginOtpEmail } from "@/lib/mail/authEmail";
+import { sendFlowdeskTransactionalEmail } from "@/lib/mail/authEmail";
 import {
   constantTimeEqualText,
   decryptFlowSecureValue,
@@ -156,8 +157,33 @@ async function fetchChallengeById(challengeId: string) {
   return result.data;
 }
 
-async function sendOtpEmailForChallenge(email: string, code: string) {
+async function sendOtpEmailForChallenge(
+  email: string,
+  code: string,
+  purpose: string,
+) {
   const expiresInMinutes = Math.max(1, Math.round(getOtpTtlMs() / 60_000));
+  if (purpose === "email_change_current" || purpose === "email_change_new") {
+    const isCurrentEmail = purpose === "email_change_current";
+    await sendFlowdeskTransactionalEmail({
+      toEmail: email,
+      type: purpose,
+      subject: "Flowdesk | Confirme a alteracao de email",
+      preheader: "Use o codigo para confirmar a alteracao do email da sua conta.",
+      badgeLabel: "Seguranca",
+      title: isCurrentEmail ? "Confirme no email atual" : "Confirme o novo email",
+      intro: isCurrentEmail
+        ? "Recebemos uma solicitacao para alterar o email da sua conta. Confirme que foi voce."
+        : "Confirme este novo email para concluir a alteracao da sua conta.",
+      sections: [
+        { label: "Codigo", value: code },
+        { label: "Validade", value: `${expiresInMinutes} minutos` },
+      ],
+      footer: "Se voce nao solicitou esta alteracao, ignore este email e revise a seguranca da sua conta.",
+    });
+    return;
+  }
+
   await sendLoginOtpEmail({
     toEmail: email,
     code,
@@ -244,7 +270,11 @@ async function createOtpChallenge(input: {
   email: string;
   ipAddress: string | null;
   userAgent: string | null;
-  purpose: "login" | "email_registration";
+  purpose:
+    | "login"
+    | "email_registration"
+    | "email_change_current"
+    | "email_change_new";
   metadata?: Record<string, unknown> | null;
 }) {
   const normalizedEmail = normalizeAuthEmail(input.email);
@@ -277,7 +307,7 @@ async function createOtpChallenge(input: {
   }
 
   try {
-    await sendOtpEmailForChallenge(normalizedEmail, code);
+    await sendOtpEmailForChallenge(normalizedEmail, code, input.purpose);
   } catch (error) {
     try {
       await supabase
@@ -323,6 +353,17 @@ export async function createEmailRegistrationOtpChallenge(input: {
     userId: null,
     purpose: "email_registration",
   });
+}
+
+export async function createEmailChangeOtpChallenge(input: {
+  userId: number;
+  email: string;
+  purpose: "email_change_current" | "email_change_new";
+  ipAddress: string | null;
+  userAgent: string | null;
+  metadata?: Record<string, unknown> | null;
+}) {
+  return createOtpChallenge(input);
 }
 
 export async function resendLoginOtpChallenge(challengeId: string) {
@@ -378,7 +419,7 @@ export async function resendLoginOtpChallenge(challengeId: string) {
   }
 
   try {
-    await sendOtpEmailForChallenge(challenge.email, code);
+    await sendOtpEmailForChallenge(challenge.email, code, challenge.purpose);
   } catch (error) {
     await supabase
       .from("auth_email_otp_challenges")
@@ -405,6 +446,7 @@ export async function resendLoginOtpChallenge(challengeId: string) {
 export async function verifyLoginOtpChallenge(input: {
   challengeId: string;
   code: string;
+  expectedPurposes?: string[];
   beforeConsume?: (challenge: VerifiedOtpChallengeContext) => Promise<void>;
   afterConsume?: (
     challenge: VerifiedOtpChallengeContext,
@@ -423,6 +465,17 @@ export async function verifyLoginOtpChallenge(input: {
 
   if (challenge.consumed_at) {
     throw new EmailOtpError("Este codigo ja foi utilizado.", 409, "otp_already_used");
+  }
+
+  if (
+    input.expectedPurposes?.length &&
+    !input.expectedPurposes.includes(challenge.purpose)
+  ) {
+    throw new EmailOtpError(
+      "Este codigo nao pertence a esta confirmacao.",
+      400,
+      "otp_wrong_purpose",
+    );
   }
 
   if (Date.parse(challenge.expires_at) <= Date.now()) {

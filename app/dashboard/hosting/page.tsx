@@ -1,4 +1,4 @@
-import { HostingWorkspace } from "@/components/dashboard/HostingWorkspace";
+﻿import { HostingWorkspace } from "@/components/dashboard/HostingWorkspace";
 import { getCurrentUserFromSessionCookieSafe } from "@/lib/auth/session";
 import {
   fetchHostingGitHubProfile,
@@ -63,3 +63,4 @@ export default async function DashboardHostingPage() {
 
   return <HostingWorkspace initialStep="kind" initialProjects={projects} githubConnected={githubConnected} />;
 }
+

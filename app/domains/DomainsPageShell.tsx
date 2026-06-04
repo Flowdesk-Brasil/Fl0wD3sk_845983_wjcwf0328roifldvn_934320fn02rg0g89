@@ -5,17 +5,9 @@ import { LandingSmoothScroll } from "@/components/landing/LandingSmoothScroll";
 import { TopBetaBanner } from "@/components/landing/TopBetaBanner";
 import { getCurrentUserFromSessionCookie } from "@/lib/auth/session";
 import { DomainHero } from "@/components/domains/DomainHero";
+import { resolveAuthUserAvatarUrl } from "@/lib/auth/avatar";
 
 type DomainMode = "register" | "ai";
-
-function buildDiscordAvatarUrl(
-  discordUserId: string | null,
-  avatarHash: string | null,
-) {
-  if (!avatarHash || !discordUserId) return null;
-  const extension = avatarHash.startsWith("a_") ? "gif" : "png";
-  return `https://cdn.discordapp.com/avatars/${discordUserId}/${avatarHash}.${extension}?size=96`;
-}
 
 export async function DomainsPageShell({ initialMode = "register" }: { initialMode?: DomainMode }) {
   const user = await getCurrentUserFromSessionCookie();
@@ -23,7 +15,7 @@ export async function DomainsPageShell({ initialMode = "register" }: { initialMo
   const authenticatedUser = user
     ? {
         username: user.username,
-        avatarUrl: buildDiscordAvatarUrl(user.discord_user_id, user.avatar),
+        avatarUrl: resolveAuthUserAvatarUrl(user),
         href: "/dashboard",
       }
     : null;

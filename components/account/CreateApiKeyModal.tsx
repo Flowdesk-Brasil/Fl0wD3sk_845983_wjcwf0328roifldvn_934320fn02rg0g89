@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { KeyRound, X } from "lucide-react";
 import { ConfigStepSelect } from "@/components/config/ConfigStepSelect";
-import { LandingGlowTag } from "@/components/landing/LandingGlowTag";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { useBodyScrollLock } from "@/lib/ui/useBodyScrollLock";
 
@@ -221,7 +221,7 @@ function CreateApiKeyModalDialog({
   }
 
   const modalContent = (
-    <div className="fixed inset-0 z-[2600] isolate overflow-y-auto overscroll-contain">
+    <div className="flowdesk-account-modal-nui fixed inset-0 z-[2600] isolate overflow-y-auto overscroll-contain">
       <button
         type="button"
         aria-label="Fechar modal"
@@ -230,44 +230,23 @@ function CreateApiKeyModalDialog({
       />
 
       <div className="relative z-[10] min-h-full px-[18px] py-[28px] md:px-6">
-        <div className="mx-auto flex min-h-[calc(100vh-64px)] w-full max-w-[820px] items-center justify-center">
+        <div className="mx-auto flex min-h-[calc(100vh-64px)] w-full max-w-[620px] items-center justify-center">
           <div
             role="dialog"
             aria-modal="true"
             aria-label="Criar chave de API"
-            className="flowdesk-stage-fade relative w-full overflow-hidden rounded-[32px] bg-transparent px-[22px] py-[22px] shadow-[0_34px_110px_rgba(0,0,0,0.52)] sm:px-[28px] sm:py-[28px]"
+            className="flowdesk-stage-fade relative w-full overflow-hidden rounded-[20px] border border-[#1B1B1B] bg-[#080808] p-[20px] shadow-[0_30px_110px_rgba(0,0,0,0.72)]"
           >
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-0 rounded-[32px] border border-[#0E0E0E]"
-            />
-            <span
-              aria-hidden="true"
-              className="flowdesk-tag-border-glow pointer-events-none absolute inset-[-2px] rounded-[32px]"
-            />
-            <span
-              aria-hidden="true"
-              className="flowdesk-tag-border-core pointer-events-none absolute inset-[-1px] rounded-[32px]"
-            />
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-[1px] rounded-[31px] bg-[linear-gradient(180deg,rgba(8,8,8,0.985)_0%,rgba(4,4,4,0.985)_100%)]"
-            />
-
             <div className="relative z-10">
-              <div className="flex flex-col gap-[14px] sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <LandingGlowTag className="px-[18px]">
-                    API FlowAI
-                  </LandingGlowTag>
-                  <div className="mt-[18px]">
-                    <h2 className="bg-[linear-gradient(90deg,#DADADA_0%,#C1C1C1_100%)] bg-clip-text text-[30px] leading-[0.98] font-normal tracking-[-0.05em] text-transparent sm:text-[36px]">
-                      Criar nova chave de API
-                    </h2>
-                    <p className="mt-[14px] max-w-[620px] text-[14px] leading-[1.62] text-[#787878]">
-                      Gere uma chave de API para autenticacao com nossa API.
-                      Observe que suas chaves de API sao confidenciais e nao sao
-                      compartilhadas dentro da sua organizacao.
+              <div className="flex items-start justify-between gap-[14px]">
+                <div className="flex min-w-0 items-start gap-[12px]">
+                  <span className="inline-flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[12px] border border-[rgba(0,98,255,0.28)] bg-[rgba(0,98,255,0.10)] text-[#74A7FF]">
+                    <KeyRound className="h-[18px] w-[18px]" />
+                  </span>
+                  <div>
+                    <h2 className="text-[15px] font-semibold text-[#EEEEEE]">Criar nova chave de API</h2>
+                    <p className="mt-[5px] max-w-[480px] text-[12px] leading-[1.55] text-[#707070]">
+                      Gere uma credencial para integrar sistemas externos. A chave completa aparece somente uma vez.
                     </p>
                   </div>
                 </div>
@@ -276,10 +255,10 @@ function CreateApiKeyModalDialog({
                   type="button"
                   onClick={onClose}
                   disabled={isProcessing}
-                  className="inline-flex h-[40px] w-[40px] items-center justify-center rounded-[14px] border border-[#171717] bg-[#0D0D0D] text-[#9C9C9C] transition-colors hover:border-[#242424] hover:text-[#E4E4E4] disabled:opacity-60"
+                  className="inline-flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[10px] text-[#777777] transition-colors hover:bg-[#111111] hover:text-white disabled:opacity-40"
                   aria-label="Fechar modal"
                 >
-                  <span className="text-[18px] leading-none">x</span>
+                  <X className="h-[17px] w-[17px]" />
                 </button>
               </div>
 

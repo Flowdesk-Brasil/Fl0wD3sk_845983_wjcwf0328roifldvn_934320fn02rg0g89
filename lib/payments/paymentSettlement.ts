@@ -16,6 +16,7 @@ import {
   buildRefundOutcome,
   finalizePaymentRefundOutcome,
 } from "@/lib/payments/refunds";
+import { finalizePaidDomainOrder } from "@/lib/domains/domainService";
 
 type PaymentOrderEventPayload = Record<string, unknown>;
 
@@ -102,6 +103,12 @@ function isNonPlanPurchaseOrder(order: PaymentSettlementOrderRecord) {
   const purchaseContext = order.provider_payload.purchase_context;
   if (!isRecord(purchaseContext)) return false;
   return typeof purchaseContext.type === "string" && purchaseContext.type.trim() !== "";
+}
+
+function isDomainPurchaseOrder(order: PaymentSettlementOrderRecord) {
+  if (!isRecord(order.provider_payload)) return false;
+  const purchaseContext = order.provider_payload.purchase_context;
+  return isRecord(purchaseContext) && purchaseContext.type === "domain";
 }
 
 function mergeProviderPayload(currentPayload: unknown, patch: Record<string, unknown>) {
@@ -208,6 +215,15 @@ function resolveSettlementReferenceMs(order: PaymentSettlementOrderRecord) {
 }
 
 function shouldAttemptSettlementRecovery(order: PaymentSettlementOrderRecord) {
+  if (isDomainPurchaseOrder(order)) {
+    const status = normalizeOptionalString(order.status)?.toLowerCase();
+    if (status !== "approved") return false;
+    const finalization = parseFinalizationPayload(order.provider_payload);
+    return (
+      finalization.status !== FINALIZATION_STATUS_SETTLED &&
+      finalization.status !== FINALIZATION_STATUS_REFUNDED
+    );
+  }
   if (isNonPlanPurchaseOrder(order)) return false;
 
   const status = normalizeOptionalString(order.status)?.toLowerCase();
@@ -454,7 +470,7 @@ async function applyAutomaticRefundForSettlementFailure<
       expires_at: input.order.expires_at || nowIso,
     },
     source: "provider_reconciliation",
-    reason: "Estorno automatico por falha de finalizacao do plano.",
+    reason: "Estorno automatico por falha de finalizacao da compra.",
     refundKind: "full_refund",
     providerPayment: input.providerPayment,
     providerRefundPayload,
@@ -502,6 +518,103 @@ export async function settleApprovedPaymentOrder<
   allowAutoRefundOnFailure?: boolean;
   providerPayment?: MercadoPagoPaymentResponse | null;
 }) : Promise<PaymentSettlementResult<TOrder>> {
+  if (isDomainPurchaseOrder(input.order)) {
+    try {
+      await finalizePaidDomainOrder(input.order);
+      const settledOrder = await markSettlementAsSettled({
+        order: input.order,
+        selectColumns: input.selectColumns,
+        source: input.source,
+      });
+      return {
+        order: settledOrder,
+        settled: true,
+        pendingRecovery: false,
+        autoRefunded: false,
+      };
+    } catch (error) {
+      const pending = await markSettlementAsPending({
+        order: input.order,
+        selectColumns: input.selectColumns,
+        source: input.source,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Falha ao provisionar o dominio apos o pagamento.",
+      });
+      if (!input.allowAutoRefundOnFailure) {
+        return {
+          order: pending.order,
+          settled: false,
+          pendingRecovery: true,
+          autoRefunded: false,
+        };
+      }
+
+      const firstFailedAtMs = parseUtcTimestampMs(pending.firstFailedAt);
+      const referenceMs = resolveSettlementReferenceMs(input.order);
+      if (
+        pending.failureCount < resolveFinalizationMaxFailures() ||
+        Date.now() <
+          (Number.isFinite(firstFailedAtMs) ? firstFailedAtMs : referenceMs) +
+            resolveFinalizationRefundGraceMs()
+      ) {
+        return {
+          order: pending.order,
+          settled: false,
+          pendingRecovery: true,
+          autoRefunded: false,
+        };
+      }
+
+      const providerPaymentId = normalizeOptionalString(input.order.provider_payment_id);
+      if (!providerPaymentId) {
+        return {
+          order: pending.order,
+          settled: false,
+          pendingRecovery: true,
+          autoRefunded: false,
+        };
+      }
+
+      let providerPayment = input.providerPayment || null;
+      try {
+        providerPayment =
+          providerPayment ||
+          (await fetchMercadoPagoPaymentById(providerPaymentId, {
+            useCardToken:
+              normalizeOptionalString(input.order.payment_method)?.toLowerCase() === "card",
+            forceFresh: true,
+          }));
+      } catch {
+        providerPayment = null;
+      }
+
+      if (!providerPayment || resolvePaymentStatus(providerPayment.status) !== "approved") {
+        return {
+          order: pending.order,
+          settled: false,
+          pendingRecovery: true,
+          autoRefunded: false,
+        };
+      }
+
+      const refundedOrder = await applyAutomaticRefundForSettlementFailure({
+        order: pending.order,
+        source: input.source,
+        providerPayment,
+        providerPaymentId,
+        selectColumns: input.selectColumns,
+      });
+      return {
+        order: refundedOrder,
+        settled: false,
+        pendingRecovery: false,
+        autoRefunded: true,
+      };
+    }
+  }
+
   if (!shouldAttemptSettlementRecovery(input.order)) {
     return {
       order: input.order,

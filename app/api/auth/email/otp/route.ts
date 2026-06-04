@@ -10,6 +10,7 @@ import { verifyEmailLoginOtp } from "@/lib/auth/emailAuth";
 import { EmailOtpError } from "@/lib/auth/emailOtp";
 import { createSessionForUser } from "@/lib/auth/session";
 import { issueTrustedDevice } from "@/lib/auth/trustedDevice";
+import { createPendingTwoFactorLoginIfNeeded } from "@/lib/auth/twoFactor";
 import {
   flowSecureDto,
   FlowSecureDtoError,
@@ -110,6 +111,40 @@ export async function POST(request: NextRequest) {
     const sessionContext = verification.sessionContext;
     const redirectTo =
       nextPath || sessionContext?.nextPath || "/dashboard";
+    const pendingTwoFactor = await createPendingTwoFactorLoginIfNeeded({
+      userId,
+      redirectTo,
+      rememberSession,
+      ipAddress: extractClientIp(request),
+      userAgent: request.headers.get("user-agent"),
+      sessionContext,
+    });
+
+    if (pendingTwoFactor) {
+      await logSecurityAuditEventSafe(authenticatedContext, {
+        action: "auth_email_otp_verify",
+        outcome: "succeeded",
+        metadata: {
+          redirectTo,
+          requiresTwoFactor: true,
+          twoFactorMethods: pendingTwoFactor.methods,
+        },
+      });
+
+      return attachRequestId(
+        applyNoStoreHeaders(
+          NextResponse.json({
+            ok: true,
+            requiresTwoFactor: true,
+            twoFactorChallengeId: pendingTwoFactor.challengeId,
+            twoFactorMethods: pendingTwoFactor.methods,
+            twoFactorExpiresAt: pendingTwoFactor.expiresAt,
+          }),
+        ),
+        authenticatedContext.requestId,
+      );
+    }
+
     const session = await createSessionForUser(
       userId,
       {
