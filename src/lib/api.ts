@@ -203,6 +203,47 @@ export async function updateEnrollmentStatus(id: string, status: LocalTables["en
   return update("enrollments", id, { status });
 }
 
+export async function editEnrollment(id: string, values: {
+  plan_id: string | string[];
+  start_date: string;
+}): Promise<Enrollment> {
+  let finalPlanId = typeof values.plan_id === "string" ? values.plan_id : values.plan_id[0];
+  let plan = (await getPlans()).find((item) => item.id === finalPlanId);
+  
+  if (Array.isArray(values.plan_id) && values.plan_id.length > 1) {
+    const selectedPlans = (await getPlans()).filter(p => values.plan_id.includes(p.id));
+    if (selectedPlans.length > 0) {
+      const combinedName = selectedPlans.map(p => p.name).join(" + ");
+      const combinedPrice = selectedPlans.reduce((sum, p) => sum + Number(p.price), 0);
+      const maxDuration = Math.max(...selectedPlans.map(p => p.duration_days));
+      const maxLimit = Math.max(...selectedPlans.map(p => p.weekly_limit));
+      plan = await insert("plans", {
+        name: combinedName,
+        description: "Plano combinado",
+        price: combinedPrice,
+        duration_days: maxDuration,
+        weekly_limit: maxLimit,
+        color: selectedPlans[0].color,
+        active: false,
+      });
+      finalPlanId = plan.id;
+    }
+  }
+
+  if (!plan) throw new Error("Plano não encontrado.");
+  const end = new Date(`${values.start_date}T12:00:00`);
+  end.setDate(end.getDate() + plan.duration_days);
+
+  const plain = await update("enrollments", id, {
+    plan_id: finalPlanId,
+    start_date: values.start_date,
+    end_date: end.toISOString().slice(0, 10),
+  });
+  
+  const student = (await getStudents()).find((item) => item.id === plain.student_id) ?? null;
+  return { ...plain, student, plan };
+}
+
 export async function getPayments(): Promise<Payment[]> {
   if (!shouldUseLocalData()) {
     const { data, error } = await supabase

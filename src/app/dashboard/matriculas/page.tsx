@@ -3,7 +3,7 @@
 import { BookOpen, PauseCircle, Plus, RotateCcw } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { EmptyState, ErrorBanner, FieldLabel, LoadingState, Modal, PageHeader, SearchInput, StatusBadge } from "@/components/ui";
-import { createEnrollment, getEnrollments, getPlans, getStudents, updateEnrollmentStatus } from "@/lib/api";
+import { createEnrollment, editEnrollment, getEnrollments, getPlans, getStudents, updateEnrollmentStatus } from "@/lib/api";
 import type { Enrollment, EnrollmentStatus, Plan, Student } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 
@@ -17,6 +17,7 @@ export default function MatriculasPage() {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -35,16 +36,37 @@ export default function MatriculasPage() {
     return enrollments.filter((item) => !query || item.matricula_number.toLowerCase().includes(query) || item.student?.full_name.toLowerCase().includes(query));
   }, [enrollments, search]);
 
+  function openEdit(item: Enrollment) {
+    setEditId(item.id);
+    setForm({
+      student_id: item.student_id,
+      plan_id: [item.plan_id], // Ideally, if it was a combo plan, we'd need to decompose it. But for now we just show the combo plan or single plan
+      start_date: item.start_date,
+    });
+    setOpen(true);
+  }
+
+  function openCreate() {
+    setEditId(null);
+    setForm(emptyForm);
+    setOpen(true);
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
     try {
-      await createEnrollment(form);
+      if (editId) {
+        await editEnrollment(editId, form);
+      } else {
+        await createEnrollment(form);
+      }
       setOpen(false);
       setForm(emptyForm);
+      setEditId(null);
       await load();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Não foi possível criar a matrícula.");
+      setError(reason instanceof Error ? reason.message : "Não foi possível salvar a matrícula.");
     }
   }
 
@@ -57,7 +79,7 @@ export default function MatriculasPage() {
 
   return (
     <div className="page-stack">
-      <PageHeader eyebrow="Ciclo comercial" title="Matrículas" description="Vincule alunos aos planos e acompanhe a vigência dos contratos." action={<button className="btn btn-primary" onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Nova matrícula</button>} />
+      <PageHeader eyebrow="Ciclo comercial" title="Matrículas" description="Vincule alunos aos planos e acompanhe a vigência dos contratos." action={<button className="btn btn-primary" onClick={openCreate}><Plus className="h-4 w-4" /> Nova matrícula</button>} />
       <section className="card">
         <div className="table-toolbar"><SearchInput value={search} onChange={setSearch} placeholder="Buscar matrícula ou aluno..." /><StatusBadge tone="blue">{enrollments.length} registros</StatusBadge></div>
         {filtered.length ? (
@@ -71,6 +93,7 @@ export default function MatriculasPage() {
                 <td className="hide-mobile">{formatDate(item.start_date)} até {formatDate(item.end_date)}</td>
                 <td><StatusBadge tone={tones[item.status]}>{labels[item.status]}</StatusBadge></td>
                 <td><div className="flex gap-2">
+                  <button className="icon-btn" title="Editar" onClick={() => openEdit(item)}><BookOpen className="h-4 w-4 text-blue-600" /></button>
                   {item.status === "active" ? <button className="icon-btn" title="Suspender" onClick={() => void setStatus(item.id, "suspended")}><PauseCircle className="h-4 w-4" /></button> : <button className="icon-btn" title="Reativar" onClick={() => void setStatus(item.id, "active")}><RotateCcw className="h-4 w-4" /></button>}
                 </div></td>
               </tr>
@@ -79,10 +102,10 @@ export default function MatriculasPage() {
         ) : <EmptyState icon={BookOpen} title="Nenhuma matrícula encontrada" description="Crie uma matrícula para gerar cobrança e contrato automaticamente." />}
       </section>
 
-      <Modal open={open} onClose={() => setOpen(false)} title="Nova matrícula" description="A cobrança inicial e o contrato serão gerados automaticamente.">
+      <Modal open={open} onClose={() => setOpen(false)} title={editId ? "Editar matrícula" : "Nova matrícula"} description={editId ? "Atualize os planos e a vigência." : "A cobrança inicial e o contrato serão gerados automaticamente."}>
         <form className="grid gap-4" onSubmit={submit}>
           <ErrorBanner message={error} />
-          <label><FieldLabel required>Aluno</FieldLabel><select className="field" required value={form.student_id} onChange={(event) => setForm({ ...form, student_id: event.target.value })}><option value="">Selecione um aluno</option>{students.map((student) => <option value={student.id} key={student.id}>{student.full_name}</option>)}</select></label>
+          <label><FieldLabel required>Aluno</FieldLabel><select className="field" required value={form.student_id} onChange={(event) => setForm({ ...form, student_id: event.target.value })} disabled={!!editId}><option value="">Selecione um aluno</option>{students.map((student) => <option value={student.id} key={student.id}>{student.full_name}</option>)}</select></label>
           <div>
             <FieldLabel required>Planos (você pode selecionar mais de um)</FieldLabel>
             <div className="grid gap-2 mt-2 max-h-48 overflow-y-auto rounded-xl border border-[#e3e8f0] bg-[#fbfcfe] p-3">
@@ -116,7 +139,7 @@ export default function MatriculasPage() {
             )}
           </div>
           <label><FieldLabel required>Data de início</FieldLabel><input className="field" type="date" required value={form.start_date} onChange={(event) => setForm({ ...form, start_date: event.target.value })} /></label>
-          <div className="form-actions"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancelar</button><button className="btn btn-primary" type="submit" disabled={form.plan_id.length === 0}>Criar matrícula</button></div>
+          <div className="form-actions"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancelar</button><button className="btn btn-primary" type="submit" disabled={form.plan_id.length === 0}>{editId ? "Salvar matrícula" : "Criar matrícula"}</button></div>
         </form>
       </Modal>
     </div>

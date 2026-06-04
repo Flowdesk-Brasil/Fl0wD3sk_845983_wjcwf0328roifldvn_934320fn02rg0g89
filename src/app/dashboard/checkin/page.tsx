@@ -4,8 +4,9 @@ import { CheckCircle2, Clock3, QrCode, Search, ShieldAlert } from "lucide-react"
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { IconInput } from "@/components/form-controls";
 import { QrScanner } from "@/components/qr-scanner";
-import { LoadingState, PageHeader, StatusBadge } from "@/components/ui";
+import { LoadingState, PageHeader, StatusBadge, Modal, FieldLabel } from "@/components/ui";
 import { getCheckins, processCheckin } from "@/lib/api";
+import { supabase } from "@/lib/supabase";
 import type { Checkin, Student } from "@/lib/types";
 import { formatDateTime } from "@/lib/utils";
 
@@ -17,13 +18,36 @@ export default function CheckinPage() {
   const [history, setHistory] = useState<Checkin[]>([]);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualName, setManualName] = useState("");
 
   const load = useCallback(async () => {
     setHistory((await getCheckins()).slice(0, 12));
     setLoading(false);
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { 
+    void load(); 
+    
+    // Escuta por check-ins manuais do desktop
+    const channel = supabase.channel("manual-checkin")
+      .on("broadcast", { event: "MANUAL_CHECKIN_APPROVED" }, ({ payload }) => {
+        setResult({
+          id: "manual-" + Date.now(),
+          student_id: "manual",
+          status: "allowed",
+          reason: "Acesso liberado manualmente pela recepção.",
+          checked_at: new Date().toISOString(),
+          unit: "Matriz",
+          student: { full_name: payload.name } as any
+        });
+        // Atualiza a lista após 2 segundos pra dar tempo de registrar
+        setTimeout(() => load(), 2000);
+      })
+      .subscribe();
+      
+    return () => { supabase.removeChannel(channel); };
+  }, [load]);
 
   const validateCode = useCallback(async (value: string) => {
     if (!value.trim()) return null;
@@ -44,11 +68,42 @@ export default function CheckinPage() {
     await validateCode(code);
   }
 
+  async function handleManualRelease(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!manualName.trim()) return;
+    
+    // Mostra na tela atual
+    setResult({
+      id: "manual-" + Date.now(),
+      student_id: "manual",
+      status: "allowed",
+      reason: "Acesso liberado manualmente pela recepção.",
+      checked_at: new Date().toISOString(),
+      unit: "Matriz",
+      student: { full_name: manualName } as any
+    });
+
+    // Transmite para outros dispositivos (celular admin no modo câmera)
+    supabase.channel("manual-checkin").send({
+      type: "broadcast",
+      event: "MANUAL_CHECKIN_APPROVED",
+      payload: { name: manualName }
+    });
+
+    setManualOpen(false);
+    setManualName("");
+  }
+
   if (loading) return <LoadingState label="Preparando controle de acesso..." />;
 
   return (
     <div className="page-stack">
-      <PageHeader eyebrow="Operação em tempo real" title="Check-in" description="Valide o acesso por câmera, QR Code ou código manual." />
+      <PageHeader 
+        eyebrow="Operação em tempo real" 
+        title="Check-in" 
+        description="Valide o acesso por câmera, QR Code ou código manual."
+        action={<button onClick={() => setManualOpen(true)} className="btn btn-primary">Liberar manualmente</button>}
+      />
       <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
         <section className="card p-5 sm:p-7">
           <div className="grid min-h-[360px] place-items-center text-center">
@@ -88,6 +143,27 @@ export default function CheckinPage() {
           <tbody>{history.map((item) => <tr key={item.id}><td><strong className="text-xs text-[#172033]">{item.student?.full_name ?? "Não identificado"}</strong></td><td><StatusBadge tone={item.status === "allowed" ? "green" : "red"}>{item.status === "allowed" ? "Liberado" : "Negado"}</StatusBadge></td><td className="hide-mobile">{item.reason ?? "Acesso regular"}</td><td>{formatDateTime(item.checked_at)}</td></tr>)}</tbody>
         </table></div>
       </section>
+
+      <Modal open={manualOpen} onClose={() => setManualOpen(false)} title="Liberação Manual" description="Libere a catraca/acesso registrando o nome do visitante ou aluno.">
+        <form onSubmit={handleManualRelease} className="grid gap-4">
+          <label>
+            <FieldLabel required>Nome da pessoa</FieldLabel>
+            <input 
+              autoFocus
+              required 
+              type="text" 
+              className="field" 
+              placeholder="Ex: João Silva (Visitante)" 
+              value={manualName} 
+              onChange={(e) => setManualName(e.target.value)} 
+            />
+          </label>
+          <div className="flex justify-end gap-2 mt-2">
+            <button type="button" className="btn btn-secondary" onClick={() => setManualOpen(false)}>Cancelar</button>
+            <button type="submit" className="btn btn-primary" disabled={!manualName.trim()}>Confirmar Liberação</button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

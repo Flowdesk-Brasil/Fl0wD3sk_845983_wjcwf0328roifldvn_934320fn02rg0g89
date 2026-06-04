@@ -13,6 +13,8 @@ import { shouldUseLocalData, useLocalData } from "@/lib/supabase";
 import type { UserRole } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { PosTerminalListener } from "@/components/pos-terminal";
+import { CheckinSidebar } from "@/components/checkin-sidebar";
+import { FaceTerminalListener } from "@/components/face-terminal";
 
 interface NavItem {
   href: string;
@@ -104,6 +106,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-screen overflow-hidden bg-[#f7f9fc]">
       <PosTerminalListener email={user.email} />
+      <FaceTerminalListener email={user.email} />
+      <CheckinSidebar />
 
       {sidebarOpen && (
         <button className="fixed inset-0 z-40 bg-[#101827]/40 backdrop-blur-sm lg:hidden" onClick={() => setSidebarOpen(false)} aria-label="Fechar menu" />

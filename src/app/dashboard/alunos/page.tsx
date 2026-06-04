@@ -117,7 +117,21 @@ export default function AlunosPage() {
               </div>
               {!selected.email && <p className="mt-2 text-xs text-red-600">Cadastre um e-mail para liberar o portal.</p>}
             </div>
-            <div><span className="field-label">Alterar situação</span><div className="flex flex-wrap gap-2">{(["active", "inactive", "blocked"] as StudentStatus[]).map((nextStatus) => <button key={nextStatus} className={`btn ${selected.status === nextStatus ? "btn-primary" : "btn-secondary"}`} onClick={() => void changeStatus(nextStatus)}>{selected.status === nextStatus && <RefreshCw className="h-3.5 w-3.5" />} {statusLabel[nextStatus]}</button>)}</div></div>
+            <div>
+              <span className="field-label">Alterar situação</span>
+              <div className="flex flex-wrap gap-2">
+                {(["active", "inactive", "blocked"] as StudentStatus[]).map((nextStatus) => (
+                  <button key={nextStatus} className={`btn ${selected.status === nextStatus ? "btn-primary" : "btn-secondary"}`} onClick={() => void changeStatus(nextStatus)}>
+                    {selected.status === nextStatus && <RefreshCw className="h-3.5 w-3.5" />} {statusLabel[nextStatus]}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="pt-2 border-t border-[#e3e8f0]">
+              <Link href={`/dashboard/alunos/${selected.id}/editar`} className="btn btn-primary w-full justify-center">
+                Editar Cadastro e Reconhecimento Facial
+              </Link>
+            </div>
           </div>
         </div>}
       </Modal>

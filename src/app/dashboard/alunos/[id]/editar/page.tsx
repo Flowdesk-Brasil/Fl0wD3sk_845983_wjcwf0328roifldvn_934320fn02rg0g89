@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, type FormEvent } from "react";
 import { ErrorBanner, FieldLabel, PageHeader } from "@/components/ui";
-import { createClassBooking, createStudent, getClassSessions } from "@/lib/api";
+import { createClassBooking, updateStudent, getClassSessions } from "@/lib/api";
 import type { ClassSession } from "@/lib/types";
 import { calculateIMC, digitsOnly, formatDateTime, maskCEP, maskCPF, maskPhone } from "@/lib/utils";
 
@@ -68,7 +68,7 @@ function TextField({
 
 import { supabase } from "@/lib/supabase";
 
-export default function NovoAlunoPage() {
+export default function EditarAlunoPage({ params }: { params: { id: string } }) {
   const router = useRouter();
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
@@ -77,7 +77,49 @@ export default function NovoAlunoPage() {
   const [selectedSessions, setSelectedSessions] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [facialScanActive, setFacialScanActive] = useState(false);
+  const [loadingInitial, setLoadingInitial] = useState(true);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+
+  useEffect(() => {
+    supabase.from("students").select("*").eq("id", params.id).single().then(({ data }) => {
+      if (data) {
+        setForm({
+          full_name: data.full_name || "",
+          email: data.email || "",
+          cpf: data.cpf || "",
+          rg: data.rg || "",
+          birth_date: data.birth_date || "",
+          gender: data.gender || "",
+          phone: data.phone || "",
+          whatsapp: data.whatsapp || "",
+          cep: data.cep || "",
+          street: data.street || "",
+          number: data.number || "",
+          complement: data.complement || "",
+          neighborhood: data.neighborhood || "",
+          city: data.city || "",
+          state: data.state || "",
+          weight: data.weight?.toString() || "",
+          height: data.height?.toString() || "",
+          objective: data.objective || "",
+          emergency_contact: data.emergency_contact || "",
+          emergency_phone: data.emergency_phone || "",
+          observations: data.observations || "",
+          photo_base64: null,
+        });
+        
+        // fetch photo url directly from storage
+        const photoUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/student-photos/${data.id}.jpg?t=${Date.now()}`;
+        
+        // try to preload photo to see if it exists
+        const img = new Image();
+        img.onload = () => setForm(prev => ({ ...prev, photo_base64: photoUrl }));
+        img.src = photoUrl;
+
+      }
+      setLoadingInitial(false);
+    });
+  }, [params.id]);
 
   useEffect(() => {
     const channel = supabase.channel("face-scan-channel", {
@@ -157,11 +199,14 @@ export default function NovoAlunoPage() {
     try {
       const weight = form.weight ? Number(form.weight) : null;
       const height = form.height ? Number(form.height) : null;
-      const student = await createStudent({
-        ...form,
+      const student = await updateStudent(params.id, {
+        full_name: form.full_name,
         email: form.email || null,
         rg: form.rg || null,
+        cpf: form.cpf,
+        birth_date: form.birth_date,
         gender: form.gender || null,
+        phone: form.phone,
         whatsapp: form.whatsapp || null,
         cep: form.cep || null,
         street: form.street || null,
@@ -169,7 +214,7 @@ export default function NovoAlunoPage() {
         complement: form.complement || null,
         neighborhood: form.neighborhood || null,
         city: form.city || null,
-        state: form.state.toUpperCase() || null,
+        state: form.state ? form.state.toUpperCase() : null,
         weight,
         height,
         imc: weight && height ? calculateIMC(weight, height) : null,
@@ -179,7 +224,7 @@ export default function NovoAlunoPage() {
         observations: form.observations || null,
       });
 
-      if (form.photo_base64) {
+      if (form.photo_base64 && form.photo_base64.startsWith("data:image")) {
         try {
           const res = await fetch(form.photo_base64);
           const blob = await res.blob();
@@ -203,9 +248,9 @@ export default function NovoAlunoPage() {
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="Novo cadastro"
-        title="Adicionar aluno"
-        description="Centralize os dados necessários para atendimento, acesso e evolução."
+        eyebrow="Editar cadastro"
+        title="Editar aluno"
+        description="Atualize os dados e a foto de reconhecimento facial."
         action={<Link href="/dashboard/alunos" className="btn btn-secondary"><ArrowLeft className="h-4 w-4" /> Voltar</Link>}
       />
 
