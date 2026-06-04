@@ -10,7 +10,11 @@ import {
   requestVpsAgent,
 } from "@/lib/hosting/vpsRuntime";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
-import { applyNoStoreHeaders } from "@/lib/security/http";
+import {
+  applyNoStoreHeaders,
+  ensureSameOriginJsonMutationRequest,
+} from "@/lib/security/http";
+import { flowSecureDto, parseFlowSecureDto } from "@/lib/security/flowSecure";
 
 type RouteProps = {
   params: Promise<{ code: string }>;
@@ -75,6 +79,30 @@ function normalizeEnvVariableInput(
   };
 }
 
+function parseEnvMutationBody(payload: unknown) {
+  return parseFlowSecureDto(
+    payload,
+    {
+      id: flowSecureDto.optional(
+        flowSecureDto.number({ integer: true, min: 1 }),
+      ),
+      environment: flowSecureDto.optional(
+        flowSecureDto.enum(["development", "preview", "production"] as const),
+      ),
+      variables: flowSecureDto.optional(
+        flowSecureDto.array(flowSecureDto.record(), { maxLength: 250 }),
+      ),
+      key: flowSecureDto.optional(
+        flowSecureDto.string({ maxLength: 81, pattern: /^[A-Z_][A-Z0-9_]{0,80}$/i }),
+      ),
+      value: flowSecureDto.optional(flowSecureDto.unknown()),
+      note: flowSecureDto.optional(flowSecureDto.unknown()),
+      sensitive: flowSecureDto.optional(flowSecureDto.boolean()),
+    },
+    { rejectUnknown: true },
+  );
+}
+
 async function load(code: string) {
   const session = await getCurrentAuthSessionFromCookie();
   const vpsCode = normalizeVpsCode(code);
@@ -108,6 +136,9 @@ export async function GET(_request: NextRequest, { params }: RouteProps) {
 }
 
 export async function POST(request: NextRequest, { params }: RouteProps) {
+  const originGuard = ensureSameOriginJsonMutationRequest(request);
+  if (originGuard) return applyNoStoreHeaders(originGuard);
+
   const { code } = await params;
   const loaded = await load(code);
   if (!loaded) {
@@ -115,7 +146,14 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
       NextResponse.json({ ok: false, message: "VPS nao encontrada." }, { status: 404 }),
     );
   }
-  const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+  let body: ReturnType<typeof parseEnvMutationBody>;
+  try {
+    body = parseEnvMutationBody(await request.json().catch(() => ({})));
+  } catch {
+    return applyNoStoreHeaders(
+      NextResponse.json({ ok: false, message: "Payload de variaveis invalido." }, { status: 400 }),
+    );
+  }
   const variables = Array.isArray(body.variables)
     ? body.variables.map((item) => normalizeEnvVariableInput(item, body.environment))
     : [normalizeEnvVariableInput(body, body.environment)];
@@ -264,6 +302,9 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
 }
 
 export async function DELETE(request: NextRequest, { params }: RouteProps) {
+  const originGuard = ensureSameOriginJsonMutationRequest(request);
+  if (originGuard) return applyNoStoreHeaders(originGuard);
+
   const { code } = await params;
   const loaded = await load(code);
   if (!loaded) {
@@ -272,7 +313,14 @@ export async function DELETE(request: NextRequest, { params }: RouteProps) {
     );
   }
 
-  const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+  let body: ReturnType<typeof parseEnvMutationBody>;
+  try {
+    body = parseEnvMutationBody(await request.json().catch(() => ({})));
+  } catch {
+    return applyNoStoreHeaders(
+      NextResponse.json({ ok: false, message: "Variavel invalida." }, { status: 400 }),
+    );
+  }
   const id = typeof body.id === "number" && Number.isFinite(body.id) ? body.id : null;
   const environment = normalizeEnvironment(body.environment);
   const key = readString(body.key);
