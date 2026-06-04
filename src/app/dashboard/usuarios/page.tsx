@@ -20,7 +20,8 @@ export default function UsuariosPage() {
   const [loading, setLoading] = useState(true);
 
   async function load() {
-    setProfiles(await getProfiles());
+    const allProfiles = await getProfiles();
+    setProfiles(allProfiles.filter(p => p.role !== 'student'));
     setLoading(false);
   }
   useEffect(() => { void load(); }, []);
