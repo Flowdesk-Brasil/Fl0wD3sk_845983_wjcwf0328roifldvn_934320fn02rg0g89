@@ -9,7 +9,7 @@ import { formatDate } from "@/lib/utils";
 
 const labels: Record<EnrollmentStatus, string> = { active: "Ativa", suspended: "Suspensa", cancelled: "Cancelada", expired: "Expirada" };
 const tones: Record<EnrollmentStatus, "green" | "yellow" | "red" | "gray"> = { active: "green", suspended: "yellow", cancelled: "red", expired: "gray" };
-const emptyForm = { student_id: "", plan_id: "", start_date: new Date().toISOString().slice(0, 10) };
+const emptyForm = { student_id: "", plan_id: [] as string[], start_date: new Date().toISOString().slice(0, 10) };
 
 export default function MatriculasPage() {
   const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
@@ -83,9 +83,40 @@ export default function MatriculasPage() {
         <form className="grid gap-4" onSubmit={submit}>
           <ErrorBanner message={error} />
           <label><FieldLabel required>Aluno</FieldLabel><select className="field" required value={form.student_id} onChange={(event) => setForm({ ...form, student_id: event.target.value })}><option value="">Selecione um aluno</option>{students.map((student) => <option value={student.id} key={student.id}>{student.full_name}</option>)}</select></label>
-          <label><FieldLabel required>Plano</FieldLabel><select className="field" required value={form.plan_id} onChange={(event) => setForm({ ...form, plan_id: event.target.value })}><option value="">Selecione um plano</option>{plans.map((plan) => <option value={plan.id} key={plan.id}>{plan.name}</option>)}</select></label>
+          <div>
+            <FieldLabel required>Planos (você pode selecionar mais de um)</FieldLabel>
+            <div className="grid gap-2 mt-2 max-h-48 overflow-y-auto rounded-xl border border-[#e3e8f0] bg-[#fbfcfe] p-3">
+              {plans.map((plan) => (
+                <label key={plan.id} className="flex items-center gap-3 rounded-lg border border-transparent p-2 hover:bg-white hover:border-[#e3e8f0] cursor-pointer transition-colors">
+                  <input 
+                    type="checkbox" 
+                    className="h-4 w-4 rounded border-slate-300 accent-blue-600"
+                    checked={form.plan_id.includes(plan.id)}
+                    onChange={(e) => {
+                      const newPlans = e.target.checked 
+                        ? [...form.plan_id, plan.id]
+                        : form.plan_id.filter(id => id !== plan.id);
+                      setForm({ ...form, plan_id: newPlans });
+                    }}
+                  />
+                  <div className="flex flex-1 justify-between items-center">
+                    <span className="text-sm font-semibold text-slate-700">{plan.name}</span>
+                    <span className="text-xs font-bold text-blue-600">R$ {Number(plan.price).toFixed(2)}</span>
+                  </div>
+                </label>
+              ))}
+            </div>
+            {form.plan_id.length > 0 && (
+              <div className="mt-3 flex justify-between rounded-xl bg-blue-50 px-4 py-3 text-blue-800">
+                <span className="text-sm font-semibold">Valor Total:</span>
+                <span className="text-sm font-black">
+                  R$ {form.plan_id.reduce((sum, id) => sum + Number(plans.find(p => p.id === id)?.price || 0), 0).toFixed(2)}
+                </span>
+              </div>
+            )}
+          </div>
           <label><FieldLabel required>Data de início</FieldLabel><input className="field" type="date" required value={form.start_date} onChange={(event) => setForm({ ...form, start_date: event.target.value })} /></label>
-          <div className="form-actions"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancelar</button><button className="btn btn-primary" type="submit">Criar matrícula</button></div>
+          <div className="form-actions"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancelar</button><button className="btn btn-primary" type="submit" disabled={form.plan_id.length === 0}>Criar matrícula</button></div>
         </form>
       </Modal>
     </div>

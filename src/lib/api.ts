@@ -137,15 +137,39 @@ export async function getEnrollments(): Promise<Enrollment[]> {
 
 export async function createEnrollment(values: {
   student_id: string;
-  plan_id: string;
+  plan_id: string | string[];
   start_date: string;
 }): Promise<Enrollment> {
-  const plan = (await getPlans()).find((item) => item.id === values.plan_id);
+  let finalPlanId = typeof values.plan_id === "string" ? values.plan_id : values.plan_id[0];
+  let plan = (await getPlans()).find((item) => item.id === finalPlanId);
+  
+  if (Array.isArray(values.plan_id) && values.plan_id.length > 1) {
+    const selectedPlans = (await getPlans()).filter(p => values.plan_id.includes(p.id));
+    if (selectedPlans.length > 0) {
+      const combinedName = selectedPlans.map(p => p.name).join(" + ");
+      const combinedPrice = selectedPlans.reduce((sum, p) => sum + Number(p.price), 0);
+      const maxDuration = Math.max(...selectedPlans.map(p => p.duration_days));
+      const maxLimit = Math.max(...selectedPlans.map(p => p.weekly_limit));
+      plan = await insert("plans", {
+        name: combinedName,
+        description: "Plano combinado",
+        price: combinedPrice,
+        duration_days: maxDuration,
+        weekly_limit: maxLimit,
+        color: selectedPlans[0].color,
+        active: false,
+      });
+      finalPlanId = plan.id;
+    }
+  }
+
   if (!plan) throw new Error("Plano não encontrado.");
   const end = new Date(`${values.start_date}T12:00:00`);
   end.setDate(end.getDate() + plan.duration_days);
   const plain = await insert("enrollments", {
-    ...values,
+    student_id: values.student_id,
+    plan_id: finalPlanId,
+    start_date: values.start_date,
     matricula_number: generateMatriculaNumber(),
     status: "active",
     end_date: end.toISOString().slice(0, 10),
@@ -165,7 +189,7 @@ export async function createEnrollment(values: {
   });
   await insert("contracts", {
     student_id: values.student_id,
-    plan_id: values.plan_id,
+    plan_id: finalPlanId,
     enrollment_id: plain.id,
     document_text: `Termo de adesão ao plano ${plan.name}.`,
     status: "pending",
