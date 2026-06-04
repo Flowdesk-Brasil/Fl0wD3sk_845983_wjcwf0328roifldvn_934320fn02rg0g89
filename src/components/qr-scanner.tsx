@@ -70,7 +70,14 @@ export function QrScanner({
 
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
-          video: { facingMode: "user" },
+          video: { 
+            facingMode: "user",
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 60, min: 30 },
+            // @ts-ignore - Propriedades avançadas não tipadas em todos os navegadores, mas que aceleram o foco se disponíveis
+            advanced: [{ focusMode: "continuous" }]
+          },
         });
         if (!active) {
           stream.getTracks().forEach((track) => track.stop());
