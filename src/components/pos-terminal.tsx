@@ -86,16 +86,22 @@ export function PosTerminalListener({ email }: { email: string }) {
       
       // Se tivermos um pagamento ativo, verificar se ele foi pago no background
       if (activeIdRef.current && !approvedStatus) {
-        supabase.from("payments").select("status").eq("id", activeIdRef.current).single().then(({ data }) => {
-          if (data && data.status === "paid") {
-            setApprovedStatus(true);
-            setTimeout(() => {
-              setActivePayment(null);
-              setApprovedStatus(false);
-              activeIdRef.current = null;
-            }, 5000);
+        const checkStatus = async () => {
+          try {
+            const { data } = await supabase.from("payments").select("status").eq("id", activeIdRef.current!).single();
+            if (data && data.status === "paid") {
+              setApprovedStatus(true);
+              setTimeout(() => {
+                setActivePayment(null);
+                setApprovedStatus(false);
+                activeIdRef.current = null;
+              }, 5000);
+            }
+          } catch {
+            // Ignora erros de rede no polling
           }
-        }).catch(() => {});
+        };
+        void checkStatus();
       }
     }, 3000);
 
