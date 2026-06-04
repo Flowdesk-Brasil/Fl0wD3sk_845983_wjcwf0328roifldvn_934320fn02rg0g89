@@ -10,12 +10,11 @@ export function PosTerminalListener({ email }: { email: string }) {
   const [activePayment, setActivePayment] = useState<Payment | null>(null);
   const [approvedStatus, setApprovedStatus] = useState(false);
   const activeIdRef = useRef<string | null>(null);
+  const ignoredIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (email !== "admin@admin.com") return;
 
-    // Função para buscar os detalhes completos (como o nome do aluno)
-    // pois o payload do Supabase Realtime não traz as relações de tabela.
     const fetchFullPayment = async (id: string) => {
       try {
         const { data } = await supabase
@@ -29,7 +28,26 @@ export function PosTerminalListener({ email }: { email: string }) {
       }
     };
 
-    // Inscreve no Supabase Realtime para ouvir mudanças na tabela de pagamentos
+    const checkInitial = async () => {
+      try {
+        const payments = await getPayments();
+        const tenMinsAgo = Date.now() - 10 * 60 * 1000;
+        // Se a cobrança foi CRIADA nos ultimos 10 mins e tá pendente
+        const pendingPix = payments.find(p => 
+          p.status === "pending" && 
+          p.pix_qr_base64 && 
+          new Date(p.created_at).getTime() >= tenMinsAgo &&
+          !ignoredIds.current.has(p.id)
+        );
+        if (pendingPix && !activeIdRef.current) {
+           setActivePayment(pendingPix);
+           activeIdRef.current = pendingPix.id;
+        }
+      } catch (err) {}
+    };
+
+    void checkInitial();
+
     const channel = supabase.channel("pos-terminal-channel")
       .on(
         "postgres_changes",
@@ -38,10 +56,9 @@ export function PosTerminalListener({ email }: { email: string }) {
           const newData = payload.new as any;
           const oldData = payload.old as any;
 
-          // Se um PIX foi gerado agora (pix_qr_base64 mudou para ter valor)
-          const justGeneratedPix = newData.pix_qr_base64 && !oldData.pix_qr_base64 && newData.status === "pending";
+          const justGeneratedPix = newData.pix_qr_base64 && newData.pix_qr_base64 !== oldData.pix_qr_base64 && newData.status === "pending";
           
-          if (justGeneratedPix) {
+          if (justGeneratedPix && !ignoredIds.current.has(newData.id)) {
             const fullPayment = await fetchFullPayment(newData.id);
             if (fullPayment) {
               setActivePayment(fullPayment);
@@ -50,7 +67,6 @@ export function PosTerminalListener({ email }: { email: string }) {
             }
           }
 
-          // Se o pagamento ativo acabou de ser pago
           if (activeIdRef.current && newData.id === activeIdRef.current && newData.status === "paid") {
             setApprovedStatus(true);
             setTimeout(() => {
@@ -69,6 +85,9 @@ export function PosTerminalListener({ email }: { email: string }) {
   }, [email]);
 
   function handleClose() {
+    if (activePayment) {
+      ignoredIds.current.add(activePayment.id);
+    }
     setActivePayment(null);
     activeIdRef.current = null;
   }
@@ -106,7 +125,7 @@ export function PosTerminalListener({ email }: { email: string }) {
           
           <div className="rounded-3xl border-4 border-slate-100 p-8 bg-white shadow-2xl flex justify-center w-full max-w-[320px]">
             {activePayment.pix_qr_base64 ? (
-              <img src={activePayment.pix_qr_base64} alt="PIX QR Code" className="w-full h-auto object-contain" />
+              <img src={activePayment.pix_qr_base64.startsWith('data:') ? activePayment.pix_qr_base64 : `data:image/png;base64,${activePayment.pix_qr_base64}`} alt="PIX QR Code" className="w-full h-auto object-contain" />
             ) : (
               <div className="w-full aspect-square flex items-center justify-center bg-slate-50 text-slate-400 font-medium rounded-xl">
                 Gerando QR Code...
@@ -116,7 +135,7 @@ export function PosTerminalListener({ email }: { email: string }) {
           
           <div className="space-y-3 bg-slate-50 w-full py-6 rounded-2xl border border-slate-100">
             <p className="text-4xl font-black text-slate-800">
-              {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(activePayment.total_amount)}
+              {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(activePayment.total_amount))}
             </p>
             {activePayment.student && (
               <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">
