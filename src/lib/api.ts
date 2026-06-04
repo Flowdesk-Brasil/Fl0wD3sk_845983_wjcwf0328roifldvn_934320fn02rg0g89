@@ -89,6 +89,17 @@ export async function releaseStudentPortal(id: string) {
   return payload;
 }
 
+export async function resetStudentPassword(id: string) {
+  const { data } = await supabase.auth.getSession();
+  const response = await fetch(`/api/admin/students/${id}/reset-password`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` },
+  });
+  const payload = await response.json() as { email?: string; error?: string };
+  if (!response.ok) throw new Error(payload.error ?? "Não foi possível enviar o link de redefinição de senha.");
+  return payload;
+}
+
 export async function getPlans(): Promise<Plan[]> {
   return (await list("plans")).sort((a, b) => Number(a.price) - Number(b.price));
 }

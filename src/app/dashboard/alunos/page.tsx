@@ -96,7 +96,27 @@ export default function AlunosPage() {
           <StudentQrCard code={selected.qr_code} name={selected.full_name} compact />
           <div className="grid content-start gap-5">
             <div className="grid grid-cols-2 gap-3 rounded-2xl bg-[#f7f9fc] p-4 text-xs"><div><span className="field-label">CPF</span><strong>{selected.cpf}</strong></div><div><span className="field-label">Nascimento</span><strong>{formatDate(selected.birth_date)}</strong></div><div><span className="field-label">Telefone</span><strong>{selected.phone}</strong></div><div><span className="field-label">E-mail</span><strong>{selected.email || "Não informado"}</strong></div></div>
-            <div><span className="field-label">Portal do aluno</span><button className="btn btn-primary" disabled={working || !selected.email} onClick={() => void releasePortal()}><Send className="h-4 w-4" /> {working ? "Enviando acesso..." : selected.profile_id ? "Reenviar acesso por e-mail" : "Liberar portal e enviar acesso"}</button>{!selected.email && <p className="mt-2 text-xs text-red-600">Cadastre um e-mail para liberar o portal.</p>}</div>
+            <div>
+              <span className="field-label">Portal do aluno</span>
+              <div className="flex flex-col gap-2">
+                <button className="btn btn-primary w-fit" disabled={working || !selected.email} onClick={() => void releasePortal()}><Send className="h-4 w-4" /> {working ? "Enviando acesso..." : selected.profile_id ? "Reenviar acesso por e-mail" : "Liberar portal e enviar acesso"}</button>
+                {selected.profile_id && <button className="btn btn-secondary w-fit" disabled={working || !selected.email} onClick={async () => {
+                  setWorking(true);
+                  setError(null);
+                  setMessage(null);
+                  try {
+                    const { resetStudentPassword } = await import("@/lib/api");
+                    const result = await resetStudentPassword(selected.id);
+                    setMessage(`Link de redefinição de senha enviado para ${result.email}.`);
+                  } catch (reason) {
+                    setError(reason instanceof Error ? reason.message : "Erro ao enviar e-mail de redefinição.");
+                  } finally {
+                    setWorking(false);
+                  }
+                }}><Mail className="h-4 w-4" /> Enviar link para redefinir senha</button>}
+              </div>
+              {!selected.email && <p className="mt-2 text-xs text-red-600">Cadastre um e-mail para liberar o portal.</p>}
+            </div>
             <div><span className="field-label">Alterar situação</span><div className="flex flex-wrap gap-2">{(["active", "inactive", "blocked"] as StudentStatus[]).map((nextStatus) => <button key={nextStatus} className={`btn ${selected.status === nextStatus ? "btn-primary" : "btn-secondary"}`} onClick={() => void changeStatus(nextStatus)}>{selected.status === nextStatus && <RefreshCw className="h-3.5 w-3.5" />} {statusLabel[nextStatus]}</button>)}</div></div>
           </div>
         </div>}

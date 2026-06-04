@@ -80,8 +80,28 @@ export function PosTerminalListener({ email }: { email: string }) {
       )
       .subscribe();
 
+    // Fallback de ultra-segurança (Polling): Se o WebSocket falhar no celular (3G/4G instável), o polling garante 100% de entrega
+    const fallbackInterval = setInterval(() => {
+      void checkInitial();
+      
+      // Se tivermos um pagamento ativo, verificar se ele foi pago no background
+      if (activeIdRef.current && !approvedStatus) {
+        supabase.from("payments").select("status").eq("id", activeIdRef.current).single().then(({ data }) => {
+          if (data && data.status === "paid") {
+            setApprovedStatus(true);
+            setTimeout(() => {
+              setActivePayment(null);
+              setApprovedStatus(false);
+              activeIdRef.current = null;
+            }, 5000);
+          }
+        }).catch(() => {});
+      }
+    }, 3000);
+
     return () => {
       supabase.removeChannel(channel);
+      clearInterval(fallbackInterval);
     };
   }, [email]);
 
