@@ -639,3 +639,102 @@ export async function deleteProduct(id: string) {
   if (error) throw new Error(error.message);
   return true;
 }
+export async function getReceivings(): Promise<Receiving[]> {
+  if (!shouldUseLocalData()) {
+    const { data, error } = await supabase
+      .from("receivings")
+      .select("*, supplier:suppliers(*)")
+      .order("created_at", { ascending: false });
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Receiving[];
+  }
+  const receivings = localDB.get("receivings");
+  const suppliers = localDB.get("suppliers");
+  return sortDesc(receivings).map(r => ({
+    ...r,
+    supplier: relation(suppliers, r.supplier_id)
+  }));
+}
+
+export async function getReceivingById(id: string): Promise<Receiving | null> {
+  if (shouldUseLocalData()) return localDB.find("receivings", id);
+  const { data, error } = await supabase.from("receivings").select("*, supplier:suppliers(*)").eq("id", id).maybeSingle();
+  if (error) throw new Error(error.message);
+  return data as Receiving | null;
+}
+
+export async function createReceiving(values: Omit<NewRow<"receivings">, "updated_at">): Promise<Receiving> {
+  return insert("receivings", {
+    ...values,
+    updated_at: new Date().toISOString(),
+  });
+}
+
+export async function updateReceiving(id: string, values: Partial<Receiving>) {
+  return update("receivings", id, { ...values, updated_at: new Date().toISOString() });
+}
+
+export async function deleteReceiving(id: string) {
+  const { error } = await supabase.from("receivings").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+  return true;
+}
+
+export async function getReceivingItems(receiving_id: string): Promise<ReceivingItem[]> {
+  if (!shouldUseLocalData()) {
+    const { data, error } = await supabase
+      .from("receiving_items")
+      .select("*, product:products(*)")
+      .eq("receiving_id", receiving_id)
+      .order("created_at", { ascending: true });
+    if (error) throw new Error(error.message);
+    return (data ?? []) as ReceivingItem[];
+  }
+  const items = localDB.get("receiving_items").filter(i => i.receiving_id === receiving_id);
+  const products = localDB.get("products");
+  return items.map(i => ({
+    ...i,
+    product: relation(products, i.product_id)
+  }));
+}
+
+export async function createReceivingItem(values: NewRow<"receiving_items">): Promise<ReceivingItem> {
+  return insert("receiving_items", values);
+}
+
+export async function updateReceivingItem(id: string, values: Partial<ReceivingItem>) {
+  return update("receiving_items", id, values);
+}
+
+export async function getInventoryTransactions(): Promise<any[]> {
+  if (!shouldUseLocalData()) {
+    const { data, error } = await supabase
+      .from("inventory_transactions")
+      .select("*, product:products(*)")
+      .order("created_at", { ascending: false })
+      .limit(100);
+    if (error) throw new Error(error.message);
+    return data ?? [];
+  }
+  const transactions = localDB.get("inventory_transactions");
+  const products = localDB.get("products");
+  return sortDesc(transactions).map(t => ({
+    ...t,
+    product: relation(products, t.product_id)
+  })).slice(0, 100);
+}
+
+export async function createInventoryTransaction(values: any) {
+  return insert("inventory_transactions", values);
+}
+
+export async function createSale(values: Omit<NewRow<"sales">, "updated_at">) {
+  return insert("sales", {
+    ...values,
+    updated_at: new Date().toISOString(),
+  });
+}
+
+export async function createSaleItem(values: NewRow<"sale_items">) {
+  return insert("sale_items", values);
+}

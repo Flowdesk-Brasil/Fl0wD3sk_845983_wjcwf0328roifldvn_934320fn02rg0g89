@@ -5,7 +5,7 @@ import { ArrowLeft, Save, Tag, Barcode, DollarSign, Package, FileText, MapPin } 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createProduct } from "@/lib/api";
-import { ErrorBanner, Label, NumberInput } from "@/components/ui";
+import { ErrorBanner, FieldLabel } from "@/components/ui";
 
 export default function NovoProdutoPage() {
   const router = useRouter();
@@ -50,10 +50,6 @@ export default function NovoProdutoPage() {
     const reader = new FileReader();
     reader.onload = () => setForm(prev => ({ ...prev, photo_base64: reader.result as string }));
     reader.readAsDataURL(file);
-  };
-
-  const handleNumberChange = (name: string, value: number | null) => {
-    setForm(prev => ({ ...prev, [name]: value?.toString() || "" }));
   };
 
   const submit = async (e: React.FormEvent) => {
@@ -148,19 +144,19 @@ export default function NovoProdutoPage() {
             <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-slate-800"><Tag className="w-5 h-5 text-blue-500" /> Informações Básicas</h2>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="sm:col-span-2">
-                <Label>Nome do Produto *</Label>
+                <FieldLabel>Nome do Produto *</FieldLabel>
                 <input required type="text" name="name" value={form.name} onChange={handleChange} className="form-input" placeholder="Ex: Whey Protein Concentrado 900g" autoFocus />
               </div>
               <div>
-                <Label>Marca</Label>
+                <FieldLabel>Marca</FieldLabel>
                 <input type="text" name="brand" value={form.brand} onChange={handleChange} className="form-input" placeholder="Ex: Max Titanium" />
               </div>
               <div>
-                <Label>Categoria</Label>
+                <FieldLabel>Categoria</FieldLabel>
                 <input type="text" name="category" value={form.category} onChange={handleChange} className="form-input" placeholder="Ex: Suplementos" />
               </div>
               <div className="sm:col-span-2 mt-2">
-                <Label>Foto do Produto</Label>
+                <FieldLabel>Foto do Produto</FieldLabel>
                 <div className="mt-2 flex items-center gap-4">
                   {form.photo_base64 ? (
                     <img src={form.photo_base64} alt="Preview" className="w-20 h-20 object-cover rounded-xl border-2 border-slate-200" />
@@ -182,15 +178,15 @@ export default function NovoProdutoPage() {
             <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-slate-800"><Barcode className="w-5 h-5 text-blue-500" /> Códigos e Identificação</h2>
             <div className="grid gap-4 sm:grid-cols-3">
               <div>
-                <Label>Cód. Barras (EAN)</Label>
+                <FieldLabel>Cód. Barras (EAN)</FieldLabel>
                 <input type="text" name="barcode" value={form.barcode} onChange={handleChange} className="form-input font-mono text-sm" placeholder="Ex: 7891234567890" />
               </div>
               <div>
-                <Label>SKU</Label>
+                <FieldLabel>SKU</FieldLabel>
                 <input type="text" name="sku" value={form.sku} onChange={handleChange} className="form-input font-mono text-sm" placeholder="Ex: WHEY-MAX-900-MOR" />
               </div>
               <div>
-                <Label>Cód. Interno</Label>
+                <FieldLabel>Cód. Interno</FieldLabel>
                 <input type="text" name="internal_code" value={form.internal_code} onChange={handleChange} className="form-input font-mono text-sm" placeholder="Ex: 00125" />
               </div>
             </div>
@@ -200,15 +196,15 @@ export default function NovoProdutoPage() {
             <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-slate-800"><DollarSign className="w-5 h-5 text-emerald-500" /> Preço e Custos</h2>
             <div className="grid gap-4 sm:grid-cols-3">
               <div>
-                <Label>Custo Atual (R$)</Label>
-                <NumberInput value={form.current_cost ? Number(form.current_cost) : null} onChange={(v) => handleNumberChange("current_cost", v)} placeholder="0,00" />
+                <FieldLabel>Custo Atual (R$)</FieldLabel>
+                <input type="number" step="0.01" name="current_cost" value={form.current_cost} onChange={handleChange} className="form-input" placeholder="0.00" />
               </div>
               <div>
-                <Label>Preço de Venda (R$) *</Label>
-                <NumberInput value={form.selling_price ? Number(form.selling_price) : null} onChange={(v) => handleNumberChange("selling_price", v)} placeholder="0,00" required />
+                <FieldLabel>Preço de Venda (R$) *</FieldLabel>
+                <input required type="number" step="0.01" name="selling_price" value={form.selling_price} onChange={handleChange} className="form-input" placeholder="0.00" />
               </div>
               <div>
-                <Label>Margem Bruta</Label>
+                <FieldLabel>Margem Bruta</FieldLabel>
                 <div className={`flex h-10 items-center justify-center rounded-xl border border-dashed text-sm font-bold ${Number(margin) >= 30 ? "bg-emerald-50 text-emerald-700 border-emerald-200" : Number(margin) >= 10 ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-red-50 text-red-700 border-red-200"}`}>
                   {margin}%
                 </div>
@@ -224,7 +220,7 @@ export default function NovoProdutoPage() {
             <div className="grid gap-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label>Unidade</Label>
+                  <FieldLabel>Unidade</FieldLabel>
                   <select name="unit_measure" value={form.unit_measure} onChange={handleChange} className="form-input">
                     <option value="UN">Unidade (UN)</option>
                     <option value="KG">Quilo (KG)</option>
@@ -233,22 +229,22 @@ export default function NovoProdutoPage() {
                   </select>
                 </div>
                 <div>
-                  <Label>Estoque Atual</Label>
+                  <FieldLabel>Estoque Atual</FieldLabel>
                   <input type="number" name="current_stock" value={form.current_stock} onChange={handleChange} className="form-input font-bold text-blue-600" />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label>Estoque Mínimo</Label>
+                  <FieldLabel>Estoque Mínimo</FieldLabel>
                   <input type="number" name="minimum_stock" value={form.minimum_stock} onChange={handleChange} className="form-input" />
                 </div>
                 <div>
-                  <Label>Estoque Máximo</Label>
+                  <FieldLabel>Estoque Máximo</FieldLabel>
                   <input type="number" name="maximum_stock" value={form.maximum_stock} onChange={handleChange} className="form-input" />
                 </div>
               </div>
               <div>
-                <Label className="flex items-center gap-1"><MapPin className="w-3 h-3" /> Localização Física</Label>
+                <FieldLabel className="flex items-center gap-1"><MapPin className="w-3 h-3" /> Localização Física</FieldLabel>
                 <input type="text" name="physical_location" value={form.physical_location} onChange={handleChange} className="form-input" placeholder="Ex: Prateleira A2" />
               </div>
             </div>
@@ -258,16 +254,16 @@ export default function NovoProdutoPage() {
             <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-slate-800"><FileText className="w-5 h-5 text-orange-500" /> Fiscal</h2>
             <div className="grid gap-4">
               <div>
-                <Label>NCM</Label>
+                <FieldLabel>NCM</FieldLabel>
                 <input type="text" name="ncm" value={form.ncm} onChange={handleChange} className="form-input font-mono text-sm" placeholder="Ex: 2106.90.30" />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label>CFOP Padrão</Label>
+                  <FieldLabel>CFOP Padrão</FieldLabel>
                   <input type="text" name="cfop" value={form.cfop} onChange={handleChange} className="form-input font-mono text-sm" placeholder="Ex: 5102" />
                 </div>
                 <div>
-                  <Label>CEST</Label>
+                  <FieldLabel>CEST</FieldLabel>
                   <input type="text" name="cest" value={form.cest} onChange={handleChange} className="form-input font-mono text-sm" />
                 </div>
               </div>

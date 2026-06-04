@@ -6,7 +6,7 @@ import Link from "next/link";
 import { getProducts } from "@/lib/api";
 import type { Product } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
-import { EmptyState, IconInput, StatusBadge } from "@/components/ui";
+import { EmptyState, SearchInput, StatusBadge } from "@/components/ui";
 
 export default function ProdutosPage() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -56,10 +56,9 @@ export default function ProdutosPage() {
       <section className="card">
         <div className="table-toolbar flex-wrap gap-4">
           <div className="flex-1 min-w-[280px]">
-            <IconInput 
-              icon={Search} 
+            <SearchInput 
               value={search} 
-              onChange={(e) => setSearch(e.target.value)} 
+              onChange={setSearch} 
               placeholder="Buscar por nome, EAN ou SKU..." 
             />
           </div>
