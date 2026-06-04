@@ -1,18 +1,29 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Package, ArrowDownRight, ArrowUpRight, AlertTriangle, Search, Activity, DollarSign } from "lucide-react";
-import { getProducts, getInventoryTransactions } from "@/lib/api";
+import { Package, ArrowDownRight, ArrowUpRight, AlertTriangle, Search, Activity, DollarSign, Settings2, Plus, Minus, Save } from "lucide-react";
+import { getProducts, getInventoryTransactions, createInventoryTransaction, updateProduct } from "@/lib/api";
 import type { Product } from "@/lib/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import { StatusBadge } from "@/components/ui";
+import { Modal, ErrorBanner, FieldLabel } from "@/components/ui";
 
 export default function EstoquePage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  const [modalOpen, setModalOpen] = useState(false);
+  const [adjustForm, setAdjustForm] = useState({
+    product_id: "",
+    type: "IN",
+    quantity: "1",
+    reason: ""
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchData = () => {
+    setLoading(true);
     Promise.all([
       getProducts(),
       getInventoryTransactions()
@@ -20,9 +31,63 @@ export default function EstoquePage() {
       setProducts(prods);
       setTransactions(trans);
     }).finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    fetchData();
   }, []);
 
-  if (loading) return <div className="p-8 text-center text-slate-500">Carregando painel de estoque...</div>;
+  const handleAdjustSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adjustForm.product_id) {
+      setError("Selecione um produto.");
+      return;
+    }
+
+    const qty = Number(adjustForm.quantity);
+    if (qty <= 0) {
+      setError("A quantidade deve ser maior que zero.");
+      return;
+    }
+
+    const product = products.find(p => p.id === adjustForm.product_id);
+    if (!product) return;
+
+    if (adjustForm.type === "OUT" && product.current_stock < qty) {
+      setError(`Estoque insuficiente. O produto possui apenas ${product.current_stock} un.`);
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+
+    try {
+      const newStock = adjustForm.type === "IN" 
+        ? product.current_stock + qty 
+        : product.current_stock - qty;
+
+      await updateProduct(product.id, { current_stock: newStock });
+      
+      await createInventoryTransaction({
+        product_id: product.id,
+        transaction_type: adjustForm.type,
+        quantity: qty,
+        previous_stock: product.current_stock,
+        new_stock: newStock,
+        reason: adjustForm.reason.trim() || 'Ajuste Manual de Estoque',
+        reference_id: null
+      });
+
+      setModalOpen(false);
+      setAdjustForm({ product_id: "", type: "IN", quantity: "1", reason: "" });
+      fetchData(); // Reload data
+    } catch (err) {
+      setError("Erro ao salvar ajuste.");
+      setSaving(false);
+    }
+  };
+
+  if (loading && products.length === 0) return <div className="p-8 text-center text-slate-500">Carregando painel de estoque...</div>;
 
   const totalValue = products.reduce((acc, p) => acc + (p.current_stock * p.current_cost), 0);
   const potentialRevenue = products.reduce((acc, p) => acc + (p.current_stock * p.selling_price), 0);
@@ -33,9 +98,14 @@ export default function EstoquePage() {
 
   return (
     <div className="mx-auto max-w-7xl">
-      <header className="mb-8">
-        <h1 className="text-3xl font-black tracking-tight text-slate-900">Visão Geral do Estoque</h1>
-        <p className="text-sm text-slate-500 mt-1">Monitore o patrimônio, nível de ruptura e histórico de movimentações</p>
+      <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-3xl font-black tracking-tight text-slate-900">Visão Geral do Estoque</h1>
+          <p className="text-sm text-slate-500 mt-1">Monitore o patrimônio, nível de ruptura e histórico de movimentações</p>
+        </div>
+        <button onClick={() => setModalOpen(true)} className="btn btn-primary bg-slate-800 hover:bg-slate-900 border-none shadow-lg shadow-slate-900/20">
+          <Settings2 className="w-4 h-4" /> Ajuste Manual
+        </button>
       </header>
 
       {/* KPIs */}
@@ -157,6 +227,80 @@ export default function EstoquePage() {
           </div>
         </section>
       </div>
+
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="Ajuste Manual de Estoque" size="md">
+        <form onSubmit={handleAdjustSubmit} className="py-4 space-y-4">
+          <ErrorBanner message={error} />
+          
+          <div>
+            <FieldLabel>Produto *</FieldLabel>
+            <select 
+              value={adjustForm.product_id} 
+              onChange={e => setAdjustForm({...adjustForm, product_id: e.target.value})} 
+              className="form-input" 
+              required
+            >
+              <option value="">-- Selecione o Produto --</option>
+              {products.map(p => (
+                <option key={p.id} value={p.id}>{p.name} (Estoque atual: {p.current_stock})</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <FieldLabel>Tipo de Movimentação *</FieldLabel>
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={() => setAdjustForm({...adjustForm, type: "IN"})}
+                  className={`flex items-center justify-center gap-2 p-2 rounded-lg border-2 font-bold transition ${adjustForm.type === 'IN' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}
+                >
+                  <Plus className="w-4 h-4" /> Entrada
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAdjustForm({...adjustForm, type: "OUT"})}
+                  className={`flex items-center justify-center gap-2 p-2 rounded-lg border-2 font-bold transition ${adjustForm.type === 'OUT' ? 'border-red-500 bg-red-50 text-red-700' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}
+                >
+                  <Minus className="w-4 h-4" /> Saída
+                </button>
+              </div>
+            </div>
+            <div>
+              <FieldLabel>Quantidade *</FieldLabel>
+              <input 
+                type="number" 
+                min="1"
+                value={adjustForm.quantity} 
+                onChange={e => setAdjustForm({...adjustForm, quantity: e.target.value})} 
+                className="form-input mt-2 font-bold text-lg" 
+                required 
+              />
+            </div>
+          </div>
+
+          <div>
+            <FieldLabel>Motivo / Observação</FieldLabel>
+            <input 
+              type="text" 
+              value={adjustForm.reason} 
+              onChange={e => setAdjustForm({...adjustForm, reason: e.target.value})} 
+              className="form-input" 
+              placeholder="Ex: Contagem de inventário, Avaria, etc" 
+            />
+          </div>
+
+          <div className="mt-6 pt-4 border-t border-slate-100 flex justify-end gap-3">
+            <button type="button" onClick={() => setModalOpen(false)} className="btn btn-secondary" disabled={saving}>
+              Cancelar
+            </button>
+            <button type="submit" className="btn btn-primary" disabled={saving}>
+              <Save className="w-4 h-4" /> {saving ? "Salvando..." : "Salvar Ajuste"}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

@@ -141,7 +141,11 @@ export default function RecebimentosPage() {
             icon={FileText} 
             title="Nenhum recebimento" 
             description="Você ainda não registrou notas fiscais ou recebimentos de mercadorias." 
-            action={{ label: "Novo Recebimento", href: "/dashboard/recebimentos/novo" }} 
+            action={
+              <Link href="/dashboard/recebimentos/novo" className="btn btn-primary mt-4">
+                Novo Recebimento
+              </Link>
+            } 
           />
         )}
       </section>

@@ -166,7 +166,11 @@ export default function ProdutosPage() {
             icon={PackageOpen} 
             title="Nenhum produto encontrado" 
             description="Você ainda não possui produtos ou a busca não retornou resultados." 
-            action={{ label: "Cadastrar Produto", href: "/dashboard/produtos/novo" }} 
+            action={
+              <Link href="/dashboard/produtos/novo" className="btn btn-primary mt-4">
+                Cadastrar Produto
+              </Link>
+            } 
           />
         )}
       </section>
