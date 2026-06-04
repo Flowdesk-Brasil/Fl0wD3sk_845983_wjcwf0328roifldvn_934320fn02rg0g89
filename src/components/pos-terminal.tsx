@@ -37,12 +37,11 @@ export function PosTerminalListener({ email }: { email: string }) {
              activeIdRef.current = null;
           }
         } else {
-          // Busca nos ultimos 10 minutos para evitar problemas de timezone/delay
-          const tenMinsAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+          const tenMinsAgo = Date.now() - 10 * 60 * 1000;
           const pendingPix = payments.find(p => 
             p.status === "pending" && 
             p.pix_qr_base64 && 
-            p.created_at >= tenMinsAgo &&
+            new Date(p.created_at).getTime() >= tenMinsAgo &&
             !ignoredIds.current.has(p.id)
           );
           
