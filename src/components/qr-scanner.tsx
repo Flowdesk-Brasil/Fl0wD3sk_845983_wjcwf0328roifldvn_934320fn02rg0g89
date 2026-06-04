@@ -111,9 +111,13 @@ export function QrScanner({
                 setTimeout(() => {
                   setValidationResult(null);
                   readingRef.current = false;
+                  if (active && videoRef.current) {
+                    frameRef.current = requestAnimationFrame(scan);
+                  }
                 }, 3000);
               } else {
                 readingRef.current = false;
+                frameRef.current = requestAnimationFrame(scan);
               }
               return;
             }
