@@ -26,13 +26,14 @@ export default function CheckinPage() {
   useEffect(() => { void load(); }, [load]);
 
   const validateCode = useCallback(async (value: string) => {
-    if (!value.trim()) return;
+    if (!value.trim()) return null;
     setProcessing(true);
     try {
       const next = await processCheckin(value);
       setCode(value);
       setResult(next);
       await load();
+      return next;
     } finally {
       setProcessing(false);
     }

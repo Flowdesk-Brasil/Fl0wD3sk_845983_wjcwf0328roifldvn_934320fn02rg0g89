@@ -1,9 +1,16 @@
 "use client";
 
-import { Camera, CameraOff, Loader2, ScanLine, X } from "lucide-react";
+import { Camera, CameraOff, Loader2, ScanLine, X, CheckCircle2, ShieldAlert } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ErrorBanner } from "@/components/ui";
+
+function getGreeting() {
+  const hour = new Date().getHours();
+  if (hour >= 5 && hour < 12) return "Bom dia";
+  if (hour >= 12 && hour < 18) return "Boa tarde";
+  return "Boa noite";
+}
 
 type BarcodeResult = { rawValue: string };
 type BarcodeDetectorLike = {
@@ -15,7 +22,7 @@ export function QrScanner({
   onRead,
   disabled,
 }: {
-  onRead: (value: string) => void | Promise<void>;
+  onRead: (value: string) => any;
   disabled?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -25,6 +32,7 @@ export function QrScanner({
   const [open, setOpen] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [validationResult, setValidationResult] = useState<{ status: 'allowed' | 'denied', name: string, message: string } | null>(null);
 
   const stop = useCallback(() => {
     if (frameRef.current) cancelAnimationFrame(frameRef.current);
@@ -83,8 +91,23 @@ export function QrScanner({
             const value = results[0]?.rawValue?.trim();
             if (value) {
               readingRef.current = true;
-              await onRead(value);
-              close();
+              const res = await onRead(value);
+              
+              if (res) {
+                const isAllowed = res.status === "allowed";
+                setValidationResult({
+                  status: isAllowed ? 'allowed' : 'denied',
+                  name: res.student?.full_name?.split(" ")[0] || "Aluno",
+                  message: res.duplicate ? "Check-in já realizado" : res.reason || (isAllowed ? "Acesso liberado" : "Acesso negado")
+                });
+                
+                setTimeout(() => {
+                  setValidationResult(null);
+                  readingRef.current = false;
+                }, 3000);
+              } else {
+                readingRef.current = false;
+              }
               return;
             }
           } catch {
@@ -158,7 +181,7 @@ export function QrScanner({
         </div>
       )}
 
-      {!error && !starting && (
+      {!error && !starting && !validationResult && (
         <div className="absolute inset-0 pointer-events-none flex flex-col">
            <div className="flex-1 bg-black/40 transition-colors" />
            <div className="flex">
@@ -172,6 +195,25 @@ export function QrScanner({
                 <p className="text-sm text-white font-bold tracking-wider uppercase">Validação Automática</p>
              </div>
            </div>
+        </div>
+      )}
+
+      {validationResult && (
+        <div className={`absolute inset-0 z-50 flex flex-col items-center justify-center animate-in fade-in duration-300 ${validationResult.status === 'allowed' ? 'bg-green-500' : 'bg-red-500'}`}>
+          {validationResult.status === 'allowed' ? (
+            <CheckCircle2 className="h-40 w-40 text-white mb-8 drop-shadow-lg" />
+          ) : (
+            <ShieldAlert className="h-40 w-40 text-white mb-8 drop-shadow-lg" />
+          )}
+          <h1 className="text-5xl font-black text-white text-center tracking-tight drop-shadow-md px-6">
+            {validationResult.status === 'allowed' ? `${getGreeting()}, seja bem-vindo(a)` : 'Acesso Negado'}
+          </h1>
+          <p className="text-6xl font-black text-white mt-4 uppercase drop-shadow-lg text-center px-6">
+            {validationResult.name}
+          </p>
+          <div className="mt-12 bg-black/20 backdrop-blur-md rounded-full px-8 py-4">
+            <p className="text-2xl font-bold text-white uppercase tracking-widest">{validationResult.message}</p>
+          </div>
         </div>
       )}
     </div>
