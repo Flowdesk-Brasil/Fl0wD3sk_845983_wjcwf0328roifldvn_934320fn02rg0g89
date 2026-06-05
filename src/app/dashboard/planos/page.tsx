@@ -1,9 +1,9 @@
-﻿"use client";
+"use client";
 
-import { CalendarDays, Edit3, Package, Plus, Users } from "lucide-react";
+import { CalendarDays, Edit3, Package, Plus, Trash2, Users } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { EmptyState, ErrorBanner, FieldLabel, LoadingState, Modal, PageHeader, StatusBadge } from "@/components/ui";
-import { getPlans, savePlan } from "@/lib/api";
+import { getPlans, savePlan, deletePlan } from "@/lib/api";
 import type { Plan } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
 
@@ -35,6 +35,17 @@ export default function PlanosPage() {
       await load();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Não foi possível salvar o plano.");
+    }
+  }
+
+  async function removePlan() {
+    if (!form.id || !window.confirm("Deseja realmente excluir este plano?")) return;
+    try {
+      await deletePlan(form.id);
+      setOpen(false);
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Erro ao remover plano.");
     }
   }
 
@@ -76,7 +87,19 @@ export default function PlanosPage() {
           <label><FieldLabel>Cor de identificação</FieldLabel><input className="field h-[42px] p-1" type="color" value={form.color} onChange={(event) => setForm({ ...form, color: event.target.value })} /></label>
           <label><FieldLabel>Situação</FieldLabel><select className="field" value={String(form.active)} onChange={(event) => setForm({ ...form, active: event.target.value === "true" })}><option value="true">Ativo</option><option value="false">Inativo</option></select></label>
           <label className="col-span-full"><FieldLabel>Descrição</FieldLabel><textarea className="field" value={form.description ?? ""} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label>
-          <div className="form-actions col-span-full"><button className="btn btn-secondary" type="button" onClick={() => setOpen(false)}>Cancelar</button><button className="btn btn-primary" type="submit">Salvar plano</button></div>
+          <div className="form-actions col-span-full flex justify-between items-center w-full">
+            <div>
+              {form.id && (
+                <button className="btn bg-red-50 text-red-600 hover:bg-red-100" type="button" onClick={removePlan}>
+                  <Trash2 className="h-4 w-4" /> Excluir
+                </button>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <button className="btn btn-secondary" type="button" onClick={() => setOpen(false)}>Cancelar</button>
+              <button className="btn btn-primary" type="submit">Salvar plano</button>
+            </div>
+          </div>
         </form>
       </Modal>
     </div>

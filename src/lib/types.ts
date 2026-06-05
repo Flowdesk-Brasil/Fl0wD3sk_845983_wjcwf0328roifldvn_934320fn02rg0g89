@@ -193,14 +193,14 @@ export interface ClassSession {
 
 export interface ClassSchedule {
   id: string;
-  class_type_id: string;
+  plan_id: string;
   instructor_id?: string | null;
   day_of_week: number;
   time: string;
   capacity: number;
   active: boolean;
   created_at: string;
-  class_type?: ClassType | null;
+  plan?: Plan | null;
   instructor?: Pick<Profile, "id" | "full_name"> | null;
   student_classes?: StudentClass[];
 }

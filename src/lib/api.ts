@@ -695,13 +695,13 @@ export async function getClassSchedules(): Promise<ClassSchedule[]> {
   if (!shouldUseLocalData()) {
     const { data, error } = await supabase
       .from("class_schedules")
-      .select("*, class_type:class_types(*), instructor:profiles(id, full_name), student_classes(id, student_id, student:students(id, full_name))")
+      .select("*, plan:plans(*), instructor:profiles(id, full_name), student_classes(id, student_id, student:students(id, full_name))")
       .order("day_of_week", { ascending: true })
       .order("time", { ascending: true });
     if (error) return [];
     return (data ?? []) as ClassSchedule[];
   }
-  const types = localDB.get("class_types");
+  const plans = localDB.get("plans");
   const profiles = localDB.get("profiles");
   const students = localDB.get("students");
   const studentClasses = localDB.get("student_classes");
@@ -709,7 +709,7 @@ export async function getClassSchedules(): Promise<ClassSchedule[]> {
     .sort((a, b) => a.day_of_week === b.day_of_week ? a.time.localeCompare(b.time) : a.day_of_week - b.day_of_week)
     .map((schedule) => ({
       ...schedule,
-      class_type: relation(types, schedule.class_type_id),
+      plan: relation(plans, schedule.plan_id),
       instructor: relation(profiles, schedule.instructor_id),
       student_classes: studentClasses.filter((sc) => sc.class_schedule_id === schedule.id).map((sc) => ({
         ...sc,
@@ -719,7 +719,7 @@ export async function getClassSchedules(): Promise<ClassSchedule[]> {
 }
 
 export async function createClassSchedule(values: {
-  class_type_id: string;
+  plan_id: string;
   instructor_id?: string | null;
   day_of_week: number;
   time: string;
@@ -740,7 +740,7 @@ export async function getStudentClasses(studentId: string): Promise<StudentClass
   if (!shouldUseLocalData()) {
     const { data, error } = await supabase
       .from("student_classes")
-      .select("*, class_schedule:class_schedules(*, class_type:class_types(*))")
+      .select("*, class_schedule:class_schedules(*, plan:plans(*))")
       .eq("student_id", studentId);
     if (error) return [];
     return (data ?? []) as StudentClass[];
@@ -1004,6 +1004,14 @@ export async function createSaleItem(values: NewRow<"sale_items">) {
 
 export async function createSupplier(values: any): Promise<any> {
   return insert("suppliers", values);
+}
+
+export async function updatePlan(id: string, values: Partial<Plan>) {
+  return update("plans", id, values);
+}
+
+export async function deletePlan(id: string) {
+  return remove("plans", id);
 }
 
 export async function updateSupplier(id: string, values: any) {
