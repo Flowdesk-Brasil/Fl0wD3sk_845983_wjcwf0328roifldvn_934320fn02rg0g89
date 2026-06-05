@@ -41,6 +41,7 @@ export function QrScanner({
   const [detectedFace, setDetectedFace] = useState<{ id: string; name: string; photo_url: string } | null>(null);
   const [loadingMsg, setLoadingMsg] = useState<string>("Iniciando Reconhecimento Facial...");
   const [isReady, setIsReady] = useState(false);
+  const cooldownRef = useRef(0);
 
   const stop = useCallback(() => {
     if (frameRef.current) cancelAnimationFrame(frameRef.current);
@@ -229,6 +230,7 @@ export function QrScanner({
                 setTimeout(() => {
                   setValidationResult(null);
                   readingRef.current = false;
+                  cooldownRef.current = Date.now() + 2000;
                 }, 3000);
               } else {
                 readingRef.current = false;
@@ -241,7 +243,7 @@ export function QrScanner({
             // 2. Facial Recognition (Non-blocking, runs every 250ms)
             overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 
-            if (Date.now() - lastFaceCheck > 250) {
+            if (Date.now() - lastFaceCheck > 250 && Date.now() > cooldownRef.current) {
               lastFaceCheck = Date.now();
               const faceDetection = await faceapi.detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 })).withFaceLandmarks().withFaceDescriptor();
               if (faceDetection) {
@@ -342,6 +344,7 @@ export function QrScanner({
       setTimeout(() => {
         setValidationResult(null);
         readingRef.current = false;
+        cooldownRef.current = Date.now() + 2000;
       }, 3000);
     } else {
       readingRef.current = false;
@@ -351,6 +354,7 @@ export function QrScanner({
   const cancelFace = () => {
     setDetectedFace(null);
     readingRef.current = false;
+    cooldownRef.current = Date.now() + 3000;
   };
 
   if (!open) {

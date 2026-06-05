@@ -23,6 +23,12 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
   const readingRef = useRef(false);
   const [loadingMsg, setLoadingMsg] = useState<string>("Iniciando Reconhecimento Facial...");
   const [isReady, setIsReady] = useState(false);
+  const disabledRef = useRef(disabled);
+  const cooldownRef = useRef(0);
+
+  useEffect(() => {
+    disabledRef.current = disabled;
+  }, [disabled]);
 
   // Load Models & Students
   useEffect(() => {
@@ -85,7 +91,7 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
   }, []);
 
   useEffect(() => {
-    if (disabled || !videoRef.current) return;
+    if (!videoRef.current) return;
 
     let animationId: number;
     let active = true;
@@ -105,7 +111,7 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
 
         const scanFrame = async () => {
           if (!active) return;
-          if (readingRef.current) {
+          if (readingRef.current || disabledRef.current) {
             animationId = requestAnimationFrame(scanFrame);
             return;
           }
@@ -145,7 +151,7 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
           // 2. Facial Recognition Scan (Non-blocking, runs every 250ms)
           overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 
-          if (Date.now() - lastFaceCheck > 250) {
+          if (Date.now() - lastFaceCheck > 250 && Date.now() > cooldownRef.current) {
             lastFaceCheck = Date.now();
             try {
               // High resolution tinyFaceDetector ensures accuracy WITHOUT freezing the UI
@@ -233,12 +239,13 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
       const stream = video.srcObject as MediaStream | null;
       stream?.getTracks().forEach((track) => track.stop());
     };
-  }, [disabled, onRead]);
+  }, [onRead]);
 
   useEffect(() => {
     if (!disabled) {
       readingRef.current = false;
       setDetectedFace(null);
+      cooldownRef.current = Date.now() + 2000;
     }
   }, [disabled]);
 
@@ -251,6 +258,7 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
   const cancelFace = () => {
     setDetectedFace(null);
     readingRef.current = false;
+    cooldownRef.current = Date.now() + 3000; // Pause facial scan for 3s
   };
 
   return (
