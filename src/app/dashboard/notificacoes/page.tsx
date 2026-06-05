@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Bell, Plus, Send, Trash2, Users } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
@@ -25,7 +25,7 @@ export default function NotificacoesPage() {
       setOpen(false);
       await load();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Não foi possível criar o comunicado.");
+      setError(reason instanceof Error ? reason.message : "NÃ£o foi possÃ­vel criar o comunicado.");
     }
   }
   async function remove(id: string) { await deleteNotification(id); await load(); }
@@ -42,12 +42,12 @@ export default function NotificacoesPage() {
         </article>
       ))}</div> : <section className="card"><EmptyState icon={Bell} title="Nenhum comunicado" description="Crie um aviso para compartilhar novidades com os alunos." /></section>}
 
-      <Modal open={open} onClose={() => setOpen(false)} title="Novo comunicado" description="O comunicado ficará disponível no histórico do workspace.">
+      <Modal open={open} onClose={() => setOpen(false)} title="Novo comunicado" description="O comunicado ficarÃ¡ disponÃ­vel no histÃ³rico do workspace.">
         <form className="grid gap-4" onSubmit={submit}>
           <ErrorBanner message={error} />
-          <label><FieldLabel required>Título</FieldLabel><input className="field" required value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} /></label>
+          <label><FieldLabel required>TÃ­tulo</FieldLabel><input className="field" required value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} /></label>
           <label><FieldLabel required>Mensagem</FieldLabel><textarea className="field" required value={form.message} onChange={(event) => setForm({ ...form, message: event.target.value })} /></label>
-          <div className="rounded-xl bg-[#f3f6fb] p-3 text-xs text-[#657085]"><Users className="mr-2 inline h-4 w-4 text-blue-600" /> Destinatários: todos os alunos</div>
+          <div className="rounded-xl bg-[#f3f6fb] p-3 text-xs text-[#657085]"><Users className="mr-2 inline h-4 w-4 text-blue-600" /> DestinatÃ¡rios: todos os alunos</div>
           <div className="form-actions"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancelar</button><button className="btn btn-primary"><Send className="h-4 w-4" /> Publicar</button></div>
         </form>
       </Modal>

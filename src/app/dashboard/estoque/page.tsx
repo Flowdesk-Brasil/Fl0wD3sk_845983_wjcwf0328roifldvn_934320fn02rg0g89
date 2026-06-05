@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { Package, ArrowDownRight, ArrowUpRight, AlertTriangle, Search, Activity, DollarSign, Settings2, Plus, Minus, Save } from "lucide-react";
@@ -100,8 +100,8 @@ export default function EstoquePage() {
     <div className="mx-auto max-w-7xl">
       <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-3xl font-black tracking-tight text-slate-900">Visão Geral do Estoque</h1>
-          <p className="text-sm text-slate-500 mt-1">Monitore o patrimônio, nível de ruptura e histórico de movimentações</p>
+          <h1 className="text-3xl font-black tracking-tight text-slate-900">VisÃ£o Geral do Estoque</h1>
+          <p className="text-sm text-slate-500 mt-1">Monitore o patrimÃ´nio, nÃ­vel de ruptura e histÃ³rico de movimentaÃ§Ãµes</p>
         </div>
         <button onClick={() => setModalOpen(true)} className="btn btn-primary bg-slate-800 hover:bg-slate-900 border-none shadow-lg shadow-slate-900/20">
           <Settings2 className="w-4 h-4" /> Ajuste Manual
@@ -153,20 +153,20 @@ export default function EstoquePage() {
           <div className="p-5 border-b border-slate-100 flex items-center justify-between sticky top-0 bg-white z-10 rounded-t-xl">
             <h2 className="font-bold text-slate-800 flex items-center gap-2">
               <AlertTriangle className="w-5 h-5 text-amber-500" />
-              Alerta de Reposição
+              Alerta de ReposiÃ§Ã£o
             </h2>
             <span className="text-xs font-bold bg-slate-100 text-slate-600 px-2 py-1 rounded-md">{criticalProducts.length} itens</span>
           </div>
           <div className="overflow-y-auto p-0 flex-1">
             {criticalProducts.length === 0 ? (
-              <div className="p-8 text-center text-emerald-600 font-medium">Todos os produtos estão com estoque saudável!</div>
+              <div className="p-8 text-center text-emerald-600 font-medium">Todos os produtos estÃ£o com estoque saudÃ¡vel!</div>
             ) : (
               <table className="w-full text-left text-sm">
                 <thead className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider sticky top-0">
                   <tr>
                     <th className="px-5 py-3 font-semibold">Produto</th>
                     <th className="px-5 py-3 font-semibold text-center">Atual</th>
-                    <th className="px-5 py-3 font-semibold text-center">Mínimo</th>
+                    <th className="px-5 py-3 font-semibold text-center">MÃ­nimo</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -190,17 +190,17 @@ export default function EstoquePage() {
           </div>
         </section>
 
-        {/* Últimas Movimentações */}
+        {/* Ãšltimas MovimentaÃ§Ãµes */}
         <section className="card p-0 flex flex-col h-[500px]">
           <div className="p-5 border-b border-slate-100 flex items-center justify-between sticky top-0 bg-white z-10 rounded-t-xl">
             <h2 className="font-bold text-slate-800 flex items-center gap-2">
               <Activity className="w-5 h-5 text-blue-500" />
-              Últimas Movimentações
+              Ãšltimas MovimentaÃ§Ãµes
             </h2>
           </div>
           <div className="overflow-y-auto p-0 flex-1">
             {transactions.length === 0 ? (
-              <div className="p-8 text-center text-slate-500 font-medium">Nenhuma movimentação registrada.</div>
+              <div className="p-8 text-center text-slate-500 font-medium">Nenhuma movimentaÃ§Ã£o registrada.</div>
             ) : (
               <div className="divide-y divide-slate-100">
                 {transactions.map(t => (
@@ -210,13 +210,13 @@ export default function EstoquePage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex justify-between items-start mb-0.5">
-                        <strong className="text-sm text-slate-900 truncate pr-2">{t.product?.name || "Produto excluído"}</strong>
+                        <strong className="text-sm text-slate-900 truncate pr-2">{t.product?.name || "Produto excluÃ­do"}</strong>
                         <span className={`text-sm font-bold whitespace-nowrap ${t.transaction_type === 'IN' ? 'text-emerald-600' : t.transaction_type === 'OUT' ? 'text-red-600' : 'text-blue-600'}`}>
                           {t.transaction_type === 'IN' ? '+' : t.transaction_type === 'OUT' ? '-' : ''}{t.quantity}
                         </span>
                       </div>
                       <div className="flex justify-between items-center text-xs text-slate-500">
-                        <span className="truncate pr-2">{t.reason || (t.transaction_type === 'IN' ? 'Entrada' : 'Saída')}</span>
+                        <span className="truncate pr-2">{t.reason || (t.transaction_type === 'IN' ? 'Entrada' : 'SaÃ­da')}</span>
                         <span className="whitespace-nowrap">{t.created_at ? formatDate(t.created_at) : ''}</span>
                       </div>
                     </div>
@@ -237,7 +237,7 @@ export default function EstoquePage() {
             <select 
               value={adjustForm.product_id} 
               onChange={e => setAdjustForm({...adjustForm, product_id: e.target.value})} 
-              className="form-input" 
+              className="field" 
               required
             >
               <option value="">-- Selecione o Produto --</option>
@@ -249,7 +249,7 @@ export default function EstoquePage() {
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <FieldLabel>Tipo de Movimentação *</FieldLabel>
+              <FieldLabel>Tipo de MovimentaÃ§Ã£o *</FieldLabel>
               <div className="grid grid-cols-2 gap-2 mt-2">
                 <button
                   type="button"
@@ -263,7 +263,7 @@ export default function EstoquePage() {
                   onClick={() => setAdjustForm({...adjustForm, type: "OUT"})}
                   className={`flex items-center justify-center gap-2 p-2 rounded-lg border-2 font-bold transition ${adjustForm.type === 'OUT' ? 'border-red-500 bg-red-50 text-red-700' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}
                 >
-                  <Minus className="w-4 h-4" /> Saída
+                  <Minus className="w-4 h-4" /> SaÃ­da
                 </button>
               </div>
             </div>
@@ -274,20 +274,20 @@ export default function EstoquePage() {
                 min="1"
                 value={adjustForm.quantity} 
                 onChange={e => setAdjustForm({...adjustForm, quantity: e.target.value})} 
-                className="form-input mt-2 font-bold text-lg" 
+                className="field mt-2 font-bold text-lg" 
                 required 
               />
             </div>
           </div>
 
           <div>
-            <FieldLabel>Motivo / Observação</FieldLabel>
+            <FieldLabel>Motivo / ObservaÃ§Ã£o</FieldLabel>
             <input 
               type="text" 
               value={adjustForm.reason} 
               onChange={e => setAdjustForm({...adjustForm, reason: e.target.value})} 
-              className="form-input" 
-              placeholder="Ex: Contagem de inventário, Avaria, etc" 
+              className="field" 
+              placeholder="Ex: Contagem de inventÃ¡rio, Avaria, etc" 
             />
           </div>
 

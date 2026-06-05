@@ -738,3 +738,19 @@ export async function createSale(values: Omit<NewRow<"sales">, "updated_at">) {
 export async function createSaleItem(values: NewRow<"sale_items">) {
   return insert("sale_items", values);
 }
+
+export async function getSuppliers(): Promise<any[]> {
+  return sortDesc(await list("suppliers"));
+}
+
+export async function createSupplier(values: any): Promise<any> {
+  return insert("suppliers", values);
+}
+
+export async function updateSupplier(id: string, values: any) {
+  return update("suppliers", id, values);
+}
+
+export async function deleteSupplier(id: string) {
+  return remove("suppliers", id);
+}

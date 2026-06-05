@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { Plus, Search, Tag, Eye, PackageOpen, AlertCircle, TrendingDown, TrendingUp } from "lucide-react";
@@ -46,7 +46,7 @@ export default function ProdutosPage() {
       <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-black tracking-tight text-slate-900">Produtos</h1>
-          <p className="text-sm text-slate-500">Gerencie o cadastro mestre, preços e estoque</p>
+          <p className="text-sm text-slate-500">Gerencie o cadastro mestre, preÃ§os e estoque</p>
         </div>
         <Link href="/dashboard/produtos/novo" className="btn btn-primary whitespace-nowrap">
           <Plus className="h-4 w-4" /> Novo Produto
@@ -95,10 +95,10 @@ export default function ProdutosPage() {
                   <th className="hide-mobile">Categoria</th>
                   <th className="text-right">Estoque</th>
                   <th className="text-right hide-mobile">Custo</th>
-                  <th className="text-right">Preço</th>
+                  <th className="text-right">PreÃ§o</th>
                   <th className="text-right hide-mobile">Margem</th>
                   <th>Status</th>
-                  <th>Ações</th>
+                  <th>AÃ§Ãµes</th>
                 </tr>
               </thead>
               <tbody>
@@ -165,7 +165,7 @@ export default function ProdutosPage() {
           <EmptyState 
             icon={PackageOpen} 
             title="Nenhum produto encontrado" 
-            description="Você ainda não possui produtos ou a busca não retornou resultados." 
+            description="VocÃª ainda nÃ£o possui produtos ou a busca nÃ£o retornou resultados." 
             action={
               <Link href="/dashboard/produtos/novo" className="btn btn-primary mt-4">
                 Cadastrar Produto

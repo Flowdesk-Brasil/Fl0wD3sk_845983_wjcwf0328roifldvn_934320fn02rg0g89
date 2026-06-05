@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { ArrowLeft, Save, Truck, FileText, Calendar, Building2 } from "lucide-react";
@@ -90,7 +90,7 @@ export default function NovoRecebimentoPage() {
           <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-slate-800"><Building2 className="w-5 h-5 text-blue-500" /> Fornecedor</h2>
           <div>
             <FieldLabel>Selecione o Fornecedor *</FieldLabel>
-            <select name="supplier_id" value={form.supplier_id} onChange={handleChange} className="form-input" required>
+            <select name="supplier_id" value={form.supplier_id} onChange={handleChange} className="field" required>
               <option value="">-- Selecione --</option>
               {suppliers.map(s => (
                 <option key={s.id} value={s.id}>{s.corporate_name} {s.cnpj ? `(${s.cnpj})` : ''}</option>
@@ -103,20 +103,20 @@ export default function NovoRecebimentoPage() {
           <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-slate-800"><FileText className="w-5 h-5 text-orange-500" /> Dados da Nota Fiscal</h2>
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <FieldLabel>Número da NFe</FieldLabel>
-              <input type="text" name="invoice_number" value={form.invoice_number} onChange={handleChange} className="form-input" placeholder="Ex: 12345" />
+              <FieldLabel>NÃºmero da NFe</FieldLabel>
+              <input type="text" name="invoice_number" value={form.invoice_number} onChange={handleChange} className="field" placeholder="Ex: 12345" />
             </div>
             <div>
               <FieldLabel>Chave de Acesso da NFe</FieldLabel>
-              <input type="text" name="invoice_key" value={form.invoice_key} onChange={handleChange} className="form-input font-mono text-sm" placeholder="44 posições" maxLength={44} />
+              <input type="text" name="invoice_key" value={form.invoice_key} onChange={handleChange} className="field font-mono text-sm" placeholder="44 posiÃ§Ãµes" maxLength={44} />
             </div>
             <div>
               <FieldLabel>Quantidade Total de Itens</FieldLabel>
-              <input type="number" name="total_items" value={form.total_items} onChange={handleChange} className="form-input" placeholder="Ex: 50" />
+              <input type="number" name="total_items" value={form.total_items} onChange={handleChange} className="field" placeholder="Ex: 50" />
             </div>
             <div>
               <FieldLabel>Valor Total da Nota (R$)</FieldLabel>
-              <input type="number" step="0.01" name="total_amount" value={form.total_amount} onChange={handleChange} className="form-input" placeholder="0.00" />
+              <input type="number" step="0.01" name="total_amount" value={form.total_amount} onChange={handleChange} className="field" placeholder="0.00" />
             </div>
           </div>
         </section>
@@ -125,19 +125,19 @@ export default function NovoRecebimentoPage() {
           <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-slate-800"><Calendar className="w-5 h-5 text-indigo-500" /> Datas e Prazos</h2>
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <FieldLabel>Data de Emissão</FieldLabel>
-              <input type="date" name="issue_date" value={form.issue_date} onChange={handleChange} className="form-input" />
+              <FieldLabel>Data de EmissÃ£o</FieldLabel>
+              <input type="date" name="issue_date" value={form.issue_date} onChange={handleChange} className="field" />
             </div>
             <div>
               <FieldLabel>Data Prevista de Entrega</FieldLabel>
-              <input type="date" name="expected_delivery_date" value={form.expected_delivery_date} onChange={handleChange} className="form-input" />
+              <input type="date" name="expected_delivery_date" value={form.expected_delivery_date} onChange={handleChange} className="field" />
             </div>
           </div>
         </section>
 
         <section className="card p-6">
-          <FieldLabel>Observações Internas</FieldLabel>
-          <textarea name="observations" value={form.observations} onChange={handleChange} className="form-input min-h-[100px] mt-2" placeholder="Anotações sobre a transportadora, condições de pagamento, etc." />
+          <FieldLabel>ObservaÃ§Ãµes Internas</FieldLabel>
+          <textarea name="observations" value={form.observations} onChange={handleChange} className="field min-h-[100px] mt-2" placeholder="AnotaÃ§Ãµes sobre a transportadora, condiÃ§Ãµes de pagamento, etc." />
         </section>
       </div>
     </form>

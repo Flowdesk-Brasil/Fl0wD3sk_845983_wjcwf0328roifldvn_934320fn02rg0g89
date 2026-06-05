@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { Plus, Search, Truck, FileText, CheckCircle, Clock, AlertTriangle, Eye } from "lucide-react";
@@ -89,7 +89,7 @@ export default function RecebimentosPage() {
                   <th className="text-right">Itens</th>
                   <th className="text-right">Valor Total</th>
                   <th>Status</th>
-                  <th>Ações</th>
+                  <th>AÃ§Ãµes</th>
                 </tr>
               </thead>
               <tbody>
@@ -101,7 +101,7 @@ export default function RecebimentosPage() {
                           <Truck className="w-5 h-5 text-slate-400" />
                         </div>
                         <span className="min-w-0">
-                          <strong className="block truncate text-xs text-slate-900">{r.supplier?.trade_name || r.supplier?.corporate_name || "Fornecedor não informado"}</strong>
+                          <strong className="block truncate text-xs text-slate-900">{r.supplier?.trade_name || r.supplier?.corporate_name || "Fornecedor nÃ£o informado"}</strong>
                           <small className="mt-1 flex items-center gap-2 truncate text-[10px] text-slate-500">
                             <span className="bg-slate-100 px-1.5 py-0.5 rounded font-mono">NFe: {r.invoice_number || "S/N"}</span>
                           </small>
@@ -109,8 +109,8 @@ export default function RecebimentosPage() {
                       </div>
                     </td>
                     <td className="hide-mobile text-xs text-slate-600">
-                      <div><span className="font-semibold">Emissão:</span> {r.issue_date ? formatDate(r.issue_date) : "-"}</div>
-                      <div className="text-slate-400"><span className="font-semibold">Previsão:</span> {r.expected_delivery_date ? formatDate(r.expected_delivery_date) : "-"}</div>
+                      <div><span className="font-semibold">EmissÃ£o:</span> {r.issue_date ? formatDate(r.issue_date) : "-"}</div>
+                      <div className="text-slate-400"><span className="font-semibold">PrevisÃ£o:</span> {r.expected_delivery_date ? formatDate(r.expected_delivery_date) : "-"}</div>
                     </td>
                     <td className="text-right font-medium text-slate-900">{r.total_items} un.</td>
                     <td className="text-right font-bold text-slate-900">{formatCurrency(r.total_amount)}</td>
@@ -118,7 +118,7 @@ export default function RecebimentosPage() {
                       <StatusBadge 
                         tone={
                           r.status === "Finalizado" ? "green" :
-                          r.status === "Divergência" ? "red" :
+                          r.status === "DivergÃªncia" ? "red" :
                           r.status === "Aguardando Chegada" ? "gray" :
                           "blue"
                         }
@@ -140,7 +140,7 @@ export default function RecebimentosPage() {
           <EmptyState 
             icon={FileText} 
             title="Nenhum recebimento" 
-            description="Você ainda não registrou notas fiscais ou recebimentos de mercadorias." 
+            description="VocÃª ainda nÃ£o registrou notas fiscais ou recebimentos de mercadorias." 
             action={
               <Link href="/dashboard/recebimentos/novo" className="btn btn-primary mt-4">
                 Novo Recebimento

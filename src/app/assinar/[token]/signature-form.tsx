@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { CheckCircle2, FileCheck2, Loader2, ShieldCheck, FileText } from "lucide-react";
 import { useEffect, useState, useRef, type FormEvent, type UIEvent } from "react";
@@ -48,7 +48,7 @@ export function SignatureForm({ token }: { token: string }) {
     fetch(`/api/public/contracts/${token}`, { cache: "no-store" })
       .then(async (response) => {
         const payload = await response.json() as { contract?: ContractView; error?: string };
-        if (!response.ok || !payload.contract) throw new Error(payload.error || "Não foi possível abrir o contrato.");
+        if (!response.ok || !payload.contract) throw new Error(payload.error || "NÃ£o foi possÃ­vel abrir o contrato.");
         setContract(payload.contract);
         setSignature(payload.contract.studentName);
       })
@@ -67,22 +67,22 @@ export function SignatureForm({ token }: { token: string }) {
         body: JSON.stringify({ cpf, signature, accepted }),
       });
       const payload = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(payload.error || "Não foi possível registrar a assinatura.");
+      if (!response.ok) throw new Error(payload.error || "NÃ£o foi possÃ­vel registrar a assinatura.");
       setSigned(true);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Não foi possível registrar a assinatura.");
+      setError(reason instanceof Error ? reason.message : "NÃ£o foi possÃ­vel registrar a assinatura.");
     } finally {
       setSending(false);
     }
   }
 
   if (loading) return <main className="grid min-h-screen place-items-center bg-[#f7f9fc]"><Loader2 className="h-7 w-7 animate-spin text-blue-600" /></main>;
-  if (signed) return <main className="grid min-h-screen place-items-center bg-[#f7f9fc] p-5"><section className="card max-w-lg p-8 text-center"><CheckCircle2 className="mx-auto h-14 w-14 text-green-600" /><h1 className="mt-5 text-2xl font-bold">Contrato assinado</h1><p className="mt-2 text-sm text-[#657085]">A confirmação já foi registrada no painel do Studio Corpo & Evolução.</p></section></main>;
+  if (signed) return <main className="grid min-h-screen place-items-center bg-[#f7f9fc] p-5"><section className="card max-w-lg p-8 text-center"><CheckCircle2 className="mx-auto h-14 w-14 text-green-600" /><h1 className="mt-5 text-2xl font-bold">Contrato assinado</h1><p className="mt-2 text-sm text-[#657085]">A confirmaÃ§Ã£o jÃ¡ foi registrada no painel do Studio Corpo & EvoluÃ§Ã£o.</p></section></main>;
 
   return (
     <main className="min-h-screen bg-[#f7f9fc] p-4 sm:p-8">
       <div className="mx-auto grid max-w-3xl gap-5">
-        <header className="text-center"><div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-blue-600 text-white"><FileCheck2 className="h-6 w-6" /></div><h1 className="mt-4 text-2xl font-bold">{contract?.studioName || "Corpo & Evolução"}</h1><p className="mt-1 text-sm text-[#657085]">Assinatura digital de contrato</p></header>
+        <header className="text-center"><div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-blue-600 text-white"><FileCheck2 className="h-6 w-6" /></div><h1 className="mt-4 text-2xl font-bold">{contract?.studioName || "Corpo & EvoluÃ§Ã£o"}</h1><p className="mt-1 text-sm text-[#657085]">Assinatura digital de contrato</p></header>
         <ErrorBanner message={error} />
         {contract && <section className="card overflow-hidden">
           <div className="card-header"><div><h2>{contract.studentName}</h2><p>Plano: {contract.planName}</p></div><ShieldCheck className="h-5 w-5 text-green-600" /></div>
@@ -126,7 +126,7 @@ export function SignatureForm({ token }: { token: string }) {
             <label className={cn("flex items-start gap-3 rounded-xl border p-4 text-sm transition-colors", !scrolledToBottom ? "border-slate-200 bg-slate-50 text-slate-400 opacity-70" : "border-blue-200 bg-blue-50/50 text-slate-700 cursor-pointer hover:bg-blue-50")}>
               <input className="mt-1 h-4 w-4 cursor-pointer accent-blue-600" type="checkbox" disabled={!scrolledToBottom} checked={accepted} onChange={(event) => setAccepted(event.target.checked)} />
               <span className="font-medium leading-relaxed">
-                {!scrolledToBottom ? (contract.documentUrl ? "Você precisa abrir e ler o PDF do contrato antes de aceitar." : "Role o contrato até o final para poder aceitar.") : "Li o contrato, entendi todas as cláusulas e confirmo que os dados e condições apresentados estão corretos."}
+                {!scrolledToBottom ? (contract.documentUrl ? "VocÃª precisa abrir e ler o PDF do contrato antes de aceitar." : "Role o contrato atÃ© o final para poder aceitar.") : "Li o contrato, entendi todas as clÃ¡usulas e confirmo que os dados e condiÃ§Ãµes apresentados estÃ£o corretos."}
               </span>
             </label>
             
@@ -145,7 +145,7 @@ export function SignatureForm({ token }: { token: string }) {
               <FileText className="h-6 w-6 text-blue-400" />
               <div>
                 <h2 className="font-bold text-sm sm:text-base line-clamp-1">{contract.documentName || "Contrato"}</h2>
-                <p className="text-xs text-slate-400">Deslize para ler até o fim</p>
+                <p className="text-xs text-slate-400">Deslize para ler atÃ© o fim</p>
               </div>
             </div>
             <button 

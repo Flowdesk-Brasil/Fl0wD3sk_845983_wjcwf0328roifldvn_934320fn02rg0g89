@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+﻿import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import { AuthProvider } from "@/contexts/AuthContext";
 import "./globals.css";
@@ -6,8 +6,8 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"], display: "swap" });
 
 export const metadata: Metadata = {
-  title: "Corpo & Evolução | Gestão",
-  description: "Plataforma de gestão para studios e academias.",
+  title: "Corpo & EvoluÃ§Ã£o | GestÃ£o",
+  description: "Plataforma de gestÃ£o para studios e academias.",
   manifest: "/manifest.webmanifest",
   robots: "noindex, nofollow",
 };

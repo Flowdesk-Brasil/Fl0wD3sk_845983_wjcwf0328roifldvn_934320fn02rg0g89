@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useState } from "react";
 import { QRScannerReceiver } from "@/components/qr-scanner-receiver";
@@ -101,7 +101,7 @@ export default function CheckinReceiverPage() {
 
           {result.status === "denied" && (
             <div className="space-y-6 animate-fadeIn">
-              <div className="text-8xl mb-6">❌</div>
+              <div className="text-8xl mb-6">âŒ</div>
               <p className="text-6xl font-black text-white uppercase tracking-wider mb-4">Acesso Negado</p>
               <p className="text-2xl text-white/90 bg-black/20 px-6 py-3 rounded-full inline-block">
                 {result.reason}
@@ -112,7 +112,7 @@ export default function CheckinReceiverPage() {
           {result.status === "allowed" && result.student && (
             <div className="space-y-8 animate-fadeIn flex flex-col items-center">
               <div className="h-32 w-32 bg-white rounded-full flex items-center justify-center shadow-2xl mb-4">
-                <span className="text-7xl">✅</span>
+                <span className="text-7xl">âœ…</span>
               </div>
               <div className="space-y-4">
                 <p className="text-5xl font-extrabold text-white mb-2 tracking-tight">

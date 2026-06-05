@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useEffect, useState, useRef } from "react";
 import { ArrowLeft, CheckCircle, Package, ScanLine, AlertTriangle, Search, Check, Save } from "lucide-react";
@@ -69,7 +69,7 @@ export default function TriagemInterfacePage({ params }: { params: Promise<{ id:
     const product = products.find(p => p.barcode === barcode || p.sku === barcode || p.internal_code === barcode);
 
     if (!product) {
-      setError(`Código não reconhecido: ${barcode}. Produto não cadastrado no sistema.`);
+      setError(`CÃ³digo nÃ£o reconhecido: ${barcode}. Produto nÃ£o cadastrado no sistema.`);
       return;
     }
 
@@ -106,7 +106,7 @@ export default function TriagemInterfacePage({ params }: { params: Promise<{ id:
         
         setItems([...items, { ...newItem, product }]);
         setLastScanned({ product, quantity: 1 });
-        setError(`Atenção: Produto ${product.name} não estava listado nesta Nota Fiscal.`);
+        setError(`AtenÃ§Ã£o: Produto ${product.name} nÃ£o estava listado nesta Nota Fiscal.`);
       }
     } catch (err) {
       console.error(err);
@@ -118,7 +118,7 @@ export default function TriagemInterfacePage({ params }: { params: Promise<{ id:
     if (!receiving) return;
     try {
       const hasDivergences = items.some(i => i.status === "Divergente" || i.checked_quantity !== i.expected_quantity);
-      await updateReceiving(receiving.id, { status: hasDivergences ? "Divergência" : "Triagem Concluída" });
+      await updateReceiving(receiving.id, { status: hasDivergences ? "DivergÃªncia" : "Triagem ConcluÃ­da" });
       router.push(`/dashboard/recebimentos/${receiving.id}`);
     } catch (err) {
       setError("Erro ao concluir a triagem.");
@@ -140,8 +140,8 @@ export default function TriagemInterfacePage({ params }: { params: Promise<{ id:
             <ArrowLeft className="h-4 w-4" />
           </Link>
           <div>
-            <h1 className="text-2xl font-black tracking-tight text-slate-900">Triagem Física</h1>
-            <p className="text-sm text-slate-500">NF: {receiving.invoice_number || "S/N"} • {receiving.supplier?.trade_name}</p>
+            <h1 className="text-2xl font-black tracking-tight text-slate-900">Triagem FÃ­sica</h1>
+            <p className="text-sm text-slate-500">NF: {receiving.invoice_number || "S/N"} â€¢ {receiving.supplier?.trade_name}</p>
           </div>
         </div>
         <div className="flex gap-2 items-center">
@@ -162,7 +162,7 @@ export default function TriagemInterfacePage({ params }: { params: Promise<{ id:
 
       <div className="grid gap-6 lg:grid-cols-3">
         
-        {/* Lado Esquerdo - Scanner e Último Produto */}
+        {/* Lado Esquerdo - Scanner e Ãšltimo Produto */}
         <div className="space-y-6">
           <form onSubmit={handleScan} className="card p-6 bg-slate-900 text-white shadow-2xl relative overflow-hidden">
             <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none">
@@ -170,7 +170,7 @@ export default function TriagemInterfacePage({ params }: { params: Promise<{ id:
             </div>
             
             <h2 className="text-lg font-bold flex items-center gap-2 mb-4"><ScanLine className="w-5 h-5 text-blue-400" /> Bipar Produto</h2>
-            <p className="text-slate-400 text-sm mb-6">O sistema está aguardando a leitura do leitor de código de barras.</p>
+            <p className="text-slate-400 text-sm mb-6">O sistema estÃ¡ aguardando a leitura do leitor de cÃ³digo de barras.</p>
             
             <div className="relative z-10">
               <input
@@ -191,7 +191,7 @@ export default function TriagemInterfacePage({ params }: { params: Promise<{ id:
               <div className="flex items-start">
                 <AlertTriangle className="w-5 h-5 text-red-500 mt-0.5" />
                 <div className="ml-3">
-                  <h3 className="text-sm font-bold text-red-800">Atenção Necessária</h3>
+                  <h3 className="text-sm font-bold text-red-800">AtenÃ§Ã£o NecessÃ¡ria</h3>
                   <p className="mt-1 text-sm text-red-700">{error}</p>
                 </div>
               </div>
@@ -201,7 +201,7 @@ export default function TriagemInterfacePage({ params }: { params: Promise<{ id:
           {lastScanned && (
             <div className="card p-6 border-2 border-blue-100 bg-blue-50/50 relative overflow-hidden animate-in fade-in slide-in-from-bottom-4">
               <div className="absolute top-0 right-0 p-3">
-                <span className="bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-1 rounded uppercase tracking-wider">Último Leitura</span>
+                <span className="bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-1 rounded uppercase tracking-wider">Ãšltimo Leitura</span>
               </div>
               <div className="flex items-center gap-4">
                 {lastScanned.product.photo_url ? (
@@ -235,7 +235,7 @@ export default function TriagemInterfacePage({ params }: { params: Promise<{ id:
               {items.length === 0 ? (
                 <div className="p-8 text-center">
                   <Package className="w-12 h-12 text-slate-200 mx-auto mb-4" />
-                  <p className="text-slate-500 text-sm">Nenhum item adicionado à nota ainda.<br/>Comece bipando os produtos para adicioná-los.</p>
+                  <p className="text-slate-500 text-sm">Nenhum item adicionado Ã  nota ainda.<br/>Comece bipando os produtos para adicionÃ¡-los.</p>
                 </div>
               ) : (
                 <table className="w-full text-left text-sm whitespace-nowrap">

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useEffect, useState } from "react";
 import { ArrowLeft, CheckCircle, Package, Truck, FileText, AlertTriangle, Play } from "lucide-react";
@@ -37,7 +37,7 @@ export default function ReceivingDetailsPage({ params }: { params: Promise<{ id:
   }, [id, router]);
 
   const finalizeReceiving = async () => {
-    if (!receiving || !confirm("Tem certeza que deseja finalizar esta nota e dar entrada no estoque? Essa ação não pode ser desfeita.")) return;
+    if (!receiving || !confirm("Tem certeza que deseja finalizar esta nota e dar entrada no estoque? Essa aÃ§Ã£o nÃ£o pode ser desfeita.")) return;
     
     setProcessing(true);
     setError(null);
@@ -76,7 +76,7 @@ export default function ReceivingDetailsPage({ params }: { params: Promise<{ id:
   const totalExpected = items.reduce((sum, i) => sum + i.expected_quantity, 0);
   const totalChecked = items.reduce((sum, i) => sum + i.checked_quantity, 0);
   const hasDivergences = items.some(i => i.status === "Divergente" || i.checked_quantity !== i.expected_quantity);
-  const canFinalize = (receiving.status === "Triagem Concluída" || receiving.status === "Divergência") && items.length > 0;
+  const canFinalize = (receiving.status === "Triagem ConcluÃ­da" || receiving.status === "DivergÃªncia") && items.length > 0;
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -90,7 +90,7 @@ export default function ReceivingDetailsPage({ params }: { params: Promise<{ id:
               <h1 className="text-2xl font-black tracking-tight text-slate-900">Nota Fiscal</h1>
               <StatusBadge tone={
                 receiving.status === "Finalizado" ? "green" :
-                receiving.status === "Divergência" ? "red" :
+                receiving.status === "DivergÃªncia" ? "red" :
                 receiving.status === "Aguardando Chegada" ? "gray" :
                 "blue"
               }>
@@ -122,8 +122,8 @@ export default function ReceivingDetailsPage({ params }: { params: Promise<{ id:
         <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl mb-6 flex items-start gap-3">
           <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5" />
           <div>
-            <h3 className="text-sm font-bold text-amber-800">Divergências Encontradas</h3>
-            <p className="text-sm text-amber-700 mt-1">A quantidade conferida na triagem não bate com a nota fiscal. Você pode continuar a triagem ou dar entrada no estoque assumindo as divergências.</p>
+            <h3 className="text-sm font-bold text-amber-800">DivergÃªncias Encontradas</h3>
+            <p className="text-sm text-amber-700 mt-1">A quantidade conferida na triagem nÃ£o bate com a nota fiscal. VocÃª pode continuar a triagem ou dar entrada no estoque assumindo as divergÃªncias.</p>
           </div>
         </div>
       )}
@@ -136,7 +136,7 @@ export default function ReceivingDetailsPage({ params }: { params: Promise<{ id:
           </div>
           <div className="space-y-3 text-sm">
             <div className="flex justify-between border-b border-slate-100 pb-2">
-              <span className="text-slate-500">Número NFe</span>
+              <span className="text-slate-500">NÃºmero NFe</span>
               <span className="font-bold">{receiving.invoice_number || "S/N"}</span>
             </div>
             <div className="flex justify-between border-b border-slate-100 pb-2">
@@ -144,7 +144,7 @@ export default function ReceivingDetailsPage({ params }: { params: Promise<{ id:
               <span className="font-bold">{formatCurrency(receiving.total_amount)}</span>
             </div>
             <div className="flex justify-between border-b border-slate-100 pb-2">
-              <span className="text-slate-500">Emissão</span>
+              <span className="text-slate-500">EmissÃ£o</span>
               <span className="font-medium">{receiving.issue_date ? formatDate(receiving.issue_date) : "-"}</span>
             </div>
           </div>
@@ -157,7 +157,7 @@ export default function ReceivingDetailsPage({ params }: { params: Promise<{ id:
           </div>
           <div className="space-y-3 text-sm">
             <div className="flex justify-between border-b border-slate-100 pb-2">
-              <span className="text-slate-500">Razão Social</span>
+              <span className="text-slate-500">RazÃ£o Social</span>
               <span className="font-medium truncate max-w-[150px]">{receiving.supplier?.corporate_name}</span>
             </div>
             <div className="flex justify-between border-b border-slate-100 pb-2">
@@ -170,7 +170,7 @@ export default function ReceivingDetailsPage({ params }: { params: Promise<{ id:
         <section className="card p-5">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-8 h-8 rounded bg-emerald-50 flex items-center justify-center text-emerald-600"><Package className="w-4 h-4" /></div>
-            <h2 className="font-bold text-slate-800">Resumo Físico</h2>
+            <h2 className="font-bold text-slate-800">Resumo FÃ­sico</h2>
           </div>
           <div className="space-y-3 text-sm">
             <div className="flex justify-between border-b border-slate-100 pb-2">

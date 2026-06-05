@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { ArrowLeft, CalendarDays, Clock3, MapPin, Save, UserRound, Users, Camera } from "lucide-react";
 import Link from "next/link";
@@ -128,11 +128,11 @@ export default function NovoAlunoPage() {
       return;
     }
     const controller = new AbortController();
-    setCepStatus("Buscando endereço...");
+    setCepStatus("Buscando endereÃ§o...");
     fetch(`https://viacep.com.br/ws/${cep}/json/`, { signal: controller.signal })
       .then((response) => response.json())
       .then((data: { erro?: boolean; logradouro?: string; bairro?: string; localidade?: string; uf?: string; complemento?: string }) => {
-        if (data.erro) throw new Error("CEP não encontrado.");
+        if (data.erro) throw new Error("CEP nÃ£o encontrado.");
         setForm((current) => ({
           ...current,
           street: data.logradouro || current.street,
@@ -141,10 +141,10 @@ export default function NovoAlunoPage() {
           state: data.uf || current.state,
           complement: data.complemento || current.complement,
         }));
-        setCepStatus("Endereço preenchido. Informe apenas o número e revise os dados.");
+        setCepStatus("EndereÃ§o preenchido. Informe apenas o nÃºmero e revise os dados.");
       })
       .catch((reason: Error) => {
-        if (reason.name !== "AbortError") setCepStatus(reason.message || "Não foi possível consultar o CEP.");
+        if (reason.name !== "AbortError") setCepStatus(reason.message || "NÃ£o foi possÃ­vel consultar o CEP.");
       });
     return () => controller.abort();
   }, [form.cep]);
@@ -204,7 +204,7 @@ export default function NovoAlunoPage() {
       await Promise.all(selectedSessions.map((sessionId) => createClassBooking(sessionId, student.id)));
       router.push("/dashboard/alunos");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Não foi possível salvar o aluno.");
+      setError(reason instanceof Error ? reason.message : "NÃ£o foi possÃ­vel salvar o aluno.");
       setSaving(false);
     }
   }
@@ -214,32 +214,32 @@ export default function NovoAlunoPage() {
       <PageHeader
         eyebrow="Novo cadastro"
         title="Adicionar aluno"
-        description="Centralize os dados necessários para atendimento, acesso e evolução."
+        description="Centralize os dados necessÃ¡rios para atendimento, acesso e evoluÃ§Ã£o."
         action={<Link href="/dashboard/alunos" className="btn btn-secondary"><ArrowLeft className="h-4 w-4" /> Voltar</Link>}
       />
 
       <form onSubmit={submit} className="grid gap-4">
         <ErrorBanner message={error} />
         <section className="card">
-          <div className="card-header"><div><h2>Dados pessoais</h2><p>Identificação e canais de contato</p></div><UserRound className="h-5 w-5 text-blue-600" /></div>
+          <div className="card-header"><div><h2>Dados pessoais</h2><p>IdentificaÃ§Ã£o e canais de contato</p></div><UserRound className="h-5 w-5 text-blue-600" /></div>
           <div className="card-body form-grid">
             <TextField id="full_name" label="Nome completo" value={form.full_name} onChange={change} required />
             <TextField id="email" label="E-mail" value={form.email} onChange={change} type="email" />
             <TextField id="cpf" label="CPF" value={form.cpf} onChange={change} required placeholder="000.000.000-00" />
             <TextField id="rg" label="RG" value={form.rg} onChange={change} />
             <TextField id="birth_date" label="Data de nascimento" value={form.birth_date} onChange={change} type="date" required />
-            <label><FieldLabel>Gênero</FieldLabel><select className="field" value={form.gender} onChange={(event) => change("gender", event.target.value)}><option value="">Não informado</option><option value="feminino">Feminino</option><option value="masculino">Masculino</option><option value="outro">Outro</option></select></label>
+            <label><FieldLabel>GÃªnero</FieldLabel><select className="field" value={form.gender} onChange={(event) => change("gender", event.target.value)}><option value="">NÃ£o informado</option><option value="feminino">Feminino</option><option value="masculino">Masculino</option><option value="outro">Outro</option></select></label>
             <TextField id="phone" label="Telefone" value={form.phone} onChange={change} required placeholder="(00) 00000-0000" />
             <TextField id="whatsapp" label="WhatsApp" value={form.whatsapp} onChange={change} placeholder="(00) 00000-0000" />
           </div>
         </section>
 
         <section className="card">
-          <div className="card-header"><div><h2>Endereço e evolução</h2><p>Informações complementares para o acompanhamento</p></div><MapPin className="h-5 w-5 text-blue-600" /></div>
+          <div className="card-header"><div><h2>EndereÃ§o e evoluÃ§Ã£o</h2><p>InformaÃ§Ãµes complementares para o acompanhamento</p></div><MapPin className="h-5 w-5 text-blue-600" /></div>
           <div className="card-body form-grid">
             <div><TextField id="cep" label="CEP" value={form.cep} onChange={change} placeholder="00000-000" />{cepStatus && <p className="mt-1.5 text-[11px] font-medium text-blue-600">{cepStatus}</p>}</div>
             <TextField id="street" label="Logradouro" value={form.street} onChange={change} />
-            <TextField id="number" label="Número" value={form.number} onChange={change} />
+            <TextField id="number" label="NÃºmero" value={form.number} onChange={change} />
             <TextField id="complement" label="Complemento" value={form.complement} onChange={change} />
             <TextField id="neighborhood" label="Bairro" value={form.neighborhood} onChange={change} />
             <TextField id="city" label="Cidade" value={form.city} onChange={change} />
@@ -247,9 +247,9 @@ export default function NovoAlunoPage() {
             <TextField id="weight" label="Peso (kg)" value={form.weight} onChange={change} type="number" />
             <TextField id="height" label="Altura (cm)" value={form.height} onChange={change} type="number" />
             <TextField id="objective" label="Objetivo" value={form.objective} onChange={change} />
-            <TextField id="emergency_contact" label="Contato de emergência" value={form.emergency_contact} onChange={change} />
-            <TextField id="emergency_phone" label="Telefone de emergência" value={form.emergency_phone} onChange={change} placeholder="(00) 00000-0000" />
-            <label><FieldLabel>Observações</FieldLabel><textarea className="field" value={form.observations} onChange={(event) => change("observations", event.target.value)} /></label>
+            <TextField id="emergency_contact" label="Contato de emergÃªncia" value={form.emergency_contact} onChange={change} />
+            <TextField id="emergency_phone" label="Telefone de emergÃªncia" value={form.emergency_phone} onChange={change} placeholder="(00) 00000-0000" />
+            <label><FieldLabel>ObservaÃ§Ãµes</FieldLabel><textarea className="field" value={form.observations} onChange={(event) => change("observations", event.target.value)} /></label>
           </div>
         </section>
 
@@ -278,10 +278,10 @@ export default function NovoAlunoPage() {
                     )}
                     <h3 className="font-bold text-blue-800 flex items-center gap-2 mb-2">
                       <span className="relative flex h-3 w-3"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span></span>
-                      {streamFrame ? "Câmera Sincronizada" : "Aguardando câmera do celular..."}
+                      {streamFrame ? "CÃ¢mera Sincronizada" : "Aguardando cÃ¢mera do celular..."}
                     </h3>
                     <p className="text-xs text-blue-600 mb-4 pr-28">
-                      {streamFrame ? "O vídeo ao lado é o que o celular está vendo. Clique em tirar foto quando estiver alinhado." : "Peça para o aluno olhar para a câmera do celular de recepção e aguarde o vídeo aparecer."}
+                      {streamFrame ? "O vÃ­deo ao lado Ã© o que o celular estÃ¡ vendo. Clique em tirar foto quando estiver alinhado." : "PeÃ§a para o aluno olhar para a cÃ¢mera do celular de recepÃ§Ã£o e aguarde o vÃ­deo aparecer."}
                     </p>
                     <div className="flex gap-2 w-full max-w-[200px]">
                       <button type="button" onClick={captureFacialScan} disabled={!streamFrame} className="btn btn-primary flex-1 disabled:opacity-50"><Camera className="h-4 w-4" /> Tirar Foto</button>
@@ -293,14 +293,14 @@ export default function NovoAlunoPage() {
                     <Camera className="h-4 w-4" /> Adicionar Facial
                   </button>
                 )}
-                <p className="mt-3 text-[11px] text-[#657085]">Ao clicar em &quot;Adicionar Facial&quot;, o celular da recepção abrirá a câmera automaticamente para captura remota.</p>
+                <p className="mt-3 text-[11px] text-[#657085]">Ao clicar em &quot;Adicionar Facial&quot;, o celular da recepÃ§Ã£o abrirÃ¡ a cÃ¢mera automaticamente para captura remota.</p>
               </div>
             </div>
           </div>
         </section>
 
         <section className="card">
-          <div className="card-header"><div><h2>Horários de aulas</h2><p>Vincule o aluno às próximas aulas com vagas disponíveis</p></div><CalendarDays className="h-5 w-5 text-blue-600" /></div>
+          <div className="card-header"><div><h2>HorÃ¡rios de aulas</h2><p>Vincule o aluno Ã s prÃ³ximas aulas com vagas disponÃ­veis</p></div><CalendarDays className="h-5 w-5 text-blue-600" /></div>
           <div className="card-body">
             {sessions.length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{sessions.slice(0, 12).map((session) => {
               const booked = (session.bookings || []).filter((booking) => booking.status === "confirmed" || booking.status === "attended").length;
@@ -311,7 +311,7 @@ export default function NovoAlunoPage() {
                 <span className="mt-2 flex items-center gap-1.5 text-[11px] text-[#657085]"><Clock3 className="h-3.5 w-3.5" /> {formatDateTime(session.start_at)}</span>
                 <span className="mt-1 flex items-center gap-1.5 text-[11px] text-[#657085]"><Users className="h-3.5 w-3.5" /> {session.capacity - booked} vagas restantes</span>
               </label>;
-            })}</div> : <p className="rounded-xl bg-[#f7f9fc] p-4 text-xs text-[#657085]">Nenhum horário disponível. Crie aulas na aba Calendário para vinculá-las durante o cadastro.</p>}
+            })}</div> : <p className="rounded-xl bg-[#f7f9fc] p-4 text-xs text-[#657085]">Nenhum horÃ¡rio disponÃ­vel. Crie aulas na aba CalendÃ¡rio para vinculÃ¡-las durante o cadastro.</p>}
           </div>
         </section>
 

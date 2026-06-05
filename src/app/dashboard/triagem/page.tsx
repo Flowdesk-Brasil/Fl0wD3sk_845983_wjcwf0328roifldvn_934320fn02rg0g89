@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState } from "react";
 import { ScanLine, Search, AlertCircle, ArrowRight } from "lucide-react";
@@ -26,15 +26,15 @@ export default function TriagemIntroPage() {
       );
 
       if (!receiving) {
-        throw new Error("Nota Fiscal não encontrada. Verifique se ela foi cadastrada no módulo de Recebimento.");
+        throw new Error("Nota Fiscal nÃ£o encontrada. Verifique se ela foi cadastrada no mÃ³dulo de Recebimento.");
       }
 
       if (receiving.status === "Finalizado") {
-        throw new Error("Esta nota fiscal já foi finalizada.");
+        throw new Error("Esta nota fiscal jÃ¡ foi finalizada.");
       }
       
-      if (receiving.status === "Triagem Concluída") {
-        throw new Error("A triagem desta nota já foi concluída, pendente apenas de finalização.");
+      if (receiving.status === "Triagem ConcluÃ­da") {
+        throw new Error("A triagem desta nota jÃ¡ foi concluÃ­da, pendente apenas de finalizaÃ§Ã£o.");
       }
 
       router.push(`/dashboard/triagem/${receiving.id}`);
@@ -51,8 +51,8 @@ export default function TriagemIntroPage() {
           <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-6 border-8 border-blue-100/50">
             <ScanLine className="w-10 h-10 text-blue-600" />
           </div>
-          <h1 className="text-3xl font-black text-slate-900 tracking-tight mb-2">Triagem e Conferência</h1>
-          <p className="text-slate-500">Inicie a contagem física das mercadorias bipando o código da nota fiscal.</p>
+          <h1 className="text-3xl font-black text-slate-900 tracking-tight mb-2">Triagem e ConferÃªncia</h1>
+          <p className="text-slate-500">Inicie a contagem fÃ­sica das mercadorias bipando o cÃ³digo da nota fiscal.</p>
         </div>
 
         <form onSubmit={startTriagem} className="card p-6 shadow-xl shadow-slate-200/40">
@@ -60,7 +60,7 @@ export default function TriagemIntroPage() {
           
           <div className="mt-4">
             <label className="block text-sm font-bold text-slate-700 mb-2">
-              Número da NF ou Chave de Acesso
+              NÃºmero da NF ou Chave de Acesso
             </label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -77,7 +77,7 @@ export default function TriagemIntroPage() {
             </div>
             <p className="mt-3 text-xs text-slate-500 flex items-center gap-1.5">
               <AlertCircle className="w-4 h-4" /> 
-              Certifique-se que o leitor USB está conectado.
+              Certifique-se que o leitor USB estÃ¡ conectado.
             </p>
           </div>
 

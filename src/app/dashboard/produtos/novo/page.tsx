@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState } from "react";
 import { ArrowLeft, Save, Tag, Barcode, DollarSign, Package, FileText, MapPin } from "lucide-react";
@@ -55,7 +55,7 @@ export default function NovoProdutoPage() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name || !form.selling_price) {
-      setError("O nome do produto e o preço de venda são obrigatórios.");
+      setError("O nome do produto e o preÃ§o de venda sÃ£o obrigatÃ³rios.");
       return;
     }
 
@@ -141,19 +141,19 @@ export default function NovoProdutoPage() {
         {/* Coluna Principal */}
         <div className="lg:col-span-2 space-y-6">
           <section className="card p-6">
-            <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-slate-800"><Tag className="w-5 h-5 text-blue-500" /> Informações Básicas</h2>
+            <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-slate-800"><Tag className="w-5 h-5 text-blue-500" /> InformaÃ§Ãµes BÃ¡sicas</h2>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="sm:col-span-2">
                 <FieldLabel>Nome do Produto *</FieldLabel>
-                <input required type="text" name="name" value={form.name} onChange={handleChange} className="form-input" placeholder="Ex: Whey Protein Concentrado 900g" autoFocus />
+                <input required type="text" name="name" value={form.name} onChange={handleChange} className="field" placeholder="Ex: Whey Protein Concentrado 900g" autoFocus />
               </div>
               <div>
                 <FieldLabel>Marca</FieldLabel>
-                <input type="text" name="brand" value={form.brand} onChange={handleChange} className="form-input" placeholder="Ex: Max Titanium" />
+                <input type="text" name="brand" value={form.brand} onChange={handleChange} className="field" placeholder="Ex: Max Titanium" />
               </div>
               <div>
                 <FieldLabel>Categoria</FieldLabel>
-                <input type="text" name="category" value={form.category} onChange={handleChange} className="form-input" placeholder="Ex: Suplementos" />
+                <input type="text" name="category" value={form.category} onChange={handleChange} className="field" placeholder="Ex: Suplementos" />
               </div>
               <div className="sm:col-span-2 mt-2">
                 <FieldLabel>Foto do Produto</FieldLabel>
@@ -175,33 +175,33 @@ export default function NovoProdutoPage() {
           </section>
 
           <section className="card p-6">
-            <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-slate-800"><Barcode className="w-5 h-5 text-blue-500" /> Códigos e Identificação</h2>
+            <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-slate-800"><Barcode className="w-5 h-5 text-blue-500" /> CÃ³digos e IdentificaÃ§Ã£o</h2>
             <div className="grid gap-4 sm:grid-cols-3">
               <div>
-                <FieldLabel>Cód. Barras (EAN)</FieldLabel>
-                <input type="text" name="barcode" value={form.barcode} onChange={handleChange} className="form-input font-mono text-sm" placeholder="Ex: 7891234567890" />
+                <FieldLabel>CÃ³d. Barras (EAN)</FieldLabel>
+                <input type="text" name="barcode" value={form.barcode} onChange={handleChange} className="field font-mono text-sm" placeholder="Ex: 7891234567890" />
               </div>
               <div>
                 <FieldLabel>SKU</FieldLabel>
-                <input type="text" name="sku" value={form.sku} onChange={handleChange} className="form-input font-mono text-sm" placeholder="Ex: WHEY-MAX-900-MOR" />
+                <input type="text" name="sku" value={form.sku} onChange={handleChange} className="field font-mono text-sm" placeholder="Ex: WHEY-MAX-900-MOR" />
               </div>
               <div>
-                <FieldLabel>Cód. Interno</FieldLabel>
-                <input type="text" name="internal_code" value={form.internal_code} onChange={handleChange} className="form-input font-mono text-sm" placeholder="Ex: 00125" />
+                <FieldLabel>CÃ³d. Interno</FieldLabel>
+                <input type="text" name="internal_code" value={form.internal_code} onChange={handleChange} className="field font-mono text-sm" placeholder="Ex: 00125" />
               </div>
             </div>
           </section>
 
           <section className="card p-6">
-            <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-slate-800"><DollarSign className="w-5 h-5 text-emerald-500" /> Preço e Custos</h2>
+            <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-slate-800"><DollarSign className="w-5 h-5 text-emerald-500" /> PreÃ§o e Custos</h2>
             <div className="grid gap-4 sm:grid-cols-3">
               <div>
                 <FieldLabel>Custo Atual (R$)</FieldLabel>
-                <input type="number" step="0.01" name="current_cost" value={form.current_cost} onChange={handleChange} className="form-input" placeholder="0.00" />
+                <input type="number" step="0.01" name="current_cost" value={form.current_cost} onChange={handleChange} className="field" placeholder="0.00" />
               </div>
               <div>
-                <FieldLabel>Preço de Venda (R$) *</FieldLabel>
-                <input required type="number" step="0.01" name="selling_price" value={form.selling_price} onChange={handleChange} className="form-input" placeholder="0.00" />
+                <FieldLabel>PreÃ§o de Venda (R$) *</FieldLabel>
+                <input required type="number" step="0.01" name="selling_price" value={form.selling_price} onChange={handleChange} className="field" placeholder="0.00" />
               </div>
               <div>
                 <FieldLabel>Margem Bruta</FieldLabel>
@@ -221,7 +221,7 @@ export default function NovoProdutoPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <FieldLabel>Unidade</FieldLabel>
-                  <select name="unit_measure" value={form.unit_measure} onChange={handleChange} className="form-input">
+                  <select name="unit_measure" value={form.unit_measure} onChange={handleChange} className="field">
                     <option value="UN">Unidade (UN)</option>
                     <option value="KG">Quilo (KG)</option>
                     <option value="CX">Caixa (CX)</option>
@@ -230,22 +230,22 @@ export default function NovoProdutoPage() {
                 </div>
                 <div>
                   <FieldLabel>Estoque Atual</FieldLabel>
-                  <input type="number" name="current_stock" value={form.current_stock} onChange={handleChange} className="form-input font-bold text-blue-600" />
+                  <input type="number" name="current_stock" value={form.current_stock} onChange={handleChange} className="field font-bold text-blue-600" />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <FieldLabel>Estoque Mínimo</FieldLabel>
-                  <input type="number" name="minimum_stock" value={form.minimum_stock} onChange={handleChange} className="form-input" />
+                  <FieldLabel>Estoque MÃ­nimo</FieldLabel>
+                  <input type="number" name="minimum_stock" value={form.minimum_stock} onChange={handleChange} className="field" />
                 </div>
                 <div>
-                  <FieldLabel>Estoque Máximo</FieldLabel>
-                  <input type="number" name="maximum_stock" value={form.maximum_stock} onChange={handleChange} className="form-input" />
+                  <FieldLabel>Estoque MÃ¡ximo</FieldLabel>
+                  <input type="number" name="maximum_stock" value={form.maximum_stock} onChange={handleChange} className="field" />
                 </div>
               </div>
               <div>
-                <FieldLabel className="flex items-center gap-1"><MapPin className="w-3 h-3" /> Localização Física</FieldLabel>
-                <input type="text" name="physical_location" value={form.physical_location} onChange={handleChange} className="form-input" placeholder="Ex: Prateleira A2" />
+                <FieldLabel className="flex items-center gap-1"><MapPin className="w-3 h-3" /> LocalizaÃ§Ã£o FÃ­sica</FieldLabel>
+                <input type="text" name="physical_location" value={form.physical_location} onChange={handleChange} className="field" placeholder="Ex: Prateleira A2" />
               </div>
             </div>
           </section>
@@ -255,16 +255,16 @@ export default function NovoProdutoPage() {
             <div className="grid gap-4">
               <div>
                 <FieldLabel>NCM</FieldLabel>
-                <input type="text" name="ncm" value={form.ncm} onChange={handleChange} className="form-input font-mono text-sm" placeholder="Ex: 2106.90.30" />
+                <input type="text" name="ncm" value={form.ncm} onChange={handleChange} className="field font-mono text-sm" placeholder="Ex: 2106.90.30" />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <FieldLabel>CFOP Padrão</FieldLabel>
-                  <input type="text" name="cfop" value={form.cfop} onChange={handleChange} className="form-input font-mono text-sm" placeholder="Ex: 5102" />
+                  <FieldLabel>CFOP PadrÃ£o</FieldLabel>
+                  <input type="text" name="cfop" value={form.cfop} onChange={handleChange} className="field font-mono text-sm" placeholder="Ex: 5102" />
                 </div>
                 <div>
                   <FieldLabel>CEST</FieldLabel>
-                  <input type="text" name="cest" value={form.cest} onChange={handleChange} className="form-input font-mono text-sm" />
+                  <input type="text" name="cest" value={form.cest} onChange={handleChange} className="field font-mono text-sm" />
                 </div>
               </div>
             </div>
@@ -275,7 +275,7 @@ export default function NovoProdutoPage() {
               <input type="checkbox" name="active" checked={form.active} onChange={handleChange} className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
               <span className="font-bold text-slate-800">Produto Ativo</span>
             </label>
-            <p className="text-xs text-slate-500 mt-2 ml-8">Produtos inativos não aparecem no PDV para venda.</p>
+            <p className="text-xs text-slate-500 mt-2 ml-8">Produtos inativos nÃ£o aparecem no PDV para venda.</p>
           </section>
 
         </div>
