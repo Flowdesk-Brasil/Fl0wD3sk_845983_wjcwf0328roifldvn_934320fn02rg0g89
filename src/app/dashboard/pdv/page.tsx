@@ -228,11 +228,13 @@ export default function PdvPage() {
     }
   };
 
-  const filteredProducts = search.length >= 2 
+  const searchQuery = search.trim().toLowerCase();
+  const filteredProducts = searchQuery.length >= 2 
     ? products.filter(p => 
-        p.name.toLowerCase().includes(search.toLowerCase()) || 
-        p.barcode?.includes(search) || 
-        p.sku?.toLowerCase().includes(search.toLowerCase())
+        p.name.toLowerCase().includes(searchQuery) || 
+        p.barcode?.toLowerCase().includes(searchQuery) || 
+        p.sku?.toLowerCase().includes(searchQuery) ||
+        p.internal_code?.toLowerCase().includes(searchQuery)
       )
     : [];
 
@@ -328,8 +330,19 @@ export default function PdvPage() {
                   }}
                   className="bg-white p-4 rounded-2xl border-2 border-transparent hover:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 transition text-left group shadow-sm flex flex-col h-full"
                 >
-                  <h3 className="font-bold text-slate-800 text-lg leading-tight mb-1 line-clamp-2 group-hover:text-blue-600 transition-colors">{p.name}</h3>
-                  <p className="text-sm text-slate-400 font-mono mb-4">{p.barcode || p.sku}</p>
+                  <div className="flex items-start gap-3 mb-3">
+                    <div className="w-12 h-12 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-center shrink-0 overflow-hidden shadow-sm">
+                      {p.photo_url ? (
+                        <img src={p.photo_url} className="w-full h-full object-cover" alt={p.name} />
+                      ) : (
+                        <Package className="w-6 h-6 text-slate-300" />
+                      )}
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-slate-800 text-base leading-tight mb-1 line-clamp-2 group-hover:text-blue-600 transition-colors">{p.name}</h3>
+                      <p className="text-xs text-slate-400 font-mono">{p.barcode || p.sku}</p>
+                    </div>
+                  </div>
                   <div className="flex items-end justify-between mt-auto">
                     <span className="font-black text-xl text-slate-900">{formatCurrency(p.selling_price)}</span>
                     <span className={`text-xs font-bold px-2 py-1 rounded-md ${p.current_stock > 0 ? 'bg-slate-100 text-slate-600' : 'bg-red-50 text-red-600'}`}>
@@ -367,8 +380,15 @@ export default function PdvPage() {
             <div className="space-y-2">
               {cart.map((item, index) => (
                 <div key={item.id} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-start gap-4 animate-in fade-in slide-in-from-right-4">
-                  <div className="w-8 flex justify-center text-slate-400 font-bold text-lg pt-1">
-                    {cart.length - index}
+                  <div className="w-10 h-10 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-center shrink-0 overflow-hidden relative shadow-sm">
+                    {item.photo_url ? (
+                      <img src={item.photo_url} className="w-full h-full object-cover" alt={item.name} />
+                    ) : (
+                      <Package className="w-5 h-5 text-slate-300" />
+                    )}
+                    <div className="absolute -top-2 -right-2 w-5 h-5 bg-slate-800 text-white text-[10px] font-bold flex items-center justify-center rounded-full shadow">
+                      {cart.length - index}
+                    </div>
                   </div>
                   <div className="flex-1 min-w-0">
                     <h4 className="text-base font-bold text-slate-900 leading-tight mb-1">{item.name}</h4>
