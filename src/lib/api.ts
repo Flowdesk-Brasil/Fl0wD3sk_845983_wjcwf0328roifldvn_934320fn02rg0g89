@@ -691,7 +691,91 @@ export async function createClassBooking(sessionId: string, studentId: string): 
     status: "confirmed",
   });
 }
+export async function getClassSchedules(): Promise<ClassSchedule[]> {
+  if (!shouldUseLocalData()) {
+    const { data, error } = await supabase
+      .from("class_schedules")
+      .select("*, class_type:class_types(*), instructor:profiles(id, full_name), student_classes(id, student_id, student:students(id, full_name))")
+      .order("day_of_week", { ascending: true })
+      .order("time", { ascending: true });
+    if (error) return [];
+    return (data ?? []) as ClassSchedule[];
+  }
+  const types = localDB.get("class_types");
+  const profiles = localDB.get("profiles");
+  const students = localDB.get("students");
+  const studentClasses = localDB.get("student_classes");
+  return localDB.get("class_schedules")
+    .sort((a, b) => a.day_of_week === b.day_of_week ? a.time.localeCompare(b.time) : a.day_of_week - b.day_of_week)
+    .map((schedule) => ({
+      ...schedule,
+      class_type: relation(types, schedule.class_type_id),
+      instructor: relation(profiles, schedule.instructor_id),
+      student_classes: studentClasses.filter((sc) => sc.class_schedule_id === schedule.id).map((sc) => ({
+        ...sc,
+        student: relation(students, sc.student_id),
+      })),
+    }));
+}
 
+export async function createClassSchedule(values: {
+  class_type_id: string;
+  instructor_id?: string | null;
+  day_of_week: number;
+  time: string;
+  capacity: number;
+}) {
+  return insert("class_schedules", {
+    ...values,
+    instructor_id: values.instructor_id || null,
+    active: true,
+  });
+}
+
+export async function deleteClassSchedule(id: string) {
+  return remove("class_schedules", id);
+}
+
+export async function getStudentClasses(studentId: string): Promise<StudentClass[]> {
+  if (!shouldUseLocalData()) {
+    const { data, error } = await supabase
+      .from("student_classes")
+      .select("*, class_schedule:class_schedules(*, class_type:class_types(*))")
+      .eq("student_id", studentId);
+    if (error) return [];
+    return (data ?? []) as StudentClass[];
+  }
+  const schedules = await getClassSchedules();
+  return localDB.get("student_classes")
+    .filter((sc) => sc.student_id === studentId)
+    .map((sc) => ({
+      ...sc,
+      class_schedule: relation(schedules, sc.class_schedule_id),
+    }));
+}
+
+export async function linkStudentToClasses(studentId: string, classScheduleIds: string[]) {
+  if (!shouldUseLocalData()) {
+    // Delete existing
+    await supabase.from("student_classes").delete().eq("student_id", studentId);
+    // Insert new
+    if (classScheduleIds.length > 0) {
+      await supabase.from("student_classes").insert(
+        classScheduleIds.map(id => ({ student_id: studentId, class_schedule_id: id }))
+      );
+    }
+    return;
+  }
+  
+  // Local logic
+  const existing = localDB.get("student_classes").filter(sc => sc.student_id === studentId);
+  for (const sc of existing) {
+    localDB.delete("student_classes", sc.id);
+  }
+  for (const id of classScheduleIds) {
+    localDB.insert("student_classes", { student_id: studentId, class_schedule_id: id });
+  }
+}
 export async function getDashboardStats(): Promise<DashboardStats> {
   const [students, enrollments, payments, checkins] = await Promise.all([
     getStudents(), getEnrollments(), getPayments(), getCheckins(),

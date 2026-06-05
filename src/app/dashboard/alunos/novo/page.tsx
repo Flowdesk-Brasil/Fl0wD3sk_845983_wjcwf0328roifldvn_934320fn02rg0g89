@@ -5,8 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, type FormEvent } from "react";
 import { ErrorBanner, FieldLabel, PageHeader } from "@/components/ui";
-import { createClassBooking, createStudent, getClassSessions } from "@/lib/api";
-import type { ClassSession } from "@/lib/types";
+import { createStudent, getClassSchedules, linkStudentToClasses } from "@/lib/api";
+import type { ClassSchedule } from "@/lib/types";
 import { calculateIMC, digitsOnly, formatDateTime, maskCEP, maskCPF, maskPhone } from "@/lib/utils";
 import { useDeviceSelector } from "@/components/device-selector";
 
@@ -74,8 +74,8 @@ export default function NovoAlunoPage() {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [cepStatus, setCepStatus] = useState<string | null>(null);
-  const [sessions, setSessions] = useState<ClassSession[]>([]);
-  const [selectedSessions, setSelectedSessions] = useState<string[]>([]);
+  const [schedules, setSchedules] = useState<ClassSchedule[]>([]);
+  const [selectedSchedules, setSelectedSchedules] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [facialScanActive, setFacialScanActive] = useState(false);
   const [streamFrame, setStreamFrame] = useState<string | null>(null);
@@ -155,11 +155,7 @@ export default function NovoAlunoPage() {
   }, [form.cep]);
 
   useEffect(() => {
-    getClassSessions().then((items) => setSessions(items.filter((item) =>
-      item.status === "scheduled" &&
-      new Date(item.start_at).getTime() > Date.now() &&
-      (item.bookings || []).filter((booking) => booking.status === "confirmed" || booking.status === "attended").length < item.capacity
-    )));
+    getClassSchedules().then((items) => setSchedules(items.filter(item => item.active)));
   }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -214,7 +210,7 @@ export default function NovoAlunoPage() {
         }
       }
 
-      await Promise.all(selectedSessions.map((sessionId) => createClassBooking(sessionId, student.id)));
+      await linkStudentToClasses(student.id, selectedSchedules);
       router.push("/dashboard/alunos");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Não foi possível salvar o aluno.");
@@ -313,18 +309,23 @@ export default function NovoAlunoPage() {
         </section>
 
         <section className="card">
-          <div className="card-header"><div><h2>Horários de aulas</h2><p>Vincule o aluno Às próximas aulas com vagas disponíveis</p></div><CalendarDays className="h-5 w-5 text-blue-600" /></div>
+          <div className="card-header"><div><h2>Grade de Aulas</h2><p>Vincule o aluno aos horários fixos semanais</p></div><CalendarDays className="h-5 w-5 text-blue-600" /></div>
           <div className="card-body">
-            {sessions.length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{sessions.slice(0, 12).map((session) => {
-              const booked = (session.bookings || []).filter((booking) => booking.status === "confirmed" || booking.status === "attended").length;
-              const selected = selectedSessions.includes(session.id);
-              return <label key={session.id} className={`cursor-pointer rounded-2xl border p-4 transition ${selected ? "border-blue-500 bg-blue-50" : "border-[#e3e8f0] hover:border-blue-300"}`}>
-                <input className="sr-only" type="checkbox" checked={selected} onChange={() => setSelectedSessions((current) => current.includes(session.id) ? current.filter((id) => id !== session.id) : [...current, session.id])} />
-                <strong className="block text-sm">{session.class_type?.name || "Aula"}</strong>
-                <span className="mt-2 flex items-center gap-1.5 text-[11px] text-[#657085]"><Clock3 className="h-3.5 w-3.5" /> {formatDateTime(session.start_at)}</span>
-                <span className="mt-1 flex items-center gap-1.5 text-[11px] text-[#657085]"><Users className="h-3.5 w-3.5" /> {session.capacity - booked} vagas restantes</span>
-              </label>;
-            })}</div> : <p className="rounded-xl bg-[#f7f9fc] p-4 text-xs text-[#657085]">Nenhum horário disponível. Crie aulas na aba Calendário para vinculá-las durante o cadastro.</p>}
+            {!schedules.length ? <p className="text-sm text-[#657085]">Nenhum horário fixo cadastrado na grade.</p> : (
+              <div className="flex flex-col gap-2">
+                {schedules.map((schedule) => {
+                  const WEEKDAYS = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+                  const label = `${schedule.class_type?.name} - ${WEEKDAYS[schedule.day_of_week]} às ${schedule.time}`;
+                  const isChecked = selectedSchedules.includes(schedule.id);
+                  return (
+                    <label key={schedule.id} className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-colors hover:bg-[#f7f9fc] ${isChecked ? "border-blue-600 bg-[#eff4ff]" : "border-[#e3e8f0]"}`}>
+                      <input type="checkbox" className="h-4 w-4 rounded border-[#cbd5e1] text-blue-600 focus:ring-blue-600" checked={isChecked} onChange={(event) => setSelectedSchedules(event.target.checked ? [...selectedSchedules, schedule.id] : selectedSchedules.filter((id) => id !== schedule.id))} />
+                      <span className={`text-sm font-medium ${isChecked ? "text-blue-900" : "text-[#172033]"}`}>{label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </section>
 

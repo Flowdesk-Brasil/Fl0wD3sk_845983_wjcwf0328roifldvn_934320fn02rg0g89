@@ -191,6 +191,29 @@ export interface ClassSession {
   bookings?: ClassBooking[];
 }
 
+export interface ClassSchedule {
+  id: string;
+  class_type_id: string;
+  instructor_id?: string | null;
+  day_of_week: number;
+  time: string;
+  capacity: number;
+  active: boolean;
+  created_at: string;
+  class_type?: ClassType | null;
+  instructor?: Pick<Profile, "id" | "full_name"> | null;
+  student_classes?: StudentClass[];
+}
+
+export interface StudentClass {
+  id: string;
+  student_id: string;
+  class_schedule_id: string;
+  created_at: string;
+  student?: Pick<Student, "id" | "full_name"> | null;
+  class_schedule?: ClassSchedule | null;
+}
+
 export interface DashboardStats {
   totalStudents: number;
   activeStudents: number;
