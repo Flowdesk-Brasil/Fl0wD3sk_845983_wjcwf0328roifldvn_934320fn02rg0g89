@@ -42,6 +42,8 @@ export function QrScanner({
   const [loadingMsg, setLoadingMsg] = useState<string>("Iniciando Reconhecimento Facial...");
   const [isReady, setIsReady] = useState(false);
   const cooldownRef = useRef(0);
+  const labeledDescriptorsRef = useRef<faceapi.LabeledFaceDescriptors[]>([]);
+  const modelsLoadedRef = useRef(false);
 
   const stop = useCallback(() => {
     if (frameRef.current) cancelAnimationFrame(frameRef.current);
@@ -104,6 +106,7 @@ export function QrScanner({
         await faceapi.nets.faceLandmark68Net.loadFromUri('/models');
         await faceapi.nets.faceRecognitionNet.loadFromUri('/models');
         
+        modelsLoadedRef.current = true;
         setLoadingMsg("Sincronizando banco de rostos (Aguarde)...");
         const { data: students } = await supabase.from('students').select('id, full_name, photo_url').not('photo_url', 'is', null);
         if (students && students.length > 0 && mounted) {
@@ -130,8 +133,11 @@ export function QrScanner({
                console.warn("Could not load face for:", s.full_name, e);
             }
           }
-          if (labeledDescriptors.length > 0 && mounted) {
-            faceMatcherRef.current = new faceapi.FaceMatcher(labeledDescriptors, 0.55);
+          if (mounted) {
+            labeledDescriptorsRef.current = labeledDescriptors;
+            if (labeledDescriptors.length > 0) {
+              faceMatcherRef.current = new faceapi.FaceMatcher(labeledDescriptors, 0.55);
+            }
           }
         }
         if (mounted) {
@@ -148,6 +154,55 @@ export function QrScanner({
     }
     loadFaces();
     return () => { mounted = false; };
+  }, [open]);
+
+  // REALTIME: Sincroniza novos alunos automaticamente (sem reabrir o site)
+  useEffect(() => {
+    if (!open) return;
+    
+    const channel = supabase.channel('students-face-realtime-scanner')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'students' } as any, async (payload: any) => {
+        if (!modelsLoadedRef.current) return;
+
+        if (payload.eventType === 'DELETE') {
+          const deletedId = payload.old?.id;
+          if (deletedId) {
+            const updated = labeledDescriptorsRef.current.filter(d => !d.label.startsWith(deletedId + "|||"));
+            labeledDescriptorsRef.current = updated;
+            faceMatcherRef.current = updated.length > 0 ? new faceapi.FaceMatcher(updated, 0.55) : null;
+          }
+          return;
+        }
+
+        const student = payload.new;
+        if (!student?.photo_url || !student?.id || !student?.full_name) return;
+        
+        try {
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          img.src = student.photo_url;
+          await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = reject;
+          });
+          
+          const detection = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 })).withFaceLandmarks().withFaceDescriptor();
+          
+          if (detection) {
+            const label = student.id + "|||" + student.full_name + "|||" + student.photo_url;
+            const updated = labeledDescriptorsRef.current.filter(d => !d.label.startsWith(student.id + "|||"));
+            updated.push(new faceapi.LabeledFaceDescriptors(label, [detection.descriptor]));
+            labeledDescriptorsRef.current = updated;
+            faceMatcherRef.current = new faceapi.FaceMatcher(updated, 0.55);
+            console.log(`[CATRACA REALTIME] Novo rosto sincronizado: ${student.full_name}`);
+          }
+        } catch (e) {
+          console.warn("[CATRACA REALTIME] Erro ao processar rosto:", e);
+        }
+      })
+      .subscribe();
+    
+    return () => { supabase.removeChannel(channel); };
   }, [open]);
 
   useEffect(() => () => stop(), [stop]);
