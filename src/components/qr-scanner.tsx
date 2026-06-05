@@ -231,7 +231,7 @@ export function QrScanner({
                   setValidationResult(null);
                   readingRef.current = false;
                   cooldownRef.current = Date.now() + 2000;
-                }, 3000);
+                }, 2000);
               } else {
                 readingRef.current = false;
               }
@@ -348,7 +348,7 @@ export function QrScanner({
         setValidationResult(null);
         readingRef.current = false;
         cooldownRef.current = Date.now() + 2000;
-      }, 3000);
+      }, 2000);
     } else {
       readingRef.current = false;
     }
@@ -357,7 +357,7 @@ export function QrScanner({
   const cancelFace = () => {
     setDetectedFace(null);
     readingRef.current = false;
-    cooldownRef.current = Date.now() + 3000;
+    cooldownRef.current = Date.now() + 2000;
   };
 
   if (!open) {

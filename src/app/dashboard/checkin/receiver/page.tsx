@@ -56,7 +56,7 @@ export default function CheckinReceiverPage() {
 
         setTimeout(() => {
           setResult({ status: "idle" });
-        }, 3000);
+        }, 2000);
       } catch (err) {
         const error = err instanceof Error ? err.message : "Erro desconhecido";
         setResult({
@@ -66,7 +66,7 @@ export default function CheckinReceiverPage() {
 
         setTimeout(() => {
           setResult({ status: "idle" });
-        }, 3000);
+        }, 2000);
       } finally {
         setIsValidating(false);
       }
