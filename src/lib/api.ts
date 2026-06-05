@@ -14,6 +14,22 @@ const sortDesc = <T extends { created_at: string }>(rows: T[]) =>
 const relation = <T extends { id: string }>(rows: T[], id?: string | null) =>
   rows.find((row) => row.id === id) ?? null;
 
+let syncChannel: any = null;
+const notifyDbChange = () => {
+  if (typeof window === "undefined") return;
+  if (shouldUseLocalData()) return;
+  if (!syncChannel) {
+    syncChannel = supabase.channel("db-sync");
+    syncChannel.subscribe((status: string) => {
+      if (status === "SUBSCRIBED") {
+        syncChannel.send({ type: "broadcast", event: "DB_CHANGED" });
+      }
+    });
+  } else if (syncChannel.state === "joined") {
+    syncChannel.send({ type: "broadcast", event: "DB_CHANGED" });
+  }
+};
+
 async function list<T extends TableName>(
   table: T,
   orderBy = "created_at",
@@ -25,9 +41,14 @@ async function list<T extends TableName>(
 }
 
 async function insert<T extends TableName>(table: T, values: NewRow<T>): Promise<LocalTables[T]> {
-  if (shouldUseLocalData()) return localDB.insert(table, values);
+  if (shouldUseLocalData()) {
+    const row = localDB.insert(table, values);
+    notifyDbChange();
+    return row;
+  }
   const { data, error } = await supabase.from(table).insert(values).select("*").single();
   if (error) throw new Error(error.message);
+  notifyDbChange();
   return data as LocalTables[T];
 }
 
@@ -39,17 +60,24 @@ async function update<T extends TableName>(
   if (shouldUseLocalData()) {
     const row = localDB.update(table, id, values);
     if (!row) throw new Error("Registro não encontrado.");
+    notifyDbChange();
     return row;
   }
   const { data, error } = await supabase.from(table).update(values as never).eq("id", id).select("*").single();
   if (error) throw new Error(error.message);
+  notifyDbChange();
   return data as LocalTables[T];
 }
 
 async function remove<T extends TableName>(table: T, id: string) {
-  if (shouldUseLocalData()) return localDB.delete(table, id);
+  if (shouldUseLocalData()) {
+    localDB.delete(table, id);
+    notifyDbChange();
+    return true;
+  }
   const { error } = await supabase.from(table).delete().eq("id", id);
   if (error) throw new Error(error.message);
+  notifyDbChange();
   return true;
 }
 
@@ -240,9 +268,44 @@ export async function editEnrollment(id: string, values: {
     start_date: values.start_date,
     end_date: end.toISOString().slice(0, 10),
   });
+
+  // Atualizar pagamentos pendentes com o novo valor do plano e data
+  if (!shouldUseLocalData()) {
+    const { data: payments } = await supabase.from("payments").select("*").eq("enrollment_id", id).eq("status", "pending");
+    if (payments) {
+      for (const pay of payments) {
+        await update("payments", pay.id, {
+          amount: Number(plan.price),
+          total_amount: Number(plan.price),
+          due_date: values.start_date
+        });
+      }
+    }
+  } else {
+    const payments = localDB.get("payments").filter((p) => p.enrollment_id === id && p.status === "pending");
+    for (const pay of payments) {
+      await update("payments", pay.id, {
+        amount: Number(plan.price),
+        total_amount: Number(plan.price),
+        due_date: values.start_date
+      });
+    }
+  }
   
   const student = (await getStudents()).find((item) => item.id === plain.student_id) ?? null;
   return { ...plain, student, plan };
+}
+
+export async function deleteEnrollment(id: string) {
+  if (!shouldUseLocalData()) {
+    await supabase.from("payments").delete().eq("enrollment_id", id);
+  } else {
+    const payments = localDB.get("payments").filter(p => p.enrollment_id === id);
+    for (const pay of payments) {
+      await remove("payments", pay.id);
+    }
+  }
+  return remove("enrollments", id);
 }
 
 export async function getPayments(): Promise<Payment[]> {

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Camera, X } from "lucide-react";
+import { getDeviceId } from "@/lib/device-id";
 
 export function FaceTerminalListener({ email }: { email: string }) {
   const [scanning, setScanning] = useState(false);
@@ -20,13 +21,16 @@ export function FaceTerminalListener({ email }: { email: string }) {
     const channel = supabase.channel("face-scan-channel", {
       config: { broadcast: { self: true } }
     })
-      .on("broadcast", { event: "START_SCAN" }, () => {
+      .on("broadcast", { event: "START_SCAN" }, ({ payload }) => {
+        if (payload?.targetDeviceId && payload.targetDeviceId !== getDeviceId()) return;
         setScanning(true);
       })
-      .on("broadcast", { event: "CAPTURE_SCAN" }, () => {
+      .on("broadcast", { event: "CAPTURE_SCAN" }, ({ payload }) => {
+        if (payload?.targetDeviceId && payload.targetDeviceId !== getDeviceId()) return;
         captureFrame(channel);
       })
-      .on("broadcast", { event: "STOP_SCAN" }, () => {
+      .on("broadcast", { event: "STOP_SCAN" }, ({ payload }) => {
+        if (payload?.targetDeviceId && payload.targetDeviceId !== getDeviceId()) return;
         setScanning(false);
       })
       .subscribe();

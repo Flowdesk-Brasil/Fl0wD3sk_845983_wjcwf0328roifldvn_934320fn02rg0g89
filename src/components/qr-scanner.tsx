@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "@/lib/supabase";
 import * as faceapi from '@vladmandic/face-api';
+import { getDeviceId } from "@/lib/device-id";
 
 function getGreeting() {
   const hour = new Date().getHours();
@@ -76,25 +77,29 @@ export function QrScanner({
 
   useEffect(() => {
     const channel = supabase.channel("face-scan-qr-interrupt", { config: { broadcast: { self: true } } })
-      .on("broadcast", { event: "START_SCAN" }, () => {
+      .on("broadcast", { event: "START_SCAN" }, ({ payload }) => {
+        if (payload?.targetDeviceId && payload.targetDeviceId !== getDeviceId()) return;
         if (openRef.current) {
           interruptedRef.current = true;
           close();
         }
       })
-      .on("broadcast", { event: "STOP_SCAN" }, () => {
+      .on("broadcast", { event: "STOP_SCAN" }, ({ payload }) => {
+        if (payload?.targetDeviceId && payload.targetDeviceId !== getDeviceId()) return;
         if (interruptedRef.current) {
           interruptedRef.current = false;
           setOpen(true);
         }
       })
-      .on("broadcast", { event: "SCAN_RESULT" }, () => {
+      .on("broadcast", { event: "SCAN_RESULT" }, ({ payload }) => {
+        if (payload?.targetDeviceId && payload.targetDeviceId !== getDeviceId()) return;
         if (interruptedRef.current) {
           interruptedRef.current = false;
           setOpen(true);
         }
       })
-      .on("broadcast", { event: "REBOOT_CAMERA" }, () => {
+      .on("broadcast", { event: "REBOOT_CAMERA" }, ({ payload }) => {
+        if (payload?.targetDeviceId && payload.targetDeviceId !== getDeviceId()) return;
         if (openRef.current) {
           sessionStorage.setItem("autoOpenScanner", "true");
         }

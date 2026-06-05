@@ -6,8 +6,11 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, type FormEvent } from "react";
 import { ErrorBanner, FieldLabel, PageHeader } from "@/components/ui";
 import { createClassBooking, updateStudent, getClassSessions } from "@/lib/api";
+import { useDeviceSelector } from "@/components/device-selector";
 import type { ClassSession } from "@/lib/types";
 import { calculateIMC, digitsOnly, formatDateTime, maskCEP, maskCPF, maskPhone } from "@/lib/utils";
+import { supabase } from "@/lib/supabase";
+import { use } from "react";
 
 interface StudentForm {
   full_name: string;
@@ -66,9 +69,6 @@ function TextField({
   );
 }
 
-import { supabase } from "@/lib/supabase";
-import { use } from "react";
-
 export default function EditarAlunoPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
   const router = useRouter();
@@ -82,6 +82,7 @@ export default function EditarAlunoPage({ params }: { params: Promise<{ id: stri
   const [streamFrame, setStreamFrame] = useState<string | null>(null);
   const [loadingInitial, setLoadingInitial] = useState(true);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const { selectDevice, DeviceSelectorModal } = useDeviceSelector();
 
   useEffect(() => {
     supabase.from("students").select("*").eq("id", resolvedParams.id).single().then(({ data }) => {
@@ -144,9 +145,11 @@ export default function EditarAlunoPage({ params }: { params: Promise<{ id: stri
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  function startFacialScan() {
+  async function startFacialScan() {
+    const targetDeviceId = await selectDevice();
+    if (targetDeviceId === null) return;
     setFacialScanActive(true);
-    channelRef.current?.send({ type: "broadcast", event: "START_SCAN" });
+    channelRef.current?.send({ type: "broadcast", event: "START_SCAN", payload: { targetDeviceId } });
   }
 
   function captureFacialScan() {
@@ -243,7 +246,6 @@ export default function EditarAlunoPage({ params }: { params: Promise<{ id: stri
           const photo_url = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/student-photos/${student.id}.jpg?t=${Date.now()}`;
           await supabase.from("students").update({ photo_url }).eq("id", student.id);
           
-          // REALTIME: Avisa a catraca que tem rosto atualizado
           supabase.channel("students-sync", { config: { broadcast: { self: false } } }).send({
             type: "broadcast",
             event: "STUDENT_FACE_UPDATED",
@@ -259,7 +261,6 @@ export default function EditarAlunoPage({ params }: { params: Promise<{ id: stri
           
           await supabase.from("students").update({ photo_url: null }).eq("id", student.id);
           
-          // REALTIME: Avisa a catraca que rosto foi removido
           supabase.channel("students-sync", { config: { broadcast: { self: false } } }).send({
             type: "broadcast",
             event: "STUDENT_FACE_REMOVED",
@@ -369,7 +370,7 @@ export default function EditarAlunoPage({ params }: { params: Promise<{ id: stri
         </section>
 
         <section className="card">
-          <div className="card-header"><div><h2>Horários de aulas</h2><p>Vincule o aluno Ã s próximas aulas com vagas disponíveis</p></div><CalendarDays className="h-5 w-5 text-blue-600" /></div>
+          <div className="card-header"><div><h2>Horários de aulas</h2><p>Vincule o aluno à s próximas aulas com vagas disponíveis</p></div><CalendarDays className="h-5 w-5 text-blue-600" /></div>
           <div className="card-body">
             {sessions.length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{sessions.slice(0, 12).map((session) => {
               const booked = (session.bookings || []).filter((booking) => booking.status === "confirmed" || booking.status === "attended").length;
@@ -389,6 +390,8 @@ export default function EditarAlunoPage({ params }: { params: Promise<{ id: stri
           <button className="btn btn-primary" disabled={saving} type="submit"><Save className="h-4 w-4" /> {saving ? "Salvando..." : "Salvar aluno"}</button>
         </div>
       </form>
+
+      <DeviceSelectorModal />
     </div>
   );
 }

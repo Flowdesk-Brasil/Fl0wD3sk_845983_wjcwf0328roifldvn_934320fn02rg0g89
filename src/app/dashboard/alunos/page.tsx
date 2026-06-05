@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { Download, Eye, Mail, Plus, RefreshCw, Send, Users } from "lucide-react";
 import Link from "next/link";
@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { StudentQrCard } from "@/components/student-qr-card";
 import { EmptyState, ErrorBanner, LoadingState, Modal, PageHeader, SearchInput, StatusBadge } from "@/components/ui";
 import { getStudents, releaseStudentPortal, updateStudent } from "@/lib/api";
+import { useRealtimeSync } from "@/hooks/use-realtime-sync";
 import type { Student, StudentStatus } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 
@@ -27,6 +28,7 @@ export default function AlunosPage() {
     setLoading(false);
   }
   useEffect(() => { void load(); }, []);
+  useRealtimeSync(load);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();

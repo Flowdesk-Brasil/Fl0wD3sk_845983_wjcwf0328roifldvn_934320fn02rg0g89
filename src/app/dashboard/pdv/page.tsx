@@ -7,6 +7,8 @@ import { supabase } from "@/lib/supabase";
 import type { Product } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
 import { ErrorBanner, Modal } from "@/components/ui";
+import { useDeviceSelector } from "@/components/device-selector";
+import { useRealtimeSync } from "@/hooks/use-realtime-sync";
 
 interface CartItem extends Product {
   cart_quantity: number;
@@ -29,13 +31,17 @@ export default function PdvPage() {
   const [lastScanned, setLastScanned] = useState<Product | null>(null);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
+  
+  const { selectDevice, DeviceSelectorModal } = useDeviceSelector();
 
-  useEffect(() => {
+  const loadProducts = () => {
     getProducts()
       .then(prods => setProducts(prods.filter(p => p.active)))
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, []);
+  };
+  useEffect(() => { loadProducts(); }, []);
+  useRealtimeSync(loadProducts);
 
   // Barcode scanner listener
   useEffect(() => {
@@ -130,17 +136,24 @@ export default function PdvPage() {
       const pix = await createPixSale(sale.id);
       setPixSale(pix);
 
-      // Broadcast para o PosTerminalListener
-      let channel = supabase.getChannels().find((c: any) => c.topic === `realtime:pos-terminal-channel`);
-      if (!channel) channel = supabase.channel("pos-terminal-channel");
-      if (channel.state === "joined") {
-        channel.send({ type: "broadcast", event: "SHOW_PIX_SALE", payload: { sale_id: sale.id, pix_qr_base64: (pix as any).pix_qr_base64, pix_code: (pix as any).pix_code, total_amount: sale.total_amount } });
-      } else {
-        channel.subscribe((status: string) => {
-          if (status === "SUBSCRIBED") {
-            channel.send({ type: "broadcast", event: "SHOW_PIX_SALE", payload: { sale_id: sale.id, pix_qr_base64: (pix as any).pix_qr_base64, pix_code: (pix as any).pix_code, total_amount: sale.total_amount } });
-          }
-        });
+      const targetDeviceId = await selectDevice();
+      if (targetDeviceId !== null) {
+        let channel = supabase.getChannels().find((c: any) => c.topic === `realtime:pos-terminal-channel`);
+        if (!channel) channel = supabase.channel("pos-terminal-channel");
+        
+        const sendSignal = () => {
+          channel.send({ type: "broadcast", event: "SHOW_PIX_SALE", payload: { sale_id: sale.id, pix_qr_base64: (pix as any).pix_qr_base64, pix_code: (pix as any).pix_code, total_amount: sale.total_amount, targetDeviceId } });
+        };
+        
+        if (channel.state === "joined") {
+          sendSignal();
+        } else {
+          channel.subscribe((status: string) => {
+            if (status === "SUBSCRIBED") {
+              sendSignal();
+            }
+          });
+        }
       }
       
       // Setup polling for status
@@ -517,17 +530,24 @@ export default function PdvPage() {
                         type="button" 
                         disabled={processing}
                         className="text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 py-3 rounded-xl transition shadow-lg w-full"
-                        onClick={() => {
+                        onClick={async () => {
+                          const targetDeviceId = await selectDevice();
+                          if (targetDeviceId === null) return;
+                          
                           let channel = supabase.getChannels().find((c: any) => c.topic === `realtime:pos-terminal-channel`);
                           if (!channel) channel = supabase.channel("pos-terminal-channel");
+                          
+                          const sendSignal = () => {
+                            channel.send({ type: "broadcast", event: "SHOW_PIX_SALE", payload: { sale_id: pixSale.id, pix_qr_base64: (pixSale as any).pix_qr_base64, pix_code: (pixSale as any).pix_code, total_amount: pixSale.total_amount, targetDeviceId } });
+                            alert("Sinal enviado!");
+                          };
+                          
                           if (channel.state === "joined") {
-                            channel.send({ type: "broadcast", event: "SHOW_PIX_SALE", payload: { sale_id: pixSale.id, pix_qr_base64: (pixSale as any).pix_qr_base64, pix_code: (pixSale as any).pix_code, total_amount: pixSale.total_amount } });
-                            alert("Sinal re-enviado para o celular admin!");
+                            sendSignal();
                           } else {
                             channel.subscribe((status: string) => {
                               if (status === "SUBSCRIBED") {
-                                channel.send({ type: "broadcast", event: "SHOW_PIX_SALE", payload: { sale_id: pixSale.id, pix_qr_base64: (pixSale as any).pix_qr_base64, pix_code: (pixSale as any).pix_code, total_amount: pixSale.total_amount } });
-                                alert("Sinal enviado para o celular admin!");
+                                sendSignal();
                               }
                             });
                           }
@@ -574,6 +594,7 @@ export default function PdvPage() {
         )}
       </Modal>
 
+      <DeviceSelectorModal />
     </div>
   );
 }

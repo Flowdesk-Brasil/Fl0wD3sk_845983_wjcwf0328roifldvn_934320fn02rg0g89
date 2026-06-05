@@ -1,9 +1,10 @@
-﻿"use client";
+"use client";
 
-import { BookOpen, PauseCircle, Plus, RotateCcw } from "lucide-react";
+import { BookOpen, PauseCircle, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { EmptyState, ErrorBanner, FieldLabel, LoadingState, Modal, PageHeader, SearchInput, StatusBadge } from "@/components/ui";
-import { createEnrollment, editEnrollment, getEnrollments, getPlans, getStudents, updateEnrollmentStatus } from "@/lib/api";
+import { createEnrollment, editEnrollment, getEnrollments, getPlans, getStudents, updateEnrollmentStatus, deleteEnrollment } from "@/lib/api";
+import { useRealtimeSync } from "@/hooks/use-realtime-sync";
 import type { Enrollment, EnrollmentStatus, Plan, Student } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 
@@ -30,6 +31,7 @@ export default function MatriculasPage() {
     setLoading(false);
   }
   useEffect(() => { void load(); }, []);
+  useRealtimeSync(load);
 
   const filtered = useMemo(() => {
     const query = search.toLowerCase();
@@ -75,6 +77,16 @@ export default function MatriculasPage() {
     await load();
   }
 
+  async function remove(id: string) {
+    if (!window.confirm("Deseja realmente deletar esta matrícula e todos os pagamentos atrelados a ela?")) return;
+    try {
+      await deleteEnrollment(id);
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Erro ao deletar matrícula.");
+    }
+  }
+
   if (loading) return <LoadingState label="Carregando matrículas..." />;
 
   return (
@@ -95,6 +107,7 @@ export default function MatriculasPage() {
                 <td><div className="flex gap-2">
                   <button className="icon-btn" title="Editar" onClick={() => openEdit(item)}><BookOpen className="h-4 w-4 text-blue-600" /></button>
                   {item.status === "active" ? <button className="icon-btn" title="Suspender" onClick={() => void setStatus(item.id, "suspended")}><PauseCircle className="h-4 w-4" /></button> : <button className="icon-btn" title="Reativar" onClick={() => void setStatus(item.id, "active")}><RotateCcw className="h-4 w-4" /></button>}
+                  <button className="icon-btn" title="Deletar" onClick={() => void remove(item.id)}><Trash2 className="h-4 w-4 text-red-600" /></button>
                 </div></td>
               </tr>
             ))}</tbody>

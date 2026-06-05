@@ -8,6 +8,7 @@ import { ErrorBanner, FieldLabel, PageHeader } from "@/components/ui";
 import { createClassBooking, createStudent, getClassSessions } from "@/lib/api";
 import type { ClassSession } from "@/lib/types";
 import { calculateIMC, digitsOnly, formatDateTime, maskCEP, maskCPF, maskPhone } from "@/lib/utils";
+import { useDeviceSelector } from "@/components/device-selector";
 
 interface StudentForm {
   full_name: string;
@@ -79,6 +80,8 @@ export default function NovoAlunoPage() {
   const [facialScanActive, setFacialScanActive] = useState(false);
   const [streamFrame, setStreamFrame] = useState<string | null>(null);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  
+  const { selectDevice, DeviceSelectorModal } = useDeviceSelector();
 
   useEffect(() => {
     const channel = supabase.channel("face-scan-channel", {
@@ -101,9 +104,11 @@ export default function NovoAlunoPage() {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  function startFacialScan() {
+  async function startFacialScan() {
+    const targetDeviceId = await selectDevice();
+    if (targetDeviceId === null) return;
     setFacialScanActive(true);
-    channelRef.current?.send({ type: "broadcast", event: "START_SCAN" });
+    channelRef.current?.send({ type: "broadcast", event: "START_SCAN", payload: { targetDeviceId } });
   }
 
   function captureFacialScan() {
@@ -307,7 +312,7 @@ export default function NovoAlunoPage() {
         </section>
 
         <section className="card">
-          <div className="card-header"><div><h2>Horários de aulas</h2><p>Vincule o aluno Ã s próximas aulas com vagas disponíveis</p></div><CalendarDays className="h-5 w-5 text-blue-600" /></div>
+          <div className="card-header"><div><h2>Horários de aulas</h2><p>Vincule o aluno Às próximas aulas com vagas disponíveis</p></div><CalendarDays className="h-5 w-5 text-blue-600" /></div>
           <div className="card-body">
             {sessions.length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{sessions.slice(0, 12).map((session) => {
               const booked = (session.bookings || []).filter((booking) => booking.status === "confirmed" || booking.status === "attended").length;
@@ -327,6 +332,8 @@ export default function NovoAlunoPage() {
           <button className="btn btn-primary" disabled={saving} type="submit"><Save className="h-4 w-4" /> {saving ? "Salvando..." : "Salvar aluno"}</button>
         </div>
       </form>
+
+      <DeviceSelectorModal />
     </div>
   );
 }

@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { PosTerminalListener } from "@/components/pos-terminal";
 import { CheckinSidebar } from "@/components/checkin-sidebar";
 import { FaceTerminalListener } from "@/components/face-terminal";
+import { DevicePresenceProvider } from "@/contexts/DevicePresenceContext";
 
 interface NavItem {
   href: string;
@@ -120,7 +121,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   const segment = pathname.split("/").filter(Boolean).at(-1) ?? "dashboard";
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#f7f9fc]">
+    <DevicePresenceProvider>
+      <div className="flex h-screen overflow-hidden bg-[#f7f9fc]">
       <PosTerminalListener email={user.email} />
       <FaceTerminalListener email={user.email} />
       <CheckinSidebar />
@@ -229,5 +231,6 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         </main>
       </div>
     </div>
+    </DevicePresenceProvider>
   );
 }
