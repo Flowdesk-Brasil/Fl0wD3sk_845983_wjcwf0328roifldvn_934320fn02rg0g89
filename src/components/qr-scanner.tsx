@@ -243,7 +243,10 @@ export function QrScanner({
             // 2. Facial Recognition (Non-blocking, runs every 250ms)
             overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 
-            if (Date.now() - lastFaceCheck > 250 && Date.now() > cooldownRef.current) {
+            if (Date.now() < cooldownRef.current) {
+              lastBox = null;
+              lastMatch = null;
+            } else if (Date.now() - lastFaceCheck > 250) {
               lastFaceCheck = Date.now();
               const faceDetection = await faceapi.detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 })).withFaceLandmarks().withFaceDescriptor();
               if (faceDetection) {

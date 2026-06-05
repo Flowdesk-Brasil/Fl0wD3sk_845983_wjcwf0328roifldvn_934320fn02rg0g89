@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useCallback, useEffect, useState } from "react";
 import { QRScannerReceiver } from "@/components/qr-scanner-receiver";
@@ -74,23 +74,20 @@ export default function CheckinReceiverPage() {
     [isValidating, result.status, students]
   );
 
-  if (result.status === "idle") {
-    return <QRScannerReceiver onRead={handleQRCode} disabled={false} />;
-  }
-
   return (
     <div className="fixed inset-0 z-50">
-      <QRScannerReceiver onRead={handleQRCode} disabled={true} />
+      <QRScannerReceiver onRead={handleQRCode} disabled={result.status !== "idle"} />
 
-      <div
-        className={`absolute inset-0 flex items-center justify-center transition-colors duration-300 ${
-          result.status === "loading"
-            ? "bg-blue-600/90 backdrop-blur-md"
-            : result.status === "denied"
-              ? "bg-red-600/95 backdrop-blur-sm"
-              : "bg-green-500/95 backdrop-blur-sm"
-        }`}
-      >
+      {result.status !== "idle" && (
+        <div
+          className={`absolute inset-0 flex items-center justify-center transition-colors duration-300 ${
+            result.status === "loading"
+              ? "bg-blue-600/90 backdrop-blur-md"
+              : result.status === "denied"
+                ? "bg-red-600/95 backdrop-blur-sm"
+                : "bg-green-500/95 backdrop-blur-sm"
+          }`}
+        >
         <div className="px-8 py-12 text-center">
           {result.status === "loading" && (
             <div className="space-y-6">
@@ -136,7 +133,7 @@ export default function CheckinReceiverPage() {
             </div>
           )}
         </div>
-      </div>
+      )}
 
       <style>{`
         @keyframes fadeIn {

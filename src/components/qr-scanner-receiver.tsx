@@ -151,7 +151,10 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
           // 2. Facial Recognition Scan (Non-blocking, runs every 250ms)
           overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 
-          if (Date.now() - lastFaceCheck > 250 && Date.now() > cooldownRef.current) {
+          if (Date.now() < cooldownRef.current) {
+            lastBox = null;
+            lastMatch = null;
+          } else if (Date.now() - lastFaceCheck > 250) {
             lastFaceCheck = Date.now();
             try {
               // High resolution tinyFaceDetector ensures accuracy WITHOUT freezing the UI
