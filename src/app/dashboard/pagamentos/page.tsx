@@ -24,6 +24,7 @@ export default function PagamentosPage() {
   const [working, setWorking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<"pending" | "paid" | "history">("pending");
 
   const load = useCallback(async () => {
     const data = await getPayments();
@@ -63,8 +64,15 @@ export default function PagamentosPage() {
 
   const filtered = useMemo(() => {
     const query = search.toLowerCase();
-    return payments.filter((item) => !query || item.reference.toLowerCase().includes(query) || item.student?.full_name.toLowerCase().includes(query));
-  }, [payments, search]);
+    return payments.filter((item) => {
+      const matchSearch = !query || item.reference.toLowerCase().includes(query) || item.student?.full_name.toLowerCase().includes(query);
+      let matchStatus = false;
+      if (statusFilter === "pending") matchStatus = item.status === "pending";
+      else if (statusFilter === "paid") matchStatus = item.status === "paid";
+      else matchStatus = ["cancelled", "expired", "refunded"].includes(item.status);
+      return matchSearch && matchStatus;
+    });
+  }, [payments, search, statusFilter]);
 
   async function receive() {
     if (!selected) return;
@@ -129,7 +137,20 @@ export default function PagamentosPage() {
         <article className="card metric-card"><div className="metric-top"><div className="metric-icon badge-yellow"><WalletCards className="h-5 w-5" /></div></div><strong>{formatCurrency(receivable)}</strong><p>Saldo pendente</p></article>
       </div>
       <section className="card">
-        <div className="table-toolbar"><SearchInput value={search} onChange={setSearch} placeholder="Buscar referência ou aluno..." /><StatusBadge tone="blue">{payments.length} cobranças</StatusBadge></div>
+        <div className="table-toolbar">
+          <SearchInput value={search} onChange={setSearch} placeholder="Buscar referência ou aluno..." />
+          <div className="flex flex-wrap gap-1 rounded-xl bg-[#f3f6fb] p-1">
+            {([["pending", "Em Aberto"], ["paid", "Recebidos"], ["history", "Histórico"]] as const).map(([value, label]) => (
+              <button 
+                key={value} 
+                onClick={() => setStatusFilter(value as any)} 
+                className={`rounded-lg px-3 py-2 text-[11px] font-semibold transition ${statusFilter === value ? "bg-white text-blue-600 shadow-sm" : "text-[#657085] hover:text-[#172033]"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
         {filtered.length ? <div className="table-wrap"><table className="data-table">
           <thead><tr><th>Referência</th><th>Aluno</th><th>Valor</th><th className="hide-mobile">Vencimento</th><th className="hide-mobile">Método</th><th>Status</th><th>Ação</th></tr></thead>
           <tbody>{filtered.map((payment) => (

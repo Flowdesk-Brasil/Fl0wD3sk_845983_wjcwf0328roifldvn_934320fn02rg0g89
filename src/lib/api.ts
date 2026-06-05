@@ -298,19 +298,36 @@ export async function editEnrollment(id: string, values: {
 
 export async function deleteEnrollment(id: string) {
   if (!shouldUseLocalData()) {
-    const { data: payments } = await supabase.from("payments").select("*").eq("enrollment_id", id).eq("status", "pending");
-    if (payments) {
-      for (const pay of payments) {
-        await update("payments", pay.id, { status: "cancelled" });
+    const { data: paidPayments } = await supabase.from("payments").select("id").eq("enrollment_id", id).eq("status", "paid").limit(1);
+    const hasPaid = paidPayments && paidPayments.length > 0;
+
+    if (hasPaid) {
+      const { data: payments } = await supabase.from("payments").select("*").eq("enrollment_id", id).eq("status", "pending");
+      if (payments) {
+        for (const pay of payments) {
+          await update("payments", pay.id, { status: "cancelled" });
+        }
       }
+      return update("enrollments", id, { status: "cancelled" });
+    } else {
+      await supabase.from("payments").delete().eq("enrollment_id", id);
+      return remove("enrollments", id);
     }
   } else {
-    const payments = localDB.get("payments").filter(p => p.enrollment_id === id && p.status === "pending");
-    for (const pay of payments) {
-      await update("payments", pay.id, { status: "cancelled" });
+    const payments = localDB.get("payments").filter(p => p.enrollment_id === id);
+    const hasPaid = payments.some(p => p.status === "paid");
+    if (hasPaid) {
+      for (const pay of payments.filter(p => p.status === "pending")) {
+        await update("payments", pay.id, { status: "cancelled" });
+      }
+      return update("enrollments", id, { status: "cancelled" });
+    } else {
+      for (const pay of payments) {
+        await remove("payments", pay.id);
+      }
+      return remove("enrollments", id);
     }
   }
-  return update("enrollments", id, { status: "cancelled" });
 }
 
 export async function getPayments(): Promise<Payment[]> {
