@@ -5,7 +5,7 @@ import { shouldUseLocalData, supabase } from "@/lib/supabase";
 import type {
   AuditLog, Checkin, ClassBooking, ClassSession, ClassType, Contract, DashboardStats, Enrollment, LocalTables, NewRow,
   Notification, Payment, Plan, Profile, RevenuePoint, Student, StudioSettings, TableName, Product, Supplier,
-  Receiving, ReceivingItem, Sale, SaleItem, InventoryTransaction
+  Receiving, ReceivingItem, Sale, SaleItem, InventoryTransaction, ClassSchedule, StudentClass, ClassAttendance
 } from "@/lib/types";
 import { generateMatriculaNumber } from "@/lib/utils";
 

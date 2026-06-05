@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, type FormEvent } from "react";
 import { ErrorBanner, FieldLabel, PageHeader } from "@/components/ui";
-import { getStudent, updateStudent, getClassSchedules, getStudentClasses, linkStudentToClasses } from "@/lib/api";
+import { getStudentById, updateStudent, getClassSchedules, getStudentClasses, linkStudentToClasses } from "@/lib/api";
 import { useDeviceSelector } from "@/components/device-selector";
 import type { ClassSchedule } from "@/lib/types";
 import { calculateIMC, digitsOnly, formatDateTime, maskCEP, maskCPF, maskPhone } from "@/lib/utils";
@@ -86,7 +86,7 @@ export default function EditarAlunoPage({ params }: { params: Promise<{ id: stri
 
   useEffect(() => {
     Promise.all([
-      getStudent(resolvedParams.id).then((data) => {
+      getStudentById(resolvedParams.id).then((data) => {
         if (data) {
           setForm({
             full_name: data.full_name || "",

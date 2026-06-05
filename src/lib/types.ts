@@ -230,7 +230,7 @@ export interface ClassAttendance {
   date: string; // YYYY-MM-DD
   status: "confirmed" | "cancelled" | "attended" | "missed" | "pending";
   created_at: string;
-  student?: Pick<Student, "id" | "full_name"> | null;
+  student?: Pick<Student, "id" | "full_name" | "photo_url"> | null;
   class_schedule?: ClassSchedule | null;
 }
 
@@ -381,6 +381,8 @@ export interface LocalTables {
   class_types: ClassType;
   class_sessions: Omit<ClassSession, "class_type" | "instructor" | "bookings">;
   class_bookings: Omit<ClassBooking, "student">;
+  class_schedules: ClassSchedule;
+  student_classes: StudentClass;
   suppliers: Supplier;
   products: Omit<Product, "supplier">;
   receivings: Omit<Receiving, "supplier">;
