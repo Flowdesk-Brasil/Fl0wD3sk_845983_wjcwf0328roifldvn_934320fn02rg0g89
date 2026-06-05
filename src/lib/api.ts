@@ -299,7 +299,7 @@ export async function getCheckins(): Promise<Checkin[]> {
     .map((row) => ({ ...row, student: relation(students, row.student_id) }));
 }
 
-export async function processCheckin(code: string): Promise<Checkin & { student?: Student | null; duplicate?: boolean }> {
+export async function processCheckin(code: string): Promise<Checkin & { student?: Student | null; duplicate?: boolean; enrollment?: Enrollment | null; payment?: Payment | null }> {
   if (!shouldUseLocalData()) {
     const { data: session } = await supabase.auth.getSession();
     const response = await fetch("/api/checkins", {
@@ -311,7 +311,7 @@ export async function processCheckin(code: string): Promise<Checkin & { student?
       body: JSON.stringify({ code: code.trim(), unit: "Matriz" }),
     });
     if (response.ok) {
-      const checkin = await response.json() as Checkin & { student?: Student | null; duplicate?: boolean };
+      const checkin = await response.json() as Checkin & { student?: Student | null; duplicate?: boolean; enrollment?: Enrollment | null; payment?: Payment | null };
       notifyCheckinCreated(checkin);
       return checkin;
     }
@@ -321,7 +321,25 @@ export async function processCheckin(code: string): Promise<Checkin & { student?
   const enrollment = student
     ? (await getEnrollments()).find((item) => item.student_id === student.id && item.status === "active")
     : null;
-  const allowed = Boolean(student && student.status === "active" && enrollment);
+  const payments = student && enrollment ? await getPayments() : [];
+  const payment = enrollment
+    ? payments
+      .filter((item) => item.enrollment_id === enrollment.id)
+      .sort((a, b) => b.due_date.localeCompare(a.due_date))[0] ?? null
+    : null;
+  const today = new Date().toISOString().slice(0, 10);
+  const enrollmentExpired = Boolean(enrollment?.end_date && enrollment.end_date < today);
+  const effectivePayment = payment && payment.status === "pending" && payment.due_date < today
+    ? { ...payment, status: "expired" as const }
+    : payment;
+  const allowed = Boolean(
+    student &&
+    student.status === "active" &&
+    enrollment &&
+    !enrollmentExpired &&
+    effectivePayment &&
+    effectivePayment.status === "paid"
+  );
   if (allowed && student) {
     const duplicateWindowStart = Date.now() - 5 * 60 * 1000;
     const recent = (await getCheckins()).find((item) =>
@@ -333,18 +351,34 @@ export async function processCheckin(code: string): Promise<Checkin & { student?
       return {
         ...recent,
         student,
+        enrollment,
+        payment: effectivePayment,
         duplicate: true,
         reason: "Check-in já confirmado nos últimos 5 minutos. Nenhum novo registro foi criado.",
       };
     }
   }
-  const reason = !student
+  let reason = !student
     ? "Código não encontrado."
     : student.status !== "active"
       ? "Aluno inativo ou bloqueado."
       : !enrollment
         ? "Aluno sem matrícula ativa."
         : null;
+  if (student?.status === "active" && enrollment) {
+    reason = enrollmentExpired
+      ? "Matricula expirada. Renove o plano antes de liberar a catraca."
+      : !effectivePayment
+        ? "Nenhum pagamento encontrado para esta matricula. Regularize na recepcao."
+        : effectivePayment.status === "expired"
+          ? "Pagamento expirado ou vencido. Acesso bloqueado ate regularizacao."
+          : effectivePayment.status === "pending"
+            ? "Pagamento pendente. Receba o pagamento na recepcao antes de liberar a catraca."
+            : effectivePayment.status !== "paid"
+              ? "Pagamento nao confirmado. Acesso bloqueado."
+              : null;
+  }
+
   const row = await insert("checkins", {
     student_id: student?.id ?? null,
     enrollment_id: enrollment?.id ?? null,
@@ -353,12 +387,12 @@ export async function processCheckin(code: string): Promise<Checkin & { student?
     unit: "Matriz",
     checked_at: new Date().toISOString(),
   });
-  const checkin = { ...row, student };
+  const checkin = { ...row, student, enrollment, payment: effectivePayment };
   notifyCheckinCreated(checkin);
   return checkin;
 }
 
-function notifyCheckinCreated(checkin: Checkin & { student?: Student | null; duplicate?: boolean }) {
+function notifyCheckinCreated(checkin: Checkin & { student?: Student | null; duplicate?: boolean; enrollment?: Enrollment | null; payment?: Payment | null }) {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent("checkin:created", { detail: checkin }));
   
@@ -830,4 +864,3 @@ export async function deleteSupplier(id: string) {
   if (error) throw new Error(error.message);
   return true;
 }
-

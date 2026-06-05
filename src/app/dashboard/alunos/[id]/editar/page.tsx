@@ -111,13 +111,12 @@ export default function EditarAlunoPage({ params }: { params: Promise<{ id: stri
           photo_base64: null,
         });
         
-        // fetch photo url directly from storage
-        const photoUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/student-photos/${data.id}.jpg?t=${Date.now()}`;
-        
-        // try to preload photo to see if it exists
-        const img = new Image();
-        img.onload = () => setForm(prev => ({ ...prev, photo_base64: photoUrl }));
-        img.src = photoUrl;
+        if (data.photo_url) {
+          const photoUrl = `${data.photo_url}?t=${Date.now()}`;
+          const img = new Image();
+          img.onload = () => setForm(prev => ({ ...prev, photo_base64: photoUrl }));
+          img.src = photoUrl;
+        }
 
       }
       setLoadingInitial(false);
@@ -255,7 +254,9 @@ export default function EditarAlunoPage({ params }: { params: Promise<{ id: stri
         }
       } else if (!form.photo_base64) {
         try {
-          await supabase.storage.from("student-photos").remove([`${student.id}.jpg`]);
+          const { error: storageError } = await supabase.storage.from("student-photos").remove([`${student.id}.jpg`]);
+          if (storageError) console.error("Failed to remove photo from bucket", storageError);
+          
           await supabase.from("students").update({ photo_url: null }).eq("id", student.id);
           
           // REALTIME: Avisa a catraca que rosto foi removido
@@ -264,7 +265,9 @@ export default function EditarAlunoPage({ params }: { params: Promise<{ id: stri
             event: "STUDENT_FACE_REMOVED",
             payload: { id: student.id }
           });
-        } catch (e) {}
+        } catch (e) {
+          console.error("Error removing photo", e);
+        }
       }
 
       await Promise.all(selectedSessions.map((sessionId) => createClassBooking(sessionId, student.id)));
