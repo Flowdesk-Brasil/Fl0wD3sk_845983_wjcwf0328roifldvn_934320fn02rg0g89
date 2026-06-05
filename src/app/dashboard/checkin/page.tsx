@@ -84,6 +84,18 @@ export default function CheckinPage() {
     });
 
     // Transmite para outros dispositivos (celular admin no modo câmera)
+    window.dispatchEvent(new CustomEvent("checkin:created", {
+      detail: {
+        id: "manual-" + Date.now(),
+        student_id: "manual",
+        status: "allowed",
+        reason: "Acesso liberado manualmente pela recepcao.",
+        checked_at: new Date().toISOString(),
+        unit: "Matriz",
+        student: { full_name: manualName },
+      },
+    }));
+
     supabase.channel("manual-checkin").send({
       type: "broadcast",
       event: "MANUAL_CHECKIN_APPROVED",

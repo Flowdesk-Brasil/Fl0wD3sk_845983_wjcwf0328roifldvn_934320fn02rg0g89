@@ -39,6 +39,7 @@ export function QrScanner({
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const faceMatcherRef = useRef<faceapi.FaceMatcher | null>(null);
   const [detectedFace, setDetectedFace] = useState<{ id: string; name: string; photo_url: string } | null>(null);
+  const [isConfirming, setIsConfirming] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState<string>("Iniciando Reconhecimento Facial...");
   const [isReady, setIsReady] = useState(false);
   const cooldownRef = useRef(0);
@@ -400,22 +401,27 @@ export function QrScanner({
   }, [close, onRead, open, stop]);
 
   const confirmFace = async () => {
-    if (!detectedFace) return;
-    const res = await onRead(detectedFace.id);
-    setDetectedFace(null);
-    if (res) {
-      const isAllowed = res.status === "allowed";
-      setValidationResult({
-        status: isAllowed ? 'allowed' : 'denied',
-        name: res.student?.full_name?.split(" ")[0] || "Aluno",
-        message: res.duplicate ? "Check-in já realizado" : res.reason || (isAllowed ? "Acesso liberado" : "Acesso negado")
-      });
-      setTimeout(() => {
-        setValidationResult(null);
+    if (!detectedFace || isConfirming) return;
+    setIsConfirming(true);
+    try {
+      const res = await onRead(detectedFace.id);
+      setDetectedFace(null);
+      if (res) {
+        const isAllowed = res.status === "allowed";
+        setValidationResult({
+          status: isAllowed ? 'allowed' : 'denied',
+          name: res.student?.full_name?.split(" ")[0] || "Aluno",
+          message: res.duplicate ? "Check-in já realizado" : res.reason || (isAllowed ? "Acesso liberado" : "Acesso negado")
+        });
+        setTimeout(() => {
+          setValidationResult(null);
+          readingRef.current = false;
+        }, 2000);
+      } else {
         readingRef.current = false;
-      }, 2000);
-    } else {
-      readingRef.current = false;
+      }
+    } finally {
+      setIsConfirming(false);
     }
   };
 
@@ -503,8 +509,10 @@ export function QrScanner({
              <p className="text-xl text-slate-600 font-bold mb-8 uppercase tracking-wide">{detectedFace.name}</p>
              
              <div className="flex gap-4 w-full">
-                <button onClick={cancelFace} className="flex-1 py-4 rounded-2xl font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition">Não sou eu</button>
-                <button onClick={confirmFace} className="flex-1 py-4 rounded-2xl font-black text-white bg-green-600 hover:bg-green-700 transition shadow-lg text-lg uppercase tracking-wider">Confirmar</button>
+                <button onClick={cancelFace} disabled={isConfirming} className="flex-1 py-4 rounded-2xl font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition disabled:opacity-50">Não sou eu</button>
+                <button onClick={confirmFace} disabled={isConfirming} className="flex-1 py-4 rounded-2xl font-black text-white bg-green-600 hover:bg-green-700 transition shadow-lg text-lg uppercase tracking-wider flex items-center justify-center gap-2">
+                  {isConfirming ? <><Loader2 className="h-5 w-5 animate-spin" /> Validando</> : 'Confirmar'}
+                </button>
              </div>
           </div>
         </div>
