@@ -248,7 +248,6 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
     if (!disabled) {
       readingRef.current = false;
       setDetectedFace(null);
-      cooldownRef.current = Date.now() + 2000;
     }
   }, [disabled]);
 

@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { CheckCircle2, Clock3, QrCode, Search, ShieldAlert } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
@@ -94,6 +94,13 @@ export default function CheckinPage() {
     setManualName("");
   }
 
+  function handleRebootCollector() {
+    supabase.channel("face-scan-qr-interrupt").send({
+      type: "broadcast",
+      event: "REBOOT_CAMERA"
+    });
+  }
+
   if (loading) return <LoadingState label="Preparando controle de acesso..." />;
 
   return (
@@ -102,7 +109,16 @@ export default function CheckinPage() {
         eyebrow="Operação em tempo real" 
         title="Check-in" 
         description="Valide o acesso por câmera, QR Code ou código manual."
-        action={<button onClick={() => setManualOpen(true)} className="btn btn-primary">Liberar manualmente</button>}
+        action={
+          <div className="flex gap-2">
+            <button onClick={handleRebootCollector} className="btn btn-secondary border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300">
+              Reiniciar Coletor
+            </button>
+            <button onClick={() => setManualOpen(true)} className="btn btn-primary">
+              Liberar manualmente
+            </button>
+          </div>
+        }
       />
       <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
         <section className="card p-5 sm:p-7">

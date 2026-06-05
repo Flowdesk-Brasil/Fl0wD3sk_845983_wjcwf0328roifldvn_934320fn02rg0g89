@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+
 import { QRScannerReceiver } from "@/components/qr-scanner-receiver";
 import { getEnrollments, getStudents, processCheckin } from "@/lib/api";
+import { supabase } from "@/lib/supabase";
 import type { Checkin, Enrollment, Student } from "@/lib/types";
 
 function getGreeting() {
@@ -29,6 +31,14 @@ export default function CheckinReceiverPage() {
     void (async () => {
       setStudents(await getStudents());
     })();
+
+    const channel = supabase.channel("face-scan-qr-interrupt", { config: { broadcast: { self: true } } })
+      .on("broadcast", { event: "REBOOT_CAMERA" }, () => {
+        window.location.reload();
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
   }, []);
 
   const handleQRCode = useCallback(

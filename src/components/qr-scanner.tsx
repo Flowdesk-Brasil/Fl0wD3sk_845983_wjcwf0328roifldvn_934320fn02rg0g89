@@ -83,6 +83,11 @@ export function QrScanner({
           setOpen(true);
         }
       })
+      .on("broadcast", { event: "REBOOT_CAMERA" }, () => {
+        if (openRef.current) {
+          window.location.reload();
+        }
+      })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [close]);
@@ -230,7 +235,6 @@ export function QrScanner({
                 setTimeout(() => {
                   setValidationResult(null);
                   readingRef.current = false;
-                  cooldownRef.current = Date.now() + 2000;
                 }, 2000);
               } else {
                 readingRef.current = false;
@@ -347,7 +351,6 @@ export function QrScanner({
       setTimeout(() => {
         setValidationResult(null);
         readingRef.current = false;
-        cooldownRef.current = Date.now() + 2000;
       }, 2000);
     } else {
       readingRef.current = false;
