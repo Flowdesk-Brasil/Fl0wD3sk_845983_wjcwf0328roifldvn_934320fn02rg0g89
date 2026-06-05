@@ -94,9 +94,9 @@ export function CheckinSidebar() {
   useEffect(() => {
     void loadLatest();
 
-    const checkinChannel = supabase.channel("checkins-sidebar")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "checkins" }, (payload) => {
-        void showCheckin(payload.new as CheckinEvent);
+    const checkinChannel = supabase.channel("checkins-sidebar-broadcast")
+      .on("broadcast", { event: "CHECKIN_CREATED" }, ({ payload }) => {
+        void showCheckin(payload as CheckinEvent);
       })
       .subscribe();
 

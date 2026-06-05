@@ -361,6 +361,13 @@ export async function processCheckin(code: string): Promise<Checkin & { student?
 function notifyCheckinCreated(checkin: Checkin & { student?: Student | null; duplicate?: boolean }) {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent("checkin:created", { detail: checkin }));
+  
+  // REALTIME: Notifica outros dispositivos para abrir o modal
+  supabase.channel("checkins-sync", { config: { broadcast: { self: false } } }).send({
+    type: "broadcast",
+    event: "CHECKIN_CREATED",
+    payload: checkin
+  });
 }
 
 export async function getContracts(): Promise<Contract[]> {
