@@ -47,6 +47,16 @@ export function DevicePresenceProvider({ children }: { children: ReactNode }) {
       setOnlineDevices(devices);
     });
 
+    channel.on("broadcast", { event: "RENAME_DEVICE" }, async ({ payload }) => {
+      if (payload.targetDeviceId === deviceId && payload.newName) {
+        localStorage.setItem("device_name", payload.newName);
+        await channel.track({
+          deviceName: payload.newName,
+          onlineAt: new Date().toISOString(),
+        });
+      }
+    });
+
     channel.subscribe(async (status) => {
       if (status === "SUBSCRIBED") {
         await channel.track({
