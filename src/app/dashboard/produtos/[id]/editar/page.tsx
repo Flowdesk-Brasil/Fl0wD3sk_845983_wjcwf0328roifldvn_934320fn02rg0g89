@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import React, { useEffect, useState } from "react";
 import { ArrowLeft, Save, Tag, Barcode, DollarSign, Package, FileText, MapPin, Trash2 } from "lucide-react";
@@ -100,7 +100,7 @@ export default function EditarProdutoPage({ params }: { params: Promise<{ id: st
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name || !form.selling_price) {
-      setError("O nome do produto e o preÃ§o de venda sÃ£o obrigatÃ³rios.");
+      setError("O nome do produto e o preço de venda são obrigatórios.");
       return;
     }
 
@@ -162,13 +162,13 @@ export default function EditarProdutoPage({ params }: { params: Promise<{ id: st
   };
 
   const handleDelete = async () => {
-    if (!confirm("Tem certeza que deseja excluir este produto? Esta aÃ§Ã£o nÃ£o pode ser desfeita e pode afetar o histÃ³rico de vendas.")) return;
+    if (!confirm("Tem certeza que deseja excluir este produto? Esta ação não pode ser desfeita e pode afetar o histórico de vendas.")) return;
     setDeleting(true);
     try {
       await deleteProduct(id);
       router.push("/dashboard/produtos");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "NÃ£o foi possÃ­vel excluir.");
+      setError(err instanceof Error ? err.message : "Não foi possível excluir.");
       setDeleting(false);
     }
   };
@@ -190,7 +190,7 @@ export default function EditarProdutoPage({ params }: { params: Promise<{ id: st
           </Link>
           <div>
             <h1 className="text-2xl font-black tracking-tight text-slate-900">Editar Produto</h1>
-            <p className="text-sm text-slate-500">Atualize as informaÃ§Ãµes do item</p>
+            <p className="text-sm text-slate-500">Atualize as informações do item</p>
           </div>
         </div>
         <div className="flex gap-2">
@@ -198,7 +198,7 @@ export default function EditarProdutoPage({ params }: { params: Promise<{ id: st
             <Trash2 className="h-4 w-4" /> {deleting ? "Excluindo..." : "Excluir"}
           </button>
           <button type="submit" className="btn btn-primary" disabled={saving || deleting}>
-            <Save className="h-4 w-4" /> {saving ? "Salvando..." : "Salvar AlteraÃ§Ãµes"}
+            <Save className="h-4 w-4" /> {saving ? "Salvando..." : "Salvar Alterações"}
           </button>
         </div>
       </header>
@@ -210,7 +210,7 @@ export default function EditarProdutoPage({ params }: { params: Promise<{ id: st
         {/* Coluna Principal */}
         <div className="lg:col-span-2 space-y-6">
           <section className="card p-6">
-            <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-slate-800"><Tag className="w-5 h-5 text-blue-500" /> InformaÃ§Ãµes BÃ¡sicas</h2>
+            <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-slate-800"><Tag className="w-5 h-5 text-blue-500" /> Informações Básicas</h2>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="sm:col-span-2">
                 <FieldLabel>Nome do Produto *</FieldLabel>
@@ -249,10 +249,10 @@ export default function EditarProdutoPage({ params }: { params: Promise<{ id: st
           </section>
 
           <section className="card p-6">
-            <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-slate-800"><Barcode className="w-5 h-5 text-blue-500" /> CÃ³digos e IdentificaÃ§Ã£o</h2>
+            <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-slate-800"><Barcode className="w-5 h-5 text-blue-500" /> Códigos e Identificação</h2>
             <div className="grid gap-4 sm:grid-cols-3">
               <div>
-                <FieldLabel>CÃ³d. Barras (EAN)</FieldLabel>
+                <FieldLabel>Cód. Barras (EAN)</FieldLabel>
                 <input type="text" name="barcode" value={form.barcode} onChange={handleChange} className="field font-mono text-sm" placeholder="Ex: 7891234567890" />
               </div>
               <div>
@@ -260,21 +260,21 @@ export default function EditarProdutoPage({ params }: { params: Promise<{ id: st
                 <input type="text" name="sku" value={form.sku} onChange={handleChange} className="field font-mono text-sm" placeholder="Ex: WHEY-MAX-900-MOR" />
               </div>
               <div>
-                <FieldLabel>CÃ³d. Interno</FieldLabel>
+                <FieldLabel>Cód. Interno</FieldLabel>
                 <input type="text" name="internal_code" value={form.internal_code} onChange={handleChange} className="field font-mono text-sm" placeholder="Ex: 00125" />
               </div>
             </div>
           </section>
 
           <section className="card p-6">
-            <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-slate-800"><DollarSign className="w-5 h-5 text-emerald-500" /> PreÃ§o e Custos</h2>
+            <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-slate-800"><DollarSign className="w-5 h-5 text-emerald-500" /> Preço e Custos</h2>
             <div className="grid gap-4 sm:grid-cols-3">
               <div>
                 <FieldLabel>Custo Atual (R$)</FieldLabel>
                 <input type="number" step="0.01" name="current_cost" value={form.current_cost} onChange={handleChange} className="field" placeholder="0.00" />
               </div>
               <div>
-                <FieldLabel>PreÃ§o de Venda (R$) *</FieldLabel>
+                <FieldLabel>Preço de Venda (R$) *</FieldLabel>
                 <input required type="number" step="0.01" name="selling_price" value={form.selling_price} onChange={handleChange} className="field" placeholder="0.00" />
               </div>
               <div>
@@ -309,16 +309,16 @@ export default function EditarProdutoPage({ params }: { params: Promise<{ id: st
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <FieldLabel>Estoque MÃ­nimo</FieldLabel>
+                  <FieldLabel>Estoque Mínimo</FieldLabel>
                   <input type="number" name="minimum_stock" value={form.minimum_stock} onChange={handleChange} className="field" />
                 </div>
                 <div>
-                  <FieldLabel>Estoque MÃ¡ximo</FieldLabel>
+                  <FieldLabel>Estoque Máximo</FieldLabel>
                   <input type="number" name="maximum_stock" value={form.maximum_stock} onChange={handleChange} className="field" />
                 </div>
               </div>
               <div>
-                <FieldLabel className="flex items-center gap-1"><MapPin className="w-3 h-3" /> LocalizaÃ§Ã£o FÃ­sica</FieldLabel>
+                <FieldLabel>Localização Física</FieldLabel>
                 <input type="text" name="physical_location" value={form.physical_location} onChange={handleChange} className="field" placeholder="Ex: Prateleira A2" />
               </div>
             </div>
@@ -333,7 +333,7 @@ export default function EditarProdutoPage({ params }: { params: Promise<{ id: st
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <FieldLabel>CFOP PadrÃ£o</FieldLabel>
+                  <FieldLabel>CFOP Padrão</FieldLabel>
                   <input type="text" name="cfop" value={form.cfop} onChange={handleChange} className="field font-mono text-sm" placeholder="Ex: 5102" />
                 </div>
                 <div>
@@ -349,7 +349,7 @@ export default function EditarProdutoPage({ params }: { params: Promise<{ id: st
               <input type="checkbox" name="active" checked={form.active} onChange={handleChange} className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
               <span className="font-bold text-slate-800">Produto Ativo</span>
             </label>
-            <p className="text-xs text-slate-500 mt-2 ml-8">Produtos inativos nÃ£o aparecem no PDV para venda.</p>
+            <p className="text-xs text-slate-500 mt-2 ml-8">Produtos inativos não aparecem no PDV para venda.</p>
           </section>
 
         </div>

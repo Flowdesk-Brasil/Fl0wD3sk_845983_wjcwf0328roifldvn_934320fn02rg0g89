@@ -66,7 +66,7 @@ export default function MatriculasPage() {
       setEditId(null);
       await load();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "NÃ£o foi possÃ­vel salvar a matrÃ­cula.");
+      setError(reason instanceof Error ? reason.message : "Não foi possível salvar a matrícula.");
     }
   }
 
@@ -75,22 +75,22 @@ export default function MatriculasPage() {
     await load();
   }
 
-  if (loading) return <LoadingState label="Carregando matrÃ­culas..." />;
+  if (loading) return <LoadingState label="Carregando matrículas..." />;
 
   return (
     <div className="page-stack">
-      <PageHeader eyebrow="Ciclo comercial" title="MatrÃ­culas" description="Vincule alunos aos planos e acompanhe a vigÃªncia dos contratos." action={<button className="btn btn-primary" onClick={openCreate}><Plus className="h-4 w-4" /> Nova matrÃ­cula</button>} />
+      <PageHeader eyebrow="Ciclo comercial" title="Matrículas" description="Vincule alunos aos planos e acompanhe a vigência dos contratos." action={<button className="btn btn-primary" onClick={openCreate}><Plus className="h-4 w-4" /> Nova matrícula</button>} />
       <section className="card">
-        <div className="table-toolbar"><SearchInput value={search} onChange={setSearch} placeholder="Buscar matrÃ­cula ou aluno..." /><StatusBadge tone="blue">{enrollments.length} registros</StatusBadge></div>
+        <div className="table-toolbar"><SearchInput value={search} onChange={setSearch} placeholder="Buscar matrícula ou aluno..." /><StatusBadge tone="blue">{enrollments.length} registros</StatusBadge></div>
         {filtered.length ? (
           <div className="table-wrap"><table className="data-table">
-            <thead><tr><th>MatrÃ­cula</th><th>Aluno</th><th className="hide-mobile">Plano</th><th className="hide-mobile">VigÃªncia</th><th>Status</th><th>AÃ§Ãµes</th></tr></thead>
+            <thead><tr><th>Matrícula</th><th>Aluno</th><th className="hide-mobile">Plano</th><th className="hide-mobile">Vigência</th><th>Status</th><th>Ações</th></tr></thead>
             <tbody>{filtered.map((item) => (
               <tr key={item.id}>
                 <td><code className="rounded-lg bg-[#f3f6fb] px-2 py-1 text-[10px] font-bold text-blue-600">{item.matricula_number}</code></td>
                 <td><strong className="text-xs text-[#172033]">{item.student?.full_name ?? "Aluno removido"}</strong></td>
                 <td className="hide-mobile"><span className="flex items-center gap-2"><i className="h-2 w-2 rounded-full" style={{ background: item.plan?.color }} />{item.plan?.name ?? "Plano removido"}</span></td>
-                <td className="hide-mobile">{formatDate(item.start_date)} atÃ© {formatDate(item.end_date)}</td>
+                <td className="hide-mobile">{formatDate(item.start_date)} até {formatDate(item.end_date)}</td>
                 <td><StatusBadge tone={tones[item.status]}>{labels[item.status]}</StatusBadge></td>
                 <td><div className="flex gap-2">
                   <button className="icon-btn" title="Editar" onClick={() => openEdit(item)}><BookOpen className="h-4 w-4 text-blue-600" /></button>
@@ -99,15 +99,15 @@ export default function MatriculasPage() {
               </tr>
             ))}</tbody>
           </table></div>
-        ) : <EmptyState icon={BookOpen} title="Nenhuma matrÃ­cula encontrada" description="Crie uma matrÃ­cula para gerar cobranÃ§a e contrato automaticamente." />}
+        ) : <EmptyState icon={BookOpen} title="Nenhuma matrícula encontrada" description="Crie uma matrícula para gerar cobrança e contrato automaticamente." />}
       </section>
 
-      <Modal open={open} onClose={() => setOpen(false)} title={editId ? "Editar matrÃ­cula" : "Nova matrÃ­cula"} description={editId ? "Atualize os planos e a vigÃªncia." : "A cobranÃ§a inicial e o contrato serÃ£o gerados automaticamente."}>
+      <Modal open={open} onClose={() => setOpen(false)} title={editId ? "Editar matrícula" : "Nova matrícula"} description={editId ? "Atualize os planos e a vigência." : "A cobrança inicial e o contrato serão gerados automaticamente."}>
         <form className="grid gap-4" onSubmit={submit}>
           <ErrorBanner message={error} />
           <label><FieldLabel required>Aluno</FieldLabel><select className="field" required value={form.student_id} onChange={(event) => setForm({ ...form, student_id: event.target.value })} disabled={!!editId}><option value="">Selecione um aluno</option>{students.map((student) => <option value={student.id} key={student.id}>{student.full_name}</option>)}</select></label>
           <div>
-            <FieldLabel required>Planos (vocÃª pode selecionar mais de um)</FieldLabel>
+            <FieldLabel required>Planos (você pode selecionar mais de um)</FieldLabel>
             <div className="grid gap-2 mt-2 max-h-48 overflow-y-auto rounded-xl border border-[#e3e8f0] bg-[#fbfcfe] p-3">
               {plans.map((plan) => (
                 <label key={plan.id} className="flex items-center gap-3 rounded-lg border border-transparent p-2 hover:bg-white hover:border-[#e3e8f0] cursor-pointer transition-colors">
@@ -138,8 +138,8 @@ export default function MatriculasPage() {
               </div>
             )}
           </div>
-          <label><FieldLabel required>Data de inÃ­cio</FieldLabel><input className="field" type="date" required value={form.start_date} onChange={(event) => setForm({ ...form, start_date: event.target.value })} /></label>
-          <div className="form-actions"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancelar</button><button className="btn btn-primary" type="submit" disabled={form.plan_id.length === 0}>{editId ? "Salvar matrÃ­cula" : "Criar matrÃ­cula"}</button></div>
+          <label><FieldLabel required>Data de início</FieldLabel><input className="field" type="date" required value={form.start_date} onChange={(event) => setForm({ ...form, start_date: event.target.value })} /></label>
+          <div className="form-actions"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancelar</button><button className="btn btn-primary" type="submit" disabled={form.plan_id.length === 0}>{editId ? "Salvar matrícula" : "Criar matrícula"}</button></div>
         </form>
       </Modal>
     </div>

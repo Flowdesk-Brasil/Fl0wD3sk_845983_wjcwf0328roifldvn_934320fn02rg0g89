@@ -20,7 +20,7 @@ export default function PdvPage() {
   const [error, setError] = useState<string | null>(null);
   
   const [checkoutModalOpen, setCheckoutModalOpen] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<"PIX" | "CREDIT_CARD" | "DEBIT_CARD" | "CASH">("PIX");
+  const [paymentMethod, setPaymentMethod] = useState<"pix" | "credit_card" | "debit_card" | "cash">("pix");
   const [processing, setProcessing] = useState(false);
   const [saleCompleted, setSaleCompleted] = useState(false);
   
@@ -120,7 +120,9 @@ export default function PdvPage() {
         student_id: null,
         payment_method: paymentMethod,
         total_amount: totalAmount,
-        status: "Pago"
+        discount: 0,
+        final_amount: totalAmount,
+        status: "completed"
       });
 
       for (const item of cart) {
@@ -367,39 +369,39 @@ export default function PdvPage() {
               <div className="grid grid-cols-2 gap-4">
                 <button
                   type="button"
-                  onClick={() => setPaymentMethod("PIX")}
-                  className={`flex flex-col items-center justify-center p-6 rounded-2xl border-4 transition ${paymentMethod === 'PIX' ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-lg shadow-blue-500/20' : 'border-slate-100 bg-white text-slate-600 hover:border-slate-200 hover:bg-slate-50'}`}
+                  onClick={() => setPaymentMethod("pix")}
+                  className={`flex flex-col items-center justify-center p-6 rounded-2xl border-4 transition ${paymentMethod === 'pix' ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-lg shadow-blue-500/20' : 'border-slate-100 bg-white text-slate-600 hover:border-slate-200 hover:bg-slate-50'}`}
                 >
                   <QrCode className="w-10 h-10 mb-3" />
                   <span className="font-black text-lg">PIX</span>
                 </button>
                 <button
                   type="button"
-                  onClick={() => setPaymentMethod("CREDIT_CARD")}
-                  className={`flex flex-col items-center justify-center p-6 rounded-2xl border-4 transition ${paymentMethod === 'CREDIT_CARD' ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-lg shadow-blue-500/20' : 'border-slate-100 bg-white text-slate-600 hover:border-slate-200 hover:bg-slate-50'}`}
+                  onClick={() => setPaymentMethod("credit_card")}
+                  className={`flex flex-col items-center justify-center p-6 rounded-2xl border-4 transition ${paymentMethod === 'credit_card' ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-lg shadow-blue-500/20' : 'border-slate-100 bg-white text-slate-600 hover:border-slate-200 hover:bg-slate-50'}`}
                 >
                   <CreditCard className="w-10 h-10 mb-3" />
                   <span className="font-black text-lg">Crédito</span>
                 </button>
                 <button
                   type="button"
-                  onClick={() => setPaymentMethod("DEBIT_CARD")}
-                  className={`flex flex-col items-center justify-center p-6 rounded-2xl border-4 transition ${paymentMethod === 'DEBIT_CARD' ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-lg shadow-blue-500/20' : 'border-slate-100 bg-white text-slate-600 hover:border-slate-200 hover:bg-slate-50'}`}
+                  onClick={() => setPaymentMethod("debit_card")}
+                  className={`flex flex-col items-center justify-center p-6 rounded-2xl border-4 transition ${paymentMethod === 'debit_card' ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-lg shadow-blue-500/20' : 'border-slate-100 bg-white text-slate-600 hover:border-slate-200 hover:bg-slate-50'}`}
                 >
                   <CreditCard className="w-10 h-10 mb-3" />
                   <span className="font-black text-lg">Débito</span>
                 </button>
                 <button
                   type="button"
-                  onClick={() => setPaymentMethod("CASH")}
-                  className={`flex flex-col items-center justify-center p-6 rounded-2xl border-4 transition ${paymentMethod === 'CASH' ? 'border-emerald-500 bg-emerald-50 text-emerald-700 shadow-lg shadow-emerald-500/20' : 'border-slate-100 bg-white text-slate-600 hover:border-slate-200 hover:bg-slate-50'}`}
+                  onClick={() => setPaymentMethod("cash")}
+                  className={`flex flex-col items-center justify-center p-6 rounded-2xl border-4 transition ${paymentMethod === 'cash' ? 'border-emerald-500 bg-emerald-50 text-emerald-700 shadow-lg shadow-emerald-500/20' : 'border-slate-100 bg-white text-slate-600 hover:border-slate-200 hover:bg-slate-50'}`}
                 >
                   <Banknote className="w-10 h-10 mb-3" />
                   <span className="font-black text-lg">Dinheiro</span>
                 </button>
               </div>
 
-              {paymentMethod === "PIX" ? (
+              {paymentMethod === "pix" ? (
                 <div className="bg-slate-900 rounded-2xl p-6 mt-6 text-center animate-in fade-in slide-in-from-bottom-4 shadow-2xl">
                   <h4 className="text-white font-bold mb-4">Mostre o QR Code para o Cliente</h4>
                   <div className="w-48 h-48 bg-white rounded-xl mx-auto flex items-center justify-center mb-4 p-2 relative overflow-hidden">
@@ -432,7 +434,7 @@ export default function PdvPage() {
                 disabled={processing}
                 className="flex-[2] py-4 rounded-xl font-black text-white bg-emerald-600 hover:bg-emerald-700 transition shadow-lg shadow-emerald-600/30 flex justify-center items-center gap-2"
               >
-                {processing ? "Validando..." : paymentMethod === "PIX" ? "Forçar Confirmação (Admin)" : "Sim, Pagamento Recebido"}
+                {processing ? "Validando..." : paymentMethod === "pix" ? "Forçar Confirmação (Admin)" : "Sim, Pagamento Recebido"}
               </button>
             </div>
           </div>

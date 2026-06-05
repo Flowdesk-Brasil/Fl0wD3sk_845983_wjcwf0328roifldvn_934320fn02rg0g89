@@ -34,7 +34,7 @@ export default function StudentPortalPage() {
       cache: "no-store",
     })).then(async (response) => {
       const payload = await response.json() as PortalData & { error?: string };
-      if (!response.ok) throw new Error(payload.error || "NÃ£o foi possÃ­vel carregar seu portal.");
+      if (!response.ok) throw new Error(payload.error || "Não foi possível carregar seu portal.");
       setData(payload);
     }).catch((reason: Error) => setError(reason.message));
   }, [user]);
@@ -56,7 +56,7 @@ export default function StudentPortalPage() {
         if (response.ok) setData(payload);
       }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "NÃ£o foi possÃ­vel gerar o PIX.");
+      setError(reason instanceof Error ? reason.message : "Não foi possível gerar o PIX.");
     } finally {
       setWorking(null);
     }
@@ -83,12 +83,12 @@ export default function StudentPortalPage() {
           <div className="grid gap-5 lg:grid-cols-[320px_1fr]">
             <StudentQrCard code={data.student.qr_code} name={data.student.full_name} />
             <section className="card">
-              <div className="card-header"><div><h2>PrÃ³ximas aulas</h2><p>Seus horÃ¡rios confirmados</p></div><CalendarDays className="h-5 w-5 text-blue-600" /></div>
-              <div className="card-body grid gap-3">{data.bookings.length ? data.bookings.map((booking) => <article className="rounded-xl border border-[#e3e8f0] p-4" key={booking.id}><div className="flex items-start justify-between gap-3"><div><strong className="text-sm">{booking.session?.class_type?.name || "Aula"}</strong><p className="mt-1 text-xs text-[#657085]">{booking.session ? formatDateTime(booking.session.start_at) : "HorÃ¡rio indisponÃ­vel"}</p><p className="mt-1 text-[11px] text-blue-600">{booking.session?.instructor?.full_name || "Professor a definir"}</p></div><StatusBadge tone="green">Confirmado</StatusBadge></div></article>) : <p className="text-sm text-[#657085]">VocÃª ainda nÃ£o possui aulas agendadas.</p>}</div>
+              <div className="card-header"><div><h2>Próximas aulas</h2><p>Seus horários confirmados</p></div><CalendarDays className="h-5 w-5 text-blue-600" /></div>
+              <div className="card-body grid gap-3">{data.bookings.length ? data.bookings.map((booking) => <article className="rounded-xl border border-[#e3e8f0] p-4" key={booking.id}><div className="flex items-start justify-between gap-3"><div><strong className="text-sm">{booking.session?.class_type?.name || "Aula"}</strong><p className="mt-1 text-xs text-[#657085]">{booking.session ? formatDateTime(booking.session.start_at) : "Horário indisponível"}</p><p className="mt-1 text-[11px] text-blue-600">{booking.session?.instructor?.full_name || "Professor a definir"}</p></div><StatusBadge tone="green">Confirmado</StatusBadge></div></article>) : <p className="text-sm text-[#657085]">Você ainda não possui aulas agendadas.</p>}</div>
             </section>
           </div>
           <div className="grid gap-5 lg:grid-cols-2">
-            <section className="card"><div className="card-header"><div><h2>Financeiro</h2><p>Ãšltimas cobranÃ§as</p></div><CreditCard className="h-5 w-5 text-blue-600" /></div><div className="table-wrap"><table className="data-table"><tbody>{data.payments.map((payment) => <tr key={payment.id}><td><strong>{payment.reference}</strong><small className="mt-1 block text-[#8d97aa]">Vence em {formatDate(payment.due_date)}</small></td><td>{formatCurrency(Number(payment.total_amount))}</td><td><StatusBadge tone={payment.status === "paid" ? "green" : payment.status === "cancelled" ? "red" : "yellow"}>{payment.status === "paid" ? "Pago" : payment.status === "cancelled" ? "Cancelado" : "Pendente"}</StatusBadge></td><td>{payment.status !== "paid" && <button className="btn btn-primary min-h-8 px-3 py-1.5 text-[10px]" disabled={working === payment.id} onClick={() => void generatePix(payment.id)}><QrCode className="mr-1.5 h-3.5 w-3.5" /> Pagar com PIX</button>}</td></tr>)}</tbody></table></div></section>
+            <section className="card"><div className="card-header"><div><h2>Financeiro</h2><p>Últimas cobranças</p></div><CreditCard className="h-5 w-5 text-blue-600" /></div><div className="table-wrap"><table className="data-table"><tbody>{data.payments.map((payment) => <tr key={payment.id}><td><strong>{payment.reference}</strong><small className="mt-1 block text-[#8d97aa]">Vence em {formatDate(payment.due_date)}</small></td><td>{formatCurrency(Number(payment.total_amount))}</td><td><StatusBadge tone={payment.status === "paid" ? "green" : payment.status === "cancelled" ? "red" : "yellow"}>{payment.status === "paid" ? "Pago" : payment.status === "cancelled" ? "Cancelado" : "Pendente"}</StatusBadge></td><td>{payment.status !== "paid" && <button className="btn btn-primary min-h-8 px-3 py-1.5 text-[10px]" disabled={working === payment.id} onClick={() => void generatePix(payment.id)}><QrCode className="mr-1.5 h-3.5 w-3.5" /> Pagar com PIX</button>}</td></tr>)}</tbody></table></div></section>
             <section className="card"><div className="card-header"><div><h2>Contratos</h2><p>Documentos vinculados</p></div><FileCheck2 className="h-5 w-5 text-blue-600" /></div><div className="table-wrap"><table className="data-table"><tbody>{data.contracts.map((contract) => <tr key={contract.id}><td><strong>{contract.plan?.name || "Contrato"}</strong><small className="mt-1 block text-[#8d97aa]">{formatDate(contract.created_at)}</small></td><td><StatusBadge tone={contract.status === "signed" ? "green" : "yellow"}>{contract.status === "signed" ? "Assinado" : "Pendente"}</StatusBadge></td></tr>)}</tbody></table></div></section>
           </div>
         </>}
@@ -99,7 +99,7 @@ export default function StudentPortalPage() {
           {pix.status === "paid" ? <div className="rounded-2xl bg-green-50 p-6 text-green-700"><CheckCircle2 className="mx-auto h-12 w-12" /><strong className="mt-3 block text-lg">Pagamento confirmado automaticamente</strong></div> : <>
             {pix.pix_qr_base64 && <Image unoptimized width={256} height={256} className="mx-auto rounded-2xl border border-[#e3e8f0] p-2" alt="QR Code PIX" src={`data:image/png;base64,${pix.pix_qr_base64}`} />}
             <p className="text-xs leading-5 text-[#657085]">Acesse o aplicativo do seu banco para ler o QR Code ou copie a chave abaixo.</p>
-            <button className="btn btn-secondary" disabled={!pix.pix_code} onClick={() => void copyPix()}>{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />} {copied ? "CÃ³digo copiado" : "Copiar PIX copia e cola"}</button>
+            <button className="btn btn-secondary" disabled={!pix.pix_code} onClick={() => void copyPix()}>{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />} {copied ? "Código copiado" : "Copiar PIX copia e cola"}</button>
           </>}
         </div>}
       </Modal>

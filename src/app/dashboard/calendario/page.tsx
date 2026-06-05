@@ -54,7 +54,7 @@ export default function CalendarioPage() {
       setForm({ class_type_id: "", instructor_id: "", start_at: localInputValue(), capacity: "10", notes: "" });
       await load();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "NÃ£o foi possÃ­vel criar a aula.");
+      setError(reason instanceof Error ? reason.message : "Não foi possível criar a aula.");
     }
   }
 
@@ -62,12 +62,12 @@ export default function CalendarioPage() {
 
   return (
     <div className="page-stack">
-      <PageHeader eyebrow="OrganizaÃ§Ã£o de aulas" title="CalendÃ¡rio" description="Veja a semana completa, horÃ¡rios disponÃ­veis, responsÃ¡veis e alunos confirmados." action={<button className="btn btn-primary" onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Nova aula</button>} />
+      <PageHeader eyebrow="Organização de aulas" title="Calendário" description="Veja a semana completa, horários disponíveis, responsáveis e alunos confirmados." action={<button className="btn btn-primary" onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Nova aula</button>} />
       <ErrorBanner message={error} />
       <section className="card">
         <div className="card-header">
           <div><h2>{format(weekStart, "MMMM 'de' yyyy", { locale: ptBR })}</h2><p>{weekSessions.length} aulas programadas nesta semana</p></div>
-          <div className="flex gap-2"><button className="btn btn-secondary" onClick={() => setAnchor(new Date())}>Hoje</button><button className="icon-btn" aria-label="Semana anterior" onClick={() => setAnchor(addDays(anchor, -7))}><ChevronLeft className="h-4 w-4" /></button><button className="icon-btn" aria-label="PrÃ³xima semana" onClick={() => setAnchor(addDays(anchor, 7))}><ChevronRight className="h-4 w-4" /></button></div>
+          <div className="flex gap-2"><button className="btn btn-secondary" onClick={() => setAnchor(new Date())}>Hoje</button><button className="icon-btn" aria-label="Semana anterior" onClick={() => setAnchor(addDays(anchor, -7))}><ChevronLeft className="h-4 w-4" /></button><button className="icon-btn" aria-label="Próxima semana" onClick={() => setAnchor(addDays(anchor, 7))}><ChevronRight className="h-4 w-4" /></button></div>
         </div>
         <div className="grid min-w-[980px] grid-cols-7 gap-px overflow-x-auto bg-[#e3e8f0]">
           {days.map((day) => {
@@ -93,15 +93,15 @@ export default function CalendarioPage() {
           })}
         </div>
       </section>
-      {!sessions.length && <EmptyState icon={CalendarDays} title="Nenhuma aula programada" description="Crie o primeiro horÃ¡rio para comeÃ§ar a organizar a agenda dos alunos." />}
+      {!sessions.length && <EmptyState icon={CalendarDays} title="Nenhuma aula programada" description="Crie o primeiro horário para começar a organizar a agenda dos alunos." />}
 
-      <Modal open={open} onClose={() => setOpen(false)} title="Programar nova aula" description="O horÃ¡rio ficarÃ¡ disponÃ­vel para vincular aos alunos." size="sm">
+      <Modal open={open} onClose={() => setOpen(false)} title="Programar nova aula" description="O horário ficará disponível para vincular aos alunos." size="sm">
         <form className="grid gap-4" onSubmit={submit}>
           <label><FieldLabel required>Tipo de aula</FieldLabel><select className="field" required value={form.class_type_id} onChange={(event) => { const type = types.find((item) => item.id === event.target.value); setForm({ ...form, class_type_id: event.target.value, capacity: String(type?.capacity || 10) }); }}><option value="">Selecione</option>{types.map((type) => <option key={type.id} value={type.id}>{type.name}</option>)}</select></label>
-          <label><FieldLabel>Professor responsÃ¡vel</FieldLabel><select className="field" value={form.instructor_id} onChange={(event) => setForm({ ...form, instructor_id: event.target.value })}><option value="">Sem responsÃ¡vel definido</option>{instructors.map((profile) => <option key={profile.id} value={profile.id}>{profile.full_name}</option>)}</select></label>
-          <label><FieldLabel required>Data e horÃ¡rio</FieldLabel><input className="field" type="datetime-local" required value={form.start_at} onChange={(event) => setForm({ ...form, start_at: event.target.value })} /></label>
+          <label><FieldLabel>Professor responsável</FieldLabel><select className="field" value={form.instructor_id} onChange={(event) => setForm({ ...form, instructor_id: event.target.value })}><option value="">Sem responsável definido</option>{instructors.map((profile) => <option key={profile.id} value={profile.id}>{profile.full_name}</option>)}</select></label>
+          <label><FieldLabel required>Data e horário</FieldLabel><input className="field" type="datetime-local" required value={form.start_at} onChange={(event) => setForm({ ...form, start_at: event.target.value })} /></label>
           <label><FieldLabel required>Capacidade</FieldLabel><input className="field" type="number" min={1} max={200} required value={form.capacity} onChange={(event) => setForm({ ...form, capacity: event.target.value })} /></label>
-          <label><FieldLabel>ObservaÃ§Ãµes</FieldLabel><textarea className="field" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></label>
+          <label><FieldLabel>Observações</FieldLabel><textarea className="field" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></label>
           <div className="form-actions"><button className="btn btn-secondary" type="button" onClick={() => setOpen(false)}>Cancelar</button><button className="btn btn-primary">Criar aula</button></div>
         </form>
       </Modal>

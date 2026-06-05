@@ -64,7 +64,7 @@ export default function AlunosPage() {
       await load();
       setSelected((current) => current ? { ...current, profile_id: result.profileId || current.profile_id } : current);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "NÃ£o foi possÃ­vel liberar o portal.");
+      setError(reason instanceof Error ? reason.message : "Não foi possível liberar o portal.");
     } finally {
       setWorking(false);
     }
@@ -80,7 +80,7 @@ export default function AlunosPage() {
       <section className="card">
         <div className="table-toolbar"><SearchInput value={search} onChange={setSearch} placeholder="Buscar por nome, CPF ou contato..." /><div className="flex flex-wrap gap-1 rounded-xl bg-[#f3f6fb] p-1">{([["all", "Todos"], ["active", "Ativos"], ["inactive", "Inativos"], ["blocked", "Bloqueados"]] as const).map(([value, label]) => <button key={value} onClick={() => setStatus(value)} className={`rounded-lg px-3 py-2 text-[11px] font-semibold transition ${status === value ? "bg-white text-blue-600 shadow-sm" : "text-[#657085] hover:text-[#172033]"}`}>{label}</button>)}</div></div>
         {filtered.length ? <div className="table-wrap"><table className="data-table">
-          <thead><tr><th>Aluno</th><th className="hide-mobile">CPF</th><th className="hide-mobile">Telefone</th><th>Portal</th><th>Status</th><th>AÃ§Ãµes</th></tr></thead>
+          <thead><tr><th>Aluno</th><th className="hide-mobile">CPF</th><th className="hide-mobile">Telefone</th><th>Portal</th><th>Status</th><th>Ações</th></tr></thead>
           <tbody>{filtered.map((student) => <tr key={student.id}>
             <td><div className="flex items-center gap-3">
               {student.photo_url ? (
@@ -90,14 +90,14 @@ export default function AlunosPage() {
               )}
               <span className="min-w-0"><strong className="block truncate text-xs text-[#172033]">{student.full_name}</strong><small className="mt-1 block truncate text-[10px] text-[#8d97aa]">{student.email || "Sem e-mail"}</small></span></div></td>
             <td className="hide-mobile">{student.cpf}</td><td className="hide-mobile">{student.phone}</td>
-            <td><StatusBadge tone={student.profile_id ? "blue" : "gray"}>{student.profile_id ? "Liberado" : "NÃ£o liberado"}</StatusBadge></td>
+            <td><StatusBadge tone={student.profile_id ? "blue" : "gray"}>{student.profile_id ? "Liberado" : "Não liberado"}</StatusBadge></td>
             <td><StatusBadge tone={statusTone[student.status]}>{statusLabel[student.status]}</StatusBadge></td>
             <td><button className="icon-btn" onClick={() => { setSelected(student); setError(null); setMessage(null); }} title="Ver aluno"><Eye className="h-4 w-4" /></button></td>
           </tr>)}</tbody>
-        </table></div> : <EmptyState icon={Users} title="Nenhum aluno encontrado" description="Ajuste os filtros ou crie um novo cadastro para comeÃ§ar." />}
+        </table></div> : <EmptyState icon={Users} title="Nenhum aluno encontrado" description="Ajuste os filtros ou crie um novo cadastro para começar." />}
       </section>
 
-      <Modal open={Boolean(selected)} onClose={() => setSelected(null)} title={selected?.full_name ?? "Aluno"} description="QR Code, acesso ao portal e situaÃ§Ã£o cadastral." size="lg">
+      <Modal open={Boolean(selected)} onClose={() => setSelected(null)} title={selected?.full_name ?? "Aluno"} description="QR Code, acesso ao portal e situação cadastral." size="lg">
         {selected && <div className="grid gap-5 lg:grid-cols-[250px_1fr]">
           <StudentQrCard code={selected.qr_code} name={selected.full_name} compact />
           <div className="grid content-start gap-5">
@@ -105,7 +105,7 @@ export default function AlunosPage() {
               {selected.photo_url && (
                 <img src={selected.photo_url} alt={selected.full_name} className="w-16 h-16 rounded-full object-cover border-2 border-white shadow-sm" />
               )}
-              <div className="grid grid-cols-2 gap-3 rounded-2xl bg-[#f7f9fc] p-4 text-xs flex-1"><div><span className="field-label">CPF</span><strong>{selected.cpf}</strong></div><div><span className="field-label">Nascimento</span><strong>{formatDate(selected.birth_date)}</strong></div><div><span className="field-label">Telefone</span><strong>{selected.phone}</strong></div><div><span className="field-label">E-mail</span><strong>{selected.email || "NÃ£o informado"}</strong></div></div>
+              <div className="grid grid-cols-2 gap-3 rounded-2xl bg-[#f7f9fc] p-4 text-xs flex-1"><div><span className="field-label">CPF</span><strong>{selected.cpf}</strong></div><div><span className="field-label">Nascimento</span><strong>{formatDate(selected.birth_date)}</strong></div><div><span className="field-label">Telefone</span><strong>{selected.phone}</strong></div><div><span className="field-label">E-mail</span><strong>{selected.email || "Não informado"}</strong></div></div>
             </div>
             <div>
               <span className="field-label">Portal do aluno</span>
@@ -118,9 +118,9 @@ export default function AlunosPage() {
                   try {
                     const { resetStudentPassword } = await import("@/lib/api");
                     const result = await resetStudentPassword(selected.id);
-                    setMessage(`Link de redefiniÃ§Ã£o de senha enviado para ${result.email}.`);
+                    setMessage(`Link de redefinição de senha enviado para ${result.email}.`);
                   } catch (reason) {
-                    setError(reason instanceof Error ? reason.message : "Erro ao enviar e-mail de redefiniÃ§Ã£o.");
+                    setError(reason instanceof Error ? reason.message : "Erro ao enviar e-mail de redefinição.");
                   } finally {
                     setWorking(false);
                   }
@@ -129,7 +129,7 @@ export default function AlunosPage() {
               {!selected.email && <p className="mt-2 text-xs text-red-600">Cadastre um e-mail para liberar o portal.</p>}
             </div>
             <div>
-              <span className="field-label">Alterar situaÃ§Ã£o</span>
+              <span className="field-label">Alterar situação</span>
               <div className="flex flex-wrap gap-2">
                 {(["active", "inactive", "blocked"] as StudentStatus[]).map((nextStatus) => (
                   <button key={nextStatus} className={`btn ${selected.status === nextStatus ? "btn-primary" : "btn-secondary"}`} onClick={() => void changeStatus(nextStatus)}>

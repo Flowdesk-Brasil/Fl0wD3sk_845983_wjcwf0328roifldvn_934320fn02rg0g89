@@ -10,7 +10,7 @@ import { formatCurrency, formatDate } from "@/lib/utils";
 
 const labels: Record<PaymentStatus, string> = { pending: "Pendente", paid: "Pago", expired: "Expirado", cancelled: "Cancelado", refunded: "Estornado" };
 const tones: Record<PaymentStatus, "yellow" | "green" | "gray" | "red" | "blue"> = { pending: "yellow", paid: "green", expired: "gray", cancelled: "red", refunded: "blue" };
-const methodLabels: Record<PaymentMethod, string> = { pix: "PIX", credit_card: "CartÃ£o de crÃ©dito", debit_card: "CartÃ£o de dÃ©bito", cash: "Dinheiro" };
+const methodLabels: Record<PaymentMethod, string> = { pix: "PIX", credit_card: "Cartão de crédito", debit_card: "Cartão de débito", cash: "Dinheiro" };
 
 export default function PagamentosPage() {
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -48,7 +48,7 @@ export default function PagamentosPage() {
       )
       .subscribe();
 
-    // MantÃ©m o polling como fallback de seguranÃ§a
+    // Mantém o polling como fallback de segurança
     const timer = window.setInterval(() => void load(), 5000);
     return () => {
       window.clearInterval(timer);
@@ -70,21 +70,21 @@ export default function PagamentosPage() {
       setSelected(null);
       await load();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "NÃ£o foi possÃ­vel confirmar o recebimento.");
+      setError(reason instanceof Error ? reason.message : "Não foi possível confirmar o recebimento.");
     } finally {
       setWorking(null);
     }
   }
 
   async function reopen(payment: Payment) {
-    if (!window.confirm(`Voltar ${payment.reference} para pendente? O recebimento atual serÃ¡ removido.`)) return;
+    if (!window.confirm(`Voltar ${payment.reference} para pendente? O recebimento atual será removido.`)) return;
     setWorking(payment.id);
     setError(null);
     try {
       await updatePaymentStatus(payment.id, "pending");
       await load();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "NÃ£o foi possÃ­vel voltar a cobranÃ§a.");
+      setError(reason instanceof Error ? reason.message : "Não foi possível voltar a cobrança.");
     } finally {
       setWorking(null);
     }
@@ -98,7 +98,7 @@ export default function PagamentosPage() {
       setPix({ ...payment, ...generated });
       await load();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "NÃ£o foi possÃ­vel gerar o PIX.");
+      setError(reason instanceof Error ? reason.message : "Não foi possível gerar o PIX.");
     } finally {
       setWorking(null);
     }
@@ -117,23 +117,23 @@ export default function PagamentosPage() {
 
   return (
     <div className="page-stack">
-      <PageHeader eyebrow="Controle financeiro" title="Financeiro" description="Gere PIX, acompanhe aprovaÃ§Ãµes automÃ¡ticas e corrija recebimentos quando necessÃ¡rio." />
+      <PageHeader eyebrow="Controle financeiro" title="Financeiro" description="Gere PIX, acompanhe aprovações automáticas e corrija recebimentos quando necessário." />
       <ErrorBanner message={error} />
       <div className="grid gap-4 sm:grid-cols-2">
         <article className="card metric-card"><div className="metric-top"><div className="metric-icon badge-green"><CheckCircle2 className="h-5 w-5" /></div></div><strong>{formatCurrency(received)}</strong><p>Total recebido</p></article>
         <article className="card metric-card"><div className="metric-top"><div className="metric-icon badge-yellow"><WalletCards className="h-5 w-5" /></div></div><strong>{formatCurrency(receivable)}</strong><p>Saldo pendente</p></article>
       </div>
       <section className="card">
-        <div className="table-toolbar"><SearchInput value={search} onChange={setSearch} placeholder="Buscar referÃªncia ou aluno..." /><StatusBadge tone="blue">{payments.length} cobranÃ§as</StatusBadge></div>
+        <div className="table-toolbar"><SearchInput value={search} onChange={setSearch} placeholder="Buscar referência ou aluno..." /><StatusBadge tone="blue">{payments.length} cobranças</StatusBadge></div>
         {filtered.length ? <div className="table-wrap"><table className="data-table">
-          <thead><tr><th>ReferÃªncia</th><th>Aluno</th><th>Valor</th><th className="hide-mobile">Vencimento</th><th className="hide-mobile">MÃ©todo</th><th>Status</th><th>AÃ§Ã£o</th></tr></thead>
+          <thead><tr><th>Referência</th><th>Aluno</th><th>Valor</th><th className="hide-mobile">Vencimento</th><th className="hide-mobile">Método</th><th>Status</th><th>Ação</th></tr></thead>
           <tbody>{filtered.map((payment) => (
             <tr key={payment.id}>
               <td><code className="rounded-lg bg-[#f3f6fb] px-2 py-1 text-[10px] font-bold text-blue-600">{payment.reference}</code></td>
               <td><strong className="text-xs text-[#172033]">{payment.student?.full_name ?? "Aluno removido"}</strong></td>
               <td><strong className="text-xs text-[#172033]">{formatCurrency(Number(payment.total_amount))}</strong></td>
               <td className="hide-mobile">{formatDate(payment.due_date)}</td>
-              <td className="hide-mobile">{payment.method ? methodLabels[payment.method] : "NÃ£o informado"}</td>
+              <td className="hide-mobile">{payment.method ? methodLabels[payment.method] : "Não informado"}</td>
               <td><StatusBadge tone={tones[payment.status]}>{labels[payment.status]}</StatusBadge></td>
               <td><div className="flex flex-wrap gap-2">
                 {payment.status !== "paid" && <button className="btn btn-primary min-h-8 px-3 py-1.5 text-[10px]" disabled={working === payment.id} onClick={() => void generatePix(payment)}><QrCode className="h-3.5 w-3.5" /> Gerar PIX</button>}
@@ -142,12 +142,12 @@ export default function PagamentosPage() {
               </div></td>
             </tr>
           ))}</tbody>
-        </table></div> : <EmptyState icon={CreditCard} title="Nenhuma cobranÃ§a encontrada" description="CobranÃ§as sÃ£o geradas automaticamente ao criar uma matrÃ­cula." />}
+        </table></div> : <EmptyState icon={CreditCard} title="Nenhuma cobrança encontrada" description="Cobranças são geradas automaticamente ao criar uma matrícula." />}
       </section>
 
       <Modal open={Boolean(selected)} onClose={() => setSelected(null)} title="Confirmar recebimento" description={selected ? `${selected.student?.full_name} Â· ${formatCurrency(Number(selected.total_amount))}` : ""} size="sm">
         <div className="grid gap-4">
-          <label><FieldLabel>MÃ©todo de pagamento</FieldLabel><select className="field" value={method} onChange={(event) => setMethod(event.target.value as PaymentMethod)}>{Object.entries(methodLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label><FieldLabel>Método de pagamento</FieldLabel><select className="field" value={method} onChange={(event) => setMethod(event.target.value as PaymentMethod)}>{Object.entries(methodLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <div className="form-actions"><button className="btn btn-secondary" onClick={() => setSelected(null)}>Cancelar</button><button className="btn btn-primary" onClick={() => void receive()}>Confirmar recebimento</button></div>
         </div>
       </Modal>
@@ -158,7 +158,7 @@ export default function PagamentosPage() {
             {pix.pix_qr_base64 && <Image unoptimized width={256} height={256} className="mx-auto rounded-2xl border border-[#e3e8f0] p-2" alt="QR Code PIX" src={`data:image/png;base64,${pix.pix_qr_base64}`} />}
             <p className="text-xs leading-5 text-[#657085]">A tela atualiza automaticamente quando o Mercado Pago confirmar o pagamento.</p>
             <div className="flex flex-col gap-2 w-full mt-2">
-              <button className="btn btn-secondary w-full justify-center" disabled={!pix.pix_code} onClick={() => void copyPix()}>{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />} {copied ? "CÃ³digo copiado" : "Copiar PIX copia e cola"}</button>
+              <button className="btn btn-secondary w-full justify-center" disabled={!pix.pix_code} onClick={() => void copyPix()}>{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />} {copied ? "Código copiado" : "Copiar PIX copia e cola"}</button>
               <button className="btn btn-primary w-full justify-center bg-indigo-600 hover:bg-indigo-700 border-indigo-600 text-white" onClick={() => {
                 const { supabase } = require("@/lib/supabase");
                 const channelName = "pos-terminal-channel";
@@ -182,7 +182,7 @@ export default function PagamentosPage() {
                     }
                   });
                 }
-              }}>Espelhar na MÃ¡quina / Celular</button>
+              }}>Espelhar na Máquina / Celular</button>
             </div>
           </>}
         </div>}

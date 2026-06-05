@@ -20,13 +20,13 @@ function ResetPasswordForm() {
     const handleAuth = async () => {
       if (token) {
         const { error } = await supabase.auth.verifyOtp({ token_hash: token, type: "recovery" });
-        if (error) setError("O link de recuperaÃ§Ã£o Ã© invÃ¡lido ou expirou.");
+        if (error) setError("O link de recuperação é inválido ou expirou.");
       } else {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) {
           supabase.auth.onAuthStateChange((event, session) => {
             if (event === "PASSWORD_RECOVERY") {
-              // O usuÃ¡rio estÃ¡ pronto para redefinir
+              // O usuário está pronto para redefinir
             }
           });
         }
@@ -40,12 +40,12 @@ function ResetPasswordForm() {
     setError(null);
 
     if (password.length < 6) {
-      setError("A senha deve ter no mÃ­nimo 6 caracteres.");
+      setError("A senha deve ter no mínimo 6 caracteres.");
       return;
     }
 
     if (password !== confirmPassword) {
-      setError("As senhas nÃ£o coincidem.");
+      setError("As senhas não coincidem.");
       return;
     }
 
@@ -108,7 +108,7 @@ function ResetPasswordForm() {
                 className="w-full rounded-xl border border-slate-200 p-3 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="MÃ­nimo 6 caracteres"
+                placeholder="Mínimo 6 caracteres"
                 disabled={loading}
               />
             </div>

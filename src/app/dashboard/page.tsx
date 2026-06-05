@@ -24,12 +24,12 @@ export default function DashboardPage() {
     });
   }, []);
 
-  if (!stats) return <LoadingState label="Montando visÃ£o geral..." />;
+  if (!stats) return <LoadingState label="Montando visão geral..." />;
 
   const metrics = [
     { label: "Alunos ativos", value: stats.activeStudents, detail: `${stats.totalStudents} cadastros totais`, icon: Users, color: "blue" },
-    { label: "MatrÃ­culas ativas", value: stats.activeEnrollments, detail: `${stats.conversionRate}% de conversÃ£o`, icon: BookOpen, color: "purple" },
-    { label: "Receita no mÃªs", value: formatCurrency(stats.monthlyRevenue), detail: `${stats.pendingPayments} cobranÃ§as pendentes`, icon: DollarSign, color: "green" },
+    { label: "Matrículas ativas", value: stats.activeEnrollments, detail: `${stats.conversionRate}% de conversão`, icon: BookOpen, color: "purple" },
+    { label: "Receita no mês", value: formatCurrency(stats.monthlyRevenue), detail: `${stats.pendingPayments} cobranças pendentes`, icon: DollarSign, color: "green" },
     { label: "Check-ins hoje", value: stats.todayCheckins, detail: "Acessos registrados", icon: QrCode, color: "yellow" },
   ];
 
@@ -37,8 +37,8 @@ export default function DashboardPage() {
     <div className="page-stack">
       <PageHeader
         eyebrow="Performance operacional"
-        title="VisÃ£o geral"
-        description="Acompanhe os indicadores essenciais e as aÃ§Ãµes que precisam da sua atenÃ§Ã£o."
+        title="Visão geral"
+        description="Acompanhe os indicadores essenciais e as ações que precisam da sua atenção."
         action={<Link href="/dashboard/alunos/novo" className="btn btn-primary"><UserCheck className="h-4 w-4" /> Novo aluno</Link>}
       />
 
@@ -58,7 +58,7 @@ export default function DashboardPage() {
       <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
         <section className="card">
           <div className="card-header">
-            <div><h2>Receita recebida</h2><p>MovimentaÃ§Ã£o dos Ãºltimos sete dias</p></div>
+            <div><h2>Receita recebida</h2><p>Movimentação dos últimos sete dias</p></div>
             <StatusBadge tone="blue">Atualizado agora</StatusBadge>
           </div>
           <div className="card-body h-[320px]">
@@ -82,7 +82,7 @@ export default function DashboardPage() {
 
         <section className="card">
           <div className="card-header">
-            <div><h2>Acessos recentes</h2><p>Ãšltimas validaÃ§Ãµes de entrada</p></div>
+            <div><h2>Acessos recentes</h2><p>Últimas validações de entrada</p></div>
             <Activity className="h-4 w-4 text-[#0f9d58]" />
           </div>
           <div className="divide-y divide-[#e3e8f0] px-5">
@@ -90,7 +90,7 @@ export default function DashboardPage() {
               <div className="flex items-center gap-3 py-4" key={checkin.id}>
                 <div className="avatar">{checkin.student?.full_name?.[0] ?? "?"}</div>
                 <div className="min-w-0 flex-1">
-                  <strong className="block truncate text-xs text-[#172033]">{checkin.student?.full_name ?? "CÃ³digo nÃ£o identificado"}</strong>
+                  <strong className="block truncate text-xs text-[#172033]">{checkin.student?.full_name ?? "Código não identificado"}</strong>
                   <span className="mt-1 block text-[10px] text-[#8d97aa]">{formatDateTime(checkin.checked_at)}</span>
                 </div>
                 <StatusBadge tone={checkin.status === "allowed" ? "green" : "red"}>
@@ -109,10 +109,10 @@ export default function DashboardPage() {
         <section className="card flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
           <div className="grid h-11 w-11 place-items-center rounded-xl bg-[#fef7e0] text-[#b06000]"><CreditCard className="h-5 w-5" /></div>
           <div className="flex-1">
-            <h3 className="text-sm font-bold">Financeiro requer atenÃ§Ã£o</h3>
-            <p className="mt-1 text-xs text-[#657085]">{stats.pendingPayments} cobranÃ§as pendentes e {stats.overduePayments} vencidas.</p>
+            <h3 className="text-sm font-bold">Financeiro requer atenção</h3>
+            <p className="mt-1 text-xs text-[#657085]">{stats.pendingPayments} cobranças pendentes e {stats.overduePayments} vencidas.</p>
           </div>
-          <Link href="/dashboard/pagamentos" className="btn btn-secondary">Revisar cobranÃ§as <ArrowRight className="h-4 w-4" /></Link>
+          <Link href="/dashboard/pagamentos" className="btn btn-secondary">Revisar cobranças <ArrowRight className="h-4 w-4" /></Link>
         </section>
       )}
     </div>

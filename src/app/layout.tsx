@@ -6,8 +6,8 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"], display: "swap" });
 
 export const metadata: Metadata = {
-  title: "Corpo & EvoluÃ§Ã£o | GestÃ£o",
-  description: "Plataforma de gestÃ£o para studios e academias.",
+  title: "Corpo & Evolução | Gestão",
+  description: "Plataforma de gestão para studios e academias.",
   manifest: "/manifest.webmanifest",
   robots: "noindex, nofollow",
 };

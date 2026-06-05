@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import type { LucideIcon } from "lucide-react";
 import {
@@ -25,68 +25,69 @@ interface NavItem {
 
 const NAV: { title: string; items: NavItem[] }[] = [
   {
-    title: "VisÃ£o geral",
+    title: "Visão geral",
     items: [{ href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["admin", "receptionist", "professor"] }],
   },
   {
-    title: "GestÃ£o",
+    title: "Gestão",
     items: [
       { href: "/dashboard/alunos", label: "Alunos", icon: Users, roles: ["admin", "receptionist"] },
-      { href: "/dashboard/matriculas", label: "MatrÃ­culas", icon: BookOpen, roles: ["admin", "receptionist"] },
+      { href: "/dashboard/matriculas", label: "Matrículas", icon: BookOpen, roles: ["admin", "receptionist"] },
       { href: "/dashboard/planos", label: "Planos", icon: Package, roles: ["admin"] },
       { href: "/dashboard/contratos", label: "Contratos", icon: ScrollText, roles: ["admin", "receptionist"] },
     ],
   },
   {
-    title: "OperaÃ§Ã£o",
+    title: "Operação",
     items: [
       { href: "/dashboard/pagamentos", label: "Financeiro", icon: CreditCard, roles: ["admin", "receptionist"] },
-      { href: "/dashboard/calendario", label: "CalendÃ¡rio", icon: CalendarDays, roles: ["admin", "receptionist", "professor"] },
+      { href: "/dashboard/calendario", label: "Calendário", icon: CalendarDays, roles: ["admin", "receptionist", "professor"] },
       { href: "/dashboard/checkin", label: "Check-in", icon: QrCode, roles: ["admin", "receptionist"] },
-      { href: "/dashboard/relatorios", label: "RelatÃ³rios", icon: BarChart3, roles: ["admin"] },
+      { href: "/dashboard/relatorios", label: "Relatórios", icon: BarChart3, roles: ["admin"] },
       { href: "/dashboard/notificacoes", label: "Comunicados", icon: Bell, roles: ["admin"] },
     ],
   },
   {
-    title: "LogÃ­stica & Loja",
+    title: "Logística & Loja",
     items: [
       { href: "/dashboard/pdv", label: "Caixa (PDV)", icon: ShoppingCart, roles: ["admin", "receptionist"] },
       { href: "/dashboard/produtos", label: "Produtos", icon: Tag, roles: ["admin"] },
       { href: "/dashboard/estoque", label: "Estoque", icon: Boxes, roles: ["admin"] },
+      { href: "/dashboard/fornecedores", label: "Fornecedores", icon: Truck, roles: ["admin"] },
       { href: "/dashboard/recebimentos", label: "Recebimento", icon: Truck, roles: ["admin"] },
       { href: "/dashboard/triagem", label: "Triagem", icon: ScanLine, roles: ["admin", "receptionist"] },
     ],
   },
   {
-    title: "AdministraÃ§Ã£o",
+    title: "Administração",
     items: [
       { href: "/dashboard/usuarios", label: "Equipe e acessos", icon: Shield, roles: ["admin"] },
       { href: "/dashboard/auditoria", label: "Auditoria", icon: Activity, roles: ["admin"] },
-      { href: "/dashboard/configuracoes", label: "ConfiguraÃ§Ãµes", icon: Settings, roles: ["admin"] },
+      { href: "/dashboard/configuracoes", label: "Configurações", icon: Settings, roles: ["admin"] },
     ],
   },
 ];
 
 const PAGE_NAMES: Record<string, string> = {
-  dashboard: "VisÃ£o geral",
+  dashboard: "Visão geral",
   alunos: "Alunos",
   novo: "Novo aluno",
-  matriculas: "MatrÃ­culas",
+  matriculas: "Matrículas",
   planos: "Planos",
   contratos: "Contratos",
   pagamentos: "Financeiro",
-  calendario: "CalendÃ¡rio",
+  calendario: "Calendário",
   checkin: "Check-in",
   pdv: "Caixa (PDV)",
   produtos: "Produtos",
   estoque: "Controle de Estoque",
   recebimentos: "Recebimentos de Mercadorias",
-  triagem: "Triagem e ConferÃªncia",
-  relatorios: "RelatÃ³rios",
+  triagem: "Triagem e Conferência",
+  relatorios: "Relatórios",
   notificacoes: "Comunicados",
   usuarios: "Equipe e acessos",
   auditoria: "Auditoria",
-  configuracoes: "ConfiguraÃ§Ãµes",
+  configuracoes: "Configurações",
 };
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
@@ -138,7 +139,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
               <Dumbbell className="h-5 w-5" />
             </span>
             <span>
-              <strong className="block text-sm tracking-[-.02em]">Corpo & EvoluÃ§Ã£o</strong>
+              <strong className="block text-sm tracking-[-.02em]">Corpo & Evolução</strong>
               <small className="text-[10px] font-medium uppercase tracking-[.15em] text-white/40">Workspace</small>
             </span>
           </Link>

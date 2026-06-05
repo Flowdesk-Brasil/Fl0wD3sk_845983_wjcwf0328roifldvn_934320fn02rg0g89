@@ -42,7 +42,7 @@ export default function MobileAppPage() {
     if (!navigator.share) return;
     try {
       await navigator.share({
-        title: "Corpo & EvoluÃ§Ã£o",
+        title: "Corpo & Evolução",
         text: "Baixe o app de check-in para validar seus acessos",
         url: window.location.origin,
       });
@@ -68,7 +68,7 @@ export default function MobileAppPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
             </svg>
           </div>
-          <h1 className="text-4xl font-bold text-white mb-2">Corpo & EvoluÃ§Ã£o</h1>
+          <h1 className="text-4xl font-bold text-white mb-2">Corpo & Evolução</h1>
           <p className="text-blue-100">App de Check-in</p>
         </div>
 
@@ -133,10 +133,10 @@ export default function MobileAppPage() {
         <div className="bg-white/10 backdrop-blur rounded-2xl p-6 text-white">
           <h3 className="font-bold mb-3 text-lg">Como usar</h3>
           <ol className="space-y-2 text-sm text-blue-100">
-            <li>1. Seu QR code Ã© gerado automaticamente</li>
-            <li>2. Aproxime o celular da cÃ¢mera na recepÃ§Ã£o</li>
-            <li>3. Aguarde a validaÃ§Ã£o (verde = acesso liberado)</li>
-            <li>4. Seu check-in Ã© registrado automaticamente</li>
+            <li>1. Seu QR code é gerado automaticamente</li>
+            <li>2. Aproxime o celular da câmera na recepção</li>
+            <li>3. Aguarde a validação (verde = acesso liberado)</li>
+            <li>4. Seu check-in é registrado automaticamente</li>
           </ol>
         </div>
       </div>
