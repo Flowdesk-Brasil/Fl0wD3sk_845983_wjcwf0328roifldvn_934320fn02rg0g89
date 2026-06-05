@@ -36,6 +36,7 @@ export function QrScanner({
   const [validationResult, setValidationResult] = useState<{ status: 'allowed' | 'denied', name: string, message: string } | null>(null);
   
   // Face Recognition State
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const faceMatcherRef = useRef<faceapi.FaceMatcher | null>(null);
   const [detectedFace, setDetectedFace] = useState<{ id: string; name: string; photo_url: string } | null>(null);
 
@@ -104,10 +105,13 @@ export function QrScanner({
               if (detection) {
                 labeledDescriptors.push(new faceapi.LabeledFaceDescriptors(s.id + "|||" + s.full_name + "|||" + s.photo_url, [detection.descriptor]));
               }
-            } catch (e) {}
+            } catch (e) {
+               console.warn("Could not load face for:", s.full_name, e);
+            }
           }
           if (labeledDescriptors.length > 0 && mounted) {
-            faceMatcherRef.current = new faceapi.FaceMatcher(labeledDescriptors, 0.45);
+            // INCREASED TOLERANCE TO 0.6
+            faceMatcherRef.current = new faceapi.FaceMatcher(labeledDescriptors, 0.6);
           }
         }
       } catch (err) {
@@ -161,6 +165,7 @@ export function QrScanner({
         const detector = new Detector({ formats: ["qr_code"] });
         
         let lastFaceCheck = Date.now();
+        let lastBox: any = null;
 
         const scan = async () => {
           if (!active || !videoRef.current) return;
@@ -168,6 +173,21 @@ export function QrScanner({
             frameRef.current = requestAnimationFrame(scan);
             return;
           }
+          
+          const overlayCanvas = overlayCanvasRef.current;
+          if (!overlayCanvas || !video.videoWidth) {
+            frameRef.current = requestAnimationFrame(scan);
+            return;
+          }
+
+          const overlayCtx = overlayCanvas.getContext("2d");
+          if (!overlayCtx) {
+            frameRef.current = requestAnimationFrame(scan);
+            return;
+          }
+
+          overlayCanvas.width = video.videoWidth;
+          overlayCanvas.height = video.videoHeight;
           
           try {
             // 1. QR Code
@@ -190,23 +210,63 @@ export function QrScanner({
               } else {
                 readingRef.current = false;
               }
+              overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
               frameRef.current = requestAnimationFrame(scan);
               return;
             }
             
-            // 2. Facial Recognition
-            if (faceMatcherRef.current && Date.now() - lastFaceCheck > 400) {
+            // 2. Facial Recognition with Laser
+            overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+            if (Date.now() - lastFaceCheck > 150) {
               lastFaceCheck = Date.now();
               const faceDetection = await faceapi.detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor();
               if (faceDetection) {
-                const bestMatch = faceMatcherRef.current.findBestMatch(faceDetection.descriptor);
-                if (bestMatch.label !== 'unknown' && bestMatch.distance < 0.5) {
-                  const [id, name, photo_url] = bestMatch.label.split("|||");
-                  readingRef.current = true;
-                  setDetectedFace({ id, name, photo_url });
+                lastBox = faceDetection.detection.box;
+                if (faceMatcherRef.current) {
+                  const bestMatch = faceMatcherRef.current.findBestMatch(faceDetection.descriptor);
+                  if (bestMatch.label !== 'unknown' && bestMatch.distance < 0.6) {
+                    const [id, name, photo_url] = bestMatch.label.split("|||");
+                    readingRef.current = true;
+                    setDetectedFace({ id, name, photo_url });
+                    overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+                    return; // Stop scanning until confirmation
+                  }
                 }
+              } else {
+                 lastBox = null;
               }
             }
+            
+            if (lastBox) {
+              const { x, y, width, height } = lastBox;
+              
+              overlayCtx.strokeStyle = "#00ffcc";
+              overlayCtx.lineWidth = 4;
+              overlayCtx.shadowColor = "#00ffcc";
+              overlayCtx.shadowBlur = 15;
+              overlayCtx.strokeRect(x, y, width, height);
+
+              const time = Date.now() / 300;
+              const scanY = y + (Math.sin(time) + 1) / 2 * height;
+              
+              overlayCtx.beginPath();
+              overlayCtx.moveTo(x, scanY);
+              overlayCtx.lineTo(x + width, scanY);
+              overlayCtx.strokeStyle = "rgba(0, 255, 204, 0.9)";
+              overlayCtx.lineWidth = 3;
+              overlayCtx.stroke();
+              
+              const l = 20; 
+              overlayCtx.lineWidth = 6;
+              overlayCtx.beginPath();
+              overlayCtx.moveTo(x, y + l); overlayCtx.lineTo(x, y); overlayCtx.lineTo(x + l, y);
+              overlayCtx.moveTo(x + width - l, y); overlayCtx.lineTo(x + width, y); overlayCtx.lineTo(x + width, y + l);
+              overlayCtx.moveTo(x + width, y + height - l); overlayCtx.lineTo(x + width, y + height); overlayCtx.lineTo(x + width - l, y + height);
+              overlayCtx.moveTo(x + l, y + height); overlayCtx.lineTo(x, y + height); overlayCtx.lineTo(x, y + height - l);
+              overlayCtx.stroke();
+            }
+
           } catch {
             // Transient errors
           }
@@ -268,10 +328,16 @@ export function QrScanner({
     <div className="fixed inset-0 z-[999] bg-black">
       <video 
         ref={videoRef} 
-        className="h-full w-full object-cover" 
+        className="absolute inset-0 h-full w-full object-cover" 
         style={{ transform: "scaleX(-1)" }} 
         muted 
         playsInline 
+      />
+      
+      <canvas 
+        ref={overlayCanvasRef} 
+        className="absolute inset-0 h-full w-full object-cover pointer-events-none" 
+        style={{ transform: "scaleX(-1)" }}
       />
       
       <div className="absolute top-6 right-6 z-10">
@@ -308,7 +374,7 @@ export function QrScanner({
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/80 backdrop-blur-md animate-in fade-in zoom-in duration-300">
           <div className="bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl flex flex-col items-center">
              <div className="w-32 h-32 rounded-full border-4 border-blue-500 overflow-hidden mb-6 shadow-lg bg-slate-100 flex items-center justify-center">
-                {detectedFace.photo_url ? (
+                {detectedFace.photo_url && detectedFace.photo_url !== 'null' ? (
                   <img src={detectedFace.photo_url} alt="Foto Aluno" className="w-full h-full object-cover" />
                 ) : (
                   <UserCheck className="w-12 h-12 text-blue-500" />

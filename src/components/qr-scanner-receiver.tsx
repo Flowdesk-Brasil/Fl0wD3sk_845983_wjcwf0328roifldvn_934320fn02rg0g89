@@ -14,6 +14,7 @@ interface QRScannerReceiverProps {
 export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Face Recognition State
@@ -35,15 +36,19 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
           const labeledDescriptors = [];
           for (const s of students) {
             try {
+              // Attempt to fetch via proxy or direct (Supabase might have CORS on localhost, but we try)
               const img = await faceapi.fetchImage(s.photo_url);
               const detection = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor();
               if (detection) {
                 labeledDescriptors.push(new faceapi.LabeledFaceDescriptors(s.id + "|||" + s.full_name + "|||" + s.photo_url, [detection.descriptor]));
               }
-            } catch (e) {}
+            } catch (e) {
+              console.warn("Could not load face for:", s.full_name, e);
+            }
           }
           if (labeledDescriptors.length > 0 && mounted) {
-            faceMatcherRef.current = new faceapi.FaceMatcher(labeledDescriptors, 0.45);
+            // INCREASED TOLERANCE TO 0.6 (Standard) FOR BETTER MATCHING
+            faceMatcherRef.current = new faceapi.FaceMatcher(labeledDescriptors, 0.6);
           }
         }
       } catch (err) {
@@ -70,6 +75,7 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
         video.play();
 
         let lastFaceCheck = Date.now();
+        let lastBox: any = null;
 
         const scanFrame = async () => {
           if (!active) return;
@@ -79,46 +85,99 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
           }
 
           const canvas = canvasRef.current;
-          if (!canvas || !video.videoWidth) {
+          const overlayCanvas = overlayCanvasRef.current;
+          
+          if (!canvas || !video.videoWidth || !overlayCanvas) {
             animationId = requestAnimationFrame(scanFrame);
             return;
           }
 
-          const ctx = canvas.getContext("2d");
-          if (!ctx) {
+          const ctx = canvas.getContext("2d", { willReadFrequently: true });
+          const overlayCtx = overlayCanvas.getContext("2d");
+          if (!ctx || !overlayCtx) {
             animationId = requestAnimationFrame(scanFrame);
             return;
           }
 
-          // 1. QR Code Scan
           canvas.width = video.videoWidth;
           canvas.height = video.videoHeight;
+          overlayCanvas.width = video.videoWidth;
+          overlayCanvas.height = video.videoHeight;
+          
           ctx.drawImage(video, 0, 0);
 
+          // 1. QR Code Scan
           const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
           const code = jsQR(imageData.data, canvas.width, canvas.height);
 
           if (code?.data) {
             readingRef.current = true;
             onRead(code.data);
-            // It gets re-enabled via the 'disabled' prop change when the parent finishes handling
             return;
           }
 
-          // 2. Facial Recognition Scan
-          if (faceMatcherRef.current && Date.now() - lastFaceCheck > 400) {
+          // 2. Facial Recognition Scan (Draw Laser)
+          overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+          if (Date.now() - lastFaceCheck > 150) {
             lastFaceCheck = Date.now();
             try {
               const faceDetection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor();
               if (faceDetection) {
-                const bestMatch = faceMatcherRef.current.findBestMatch(faceDetection.descriptor);
-                if (bestMatch.label !== 'unknown' && bestMatch.distance < 0.5) {
-                  const [id, name, photo_url] = bestMatch.label.split("|||");
-                  readingRef.current = true;
-                  setDetectedFace({ id, name, photo_url });
+                lastBox = faceDetection.detection.box;
+                if (faceMatcherRef.current) {
+                  const bestMatch = faceMatcherRef.current.findBestMatch(faceDetection.descriptor);
+                  if (bestMatch.label !== 'unknown' && bestMatch.distance < 0.6) {
+                    const [id, name, photo_url] = bestMatch.label.split("|||");
+                    readingRef.current = true;
+                    setDetectedFace({ id, name, photo_url });
+                    overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+                    return;
+                  }
                 }
+              } else {
+                lastBox = null;
               }
             } catch (err) {}
+          }
+
+          // Render Laser Box if face detected recently
+          if (lastBox) {
+            // Mirror coordinates for the overlay because video is scaleX(-1)
+            // But if we overlay canvas on top of video, and canvas is ALSO scaleX(-1), they align perfectly!
+            // We just draw normally.
+            const { x, y, width, height } = lastBox;
+            
+            overlayCtx.strokeStyle = "#00ffcc";
+            overlayCtx.lineWidth = 4;
+            overlayCtx.shadowColor = "#00ffcc";
+            overlayCtx.shadowBlur = 15;
+            overlayCtx.strokeRect(x, y, width, height);
+
+            // Laser line
+            const time = Date.now() / 300;
+            const scanY = y + (Math.sin(time) + 1) / 2 * height;
+            
+            overlayCtx.beginPath();
+            overlayCtx.moveTo(x, scanY);
+            overlayCtx.lineTo(x + width, scanY);
+            overlayCtx.strokeStyle = "rgba(0, 255, 204, 0.9)";
+            overlayCtx.lineWidth = 3;
+            overlayCtx.stroke();
+            
+            // Draw corners
+            const l = 20; // length
+            overlayCtx.lineWidth = 6;
+            overlayCtx.beginPath();
+            // Top left
+            overlayCtx.moveTo(x, y + l); overlayCtx.lineTo(x, y); overlayCtx.lineTo(x + l, y);
+            // Top right
+            overlayCtx.moveTo(x + width - l, y); overlayCtx.lineTo(x + width, y); overlayCtx.lineTo(x + width, y + l);
+            // Bottom right
+            overlayCtx.moveTo(x + width, y + height - l); overlayCtx.lineTo(x + width, y + height); overlayCtx.lineTo(x + width - l, y + height);
+            // Bottom left
+            overlayCtx.moveTo(x + l, y + height); overlayCtx.lineTo(x, y + height); overlayCtx.lineTo(x, y + height - l);
+            overlayCtx.stroke();
           }
 
           animationId = requestAnimationFrame(scanFrame);
@@ -141,7 +200,6 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
     };
   }, [disabled, onRead]);
 
-  // When parent sets disabled=false, we should reset our reading lock
   useEffect(() => {
     if (!disabled) {
       readingRef.current = false;
@@ -164,12 +222,20 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
     <div className="fixed inset-0 bg-black">
       <video
         ref={videoRef}
-        className="h-full w-full object-cover"
+        className="absolute inset-0 h-full w-full object-cover"
         style={{ transform: "scaleX(-1)" }}
         muted
         playsInline
       />
+      {/* Offscreen canvas for QR parsing */}
       <canvas ref={canvasRef} className="hidden" />
+      
+      {/* Onscreen canvas for Laser Drawing */}
+      <canvas 
+        ref={overlayCanvasRef} 
+        className="absolute inset-0 h-full w-full object-cover pointer-events-none" 
+        style={{ transform: "scaleX(-1)" }}
+      />
       
       {error && (
         <div className="absolute inset-0 grid place-items-center bg-black/80">
