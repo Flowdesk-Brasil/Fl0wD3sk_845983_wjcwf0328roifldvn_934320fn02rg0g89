@@ -133,6 +133,7 @@ export default function CheckinReceiverPage() {
             </div>
           )}
         </div>
+        </div>
       )}
 
       <style>{`
