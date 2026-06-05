@@ -84,6 +84,7 @@ export default function PdvPage() {
           setError(`Estoque insuficiente para ${product.name}. Máximo: ${product.current_stock}`);
           return prev;
         }
+        setError(null);
         return prev.map(i => i.id === product.id ? { ...i, cart_quantity: i.cart_quantity + 1 } : i);
       }
       setError(null);
@@ -100,6 +101,7 @@ export default function PdvPage() {
           return i;
         }
         if (newQty < 1) return i;
+        setError(null);
         return { ...i, cart_quantity: newQty };
       }
       return i;
@@ -108,6 +110,7 @@ export default function PdvPage() {
 
   const removeFromCart = (id: string) => {
     setCart(prev => prev.filter(i => i.id !== id));
+    setError(null);
   };
 
   const generatePix = async () => {
@@ -202,8 +205,23 @@ export default function PdvPage() {
           reference_id: sale.id
         });
       }
-
       setSaleCompleted(true);
+      
+      // Notify mobile terminal immediately
+      let channel = supabase.getChannels().find((c: any) => c.topic === `realtime:pos-terminal-channel`);
+      if (channel) {
+        channel.send({ type: "broadcast", event: "SALE_APPROVED", payload: { sale_id: sale.id } });
+      }
+      
+      // Update local products state with new stock values so we don't have stale limits for the next sale
+      setProducts(prev => prev.map(p => {
+        const cartItem = cart.find(c => c.id === p.id);
+        if (cartItem) {
+          return { ...p, current_stock: p.current_stock - cartItem.cart_quantity };
+        }
+        return p;
+      }));
+
       setTimeout(() => {
         setCart([]);
         setCheckoutModalOpen(false);
