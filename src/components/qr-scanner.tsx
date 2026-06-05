@@ -1,6 +1,6 @@
 "use client";
 
-import { Camera, CameraOff, Loader2, ScanLine, X, CheckCircle2, ShieldAlert, UserCheck } from "lucide-react";
+import { Camera, CameraOff, Loader2, ScanLine, X, CheckCircle2, ShieldAlert, UserCheck, Fingerprint } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "@/lib/supabase";
@@ -39,6 +39,8 @@ export function QrScanner({
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const faceMatcherRef = useRef<faceapi.FaceMatcher | null>(null);
   const [detectedFace, setDetectedFace] = useState<{ id: string; name: string; photo_url: string } | null>(null);
+  const [loadingMsg, setLoadingMsg] = useState<string>("Iniciando sistema biométrico...");
+  const [isReady, setIsReady] = useState(false);
 
   const stop = useCallback(() => {
     if (frameRef.current) cancelAnimationFrame(frameRef.current);
@@ -91,31 +93,51 @@ export function QrScanner({
     
     async function loadFaces() {
       try {
-        await faceapi.nets.tinyFaceDetector.loadFromUri('/models');
+        setLoadingMsg("Carregando redes neurais (SSD MobileNet)...");
+        await faceapi.nets.ssdMobilenetv1.loadFromUri('/models');
         await faceapi.nets.faceLandmark68Net.loadFromUri('/models');
         await faceapi.nets.faceRecognitionNet.loadFromUri('/models');
         
+        setLoadingMsg("Sincronizando banco de dados facial...");
         const { data: students } = await supabase.from('students').select('id, full_name, photo_url').not('photo_url', 'is', null);
         if (students && students.length > 0 && mounted) {
           const labeledDescriptors = [];
+          let loadedCount = 0;
           for (const s of students) {
+            if (!mounted) break;
             try {
-              const img = await faceapi.fetchImage(s.photo_url);
-              const detection = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor();
+              setLoadingMsg(`Processando face ${loadedCount + 1}/${students.length}...`);
+              const img = new Image();
+              img.crossOrigin = "anonymous";
+              img.src = s.photo_url;
+              await new Promise((resolve, reject) => {
+                 img.onload = resolve;
+                 img.onerror = reject;
+              });
+
+              const detection = await faceapi.detectSingleFace(img, new faceapi.SsdMobilenetv1Options()).withFaceLandmarks().withFaceDescriptor();
               if (detection) {
                 labeledDescriptors.push(new faceapi.LabeledFaceDescriptors(s.id + "|||" + s.full_name + "|||" + s.photo_url, [detection.descriptor]));
               }
+              loadedCount++;
             } catch (e) {
                console.warn("Could not load face for:", s.full_name, e);
             }
           }
           if (labeledDescriptors.length > 0 && mounted) {
-            // INCREASED TOLERANCE TO 0.6
-            faceMatcherRef.current = new faceapi.FaceMatcher(labeledDescriptors, 0.6);
+            faceMatcherRef.current = new faceapi.FaceMatcher(labeledDescriptors, 0.55);
           }
+        }
+        if (mounted) {
+          setLoadingMsg("Sistema pronto!");
+          setTimeout(() => setIsReady(true), 1000);
         }
       } catch (err) {
         console.error("Face API Error:", err);
+        if (mounted) {
+          setLoadingMsg("Erro ao iniciar biometria. Operando apenas com QR Code.");
+          setTimeout(() => setIsReady(true), 3000);
+        }
       }
     }
     loadFaces();
@@ -166,6 +188,7 @@ export function QrScanner({
         
         let lastFaceCheck = Date.now();
         let lastBox: any = null;
+        let lastMatch: any = null;
 
         const scan = async () => {
           if (!active || !videoRef.current) return;
@@ -215,56 +238,70 @@ export function QrScanner({
               return;
             }
             
-            // 2. Facial Recognition with Laser
+            // 2. Facial Recognition
             overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 
-            if (Date.now() - lastFaceCheck > 150) {
+            if (Date.now() - lastFaceCheck > 200) {
               lastFaceCheck = Date.now();
-              const faceDetection = await faceapi.detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor();
+              const faceDetection = await faceapi.detectSingleFace(videoRef.current, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 })).withFaceLandmarks().withFaceDescriptor();
               if (faceDetection) {
                 lastBox = faceDetection.detection.box;
                 if (faceMatcherRef.current) {
                   const bestMatch = faceMatcherRef.current.findBestMatch(faceDetection.descriptor);
-                  if (bestMatch.label !== 'unknown' && bestMatch.distance < 0.6) {
+                  if (bestMatch.label !== 'unknown' && bestMatch.distance < 0.55) {
+                    lastMatch = bestMatch;
                     const [id, name, photo_url] = bestMatch.label.split("|||");
                     readingRef.current = true;
                     setDetectedFace({ id, name, photo_url });
                     overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-                    return; // Stop scanning until confirmation
+                    return; 
+                  } else {
+                    lastMatch = 'unknown';
                   }
+                } else {
+                  lastMatch = 'unknown';
                 }
               } else {
                  lastBox = null;
+                 lastMatch = null;
               }
             }
             
             if (lastBox) {
               const { x, y, width, height } = lastBox;
+              const isUnknown = lastMatch === 'unknown';
               
-              overlayCtx.strokeStyle = "#00ffcc";
+              const colorPrimary = isUnknown ? "#ff3366" : "#00ffcc";
+              const colorRgba = isUnknown ? "rgba(255, 51, 102, 0.9)" : "rgba(0, 255, 204, 0.9)";
+              
+              overlayCtx.strokeStyle = colorPrimary;
               overlayCtx.lineWidth = 4;
-              overlayCtx.shadowColor = "#00ffcc";
-              overlayCtx.shadowBlur = 15;
+              overlayCtx.shadowColor = colorPrimary;
+              overlayCtx.shadowBlur = 20;
               overlayCtx.strokeRect(x, y, width, height);
 
-              const time = Date.now() / 300;
+              const time = Date.now() / 200;
               const scanY = y + (Math.sin(time) + 1) / 2 * height;
               
               overlayCtx.beginPath();
               overlayCtx.moveTo(x, scanY);
               overlayCtx.lineTo(x + width, scanY);
-              overlayCtx.strokeStyle = "rgba(0, 255, 204, 0.9)";
+              overlayCtx.strokeStyle = colorRgba;
               overlayCtx.lineWidth = 3;
               overlayCtx.stroke();
               
-              const l = 20; 
-              overlayCtx.lineWidth = 6;
+              const l = 30; 
+              overlayCtx.lineWidth = 8;
               overlayCtx.beginPath();
               overlayCtx.moveTo(x, y + l); overlayCtx.lineTo(x, y); overlayCtx.lineTo(x + l, y);
               overlayCtx.moveTo(x + width - l, y); overlayCtx.lineTo(x + width, y); overlayCtx.lineTo(x + width, y + l);
               overlayCtx.moveTo(x + width, y + height - l); overlayCtx.lineTo(x + width, y + height); overlayCtx.lineTo(x + width - l, y + height);
               overlayCtx.moveTo(x + l, y + height); overlayCtx.lineTo(x, y + height); overlayCtx.lineTo(x, y + height - l);
               overlayCtx.stroke();
+
+              overlayCtx.font = "20px monospace";
+              overlayCtx.fillStyle = colorPrimary;
+              overlayCtx.fillText(isUnknown ? "ANALISANDO BIOMETRIA..." : "MATCH ENCONTRADO", x, y - 10);
             }
 
           } catch {
@@ -339,6 +376,16 @@ export function QrScanner({
         className="absolute inset-0 h-full w-full object-cover pointer-events-none" 
         style={{ transform: "scaleX(-1)" }}
       />
+
+      {!isReady && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm z-30">
+          <Fingerprint className="h-24 w-24 text-blue-500 animate-pulse mb-6" />
+          <div className="flex items-center gap-3 bg-white/10 px-6 py-3 rounded-full text-white">
+            <Loader2 className="animate-spin h-5 w-5 text-blue-400" />
+            <span className="font-medium tracking-wide">{loadingMsg}</span>
+          </div>
+        </div>
+      )}
       
       <div className="absolute top-6 right-6 z-10">
         <button 
@@ -351,7 +398,7 @@ export function QrScanner({
       </div>
       
       {starting && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/90">
+        <div className="absolute inset-0 flex items-center justify-center bg-black/90 z-20">
           <div className="text-center text-white">
             <Loader2 className="mx-auto h-14 w-14 animate-spin text-blue-500" />
             <p className="mt-6 text-2xl font-bold tracking-wide">Iniciando câmera...</p>
@@ -360,7 +407,7 @@ export function QrScanner({
       )}
       
       {error && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/95">
+        <div className="absolute inset-0 flex items-center justify-center bg-black/95 z-50">
           <div className="max-w-md p-8 text-center text-white">
             <CameraOff className="mx-auto h-20 w-20 text-red-500 mb-6" />
             <p className="text-xl font-bold tracking-tight mb-4">{error}</p>
@@ -373,19 +420,19 @@ export function QrScanner({
       {detectedFace && !validationResult && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/80 backdrop-blur-md animate-in fade-in zoom-in duration-300">
           <div className="bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl flex flex-col items-center">
-             <div className="w-32 h-32 rounded-full border-4 border-blue-500 overflow-hidden mb-6 shadow-lg bg-slate-100 flex items-center justify-center">
+             <div className="w-40 h-40 rounded-full border-8 border-green-500 overflow-hidden mb-6 shadow-[0_0_30px_rgba(74,222,128,0.5)] bg-slate-100 flex items-center justify-center">
                 {detectedFace.photo_url && detectedFace.photo_url !== 'null' ? (
                   <img src={detectedFace.photo_url} alt="Foto Aluno" className="w-full h-full object-cover" />
                 ) : (
-                  <UserCheck className="w-12 h-12 text-blue-500" />
+                  <UserCheck className="w-16 h-16 text-green-500" />
                 )}
              </div>
-             <h2 className="text-2xl font-black text-slate-900 mb-2">Rosto Identificado</h2>
-             <p className="text-lg text-slate-600 font-semibold mb-8">{detectedFace.name}</p>
+             <h2 className="text-3xl font-black text-slate-900 mb-2">Identificado</h2>
+             <p className="text-xl text-slate-600 font-bold mb-8 uppercase tracking-wide">{detectedFace.name}</p>
              
-             <div className="flex gap-3 w-full">
-                <button onClick={cancelFace} className="flex-1 py-4 rounded-2xl font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition">Cancelar</button>
-                <button onClick={confirmFace} className="flex-1 py-4 rounded-2xl font-bold text-white bg-blue-600 hover:bg-blue-700 transition shadow-md">Confirmar</button>
+             <div className="flex gap-4 w-full">
+                <button onClick={cancelFace} className="flex-1 py-4 rounded-2xl font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition">Não sou eu</button>
+                <button onClick={confirmFace} className="flex-1 py-4 rounded-2xl font-black text-white bg-green-600 hover:bg-green-700 transition shadow-lg text-lg uppercase tracking-wider">Confirmar</button>
              </div>
           </div>
         </div>

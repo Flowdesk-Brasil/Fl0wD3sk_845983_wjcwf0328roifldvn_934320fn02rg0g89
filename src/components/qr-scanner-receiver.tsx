@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import jsQR from "jsqr";
-import { UserCheck } from "lucide-react";
+import { UserCheck, Fingerprint, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import * as faceapi from '@vladmandic/face-api';
 
@@ -21,38 +21,63 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
   const faceMatcherRef = useRef<faceapi.FaceMatcher | null>(null);
   const [detectedFace, setDetectedFace] = useState<{ id: string; name: string; photo_url: string } | null>(null);
   const readingRef = useRef(false);
+  const [loadingMsg, setLoadingMsg] = useState<string>("Iniciando sistema biométrico...");
+  const [isReady, setIsReady] = useState(false);
 
   // Load Models & Students
   useEffect(() => {
     let mounted = true;
     async function loadFaces() {
       try {
-        await faceapi.nets.tinyFaceDetector.loadFromUri('/models');
+        setLoadingMsg("Carregando redes neurais (SSD MobileNet)...");
+        // SSD MobileNet is the most robust model for university/corporate environments
+        await faceapi.nets.ssdMobilenetv1.loadFromUri('/models');
         await faceapi.nets.faceLandmark68Net.loadFromUri('/models');
         await faceapi.nets.faceRecognitionNet.loadFromUri('/models');
         
+        setLoadingMsg("Sincronizando banco de dados facial...");
         const { data: students } = await supabase.from('students').select('id, full_name, photo_url').not('photo_url', 'is', null);
+        
         if (students && students.length > 0 && mounted) {
           const labeledDescriptors = [];
+          let loadedCount = 0;
           for (const s of students) {
+            if (!mounted) break;
             try {
-              // Attempt to fetch via proxy or direct (Supabase might have CORS on localhost, but we try)
-              const img = await faceapi.fetchImage(s.photo_url);
-              const detection = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor();
+              setLoadingMsg(`Processando face ${loadedCount + 1}/${students.length}...`);
+              // To avoid CORS blocks with standard fetchImage, we use HTML image with crossOrigin
+              const img = new Image();
+              img.crossOrigin = "anonymous";
+              img.src = s.photo_url;
+              await new Promise((resolve, reject) => {
+                 img.onload = resolve;
+                 img.onerror = reject;
+              });
+
+              const detection = await faceapi.detectSingleFace(img, new faceapi.SsdMobilenetv1Options()).withFaceLandmarks().withFaceDescriptor();
               if (detection) {
                 labeledDescriptors.push(new faceapi.LabeledFaceDescriptors(s.id + "|||" + s.full_name + "|||" + s.photo_url, [detection.descriptor]));
               }
+              loadedCount++;
             } catch (e) {
-              console.warn("Could not load face for:", s.full_name, e);
+              console.warn("Could not process face for:", s.full_name, e);
             }
           }
           if (labeledDescriptors.length > 0 && mounted) {
-            // INCREASED TOLERANCE TO 0.6 (Standard) FOR BETTER MATCHING
-            faceMatcherRef.current = new faceapi.FaceMatcher(labeledDescriptors, 0.6);
+            // Tolerance 0.55 is highly optimized for SSD
+            faceMatcherRef.current = new faceapi.FaceMatcher(labeledDescriptors, 0.55);
           }
+        }
+        if (mounted) {
+          setLoadingMsg("Sistema pronto!");
+          setTimeout(() => setIsReady(true), 1000);
         }
       } catch (err) {
         console.error("Face API Error:", err);
+        if (mounted) {
+          setLoadingMsg("Erro ao iniciar biometria. Operando apenas com QR Code.");
+          setTimeout(() => setIsReady(true), 3000);
+        }
       }
     }
     loadFaces();
@@ -76,6 +101,7 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
 
         let lastFaceCheck = Date.now();
         let lastBox: any = null;
+        let lastMatch: any = null;
 
         const scanFrame = async () => {
           if (!active) return;
@@ -119,65 +145,76 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
           // 2. Facial Recognition Scan (Draw Laser)
           overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 
-          if (Date.now() - lastFaceCheck > 150) {
+          if (Date.now() - lastFaceCheck > 200) {
             lastFaceCheck = Date.now();
             try {
-              const faceDetection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor();
+              // SSD MobileNet is heavier but much more accurate
+              const faceDetection = await faceapi.detectSingleFace(video, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 })).withFaceLandmarks().withFaceDescriptor();
               if (faceDetection) {
                 lastBox = faceDetection.detection.box;
                 if (faceMatcherRef.current) {
                   const bestMatch = faceMatcherRef.current.findBestMatch(faceDetection.descriptor);
-                  if (bestMatch.label !== 'unknown' && bestMatch.distance < 0.6) {
+                  if (bestMatch.label !== 'unknown' && bestMatch.distance < 0.55) {
+                    lastMatch = bestMatch;
                     const [id, name, photo_url] = bestMatch.label.split("|||");
                     readingRef.current = true;
                     setDetectedFace({ id, name, photo_url });
                     overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
                     return;
+                  } else {
+                    lastMatch = 'unknown'; // Face found but not recognized
                   }
+                } else {
+                  lastMatch = 'unknown'; // Database empty
                 }
               } else {
                 lastBox = null;
+                lastMatch = null;
               }
             } catch (err) {}
           }
 
-          // Render Laser Box if face detected recently
+          // Render Advanced Laser Box
           if (lastBox) {
-            // Mirror coordinates for the overlay because video is scaleX(-1)
-            // But if we overlay canvas on top of video, and canvas is ALSO scaleX(-1), they align perfectly!
-            // We just draw normally.
             const { x, y, width, height } = lastBox;
+            const isUnknown = lastMatch === 'unknown';
             
-            overlayCtx.strokeStyle = "#00ffcc";
+            // Red for unknown/analyzing, Green for Match (actually green means it's about to trigger)
+            // We use Red/Orange for scanning to indicate it's actively reading
+            const colorPrimary = isUnknown ? "#ff3366" : "#00ffcc";
+            const colorRgba = isUnknown ? "rgba(255, 51, 102, 0.9)" : "rgba(0, 255, 204, 0.9)";
+            
+            overlayCtx.strokeStyle = colorPrimary;
             overlayCtx.lineWidth = 4;
-            overlayCtx.shadowColor = "#00ffcc";
-            overlayCtx.shadowBlur = 15;
+            overlayCtx.shadowColor = colorPrimary;
+            overlayCtx.shadowBlur = 20;
             overlayCtx.strokeRect(x, y, width, height);
 
             // Laser line
-            const time = Date.now() / 300;
+            const time = Date.now() / 200;
             const scanY = y + (Math.sin(time) + 1) / 2 * height;
             
             overlayCtx.beginPath();
             overlayCtx.moveTo(x, scanY);
             overlayCtx.lineTo(x + width, scanY);
-            overlayCtx.strokeStyle = "rgba(0, 255, 204, 0.9)";
+            overlayCtx.strokeStyle = colorRgba;
             overlayCtx.lineWidth = 3;
             overlayCtx.stroke();
             
             // Draw corners
-            const l = 20; // length
-            overlayCtx.lineWidth = 6;
+            const l = 30; 
+            overlayCtx.lineWidth = 8;
             overlayCtx.beginPath();
-            // Top left
             overlayCtx.moveTo(x, y + l); overlayCtx.lineTo(x, y); overlayCtx.lineTo(x + l, y);
-            // Top right
             overlayCtx.moveTo(x + width - l, y); overlayCtx.lineTo(x + width, y); overlayCtx.lineTo(x + width, y + l);
-            // Bottom right
             overlayCtx.moveTo(x + width, y + height - l); overlayCtx.lineTo(x + width, y + height); overlayCtx.lineTo(x + width - l, y + height);
-            // Bottom left
             overlayCtx.moveTo(x + l, y + height); overlayCtx.lineTo(x, y + height); overlayCtx.lineTo(x, y + height - l);
             overlayCtx.stroke();
+            
+            // Write HUD Text
+            overlayCtx.font = "20px monospace";
+            overlayCtx.fillStyle = colorPrimary;
+            overlayCtx.fillText(isUnknown ? "ANALISANDO BIOMETRIA..." : "MATCH ENCONTRADO", x, y - 10);
           }
 
           animationId = requestAnimationFrame(scanFrame);
@@ -227,18 +264,26 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
         muted
         playsInline
       />
-      {/* Offscreen canvas for QR parsing */}
       <canvas ref={canvasRef} className="hidden" />
       
-      {/* Onscreen canvas for Laser Drawing */}
       <canvas 
         ref={overlayCanvasRef} 
         className="absolute inset-0 h-full w-full object-cover pointer-events-none" 
         style={{ transform: "scaleX(-1)" }}
       />
       
+      {!isReady && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm z-30">
+          <Fingerprint className="h-24 w-24 text-blue-500 animate-pulse mb-6" />
+          <div className="flex items-center gap-3 bg-white/10 px-6 py-3 rounded-full text-white">
+            <Loader2 className="animate-spin h-5 w-5 text-blue-400" />
+            <span className="font-medium tracking-wide">{loadingMsg}</span>
+          </div>
+        </div>
+      )}
+
       {error && (
-        <div className="absolute inset-0 grid place-items-center bg-black/80">
+        <div className="absolute inset-0 grid place-items-center bg-black/80 z-50">
           <div className="max-w-md rounded-2xl bg-red-900/20 p-8 text-center backdrop-blur">
             <p className="text-lg font-semibold text-red-300">{error}</p>
             <button
@@ -255,19 +300,19 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
       {detectedFace && !disabled && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/80 backdrop-blur-md animate-in fade-in zoom-in duration-300">
           <div className="bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl flex flex-col items-center">
-             <div className="w-32 h-32 rounded-full border-4 border-blue-500 overflow-hidden mb-6 shadow-lg bg-slate-100 flex items-center justify-center">
+             <div className="w-40 h-40 rounded-full border-8 border-green-500 overflow-hidden mb-6 shadow-[0_0_30px_rgba(74,222,128,0.5)] bg-slate-100 flex items-center justify-center">
                 {detectedFace.photo_url && detectedFace.photo_url !== 'null' ? (
                   <img src={detectedFace.photo_url} alt="Foto Aluno" className="w-full h-full object-cover" />
                 ) : (
-                  <UserCheck className="w-12 h-12 text-blue-500" />
+                  <UserCheck className="w-16 h-16 text-green-500" />
                 )}
              </div>
-             <h2 className="text-2xl font-black text-slate-900 mb-2">Rosto Identificado</h2>
-             <p className="text-lg text-slate-600 font-semibold mb-8">{detectedFace.name}</p>
+             <h2 className="text-3xl font-black text-slate-900 mb-2">Identificado</h2>
+             <p className="text-xl text-slate-600 font-bold mb-8 uppercase tracking-wide">{detectedFace.name}</p>
              
-             <div className="flex gap-3 w-full">
-                <button onClick={cancelFace} className="flex-1 py-4 rounded-2xl font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition">Cancelar</button>
-                <button onClick={confirmFace} className="flex-1 py-4 rounded-2xl font-bold text-white bg-blue-600 hover:bg-blue-700 transition shadow-md">Confirmar</button>
+             <div className="flex gap-4 w-full">
+                <button onClick={cancelFace} className="flex-1 py-4 rounded-2xl font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition">Não sou eu</button>
+                <button onClick={confirmFace} className="flex-1 py-4 rounded-2xl font-black text-white bg-green-600 hover:bg-green-700 transition shadow-lg text-lg uppercase tracking-wider">Confirmar</button>
              </div>
           </div>
         </div>
