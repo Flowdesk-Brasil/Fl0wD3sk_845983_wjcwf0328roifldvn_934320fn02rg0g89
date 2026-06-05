@@ -1,10 +1,10 @@
 "use client";
 
-import { Camera, CameraOff, Loader2, ScanLine, X, CheckCircle2, ShieldAlert } from "lucide-react";
+import { Camera, CameraOff, Loader2, ScanLine, X, CheckCircle2, ShieldAlert, UserCheck } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ErrorBanner } from "@/components/ui";
 import { supabase } from "@/lib/supabase";
+import * as faceapi from '@vladmandic/face-api';
 
 function getGreeting() {
   const hour = new Date().getHours();
@@ -34,6 +34,10 @@ export function QrScanner({
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [validationResult, setValidationResult] = useState<{ status: 'allowed' | 'denied', name: string, message: string } | null>(null);
+  
+  // Face Recognition State
+  const faceMatcherRef = useRef<faceapi.FaceMatcher | null>(null);
+  const [detectedFace, setDetectedFace] = useState<{ id: string; name: string; photo_url: string } | null>(null);
 
   const stop = useCallback(() => {
     if (frameRef.current) cancelAnimationFrame(frameRef.current);
@@ -48,6 +52,7 @@ export function QrScanner({
     stop();
     setOpen(false);
     setStarting(false);
+    setDetectedFace(null);
   }, [stop]);
 
   const openRef = useRef(open);
@@ -78,6 +83,41 @@ export function QrScanner({
     return () => { supabase.removeChannel(channel); };
   }, [close]);
 
+  // Load Face Models & Students
+  useEffect(() => {
+    if (!open) return;
+    let mounted = true;
+    
+    async function loadFaces() {
+      try {
+        await faceapi.nets.tinyFaceDetector.loadFromUri('/models');
+        await faceapi.nets.faceLandmark68Net.loadFromUri('/models');
+        await faceapi.nets.faceRecognitionNet.loadFromUri('/models');
+        
+        const { data: students } = await supabase.from('students').select('id, full_name, photo_url').not('photo_url', 'is', null);
+        if (students && students.length > 0 && mounted) {
+          const labeledDescriptors = [];
+          for (const s of students) {
+            try {
+              const img = await faceapi.fetchImage(s.photo_url);
+              const detection = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor();
+              if (detection) {
+                labeledDescriptors.push(new faceapi.LabeledFaceDescriptors(s.id + "|||" + s.full_name + "|||" + s.photo_url, [detection.descriptor]));
+              }
+            } catch (e) {}
+          }
+          if (labeledDescriptors.length > 0 && mounted) {
+            faceMatcherRef.current = new faceapi.FaceMatcher(labeledDescriptors, 0.45);
+          }
+        }
+      } catch (err) {
+        console.error("Face API Error:", err);
+      }
+    }
+    loadFaces();
+    return () => { mounted = false; };
+  }, [open]);
+
   useEffect(() => () => stop(), [stop]);
 
   useEffect(() => {
@@ -104,7 +144,7 @@ export function QrScanner({
             width: { ideal: 1280 },
             height: { ideal: 720 },
             frameRate: { ideal: 60, min: 30 },
-            // @ts-ignore - Propriedades avançadas não tipadas em todos os navegadores, mas que aceleram o foco se disponíveis
+            // @ts-ignore
             advanced: [{ focusMode: "continuous" }]
           },
         });
@@ -119,16 +159,23 @@ export function QrScanner({
         video.srcObject = stream;
         await video.play();
         const detector = new Detector({ formats: ["qr_code"] });
+        
+        let lastFaceCheck = Date.now();
 
         const scan = async () => {
-          if (!active || !videoRef.current || readingRef.current) return;
+          if (!active || !videoRef.current) return;
+          if (readingRef.current) {
+            frameRef.current = requestAnimationFrame(scan);
+            return;
+          }
+          
           try {
+            // 1. QR Code
             const results = await detector.detect(videoRef.current);
             const value = results[0]?.rawValue?.trim();
             if (value) {
               readingRef.current = true;
               const res = await onRead(value);
-              
               if (res) {
                 const isAllowed = res.status === "allowed";
                 setValidationResult({
@@ -136,22 +183,32 @@ export function QrScanner({
                   name: res.student?.full_name?.split(" ")[0] || "Aluno",
                   message: res.duplicate ? "Check-in já realizado" : res.reason || (isAllowed ? "Acesso liberado" : "Acesso negado")
                 });
-                
                 setTimeout(() => {
                   setValidationResult(null);
                   readingRef.current = false;
-                  if (active && videoRef.current) {
-                    frameRef.current = requestAnimationFrame(scan);
-                  }
                 }, 3000);
               } else {
                 readingRef.current = false;
-                frameRef.current = requestAnimationFrame(scan);
               }
+              frameRef.current = requestAnimationFrame(scan);
               return;
             }
+            
+            // 2. Facial Recognition
+            if (faceMatcherRef.current && Date.now() - lastFaceCheck > 400) {
+              lastFaceCheck = Date.now();
+              const faceDetection = await faceapi.detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor();
+              if (faceDetection) {
+                const bestMatch = faceMatcherRef.current.findBestMatch(faceDetection.descriptor);
+                if (bestMatch.label !== 'unknown' && bestMatch.distance < 0.5) {
+                  const [id, name, photo_url] = bestMatch.label.split("|||");
+                  readingRef.current = true;
+                  setDetectedFace({ id, name, photo_url });
+                }
+              }
+            }
           } catch {
-            // A próxima imagem costuma resolver falhas transitórias do detector.
+            // Transient errors
           }
           frameRef.current = requestAnimationFrame(scan);
         };
@@ -173,6 +230,31 @@ export function QrScanner({
       stop();
     };
   }, [close, onRead, open, stop]);
+
+  const confirmFace = async () => {
+    if (!detectedFace) return;
+    const res = await onRead(detectedFace.id);
+    setDetectedFace(null);
+    if (res) {
+      const isAllowed = res.status === "allowed";
+      setValidationResult({
+        status: isAllowed ? 'allowed' : 'denied',
+        name: res.student?.full_name?.split(" ")[0] || "Aluno",
+        message: res.duplicate ? "Check-in já realizado" : res.reason || (isAllowed ? "Acesso liberado" : "Acesso negado")
+      });
+      setTimeout(() => {
+        setValidationResult(null);
+        readingRef.current = false;
+      }, 3000);
+    } else {
+      readingRef.current = false;
+    }
+  };
+
+  const cancelFace = () => {
+    setDetectedFace(null);
+    readingRef.current = false;
+  };
 
   if (!open) {
     return (
@@ -221,20 +303,25 @@ export function QrScanner({
         </div>
       )}
 
-      {!error && !starting && !validationResult && (
-        <div className="absolute inset-0 pointer-events-none flex flex-col">
-           <div className="flex-1 bg-black/40 transition-colors" />
-           <div className="flex">
-             <div className="w-12 bg-black/40 sm:w-32" />
-             <div className="relative aspect-square flex-1 border-2 border-dashed border-white/60 rounded-3xl" />
-             <div className="w-12 bg-black/40 sm:w-32" />
-           </div>
-           <div className="flex-1 bg-black/40 flex items-center justify-center pb-10">
-             <div className="bg-black/60 px-6 py-3 rounded-full backdrop-blur flex items-center gap-2">
-                <ScanLine className="h-5 w-5 text-blue-400" />
-                <p className="text-sm text-white font-bold tracking-wider uppercase">Validação Automática</p>
+      {/* Rosto Detectado Modal */}
+      {detectedFace && !validationResult && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/80 backdrop-blur-md animate-in fade-in zoom-in duration-300">
+          <div className="bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl flex flex-col items-center">
+             <div className="w-32 h-32 rounded-full border-4 border-blue-500 overflow-hidden mb-6 shadow-lg bg-slate-100 flex items-center justify-center">
+                {detectedFace.photo_url ? (
+                  <img src={detectedFace.photo_url} alt="Foto Aluno" className="w-full h-full object-cover" />
+                ) : (
+                  <UserCheck className="w-12 h-12 text-blue-500" />
+                )}
              </div>
-           </div>
+             <h2 className="text-2xl font-black text-slate-900 mb-2">Rosto Identificado</h2>
+             <p className="text-lg text-slate-600 font-semibold mb-8">{detectedFace.name}</p>
+             
+             <div className="flex gap-3 w-full">
+                <button onClick={cancelFace} className="flex-1 py-4 rounded-2xl font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition">Cancelar</button>
+                <button onClick={confirmFace} className="flex-1 py-4 rounded-2xl font-bold text-white bg-blue-600 hover:bg-blue-700 transition shadow-md">Confirmar</button>
+             </div>
+          </div>
         </div>
       )}
 
