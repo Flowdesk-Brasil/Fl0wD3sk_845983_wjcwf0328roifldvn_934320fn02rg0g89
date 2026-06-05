@@ -310,7 +310,11 @@ export async function processCheckin(code: string): Promise<Checkin & { student?
       },
       body: JSON.stringify({ code: code.trim(), unit: "Matriz" }),
     });
-    if (response.ok) return await response.json() as Checkin & { student?: Student | null; duplicate?: boolean };
+    if (response.ok) {
+      const checkin = await response.json() as Checkin & { student?: Student | null; duplicate?: boolean };
+      notifyCheckinCreated(checkin);
+      return checkin;
+    }
   }
   const students = await getStudents();
   const student = students.find((item) => item.qr_code === code.trim() || item.id === code.trim());
@@ -349,7 +353,14 @@ export async function processCheckin(code: string): Promise<Checkin & { student?
     unit: "Matriz",
     checked_at: new Date().toISOString(),
   });
-  return { ...row, student };
+  const checkin = { ...row, student };
+  notifyCheckinCreated(checkin);
+  return checkin;
+}
+
+function notifyCheckinCreated(checkin: Checkin & { student?: Student | null; duplicate?: boolean }) {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent("checkin:created", { detail: checkin }));
 }
 
 export async function getContracts(): Promise<Contract[]> {
@@ -812,5 +823,4 @@ export async function deleteSupplier(id: string) {
   if (error) throw new Error(error.message);
   return true;
 }
-
 

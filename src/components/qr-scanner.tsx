@@ -65,6 +65,14 @@ export function QrScanner({
   useEffect(() => { openRef.current = open; }, [open]);
   const interruptedRef = useRef(false);
 
+  // Auto-abrir após reload se solicitado
+  useEffect(() => {
+    if (sessionStorage.getItem("autoOpenScanner") === "true") {
+      sessionStorage.removeItem("autoOpenScanner");
+      setOpen(true);
+    }
+  }, []);
+
   useEffect(() => {
     const channel = supabase.channel("face-scan-qr-interrupt", { config: { broadcast: { self: true } } })
       .on("broadcast", { event: "START_SCAN" }, () => {
@@ -87,8 +95,9 @@ export function QrScanner({
       })
       .on("broadcast", { event: "REBOOT_CAMERA" }, () => {
         if (openRef.current) {
-          window.location.reload();
+          sessionStorage.setItem("autoOpenScanner", "true");
         }
+        window.location.reload();
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
