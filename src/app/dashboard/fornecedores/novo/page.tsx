@@ -34,7 +34,26 @@ export default function NovoFornecedorPage() {
     setError(null);
 
     try {
-      await createSupplier(formData);
+      const addressParts = [
+        formData.street,
+        formData.number,
+        formData.complement,
+        formData.neighborhood,
+        formData.city,
+        formData.state ? `- ${formData.state}` : "",
+        formData.zip_code ? `CEP: ${formData.zip_code}` : ""
+      ].filter(Boolean).join(", ");
+
+      const payload = {
+        corporate_name: formData.corporate_name,
+        trade_name: formData.trade_name,
+        cnpj: formData.cnpj,
+        email: formData.email,
+        phone: formData.phone,
+        address: addressParts || null
+      };
+
+      await createSupplier(payload);
       router.push("/dashboard/fornecedores");
     } catch (err) {
       console.error(err);

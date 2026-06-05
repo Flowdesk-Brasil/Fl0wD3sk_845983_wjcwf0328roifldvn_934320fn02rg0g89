@@ -178,39 +178,39 @@ export default function PdvPage() {
   if (loading) return <div className="p-8 text-center text-slate-500">Iniciando Caixa...</div>;
 
   return (
-    <div className="flex flex-col lg:flex-row h-[calc(100vh-64px)] -m-4 md:-m-6 lg:-m-8 bg-slate-100 overflow-hidden">
+    <div className="flex flex-col lg:flex-row h-full w-full bg-slate-100 overflow-hidden">
       
       {/* Lado Esquerdo - Scanner e Busca */}
       <div className="flex-1 flex flex-col p-4 md:p-8 min-w-0 bg-slate-50 border-r border-slate-200">
         
-        <header className="mb-8 flex items-center justify-between">
+        <header className="mb-6 flex items-center justify-between">
           <div>
-            <h1 className="text-4xl font-black tracking-tight text-slate-900">Caixa Aberto</h1>
-            <p className="text-slate-500 font-medium mt-1">Ponto de Venda • Operador Padrão</p>
+            <h1 className="text-2xl font-black tracking-tight text-slate-900">Caixa Aberto</h1>
+            <p className="text-sm text-slate-500 font-medium mt-1">Ponto de Venda • Operador Padrão</p>
           </div>
-          <div className="bg-emerald-100 text-emerald-700 px-4 py-2 rounded-full font-bold flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+          <div className="bg-emerald-50 text-emerald-600 text-xs px-3 py-1.5 rounded-md font-bold flex items-center gap-2 border border-emerald-100">
+            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
             Online
           </div>
         </header>
 
-        {/* Input de Scanner Gigante */}
-        <div className="relative mb-8 shadow-xl shadow-blue-900/5 rounded-3xl">
-          <div className="absolute inset-y-0 left-0 pl-6 flex items-center pointer-events-none">
-            <ScanLine className="h-8 w-8 text-blue-500" />
+        {/* Input de Scanner Elegante */}
+        <div className="relative mb-6 shadow-sm">
+          <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+            <ScanLine className="h-5 w-5 text-blue-500" />
           </div>
           <input
             ref={searchInputRef}
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="block w-full pl-20 pr-6 py-6 border-0 rounded-3xl text-3xl font-bold bg-white placeholder-slate-300 focus:outline-none focus:ring-4 focus:ring-blue-500/20 transition text-slate-900"
-            placeholder="Bipe ou digite o código..."
+            className="block w-full pl-12 pr-12 py-4 border border-slate-200 rounded-xl text-lg font-semibold bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition text-slate-900 shadow-sm"
+            placeholder="Bipe ou digite o código do produto..."
             autoFocus
           />
           {search && (
-            <button onClick={() => setSearch("")} className="absolute inset-y-0 right-0 pr-6 flex items-center text-slate-400 hover:text-slate-600">
-              <span className="bg-slate-100 text-xs font-bold px-2 py-1 rounded">ESC</span>
+            <button onClick={() => setSearch("")} className="absolute inset-y-0 right-0 pr-4 flex items-center text-slate-400 hover:text-slate-600">
+              <span className="bg-slate-100 text-[10px] font-bold px-2 py-0.5 rounded text-slate-500">ESC</span>
             </button>
           )}
         </div>
@@ -219,23 +219,23 @@ export default function PdvPage() {
 
         {/* Exibição do Produto Atual (Supermercado style) */}
         {lastScanned && !search && cart.length > 0 && (
-          <div className="card p-8 bg-blue-600 text-white border-0 shadow-2xl shadow-blue-900/20 flex items-center gap-8 mb-8 animate-in slide-in-from-bottom-4">
-            <div className="w-40 h-40 rounded-2xl bg-white p-2 shrink-0">
+          <div className="card p-6 bg-blue-600 text-white border-0 shadow-lg shadow-blue-900/10 flex items-center gap-6 mb-6 animate-in slide-in-from-bottom-4">
+            <div className="w-24 h-24 rounded-xl bg-white p-1.5 shrink-0 shadow-sm">
               {lastScanned.photo_url ? (
-                <img src={lastScanned.photo_url} className="w-full h-full object-cover rounded-xl" />
+                <img src={lastScanned.photo_url} className="w-full h-full object-cover rounded-lg" />
               ) : (
-                <div className="w-full h-full bg-slate-100 rounded-xl flex items-center justify-center">
-                  <Package className="w-16 h-16 text-slate-300" />
+                <div className="w-full h-full bg-slate-50 rounded-lg flex items-center justify-center">
+                  <Package className="w-8 h-8 text-slate-300" />
                 </div>
               )}
             </div>
-            <div className="flex-1">
-              <h2 className="text-4xl font-black leading-tight mb-2">{lastScanned.name}</h2>
-              <p className="text-blue-200 font-mono text-xl mb-6">{lastScanned.barcode || lastScanned.sku}</p>
+            <div className="flex-1 min-w-0">
+              <h2 className="text-2xl font-black truncate mb-1">{lastScanned.name}</h2>
+              <p className="text-blue-200 font-mono text-sm mb-3">{lastScanned.barcode || lastScanned.sku}</p>
               <div className="flex items-end justify-between">
                 <div>
-                  <div className="text-blue-200 text-sm font-bold uppercase tracking-wider mb-1">Valor Unitário</div>
-                  <div className="text-5xl font-black">{formatCurrency(lastScanned.selling_price)}</div>
+                  <div className="text-blue-200 text-xs font-bold uppercase tracking-wider mb-0.5">Valor Unitário</div>
+                  <div className="text-3xl font-black">{formatCurrency(lastScanned.selling_price)}</div>
                 </div>
               </div>
             </div>

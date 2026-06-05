@@ -90,7 +90,7 @@ export default function FornecedoresPage() {
                     </td>
                     <td className="hide-mobile">
                       <span className="text-xs text-slate-600 font-medium">
-                        {s.city ? `${s.city} - ${s.state}` : "Não informado"}
+                        {s.address ? s.address : "Não informado"}
                       </span>
                     </td>
                     <td>

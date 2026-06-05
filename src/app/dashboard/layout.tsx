@@ -222,9 +222,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
-          <div className="mx-auto grid max-w-[1440px] gap-4">
-
+        <main className={cn("flex-1 overflow-y-auto", segment !== "pdv" && "p-4 sm:p-6 lg:p-8")}>
+          <div className={cn("mx-auto", segment !== "pdv" && "grid max-w-[1440px] gap-4", segment === "pdv" && "h-full w-full")}>
             {children}
           </div>
         </main>
