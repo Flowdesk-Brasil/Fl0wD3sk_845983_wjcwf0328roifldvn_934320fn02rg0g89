@@ -6,6 +6,7 @@ const PREFIX = "corpoevolucao_v2_";
 const VERSION_KEY = `${PREFIX}ready`;
 const CREATED_AT_TABLES = new Set<TableName>([
   "profiles", "students", "plans", "enrollments", "contracts", "payments", "notifications", "audit_logs", "class_types", "class_sessions", "class_bookings",
+  "suppliers", "products", "receivings", "receiving_items", "inventory_transactions", "sales", "sale_items"
 ]);
 const now = () => new Date().toISOString();
 const today = () => now().slice(0, 10);
