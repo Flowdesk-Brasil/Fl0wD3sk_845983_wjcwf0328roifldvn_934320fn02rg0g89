@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { ArrowLeft, CalendarDays, Clock3, MapPin, Save, UserRound, Users, Camera } from "lucide-react";
 import Link from "next/link";
@@ -196,6 +196,13 @@ export default function NovoAlunoPage() {
           });
           const photo_url = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/student-photos/${student.id}.jpg?t=${Date.now()}`;
           await supabase.from("students").update({ photo_url }).eq("id", student.id);
+          
+          // REALTIME: Avisa a catraca que tem rosto novo pra sincronizar
+          supabase.channel("students-sync", { config: { broadcast: { self: false } } }).send({
+            type: "broadcast",
+            event: "STUDENT_FACE_UPDATED",
+            payload: { id: student.id, full_name: form.full_name, photo_url }
+          });
         } catch (e) {
           console.error("Failed to upload photo", e);
         }

@@ -156,31 +156,20 @@ export function QrScanner({
     return () => { mounted = false; };
   }, [open]);
 
-  // REALTIME: Sincroniza novos alunos automaticamente (sem reabrir o site)
+  // REALTIME: Sincroniza novos alunos automaticamente via broadcast (sem reabrir o site)
   useEffect(() => {
     if (!open) return;
     
-    const channel = supabase.channel('students-face-realtime-scanner')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'students' } as any, async (payload: any) => {
+    const channel = supabase.channel('students-sync', { config: { broadcast: { self: true } } })
+      .on('broadcast', { event: 'STUDENT_FACE_UPDATED' }, async ({ payload }: any) => {
         if (!modelsLoadedRef.current) return;
-
-        if (payload.eventType === 'DELETE') {
-          const deletedId = payload.old?.id;
-          if (deletedId) {
-            const updated = labeledDescriptorsRef.current.filter(d => !d.label.startsWith(deletedId + "|||"));
-            labeledDescriptorsRef.current = updated;
-            faceMatcherRef.current = updated.length > 0 ? new faceapi.FaceMatcher(updated, 0.55) : null;
-          }
-          return;
-        }
-
-        const student = payload.new;
-        if (!student?.photo_url || !student?.id || !student?.full_name) return;
+        const { id, full_name, photo_url } = payload;
+        if (!photo_url || !id || !full_name) return;
         
         try {
           const img = new Image();
           img.crossOrigin = "anonymous";
-          img.src = student.photo_url;
+          img.src = photo_url;
           await new Promise((resolve, reject) => {
             img.onload = resolve;
             img.onerror = reject;
@@ -189,16 +178,24 @@ export function QrScanner({
           const detection = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 })).withFaceLandmarks().withFaceDescriptor();
           
           if (detection) {
-            const label = student.id + "|||" + student.full_name + "|||" + student.photo_url;
-            const updated = labeledDescriptorsRef.current.filter(d => !d.label.startsWith(student.id + "|||"));
+            const label = id + "|||" + full_name + "|||" + photo_url;
+            const updated = labeledDescriptorsRef.current.filter(d => !d.label.startsWith(id + "|||"));
             updated.push(new faceapi.LabeledFaceDescriptors(label, [detection.descriptor]));
             labeledDescriptorsRef.current = updated;
             faceMatcherRef.current = new faceapi.FaceMatcher(updated, 0.55);
-            console.log(`[CATRACA REALTIME] Novo rosto sincronizado: ${student.full_name}`);
+            console.log(`[CATRACA REALTIME] Novo rosto sincronizado: ${full_name}`);
           }
         } catch (e) {
           console.warn("[CATRACA REALTIME] Erro ao processar rosto:", e);
         }
+      })
+      .on('broadcast', { event: 'STUDENT_FACE_REMOVED' }, ({ payload }: any) => {
+        const { id } = payload;
+        if (!id) return;
+        const updated = labeledDescriptorsRef.current.filter(d => !d.label.startsWith(id + "|||"));
+        labeledDescriptorsRef.current = updated;
+        faceMatcherRef.current = updated.length > 0 ? new faceapi.FaceMatcher(updated, 0.55) : null;
+        console.log(`[CATRACA REALTIME] Rosto removido: ${id}`);
       })
       .subscribe();
     
