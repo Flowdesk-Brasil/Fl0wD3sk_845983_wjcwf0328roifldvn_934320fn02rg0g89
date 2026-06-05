@@ -1,0 +1,1 @@
+ALTER TABLE public.sales ADD COLUMN pix_code text; ALTER TABLE public.sales ADD COLUMN pix_qr_base64 text;
