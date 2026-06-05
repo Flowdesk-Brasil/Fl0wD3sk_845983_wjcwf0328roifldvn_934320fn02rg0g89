@@ -22,6 +22,7 @@ export default function MatriculasPage() {
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState<"all" | EnrollmentStatus>("all");
 
   async function load() {
     const [nextEnrollments, nextStudents, nextPlans] = await Promise.all([getEnrollments(), getStudents(), getPlans()]);
@@ -35,8 +36,12 @@ export default function MatriculasPage() {
 
   const filtered = useMemo(() => {
     const query = search.toLowerCase();
-    return enrollments.filter((item) => !query || item.matricula_number.toLowerCase().includes(query) || item.student?.full_name.toLowerCase().includes(query));
-  }, [enrollments, search]);
+    return enrollments.filter((item) => {
+      const matchSearch = !query || item.matricula_number.toLowerCase().includes(query) || item.student?.full_name.toLowerCase().includes(query);
+      const matchStatus = statusFilter === "all" ? item.status !== "cancelled" : item.status === statusFilter;
+      return matchSearch && matchStatus;
+    });
+  }, [enrollments, search, statusFilter]);
 
   function openEdit(item: Enrollment) {
     setEditId(item.id);
@@ -93,7 +98,20 @@ export default function MatriculasPage() {
     <div className="page-stack">
       <PageHeader eyebrow="Ciclo comercial" title="Matrículas" description="Vincule alunos aos planos e acompanhe a vigência dos contratos." action={<button className="btn btn-primary" onClick={openCreate}><Plus className="h-4 w-4" /> Nova matrícula</button>} />
       <section className="card">
-        <div className="table-toolbar"><SearchInput value={search} onChange={setSearch} placeholder="Buscar matrícula ou aluno..." /><StatusBadge tone="blue">{enrollments.length} registros</StatusBadge></div>
+        <div className="table-toolbar">
+          <SearchInput value={search} onChange={setSearch} placeholder="Buscar matrícula ou aluno..." />
+          <div className="flex flex-wrap gap-1 rounded-xl bg-[#f3f6fb] p-1">
+            {([["all", "Ativas e Suspensas"], ["active", "Ativas"], ["suspended", "Suspensas"], ["cancelled", "Canceladas"], ["expired", "Expiradas"]] as const).map(([value, label]) => (
+              <button 
+                key={value} 
+                onClick={() => setStatusFilter(value)} 
+                className={`rounded-lg px-3 py-2 text-[11px] font-semibold transition ${statusFilter === value ? "bg-white text-blue-600 shadow-sm" : "text-[#657085] hover:text-[#172033]"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
         {filtered.length ? (
           <div className="table-wrap"><table className="data-table">
             <thead><tr><th>Matrícula</th><th>Aluno</th><th className="hide-mobile">Plano</th><th className="hide-mobile">Vigência</th><th>Status</th><th>Ações</th></tr></thead>
