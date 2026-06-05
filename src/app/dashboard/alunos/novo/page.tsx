@@ -167,21 +167,22 @@ export default function NovoAlunoPage() {
     setSaving(true);
     setError(null);
     try {
-      const weight = form.weight ? Number(form.weight) : null;
-      const height = form.height ? Number(form.height) : null;
+      const { photo_base64, ...studentData } = form;
+      const weight = studentData.weight ? Number(studentData.weight) : null;
+      const height = studentData.height ? Number(studentData.height) : null;
       const student = await createStudent({
-        ...form,
-        email: form.email || null,
-        rg: form.rg || null,
-        gender: form.gender || null,
-        whatsapp: form.whatsapp || null,
-        cep: form.cep || null,
-        street: form.street || null,
-        number: form.number || null,
-        complement: form.complement || null,
-        neighborhood: form.neighborhood || null,
-        city: form.city || null,
-        state: form.state.toUpperCase() || null,
+        ...studentData,
+        email: studentData.email || null,
+        rg: studentData.rg || null,
+        gender: studentData.gender || null,
+        whatsapp: studentData.whatsapp || null,
+        cep: studentData.cep || null,
+        street: studentData.street || null,
+        number: studentData.number || null,
+        complement: studentData.complement || null,
+        neighborhood: studentData.neighborhood || null,
+        city: studentData.city || null,
+        state: studentData.state.toUpperCase() || null,
         weight,
         height,
         imc: weight && height ? calculateIMC(weight, height) : null,
