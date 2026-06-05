@@ -1,10 +1,10 @@
-﻿"use client";
+"use client";
 
 import React, { useEffect, useState } from "react";
-import { ArrowLeft, CheckCircle, Package, Truck, FileText, AlertTriangle, Play } from "lucide-react";
+import { ArrowLeft, CheckCircle, Package, Truck, FileText, AlertTriangle, Play, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { getReceivingById, getReceivingItems, updateReceiving, createInventoryTransaction, updateProduct } from "@/lib/api";
+import { getReceivingById, getReceivingItems, updateReceiving, createInventoryTransaction, updateProduct, deleteReceiving } from "@/lib/api";
 import type { Receiving, ReceivingItem } from "@/lib/types";
 import { ErrorBanner, StatusBadge } from "@/components/ui";
 import { formatCurrency, formatDate } from "@/lib/utils";
@@ -36,8 +36,18 @@ export default function ReceivingDetailsPage({ params }: { params: Promise<{ id:
     .finally(() => setLoading(false));
   }, [id, router]);
 
+  const handleDelete = async () => {
+    if (!receiving || !confirm("Tem certeza que deseja excluir esta nota? Os itens serão removidos. Essa ação não pode ser desfeita.")) return;
+    try {
+      await deleteReceiving(receiving.id);
+      router.push("/dashboard/recebimentos");
+    } catch (err) {
+      setError("Erro ao excluir recebimento.");
+    }
+  };
+
   const finalizeReceiving = async () => {
-    if (!receiving || !confirm("Tem certeza que deseja finalizar esta nota e dar entrada no estoque? Essa ação não pode ser desfeita.")) return;
+    if (!receiving || !confirm("Tem certeza que deseja finalizar a nota? Ao confirmar, ela ficará liberada para armazenagem e o estoque será atualizado permanentemente.")) return;
     
     setProcessing(true);
     setError(null);
@@ -94,7 +104,7 @@ export default function ReceivingDetailsPage({ params }: { params: Promise<{ id:
                 receiving.status === "Aguardando Chegada" ? "gray" :
                 "blue"
               }>
-                {receiving.status}
+                {receiving.status === "Finalizado" ? "Armazenado" : receiving.status}
               </StatusBadge>
             </div>
             <p className="text-sm text-slate-500">
@@ -102,7 +112,10 @@ export default function ReceivingDetailsPage({ params }: { params: Promise<{ id:
             </p>
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          <button onClick={handleDelete} className="icon-btn text-red-500 hover:bg-red-50 hover:text-red-600 mr-2" aria-label="Excluir">
+            <Trash2 className="h-4 w-4" />
+          </button>
           {receiving.status !== "Finalizado" && (
             <Link href={`/dashboard/triagem/${receiving.id}`} className="btn bg-blue-50 text-blue-700 hover:bg-blue-100 border-none">
               <Play className="h-4 w-4" /> {receiving.status === "Aguardando Chegada" || receiving.status === "Recebido" ? "Iniciar Triagem" : "Continuar Triagem"}
@@ -110,7 +123,7 @@ export default function ReceivingDetailsPage({ params }: { params: Promise<{ id:
           )}
           {canFinalize && (
             <button onClick={finalizeReceiving} disabled={processing} className="btn bg-emerald-600 hover:bg-emerald-700 text-white border-none shadow-lg shadow-emerald-600/20">
-              <CheckCircle className="h-4 w-4" /> {processing ? "Processando..." : "Dar Entrada no Estoque"}
+              <CheckCircle className="h-4 w-4" /> {processing ? "Processando..." : "Finalizar Nota / Armazenar"}
             </button>
           )}
         </div>

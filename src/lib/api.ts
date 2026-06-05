@@ -596,7 +596,7 @@ export async function getRevenueSeries(): Promise<RevenuePoint[]> {
 // MÓDULO ERP (ESTOQUE E PDV)
 // ==========================================
 
-export async function getSuppliers(): Promise<Supplier[]> {
+export async function getSuppliers() {
   return sortDesc(await list("suppliers"));
 }
 
@@ -636,6 +636,18 @@ export async function updateProduct(id: string, values: Partial<Product>) {
 }
 
 export async function deleteProduct(id: string) {
+  if (shouldUseLocalData()) {
+    const rItems = localDB.get("receiving_items").filter(i => i.product_id === id);
+    for (const item of rItems) localDB.delete("receiving_items", item.id);
+    const sItems = localDB.get("sale_items").filter(i => i.product_id === id);
+    for (const item of sItems) localDB.delete("sale_items", item.id);
+    const trans = localDB.get("inventory_transactions").filter(i => i.product_id === id);
+    for (const t of trans) localDB.delete("inventory_transactions", t.id);
+    return remove("products", id);
+  }
+  await supabase.from("receiving_items").delete().eq("product_id", id);
+  await supabase.from("sale_items").delete().eq("product_id", id);
+  await supabase.from("inventory_transactions").delete().eq("product_id", id);
   const { error } = await supabase.from("products").delete().eq("id", id);
   if (error) throw new Error(error.message);
   return true;
@@ -676,6 +688,15 @@ export async function updateReceiving(id: string, values: Partial<Receiving>) {
 }
 
 export async function deleteReceiving(id: string) {
+  if (shouldUseLocalData()) {
+    const items = localDB.get("receiving_items").filter(i => i.receiving_id === id);
+    for (const item of items) localDB.delete("receiving_items", item.id);
+    const trans = localDB.get("inventory_transactions").filter(i => i.reference_id === id);
+    for (const t of trans) localDB.delete("inventory_transactions", t.id);
+    return remove("receivings", id);
+  }
+  await supabase.from("inventory_transactions").delete().eq("reference_id", id);
+  await supabase.from("receiving_items").delete().eq("receiving_id", id);
   const { error } = await supabase.from("receivings").delete().eq("id", id);
   if (error) throw new Error(error.message);
   return true;
@@ -699,14 +720,6 @@ export async function getReceivingItems(receiving_id: string): Promise<Receiving
   }));
 }
 
-export async function createReceivingItem(values: NewRow<"receiving_items">): Promise<ReceivingItem> {
-  return insert("receiving_items", values);
-}
-
-export async function updateReceivingItem(id: string, values: Partial<ReceivingItem>) {
-  return update("receiving_items", id, values);
-}
-
 export async function getInventoryTransactions(): Promise<any[]> {
   if (!shouldUseLocalData()) {
     const { data, error } = await supabase
@@ -725,12 +738,43 @@ export async function getInventoryTransactions(): Promise<any[]> {
   })).slice(0, 100);
 }
 
+export async function createReceivingItem(values: NewRow<"receiving_items">): Promise<ReceivingItem> {
+  if (shouldUseLocalData()) return localDB.insert("receiving_items", values);
+  const { data, error } = await supabase.from("receiving_items").insert(values).select("*").single();
+  if (error) throw new Error(error.message);
+  return data as ReceivingItem;
+}
+
+export async function deleteReceivingItem(id: string) {
+  if (shouldUseLocalData()) return localDB.delete("receiving_items", id);
+  const { error } = await supabase.from("receiving_items").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+export async function updateReceivingItem(id: string, values: Partial<NewRow<"receiving_items">>) {
+  if (shouldUseLocalData()) return localDB.update("receiving_items", id, values);
+  const { data, error } = await supabase.from("receiving_items").update(values).eq("id", id).select("*").single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
 export async function createInventoryTransaction(values: any) {
   return insert("inventory_transactions", values);
 }
 
 export async function createSale(values: NewRow<"sales">) {
   return insert("sales", values);
+}
+
+export async function createPixSale(id: string): Promise<Sale> {
+  const { data } = await supabase.auth.getSession();
+  const response = await fetch(`/api/sales/${id}/pix`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` },
+  });
+  const payload = await response.json() as { sale?: Sale; error?: string };
+  if (!response.ok || !payload.sale) throw new Error(payload.error ?? "Não foi possível gerar o PIX da venda.");
+  return payload.sale;
 }
 
 export async function createSaleItem(values: NewRow<"sale_items">) {
@@ -746,7 +790,27 @@ export async function updateSupplier(id: string, values: any) {
 }
 
 export async function deleteSupplier(id: string) {
-  return remove("suppliers", id);
+  if (shouldUseLocalData()) {
+    const products = localDB.get("products").filter(p => p.supplier_id === id);
+    for (const p of products) await deleteProduct(p.id);
+    const receivings = localDB.get("receivings").filter(r => r.supplier_id === id);
+    for (const r of receivings) await deleteReceiving(r.id);
+    return remove("suppliers", id);
+  }
+  
+  const { data: prods } = await supabase.from("products").select("id").eq("supplier_id", id);
+  if (prods) {
+    for (const p of prods) await deleteProduct(p.id);
+  }
+  
+  const { data: recs } = await supabase.from("receivings").select("id").eq("supplier_id", id);
+  if (recs) {
+    for (const r of recs) await deleteReceiving(r.id);
+  }
+  
+  const { error } = await supabase.from("suppliers").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+  return true;
 }
 
 

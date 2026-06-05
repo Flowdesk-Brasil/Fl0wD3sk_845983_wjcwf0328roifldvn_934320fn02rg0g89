@@ -2,7 +2,8 @@
 
 import React, { useEffect, useState, useRef } from "react";
 import { Search, ShoppingCart, Plus, Minus, Trash2, CreditCard, Banknote, QrCode, CheckCircle, Package, ScanLine, ArrowRight } from "lucide-react";
-import { getProducts, createSale, createSaleItem, updateProduct, createInventoryTransaction } from "@/lib/api";
+import { getProducts, createSale, createSaleItem, updateProduct, createInventoryTransaction, createPixSale } from "@/lib/api";
+import { supabase } from "@/lib/supabase";
 import type { Product } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
 import { ErrorBanner, Modal } from "@/components/ui";
@@ -23,6 +24,7 @@ export default function PdvPage() {
   const [paymentMethod, setPaymentMethod] = useState<"pix" | "credit_card" | "debit_card" | "cash">("pix");
   const [processing, setProcessing] = useState(false);
   const [saleCompleted, setSaleCompleted] = useState(false);
+  const [pixSale, setPixSale] = useState<any>(null);
   
   const [lastScanned, setLastScanned] = useState<Product | null>(null);
 
@@ -108,7 +110,55 @@ export default function PdvPage() {
     setCart(prev => prev.filter(i => i.id !== id));
   };
 
-  const handleCheckout = async () => {
+  const generatePix = async () => {
+    if (cart.length === 0) return;
+    setProcessing(true);
+    setError(null);
+    try {
+      const totalAmount = cart.reduce((sum, item) => sum + (item.selling_price * item.cart_quantity), 0);
+      const sale = await createSale({
+        student_id: null,
+        payment_method: "pix",
+        total_amount: totalAmount,
+        discount: 0,
+        final_amount: totalAmount,
+        status: "pending"
+      });
+      const pix = await createPixSale(sale.id);
+      setPixSale(pix);
+
+      // Broadcast para o PosTerminalListener
+      let channel = supabase.getChannels().find((c: any) => c.topic === `realtime:pos-terminal-channel`);
+      if (!channel) channel = supabase.channel("pos-terminal-channel");
+      if (channel.state === "joined") {
+        channel.send({ type: "broadcast", event: "SHOW_PIX_SALE", payload: { sale_id: sale.id, pix_qr_base64: (pix as any).pix_qr_base64, pix_code: (pix as any).pix_code, total_amount: sale.total_amount } });
+      } else {
+        channel.subscribe((status: string) => {
+          if (status === "SUBSCRIBED") {
+            channel.send({ type: "broadcast", event: "SHOW_PIX_SALE", payload: { sale_id: sale.id, pix_qr_base64: (pix as any).pix_qr_base64, pix_code: (pix as any).pix_code, total_amount: sale.total_amount } });
+          }
+        });
+      }
+      
+      // Setup polling for status
+      const poll = setInterval(async () => {
+        try {
+          const { data } = await supabase.from('sales').select('status').eq('id', sale.id).single();
+          if (data && data.status === 'completed') {
+            clearInterval(poll);
+            await finalizeSale(sale);
+          }
+        } catch(err){}
+      }, 3000);
+      
+    } catch (err: any) {
+      setError(err.message || "Erro ao gerar PIX.");
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const finalizeSale = async (existingSale: any = null) => {
     if (cart.length === 0) return;
     setProcessing(true);
     setError(null);
@@ -116,14 +166,19 @@ export default function PdvPage() {
     try {
       const totalAmount = cart.reduce((sum, item) => sum + (item.selling_price * item.cart_quantity), 0);
       
-      const sale = await createSale({
-        student_id: null,
-        payment_method: paymentMethod,
-        total_amount: totalAmount,
-        discount: 0,
-        final_amount: totalAmount,
-        status: "completed"
-      });
+      let sale = existingSale || pixSale;
+      if (!sale) {
+        sale = await createSale({
+          student_id: null,
+          payment_method: paymentMethod,
+          total_amount: totalAmount,
+          discount: 0,
+          final_amount: totalAmount,
+          status: "completed"
+        });
+      } else if (sale.status !== "completed") {
+        await supabase.from('sales').update({ status: 'completed' }).eq('id', sale.id);
+      }
 
       for (const item of cart) {
         await createSaleItem({
@@ -153,6 +208,7 @@ export default function PdvPage() {
         setCart([]);
         setCheckoutModalOpen(false);
         setSaleCompleted(false);
+        setPixSale(null);
         setSearch("");
         setLastScanned(null);
       }, 3000);
@@ -161,6 +217,14 @@ export default function PdvPage() {
       setError("Erro ao processar a venda.");
     } finally {
       setProcessing(false);
+    }
+  };
+
+  const handleCheckout = async () => {
+    if (paymentMethod === "pix" && !pixSale) {
+       await generatePix();
+    } else {
+       await finalizeSale();
     }
   };
 
@@ -402,14 +466,45 @@ export default function PdvPage() {
               </div>
 
               {paymentMethod === "pix" ? (
-                <div className="bg-slate-900 rounded-2xl p-6 mt-6 text-center animate-in fade-in slide-in-from-bottom-4 shadow-2xl">
-                  <h4 className="text-white font-bold mb-4">Mostre o QR Code para o Cliente</h4>
-                  <div className="w-48 h-48 bg-white rounded-xl mx-auto flex items-center justify-center mb-4 p-2 relative overflow-hidden">
-                    <QrCode className="w-full h-full text-slate-900" />
-                    {processing && <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center"><div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div></div>}
+                pixSale ? (
+                  <div className="bg-slate-900 rounded-2xl p-6 mt-6 text-center animate-in fade-in slide-in-from-bottom-4 shadow-2xl">
+                    <h4 className="text-white font-bold mb-4">Mostre o QR Code para o Cliente</h4>
+                    <div className="w-48 h-48 bg-white rounded-xl mx-auto flex items-center justify-center mb-4 p-2 relative overflow-hidden">
+                      {(pixSale as any).pix_qr_base64 ? <img src={`data:image/jpeg;base64,${(pixSale as any).pix_qr_base64}`} className="w-full h-full object-contain" /> : <QrCode className="w-full h-full text-slate-900" />}
+                      {processing && <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center"><div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div></div>}
+                    </div>
+                    <p className="text-lg font-bold text-blue-400 animate-pulse">Aguardando pagamento PIX...</p>
+                    <div className="mt-4 flex flex-col gap-2">
+                      <button 
+                        type="button" 
+                        disabled={processing}
+                        className="text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 py-3 rounded-xl transition shadow-lg w-full"
+                        onClick={() => {
+                          let channel = supabase.getChannels().find((c: any) => c.topic === `realtime:pos-terminal-channel`);
+                          if (!channel) channel = supabase.channel("pos-terminal-channel");
+                          if (channel.state === "joined") {
+                            channel.send({ type: "broadcast", event: "SHOW_PIX_SALE", payload: { sale_id: pixSale.id, pix_qr_base64: (pixSale as any).pix_qr_base64, pix_code: (pixSale as any).pix_code, total_amount: pixSale.total_amount } });
+                            alert("Sinal re-enviado para o celular admin!");
+                          } else {
+                            channel.subscribe((status: string) => {
+                              if (status === "SUBSCRIBED") {
+                                channel.send({ type: "broadcast", event: "SHOW_PIX_SALE", payload: { sale_id: pixSale.id, pix_qr_base64: (pixSale as any).pix_qr_base64, pix_code: (pixSale as any).pix_code, total_amount: pixSale.total_amount } });
+                                alert("Sinal enviado para o celular admin!");
+                              }
+                            });
+                          }
+                        }}
+                      >
+                        Espelhar na Máquina / Celular
+                      </button>
+                    </div>
                   </div>
-                  <p className="text-lg font-bold text-blue-400 animate-pulse">Aguardando pagamento PIX...</p>
-                </div>
+                ) : (
+                  <div className="bg-slate-900 rounded-2xl p-6 mt-6 text-center animate-in fade-in slide-in-from-bottom-4 shadow-2xl">
+                    <h4 className="text-white font-bold mb-4">Pronto para gerar o PIX</h4>
+                    <p className="text-sm text-slate-400 mb-4">O QR Code será exibido e enviado para o terminal.</p>
+                  </div>
+                )
               ) : (
                 <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 mt-6 text-center animate-in fade-in slide-in-from-bottom-4">
                   <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -423,7 +518,7 @@ export default function PdvPage() {
 
             <div className="mt-8 flex gap-3">
               <button 
-                onClick={() => setCheckoutModalOpen(false)} 
+                onClick={() => { setCheckoutModalOpen(false); setPixSale(null); }} 
                 className="flex-1 py-4 rounded-xl font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition"
                 disabled={processing}
               >
@@ -434,7 +529,7 @@ export default function PdvPage() {
                 disabled={processing}
                 className="flex-[2] py-4 rounded-xl font-black text-white bg-emerald-600 hover:bg-emerald-700 transition shadow-lg shadow-emerald-600/30 flex justify-center items-center gap-2"
               >
-                {processing ? "Validando..." : paymentMethod === "pix" ? "Forçar Confirmação (Admin)" : "Sim, Pagamento Recebido"}
+                {processing ? "Processando..." : paymentMethod === "pix" ? (pixSale ? "Forçar Confirmação (Admin)" : "Gerar PIX e Cobrar") : "Sim, Pagamento Recebido"}
               </button>
             </div>
           </div>

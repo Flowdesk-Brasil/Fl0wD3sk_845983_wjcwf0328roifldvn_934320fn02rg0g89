@@ -26,6 +26,23 @@ export async function POST(request: Request) {
     const provider = await fetchMercadoPagoPayment(providerId);
     const admin = getAdminClient();
     const externalReference = provider.external_reference?.trim();
+    
+    // Check if it is a PDV sale
+    if (externalReference && externalReference.startsWith("SALE-")) {
+      const saleId = externalReference.replace("SALE-", "");
+      const { data: sale } = await admin.from("sales").select("id, total_amount").eq("id", saleId).single();
+      if (!sale) return Response.json({ ok: true, ignored: true, reason: "sale_not_found" });
+      
+      const status = provider.status === "approved" ? "completed" : provider.status === "cancelled" || provider.status === "rejected" ? "cancelled" : "pending";
+      
+      await admin.from("sales").update({
+        status,
+        payment_method: "pix",
+      }).eq("id", saleId);
+      
+      return Response.json({ ok: true, saleId, status });
+    }
+
     const validExternalReference = externalReference && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(externalReference) ? externalReference : null;
     const query = admin.from("payments").select("id, enrollment_id, student_id, total_amount").limit(1);
     const { data: rows } = validExternalReference

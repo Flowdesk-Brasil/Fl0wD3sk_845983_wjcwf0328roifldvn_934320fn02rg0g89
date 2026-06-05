@@ -1,12 +1,13 @@
-﻿"use client";
+"use client";
 
 import React, { useEffect, useState, useRef } from "react";
 import { ArrowLeft, CheckCircle, Package, ScanLine, AlertTriangle, Search, Check, Save } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { getReceivingById, getReceivingItems, getProducts, updateReceiving, createReceivingItem, updateReceivingItem } from "@/lib/api";
+import { getReceivingById, getReceivingItems, getProducts, updateReceiving, createReceivingItem, updateReceivingItem, deleteReceivingItem } from "@/lib/api";
 import type { Receiving, ReceivingItem, Product } from "@/lib/types";
 import { ErrorBanner, StatusBadge } from "@/components/ui";
+import { formatCurrency } from "@/lib/utils";
 
 export default function TriagemInterfacePage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
@@ -57,6 +58,9 @@ export default function TriagemInterfacePage({ params }: { params: Promise<{ id:
     return () => clearInterval(interval);
   }, []);
 
+  const totalExpectedByItems = items.reduce((sum, i) => sum + i.expected_quantity, 0);
+  const isBlindReceipt = totalExpectedByItems === 0 && (receiving?.total_items || 0) > 0;
+  
   const handleScan = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!scanValue.trim() || !receiving) return;
@@ -79,7 +83,7 @@ export default function TriagemInterfacePage({ params }: { params: Promise<{ id:
     try {
       if (existingItem) {
         const newCheckedQty = existingItem.checked_quantity + 1;
-        const newStatus = newCheckedQty > existingItem.expected_quantity ? "Divergente" : (newCheckedQty === existingItem.expected_quantity ? "Conferido" : "Pendente");
+        const newStatus = isBlindReceipt ? "Conferido" : (newCheckedQty > existingItem.expected_quantity ? "Divergente" : (newCheckedQty === existingItem.expected_quantity ? "Conferido" : "Pendente"));
         
         await updateReceivingItem(existingItem.id, {
           checked_quantity: newCheckedQty,
@@ -89,24 +93,27 @@ export default function TriagemInterfacePage({ params }: { params: Promise<{ id:
         setItems(items.map(i => i.id === existingItem!.id ? { ...i, checked_quantity: newCheckedQty, status: newStatus } : i));
         setLastScanned({ product, quantity: newCheckedQty });
         
-        if (newCheckedQty > existingItem.expected_quantity) {
+        if (!isBlindReceipt && newCheckedQty > existingItem.expected_quantity) {
           setError(`Aviso: Quantidade conferida de ${product.name} ultrapassou a quantidade esperada na Nota Fiscal.`);
         }
       } else {
-        // Product belongs to another order or manual add
+        // Product belongs to another order or manual add (Blind receipt)
         const newItem = await createReceivingItem({
           receiving_id: receiving.id,
           product_id: product.id,
-          expected_quantity: 0, // Not expected in invoice
+          expected_quantity: isBlindReceipt ? 0 : 0, 
           checked_quantity: 1,
           unit_cost: product.current_cost,
           total_cost: product.current_cost,
-          status: "Divergente"
+          status: isBlindReceipt ? "Conferido" : "Divergente"
         });
         
         setItems([...items, { ...newItem, product }]);
         setLastScanned({ product, quantity: 1 });
-        setError(`Atenção: Produto ${product.name} não estava listado nesta Nota Fiscal.`);
+        
+        if (!isBlindReceipt) {
+          setError(`Atenção: Produto ${product.name} não estava listado nesta Nota Fiscal.`);
+        }
       }
     } catch (err) {
       console.error(err);
@@ -114,10 +121,45 @@ export default function TriagemInterfacePage({ params }: { params: Promise<{ id:
     }
   };
 
+  const handleUpdateQty = async (itemId: string, newQty: number) => {
+    if (newQty < 0) return;
+    try {
+      const item = items.find(i => i.id === itemId);
+      if (!item) return;
+      const newStatus = isBlindReceipt ? "Conferido" : (newQty > item.expected_quantity ? "Divergente" : (newQty === item.expected_quantity ? "Conferido" : "Pendente"));
+      await updateReceivingItem(itemId, { checked_quantity: newQty, status: newStatus });
+      setItems(items.map(i => i.id === itemId ? { ...i, checked_quantity: newQty, status: newStatus } : i));
+    } catch {
+      setError("Erro ao atualizar quantidade.");
+    }
+  };
+
+  const handleRemoveItem = async (itemId: string) => {
+    try {
+      await deleteReceivingItem(itemId);
+      setItems(items.filter(i => i.id !== itemId));
+    } catch {
+      setError("Erro ao remover item.");
+    }
+  };
+
+  if (loading) return <div className="p-8 text-center text-slate-500">Iniciando ambiente de triagem...</div>;
+  if (!receiving) return null;
+
+  const totalExpected = isBlindReceipt ? receiving.total_items : totalExpectedByItems;
+  const totalChecked = items.reduce((sum, i) => sum + i.checked_quantity, 0);
+  
   const finishTriagem = async () => {
     if (!receiving) return;
     try {
-      const hasDivergences = items.some(i => i.status === "Divergente" || i.checked_quantity !== i.expected_quantity);
+      // For blind receipts, we only care if the global total matches.
+      // For regular receipts, we check item-level divergences too.
+      let hasDivergences = false;
+      if (isBlindReceipt) {
+        hasDivergences = totalChecked !== receiving.total_items;
+      } else {
+        hasDivergences = items.some(i => i.status === "Divergente" || i.checked_quantity !== i.expected_quantity) || (receiving.total_items > 0 && totalChecked !== receiving.total_items);
+      }
       await updateReceiving(receiving.id, { status: hasDivergences ? "Divergência" : "Triagem Concluída" });
       router.push(`/dashboard/recebimentos/${receiving.id}`);
     } catch (err) {
@@ -125,11 +167,6 @@ export default function TriagemInterfacePage({ params }: { params: Promise<{ id:
     }
   };
 
-  if (loading) return <div className="p-8 text-center text-slate-500">Iniciando ambiente de triagem...</div>;
-  if (!receiving) return null;
-
-  const totalExpected = items.reduce((sum, i) => sum + i.expected_quantity, 0);
-  const totalChecked = items.reduce((sum, i) => sum + i.checked_quantity, 0);
   const progress = totalExpected > 0 ? Math.min(100, Math.round((totalChecked / totalExpected) * 100)) : 0;
 
   return (
@@ -141,7 +178,15 @@ export default function TriagemInterfacePage({ params }: { params: Promise<{ id:
           </Link>
           <div>
             <h1 className="text-2xl font-black tracking-tight text-slate-900">Triagem Física</h1>
-            <p className="text-sm text-slate-500">NF: {receiving.invoice_number || "S/N"} â€¢ {receiving.supplier?.trade_name}</p>
+            <div className="flex items-center gap-2 text-sm text-slate-500 mt-1">
+              <span className="font-bold text-slate-700">NF: {receiving.invoice_number || "S/N"}</span>
+              <span>&bull;</span>
+              <span>{receiving.supplier?.trade_name}</span>
+              <span>&bull;</span>
+              <span className="font-bold text-blue-600">{formatCurrency(receiving.total_amount)}</span>
+              <span>&bull;</span>
+              <span className="font-semibold text-slate-600">{totalExpected} produtos esperados</span>
+            </div>
           </div>
         </div>
         <div className="flex gap-2 items-center">
@@ -245,6 +290,7 @@ export default function TriagemInterfacePage({ params }: { params: Promise<{ id:
                       <th className="px-4 py-3 font-semibold text-center">Esperado</th>
                       <th className="px-4 py-3 font-semibold text-center">Conferido</th>
                       <th className="px-4 py-3 font-semibold text-center">Status</th>
+                      <th className="px-4 py-3 font-semibold text-right">Ações</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -288,6 +334,13 @@ export default function TriagemInterfacePage({ params }: { params: Promise<{ id:
                             {isOver && <StatusBadge tone="red">Sobra</StatusBadge>}
                             {(!isComplete && !isOver && !isZero) && <StatusBadge tone="yellow">Em progresso</StatusBadge>}
                             {isZero && <StatusBadge tone="gray">Pendente</StatusBadge>}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <button onClick={() => handleUpdateQty(item.id, item.checked_quantity - 1)} className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 transition">-</button>
+                              <button onClick={() => handleUpdateQty(item.id, item.checked_quantity + 1)} className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 transition">+</button>
+                              <button onClick={() => handleRemoveItem(item.id)} className="w-8 h-8 flex items-center justify-center rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition">x</button>
+                            </div>
                           </td>
                         </tr>
                       );

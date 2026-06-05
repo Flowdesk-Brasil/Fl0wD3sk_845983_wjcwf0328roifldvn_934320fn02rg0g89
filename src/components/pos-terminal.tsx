@@ -4,11 +4,14 @@ import { useEffect, useState, useRef } from "react";
 import { getPayments } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import type { Payment } from "@/lib/types";
-import { X } from "lucide-react";
+import { X, Mail } from "lucide-react";
 
 export function PosTerminalListener({ email }: { email: string }) {
-  const [activePayment, setActivePayment] = useState<Payment | null>(null);
+  const [activePayment, setActivePayment] = useState<any | null>(null);
   const [approvedStatus, setApprovedStatus] = useState(false);
+  const [emailPrompt, setEmailPrompt] = useState(false);
+  const [receiptEmail, setReceiptEmail] = useState("");
+  const [sendingReceipt, setSendingReceipt] = useState(false);
   const activeIdRef = useRef<string | null>(null);
   const ignoredIds = useRef<Set<string>>(new Set());
 
@@ -23,6 +26,15 @@ export function PosTerminalListener({ email }: { email: string }) {
           .eq("id", id)
           .single();
         return data as Payment;
+      } catch {
+        return null;
+      }
+    };
+
+    const fetchFullSale = async (id: string) => {
+      try {
+        const { data } = await supabase.from("sales").select("*").eq("id", id).single();
+        return data;
       } catch {
         return null;
       }
@@ -97,6 +109,40 @@ export function PosTerminalListener({ email }: { email: string }) {
           }
         }
       )
+      .on(
+        "broadcast",
+        { event: "SHOW_PIX_SALE" },
+        async ({ payload }) => {
+          if (payload.sale_id) {
+            ignoredIds.current.delete(payload.sale_id);
+            // We use payload directly to be instant, bypass DB
+            setActivePayment({ 
+              id: payload.sale_id,
+              total_amount: payload.total_amount || 0,
+              pix_qr_base64: payload.pix_qr_base64,
+              pix_code: payload.pix_code,
+              status: "pending",
+              is_sale: true, 
+              reference: `Venda #${String(payload.sale_id).substring(0, 5)}` 
+            });
+            activeIdRef.current = payload.sale_id;
+            setApprovedStatus(false);
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "sales" },
+        async (payload) => {
+          const newData = payload.new as any;
+          if (activeIdRef.current && newData.id === activeIdRef.current && newData.status === "completed") {
+            setApprovedStatus(true);
+            setTimeout(() => {
+              setEmailPrompt(true);
+            }, 2000);
+          }
+        }
+      )
       .subscribe();
 
     // Fallback de ultra-segurança (Polling): Se o WebSocket falhar no celular (3G/4G instável), o polling garante 100% de entrega
@@ -107,14 +153,20 @@ export function PosTerminalListener({ email }: { email: string }) {
       if (activeIdRef.current && !approvedStatus) {
         const checkStatus = async () => {
           try {
-            const { data } = await supabase.from("payments").select("status").eq("id", activeIdRef.current!).single();
+            let data = null;
+            if (activePayment?.is_sale) {
+              const res = await supabase.from("sales").select("status").eq("id", activeIdRef.current!).single();
+              data = res.data;
+              if (data && data.status === "completed") data.status = "paid";
+            } else {
+              const res = await supabase.from("payments").select("status").eq("id", activeIdRef.current!).single();
+              data = res.data;
+            }
             if (data && data.status === "paid") {
               setApprovedStatus(true);
               setTimeout(() => {
-                setActivePayment(null);
-                setApprovedStatus(false);
-                activeIdRef.current = null;
-              }, 5000);
+                setEmailPrompt(true);
+              }, 2000);
             }
           } catch {
             // Ignora erros de rede no polling
@@ -136,7 +188,19 @@ export function PosTerminalListener({ email }: { email: string }) {
     }
     setActivePayment(null);
     activeIdRef.current = null;
+    setApprovedStatus(false);
+    setEmailPrompt(false);
+    setReceiptEmail("");
   }
+
+  const handleSendReceipt = async () => {
+    if (!receiptEmail.includes("@")) return;
+    setSendingReceipt(true);
+    // Simulate API call for sending email
+    await new Promise(r => setTimeout(r, 1000));
+    setSendingReceipt(false);
+    handleClose();
+  };
 
   if (!activePayment) return null;
 
@@ -153,15 +217,52 @@ export function PosTerminalListener({ email }: { email: string }) {
       )}
 
       {approvedStatus ? (
-        <div className="space-y-6 text-center animate-fadeIn flex flex-col items-center">
-          <div className="h-40 w-40 rounded-full bg-green-500 text-white flex items-center justify-center shadow-2xl mb-8">
-            <span className="text-8xl">✅</span>
+        emailPrompt ? (
+          <div className="space-y-6 animate-fadeIn flex flex-col w-full max-w-sm">
+            <div className="text-center mb-4">
+              <div className="h-20 w-20 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center mx-auto mb-4">
+                <Mail className="h-10 w-10" />
+              </div>
+              <h3 className="text-2xl font-bold text-slate-900">Enviar Comprovante?</h3>
+              <p className="text-slate-500 mt-2">Deseja enviar a nota fiscal ou o comprovante da transação para o cliente?</p>
+            </div>
+            
+            <input 
+              type="email" 
+              placeholder="E-mail do cliente" 
+              value={receiptEmail}
+              onChange={(e) => setReceiptEmail(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-lg focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+            />
+            
+            <div className="flex gap-3 pt-2">
+              <button 
+                onClick={handleClose}
+                className="flex-1 py-3 rounded-xl font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition"
+                disabled={sendingReceipt}
+              >
+                Pular
+              </button>
+              <button 
+                onClick={handleSendReceipt}
+                className="flex-[2] py-3 rounded-xl font-bold text-white bg-blue-600 hover:bg-blue-700 transition"
+                disabled={sendingReceipt || !receiptEmail.includes("@")}
+              >
+                {sendingReceipt ? "Enviando..." : "Enviar Email"}
+              </button>
+            </div>
           </div>
-          <p className="text-5xl font-extrabold text-green-600 mb-2 uppercase tracking-tight drop-shadow-sm">Pagamento Aprovado!</p>
-          <p className="text-3xl font-bold text-slate-700 uppercase bg-slate-100 px-6 py-2 rounded-full inline-block">
-            {activePayment.student?.full_name}
-          </p>
-        </div>
+        ) : (
+          <div className="space-y-6 text-center animate-fadeIn flex flex-col items-center">
+            <div className="h-40 w-40 rounded-full bg-green-500 text-white flex items-center justify-center shadow-2xl mb-8">
+              <span className="text-8xl">✅</span>
+            </div>
+            <p className="text-5xl font-extrabold text-green-600 mb-2 uppercase tracking-tight drop-shadow-sm">Pagamento Aprovado!</p>
+            <p className="text-3xl font-bold text-slate-700 uppercase bg-slate-100 px-6 py-2 rounded-full inline-block">
+              {activePayment.student?.full_name || activePayment.reference}
+            </p>
+          </div>
+        )
       ) : (
         <div className="space-y-8 text-center animate-fadeIn max-w-md w-full flex flex-col items-center">
           <div>

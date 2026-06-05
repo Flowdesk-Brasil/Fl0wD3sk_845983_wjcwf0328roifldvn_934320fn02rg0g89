@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useState } from "react";
 import { Plus, Search, Truck, FileText, CheckCircle, Clock, AlertTriangle, Eye } from "lucide-react";
@@ -61,7 +61,7 @@ export default function RecebimentosPage() {
               [
                 ["all", "Todos"],
                 ["pending", "Pendentes"],
-                ["completed", "Finalizados"],
+                ["completed", "Armazenados / Finalizados"],
               ] as const
             ).map(([value, label]) => (
               <button
@@ -123,7 +123,7 @@ export default function RecebimentosPage() {
                           "blue"
                         }
                       >
-                        {r.status}
+                        {r.status === "Finalizado" ? "Armazenado" : r.status}
                       </StatusBadge>
                     </td>
                     <td>
