@@ -6,7 +6,7 @@ const PREFIX = "corpoevolucao_v2_";
 const VERSION_KEY = `${PREFIX}ready`;
 const CREATED_AT_TABLES = new Set<TableName>([
   "profiles", "students", "plans", "enrollments", "contracts", "payments", "notifications", "audit_logs", "class_types", "class_sessions", "class_bookings",
-  "class_schedules", "student_classes",
+  "class_schedules", "student_classes", "push_subscriptions", "class_attendances",
   "suppliers", "products", "receivings", "receiving_items", "inventory_transactions", "sales", "sale_items"
 ]);
 const now = () => new Date().toISOString();
@@ -340,6 +340,8 @@ export function initLocalDB() {
   ]);
   write("class_schedules", []);
   write("student_classes", []);
+  write("push_subscriptions", []);
+  write("class_attendances", []);
   write("settings", [
     {
       id: "studio",

@@ -214,6 +214,26 @@ export interface StudentClass {
   class_schedule?: ClassSchedule | null;
 }
 
+export interface PushSubscriptionRow {
+  id: string;
+  user_id: string;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  created_at: string;
+}
+
+export interface ClassAttendance {
+  id: string;
+  class_schedule_id: string;
+  student_id: string;
+  date: string; // YYYY-MM-DD
+  status: "confirmed" | "cancelled" | "attended" | "missed" | "pending";
+  created_at: string;
+  student?: Pick<Student, "id" | "full_name"> | null;
+  class_schedule?: ClassSchedule | null;
+}
+
 export interface DashboardStats {
   totalStudents: number;
   activeStudents: number;
@@ -355,6 +375,8 @@ export interface LocalTables {
   checkins: Omit<Checkin, "student">;
   notifications: Notification;
   audit_logs: AuditLog;
+  push_subscriptions: PushSubscriptionRow;
+  class_attendances: ClassAttendance;
   settings: StudioSettings;
   class_types: ClassType;
   class_sessions: Omit<ClassSession, "class_type" | "instructor" | "bookings">;

@@ -745,13 +745,68 @@ export async function getStudentClasses(studentId: string): Promise<StudentClass
     if (error) return [];
     return (data ?? []) as StudentClass[];
   }
-  const schedules = await getClassSchedules();
+  const schedules = localDB.get("class_schedules");
+  const plans = localDB.get("plans");
   return localDB.get("student_classes")
     .filter((sc) => sc.student_id === studentId)
-    .map((sc) => ({
-      ...sc,
-      class_schedule: relation(schedules, sc.class_schedule_id),
-    }));
+    .map((sc) => {
+      const schedule = relation(schedules, sc.class_schedule_id);
+      return {
+        ...sc,
+        class_schedule: schedule ? { ...schedule, plan: relation(plans, schedule.plan_id) } : null,
+      };
+    });
+}
+
+export async function getTodayAttendances(studentId: string, dateStr: string): Promise<ClassAttendance[]> {
+  if (!shouldUseLocalData()) {
+    const { data, error } = await supabase
+      .from("class_attendances")
+      .select("*, class_schedule:class_schedules(*, plan:plans(*))")
+      .eq("student_id", studentId)
+      .eq("date", dateStr);
+    if (error) return [];
+    return (data ?? []) as ClassAttendance[];
+  }
+  const schedules = localDB.get("class_schedules");
+  const plans = localDB.get("plans");
+  return localDB.get("class_attendances")
+    .filter((ca) => ca.student_id === studentId && ca.date === dateStr)
+    .map((ca) => {
+      const schedule = relation(schedules, ca.class_schedule_id);
+      return {
+        ...ca,
+        class_schedule: schedule ? { ...schedule, plan: relation(plans, schedule.plan_id) } : null,
+      };
+    });
+}
+
+export async function getAttendancesByDate(dateStr: string): Promise<ClassAttendance[]> {
+  if (!shouldUseLocalData()) {
+    const { data, error } = await supabase
+      .from("class_attendances")
+      .select("*, student:students(id, full_name, photo_url), class_schedule:class_schedules(*, plan:plans(*))")
+      .eq("date", dateStr);
+    if (error) return [];
+    return (data ?? []) as ClassAttendance[];
+  }
+  const schedules = localDB.get("class_schedules");
+  const plans = localDB.get("plans");
+  const students = localDB.get("students");
+  return localDB.get("class_attendances")
+    .filter((ca) => ca.date === dateStr)
+    .map((ca) => {
+      const schedule = relation(schedules, ca.class_schedule_id);
+      return {
+        ...ca,
+        student: relation(students, ca.student_id),
+        class_schedule: schedule ? { ...schedule, plan: relation(plans, schedule.plan_id) } : null,
+      };
+    });
+}
+
+export async function updateAttendanceStatus(id: string, status: ClassAttendance["status"]) {
+  return update("class_attendances", id, { status });
 }
 
 export async function linkStudentToClasses(studentId: string, classScheduleIds: string[]) {
