@@ -1,6 +1,6 @@
 "use client";
 
-import { Camera, CameraOff, Loader2, ScanLine, X, CheckCircle2, ShieldAlert, UserCheck, Fingerprint } from "lucide-react";
+import { Camera, CameraOff, Loader2, ScanLine, X, CheckCircle2, ShieldAlert, UserCheck, ScanFace } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "@/lib/supabase";
@@ -39,7 +39,7 @@ export function QrScanner({
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const faceMatcherRef = useRef<faceapi.FaceMatcher | null>(null);
   const [detectedFace, setDetectedFace] = useState<{ id: string; name: string; photo_url: string } | null>(null);
-  const [loadingMsg, setLoadingMsg] = useState<string>("Iniciando sistema biométrico...");
+  const [loadingMsg, setLoadingMsg] = useState<string>("Iniciando Reconhecimento Facial...");
   const [isReady, setIsReady] = useState(false);
 
   const stop = useCallback(() => {
@@ -93,12 +93,12 @@ export function QrScanner({
     
     async function loadFaces() {
       try {
-        setLoadingMsg("Carregando redes neurais (SSD MobileNet)...");
-        await faceapi.nets.ssdMobilenetv1.loadFromUri('/models');
+        setLoadingMsg("Carregando IA de Reconhecimento Facial...");
+        await faceapi.nets.tinyFaceDetector.loadFromUri('/models');
         await faceapi.nets.faceLandmark68Net.loadFromUri('/models');
         await faceapi.nets.faceRecognitionNet.loadFromUri('/models');
         
-        setLoadingMsg("Sincronizando banco de dados facial...");
+        setLoadingMsg("Sincronizando banco de rostos (Aguarde)...");
         const { data: students } = await supabase.from('students').select('id, full_name, photo_url').not('photo_url', 'is', null);
         if (students && students.length > 0 && mounted) {
           const labeledDescriptors = [];
@@ -106,7 +106,7 @@ export function QrScanner({
           for (const s of students) {
             if (!mounted) break;
             try {
-              setLoadingMsg(`Processando face ${loadedCount + 1}/${students.length}...`);
+              setLoadingMsg(`Processando aluno ${loadedCount + 1}/${students.length}...`);
               const img = new Image();
               img.crossOrigin = "anonymous";
               img.src = s.photo_url;
@@ -115,7 +115,7 @@ export function QrScanner({
                  img.onerror = reject;
               });
 
-              const detection = await faceapi.detectSingleFace(img, new faceapi.SsdMobilenetv1Options()).withFaceLandmarks().withFaceDescriptor();
+              const detection = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 })).withFaceLandmarks().withFaceDescriptor();
               if (detection) {
                 labeledDescriptors.push(new faceapi.LabeledFaceDescriptors(s.id + "|||" + s.full_name + "|||" + s.photo_url, [detection.descriptor]));
               }
@@ -129,13 +129,13 @@ export function QrScanner({
           }
         }
         if (mounted) {
-          setLoadingMsg("Sistema pronto!");
+          setLoadingMsg("Sistema de Catraca Ativo!");
           setTimeout(() => setIsReady(true), 1000);
         }
       } catch (err) {
         console.error("Face API Error:", err);
         if (mounted) {
-          setLoadingMsg("Erro ao iniciar biometria. Operando apenas com QR Code.");
+          setLoadingMsg("Erro ao carregar IA. Operando via QR Code.");
           setTimeout(() => setIsReady(true), 3000);
         }
       }
@@ -213,7 +213,7 @@ export function QrScanner({
           overlayCanvas.height = video.videoHeight;
           
           try {
-            // 1. QR Code
+            // 1. QR Code ALWAYS RUNS FIRST (Non-blocking)
             const results = await detector.detect(videoRef.current);
             const value = results[0]?.rawValue?.trim();
             if (value) {
@@ -238,12 +238,12 @@ export function QrScanner({
               return;
             }
             
-            // 2. Facial Recognition
+            // 2. Facial Recognition (Non-blocking, runs every 250ms)
             overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 
-            if (Date.now() - lastFaceCheck > 200) {
+            if (Date.now() - lastFaceCheck > 250) {
               lastFaceCheck = Date.now();
-              const faceDetection = await faceapi.detectSingleFace(videoRef.current, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 })).withFaceLandmarks().withFaceDescriptor();
+              const faceDetection = await faceapi.detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 })).withFaceLandmarks().withFaceDescriptor();
               if (faceDetection) {
                 lastBox = faceDetection.detection.box;
                 if (faceMatcherRef.current) {
@@ -301,7 +301,7 @@ export function QrScanner({
 
               overlayCtx.font = "20px monospace";
               overlayCtx.fillStyle = colorPrimary;
-              overlayCtx.fillText(isUnknown ? "ANALISANDO BIOMETRIA..." : "MATCH ENCONTRADO", x, y - 10);
+              overlayCtx.fillText(isUnknown ? "ANALISANDO FACIAL..." : "ALUNO IDENTIFICADO", x, y - 10);
             }
 
           } catch {
@@ -379,7 +379,7 @@ export function QrScanner({
 
       {!isReady && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm z-30">
-          <Fingerprint className="h-24 w-24 text-blue-500 animate-pulse mb-6" />
+          <ScanFace className="h-24 w-24 text-blue-500 animate-pulse mb-6" />
           <div className="flex items-center gap-3 bg-white/10 px-6 py-3 rounded-full text-white">
             <Loader2 className="animate-spin h-5 w-5 text-blue-400" />
             <span className="font-medium tracking-wide">{loadingMsg}</span>

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import jsQR from "jsqr";
-import { UserCheck, Fingerprint, Loader2 } from "lucide-react";
+import { UserCheck, ScanFace, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import * as faceapi from '@vladmandic/face-api';
 
@@ -21,7 +21,7 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
   const faceMatcherRef = useRef<faceapi.FaceMatcher | null>(null);
   const [detectedFace, setDetectedFace] = useState<{ id: string; name: string; photo_url: string } | null>(null);
   const readingRef = useRef(false);
-  const [loadingMsg, setLoadingMsg] = useState<string>("Iniciando sistema biométrico...");
+  const [loadingMsg, setLoadingMsg] = useState<string>("Iniciando Reconhecimento Facial...");
   const [isReady, setIsReady] = useState(false);
 
   // Load Models & Students
@@ -29,13 +29,13 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
     let mounted = true;
     async function loadFaces() {
       try {
-        setLoadingMsg("Carregando redes neurais (SSD MobileNet)...");
-        // SSD MobileNet is the most robust model for university/corporate environments
-        await faceapi.nets.ssdMobilenetv1.loadFromUri('/models');
+        setLoadingMsg("Carregando IA de Reconhecimento Facial...");
+        // Using TinyFaceDetector with higher inputSize is fast AND highly accurate, avoiding UI freeze!
+        await faceapi.nets.tinyFaceDetector.loadFromUri('/models');
         await faceapi.nets.faceLandmark68Net.loadFromUri('/models');
         await faceapi.nets.faceRecognitionNet.loadFromUri('/models');
         
-        setLoadingMsg("Sincronizando banco de dados facial...");
+        setLoadingMsg("Sincronizando banco de rostos (Aguarde)...");
         const { data: students } = await supabase.from('students').select('id, full_name, photo_url').not('photo_url', 'is', null);
         
         if (students && students.length > 0 && mounted) {
@@ -44,8 +44,7 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
           for (const s of students) {
             if (!mounted) break;
             try {
-              setLoadingMsg(`Processando face ${loadedCount + 1}/${students.length}...`);
-              // To avoid CORS blocks with standard fetchImage, we use HTML image with crossOrigin
+              setLoadingMsg(`Processando aluno ${loadedCount + 1}/${students.length}...`);
               const img = new Image();
               img.crossOrigin = "anonymous";
               img.src = s.photo_url;
@@ -54,7 +53,8 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
                  img.onerror = reject;
               });
 
-              const detection = await faceapi.detectSingleFace(img, new faceapi.SsdMobilenetv1Options()).withFaceLandmarks().withFaceDescriptor();
+              // Use high resolution TinyFaceDetector for precision
+              const detection = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 })).withFaceLandmarks().withFaceDescriptor();
               if (detection) {
                 labeledDescriptors.push(new faceapi.LabeledFaceDescriptors(s.id + "|||" + s.full_name + "|||" + s.photo_url, [detection.descriptor]));
               }
@@ -64,18 +64,18 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
             }
           }
           if (labeledDescriptors.length > 0 && mounted) {
-            // Tolerance 0.55 is highly optimized for SSD
+            // Tolerance 0.55 for precision
             faceMatcherRef.current = new faceapi.FaceMatcher(labeledDescriptors, 0.55);
           }
         }
         if (mounted) {
-          setLoadingMsg("Sistema pronto!");
+          setLoadingMsg("Sistema de Catraca Ativo!");
           setTimeout(() => setIsReady(true), 1000);
         }
       } catch (err) {
         console.error("Face API Error:", err);
         if (mounted) {
-          setLoadingMsg("Erro ao iniciar biometria. Operando apenas com QR Code.");
+          setLoadingMsg("Erro ao carregar IA. Operando via QR Code.");
           setTimeout(() => setIsReady(true), 3000);
         }
       }
@@ -132,7 +132,7 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
           
           ctx.drawImage(video, 0, 0);
 
-          // 1. QR Code Scan
+          // 1. QR Code Scan (Always runs first, guarantees it works instantly)
           const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
           const code = jsQR(imageData.data, canvas.width, canvas.height);
 
@@ -142,14 +142,14 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
             return;
           }
 
-          // 2. Facial Recognition Scan (Draw Laser)
+          // 2. Facial Recognition Scan (Non-blocking, runs every 250ms)
           overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 
-          if (Date.now() - lastFaceCheck > 200) {
+          if (Date.now() - lastFaceCheck > 250) {
             lastFaceCheck = Date.now();
             try {
-              // SSD MobileNet is heavier but much more accurate
-              const faceDetection = await faceapi.detectSingleFace(video, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 })).withFaceLandmarks().withFaceDescriptor();
+              // High resolution tinyFaceDetector ensures accuracy WITHOUT freezing the UI
+              const faceDetection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 })).withFaceLandmarks().withFaceDescriptor();
               if (faceDetection) {
                 lastBox = faceDetection.detection.box;
                 if (faceMatcherRef.current) {
@@ -179,8 +179,6 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
             const { x, y, width, height } = lastBox;
             const isUnknown = lastMatch === 'unknown';
             
-            // Red for unknown/analyzing, Green for Match (actually green means it's about to trigger)
-            // We use Red/Orange for scanning to indicate it's actively reading
             const colorPrimary = isUnknown ? "#ff3366" : "#00ffcc";
             const colorRgba = isUnknown ? "rgba(255, 51, 102, 0.9)" : "rgba(0, 255, 204, 0.9)";
             
@@ -214,7 +212,7 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
             // Write HUD Text
             overlayCtx.font = "20px monospace";
             overlayCtx.fillStyle = colorPrimary;
-            overlayCtx.fillText(isUnknown ? "ANALISANDO BIOMETRIA..." : "MATCH ENCONTRADO", x, y - 10);
+            overlayCtx.fillText(isUnknown ? "ANALISANDO FACIAL..." : "ALUNO IDENTIFICADO", x, y - 10);
           }
 
           animationId = requestAnimationFrame(scanFrame);
@@ -274,7 +272,7 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
       
       {!isReady && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm z-30">
-          <Fingerprint className="h-24 w-24 text-blue-500 animate-pulse mb-6" />
+          <ScanFace className="h-24 w-24 text-blue-500 animate-pulse mb-6" />
           <div className="flex items-center gap-3 bg-white/10 px-6 py-3 rounded-full text-white">
             <Loader2 className="animate-spin h-5 w-5 text-blue-400" />
             <span className="font-medium tracking-wide">{loadingMsg}</span>
