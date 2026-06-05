@@ -298,14 +298,19 @@ export async function editEnrollment(id: string, values: {
 
 export async function deleteEnrollment(id: string) {
   if (!shouldUseLocalData()) {
-    await supabase.from("payments").delete().eq("enrollment_id", id);
+    const { data: payments } = await supabase.from("payments").select("*").eq("enrollment_id", id).eq("status", "pending");
+    if (payments) {
+      for (const pay of payments) {
+        await update("payments", pay.id, { status: "cancelled" });
+      }
+    }
   } else {
-    const payments = localDB.get("payments").filter(p => p.enrollment_id === id);
+    const payments = localDB.get("payments").filter(p => p.enrollment_id === id && p.status === "pending");
     for (const pay of payments) {
-      await remove("payments", pay.id);
+      await update("payments", pay.id, { status: "cancelled" });
     }
   }
-  return remove("enrollments", id);
+  return update("enrollments", id, { status: "cancelled" });
 }
 
 export async function getPayments(): Promise<Payment[]> {

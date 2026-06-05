@@ -78,12 +78,12 @@ export default function MatriculasPage() {
   }
 
   async function remove(id: string) {
-    if (!window.confirm("Deseja realmente deletar esta matrícula e todos os pagamentos atrelados a ela?")) return;
+    if (!window.confirm("Deseja realmente cancelar esta matrícula? Os pagamentos futuros em aberto serão cancelados, mas o histórico e pagamentos já realizados serão mantidos.")) return;
     try {
       await deleteEnrollment(id);
       await load();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Erro ao deletar matrícula.");
+      setError(reason instanceof Error ? reason.message : "Erro ao cancelar matrícula.");
     }
   }
 
