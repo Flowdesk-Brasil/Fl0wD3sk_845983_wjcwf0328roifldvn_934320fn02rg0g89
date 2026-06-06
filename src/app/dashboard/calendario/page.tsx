@@ -160,7 +160,7 @@ export default function CalendarioPage() {
 
       {/* MODAL DE DETALHES DO HORÁRIO E ALUNOS */}
       {selectedSchedule && (
-        <Modal open={!!selectedSchedule} onClose={() => setSelectedSchedule(null)} title={`Turma de ${selectedSchedule.plan?.name}`} description={`${WEEKDAYS.find(w => w.value === selectedSchedule.day_of_week)?.label} às ${selectedSchedule.time}`} size="md">
+        <Modal open={!!selectedSchedule} onClose={() => setSelectedSchedule(null)} title={`Turma de ${selectedSchedule.class_type?.name}`} description={`${WEEKDAYS.find(w => w.value === selectedSchedule.day_of_week)?.label} às ${selectedSchedule.time}`} size="md">
           <div className="grid gap-6">
             <div className="flex justify-between items-center bg-[#f3f6fb] p-4 rounded-xl">
               <div>
