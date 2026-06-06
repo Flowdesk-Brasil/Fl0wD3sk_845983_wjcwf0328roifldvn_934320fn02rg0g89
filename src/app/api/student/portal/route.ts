@@ -1,4 +1,5 @@
 import { apiErrorResponse, ApiError, requireRole } from "@/lib/server/supabase-admin";
+import { todayInBrasilia, dayOfWeekInBrasilia } from "@/lib/brazil-date";
 
 export async function GET(request: Request) {
   try {
@@ -6,10 +7,8 @@ export async function GET(request: Request) {
     const { data: student, error } = await admin.from("students").select("*").eq("profile_id", user.id).single();
     if (error || !student) throw new ApiError("Cadastro de aluno não vinculado ao portal.", 404);
 
-    const now = new Date();
-    // Use Brazil timezone offset (UTC-3)
-    const dateStr = new Date(now.getTime() - 3 * 60 * 60 * 1000).toISOString().split('T')[0];
-    const dayOfWeek = now.getDay(); // 0=Sunday ... 6=Saturday
+    const dateStr = todayInBrasilia();      // "YYYY-MM-DD" no fuso de Brasília
+    const dayOfWeek = dayOfWeekInBrasilia(); // 0=Dom...6=Sáb no fuso de Brasília
 
     const [
       { data: existingAttendances },

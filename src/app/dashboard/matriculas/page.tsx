@@ -7,10 +7,11 @@ import { createEnrollment, editEnrollment, getEnrollments, getPlans, getStudents
 import { useRealtimeSync } from "@/hooks/use-realtime-sync";
 import type { Enrollment, EnrollmentStatus, Plan, Student, ClassSchedule, ClassType } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
+import { todayInBrasilia } from "@/lib/brazil-date";
 
 const labels: Record<EnrollmentStatus, string> = { active: "Ativa", suspended: "Suspensa", cancelled: "Cancelada", expired: "Expirada" };
 const tones: Record<EnrollmentStatus, "green" | "yellow" | "red" | "gray"> = { active: "green", suspended: "yellow", cancelled: "red", expired: "gray" };
-const emptyForm = { student_id: "", plan_id: [] as string[], start_date: new Date().toISOString().slice(0, 10) };
+const emptyForm = { student_id: "", plan_id: [] as string[], start_date: todayInBrasilia() };
 
 export default function MatriculasPage() {
   const [enrollments, setEnrollments] = useState<Enrollment[]>([]);

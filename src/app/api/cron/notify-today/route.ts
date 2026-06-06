@@ -1,15 +1,14 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
+import { todayInBrasilia, dayOfWeekInBrasilia } from '@/lib/brazil-date';
 
 // This endpoint should be called by a CRON job (e.g., every morning at 6am)
 // OR manually via the "Alertar alunos" button in the Calendar page.
 // It generates today's attendance records and sends push notifications.
 export async function GET(req: Request) {
   try {
-    const now = new Date();
-    const dayOfWeek = now.getDay(); // 0=Sunday ... 6=Saturday
-    // Correct for Brazil UTC-3
-    const dateStr = new Date(now.getTime() - 3 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const dayOfWeek = dayOfWeekInBrasilia();
+    const dateStr = todayInBrasilia();
 
     // 1. Get all active schedules for today's weekday
     const { data: schedules, error: scheduleError } = await supabase

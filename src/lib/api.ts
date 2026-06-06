@@ -2,6 +2,7 @@
 
 import { localDB } from "@/lib/localDB";
 import { shouldUseLocalData, supabase } from "@/lib/supabase";
+import { todayInBrasilia, currentMonthInBrasilia } from "@/lib/brazil-date";
 import type {
   AuditLog, Checkin, ClassBooking, ClassSession, ClassType, Contract, DashboardStats, Enrollment, LocalTables, NewRow,
   Notification, Payment, Plan, Profile, RevenuePoint, Student, StudioSettings, TableName, Product, Supplier,
@@ -412,7 +413,7 @@ export async function processCheckin(code: string): Promise<Checkin & { student?
       .filter((item) => item.enrollment_id === enrollment.id)
       .sort((a, b) => b.due_date.localeCompare(a.due_date))[0] ?? null
     : null;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayInBrasilia(); // Data no fuso de Brasília
   const enrollmentExpired = Boolean(enrollment?.end_date && enrollment.end_date < today);
   const effectivePayment = payment && payment.status === "pending" && payment.due_date < today
     ? { ...payment, status: "expired" as const }
@@ -908,8 +909,8 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   const [students, enrollments, payments, checkins] = await Promise.all([
     getStudents(), getEnrollments(), getPayments(), getCheckins(),
   ]);
-  const month = new Date().toISOString().slice(0, 7);
-  const currentDate = new Date().toISOString().slice(0, 10);
+  const month = currentMonthInBrasilia(); // Mês no fuso de Brasília
+  const currentDate = todayInBrasilia();   // Data no fuso de Brasília
   const activeEnrollments = enrollments.filter((item) => item.status === "active").length;
   return {
     totalStudents: students.length,

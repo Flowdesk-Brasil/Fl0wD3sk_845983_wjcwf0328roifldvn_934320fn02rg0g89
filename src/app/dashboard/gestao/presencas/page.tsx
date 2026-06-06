@@ -16,7 +16,7 @@ export default function PresencasPage() {
 
   async function loadData() {
     setLoading(true);
-    const dateStr = currentDate.toISOString().split('T')[0];
+    const dateStr = format(currentDate, 'yyyy-MM-dd'); // Usa data local do browser, sem shift UTC
     const data = await getAttendancesByDate(dateStr);
     setAttendances(data);
     setLoading(false);

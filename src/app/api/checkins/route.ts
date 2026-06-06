@@ -1,4 +1,5 @@
 import { apiErrorResponse, ApiError, requireRole } from "@/lib/server/supabase-admin";
+import { todayInBrasilia } from "@/lib/brazil-date";
 
 const recentLocks = new Map<string, number>();
 
@@ -7,7 +8,7 @@ function isUuid(value: string) {
 }
 
 function todayDate() {
-  return new Date().toISOString().slice(0, 10);
+  return todayInBrasilia(); // Data no fuso de Brasília (UTC-3)
 }
 
 export async function POST(request: Request) {
