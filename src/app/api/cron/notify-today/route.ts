@@ -124,8 +124,27 @@ export async function GET() {
       });
     }
 
-    // 3. Upsert "pending" attendance records — ignoreDuplicates preserves confirmed/cancelled
-    const attendanceInserts = studentClasses.map((sc) => ({
+    // 3. Filter out students who already have an attendance record for today
+    const { data: existingAttendances } = await admin
+      .from('class_attendances')
+      .select('student_id, class_schedule_id')
+      .eq('date', dateStr)
+      .in('class_schedule_id', scheduleIds);
+
+    const existingSet = new Set(existingAttendances?.map(a => `${a.student_id}-${a.class_schedule_id}`) || []);
+    
+    const newStudentClasses = studentClasses.filter(sc => !existingSet.has(`${sc.student_id}-${sc.class_schedule_id}`));
+
+    if (newStudentClasses.length === 0) {
+      return NextResponse.json({
+        message: 'Nenhum aluno novo pendente de notificação para as turmas de hoje.',
+        date: dateStr,
+        dayOfWeek,
+      });
+    }
+
+    // 4. Upsert ONLY new "pending" attendance records
+    const attendanceInserts = newStudentClasses.map((sc) => ({
       class_schedule_id: sc.class_schedule_id,
       student_id: sc.student_id,
       date: dateStr,
@@ -139,11 +158,10 @@ export async function GET() {
 
     if (upsertError) {
       console.error('Attendance upsert error:', upsertError.message);
-      // Don't abort — continue to push notifications
     }
 
-    // 4. Send push notifications directly (no internal HTTP fetch)
-    const allStudentIds = [...new Set(studentClasses.map((sc) => sc.student_id))];
+    // 5. Send push notifications directly ONLY to newly inserted students
+    const allStudentIds = [...new Set(newStudentClasses.map((sc) => sc.student_id))];
 
     // Fetch profile IDs to match push_subscriptions (which are tied to profile_id)
     const { data: studentsInfo } = await admin
@@ -154,7 +172,7 @@ export async function GET() {
     let totalPushSent = 0;
 
     for (const schedule of schedules) {
-      const studentIdsForSchedule = studentClasses
+      const studentIdsForSchedule = newStudentClasses
         .filter((sc) => sc.class_schedule_id === schedule.id)
         .map((sc) => sc.student_id);
 
