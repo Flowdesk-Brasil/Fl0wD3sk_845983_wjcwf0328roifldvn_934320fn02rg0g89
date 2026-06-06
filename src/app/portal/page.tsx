@@ -64,10 +64,23 @@ export default function StudentPortalPage() {
       setPushSupported(true);
       if (Notification.permission === 'granted') {
         navigator.serviceWorker.register('/sw.js').then(reg => {
-          reg.pushManager.getSubscription().then(sub => {
-            if (sub) {
+          reg.pushManager.getSubscription().then(async (sub) => {
+            try {
+              if (sub) {
+                await sub.unsubscribe();
+              }
+              const newSub = await reg.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: urlBase64ToUint8Array(publicVapidKey)
+              });
+              await fetch('/api/push/subscribe', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ subscription: newSub, student_id: user.id })
+              });
               setPushEnabled(true);
-            } else {
+            } catch (err) {
+              console.error("Auto-subscribe failed:", err);
               setPushEnabled(false);
             }
             setPushChecking(false);
