@@ -625,6 +625,36 @@ export async function getClassTypes(): Promise<ClassType[]> {
   }
 }
 
+export async function saveClassType(values: Partial<ClassType>) {
+  if (values.id) {
+    return update("class_types", values.id, values);
+  }
+  return insert("class_types", values as NewRow<"class_types">);
+}
+
+export async function deleteClassType(id: string) {
+  // Verifying if it is used in any class schedules
+  if (!shouldUseLocalData()) {
+    const { count, error } = await supabase
+      .from("class_schedules")
+      .select("*", { count: "exact", head: true })
+      .eq("class_type_id", id);
+      
+    if (error) throw new Error("Erro ao verificar dependências.");
+    if (count && count > 0) {
+      throw new Error("Esta aula possui horários cadastrados na Grade Fixa. Exclua ou altere os horários antes de excluir a modalidade.");
+    }
+  } else {
+    const schedules = localDB.get("class_schedules");
+    const used = schedules.some((s) => s.class_type_id === id);
+    if (used) {
+      throw new Error("Esta aula possui horários cadastrados na Grade Fixa. Exclua ou altere os horários antes de excluir a modalidade.");
+    }
+  }
+  
+  return remove("class_types", id);
+}
+
 export async function getClassSessions(): Promise<ClassSession[]> {
   if (!shouldUseLocalData()) {
     const { data, error } = await supabase
