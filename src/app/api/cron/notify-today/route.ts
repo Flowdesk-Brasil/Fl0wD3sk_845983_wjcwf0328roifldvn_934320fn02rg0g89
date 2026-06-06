@@ -21,24 +21,12 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'Erro ao buscar turmas' }, { status: 500 });
     }
 
-    // Filter schedules: only those starting within the next 12 hours
-    const upcomingSchedules = schedules.filter(schedule => {
-      if (!schedule.time) return false;
-      const [hourStr] = schedule.time.split(':');
-      const scheduleHour = parseInt(hourStr, 10);
-      
-      // Se a aula já passou, a gente ignora.
-      // Se a aula é no futuro e a diferença é <= 12 horas, está dentro da janela!
-      const hoursUntilClass = scheduleHour - currentHour;
-      return hoursUntilClass >= 0 && hoursUntilClass <= 12;
-    });
-
-    if (upcomingSchedules.length === 0) {
-      return NextResponse.json({ message: 'Nenhuma turma nas próximas 12 horas' }, { status: 200 });
+    if (schedules.length === 0) {
+      return NextResponse.json({ message: 'Nenhuma turma programada para hoje' }, { status: 200 });
     }
 
     // 2. Get students for these schedules
-    const scheduleIds = upcomingSchedules.map(s => s.id);
+    const scheduleIds = schedules.map(s => s.id);
     const { data: studentClasses, error: scError } = await supabase
       .from('student_classes')
       .select('student_id, class_schedule_id')
@@ -84,7 +72,7 @@ export async function GET(req: Request) {
     let totalSent = 0;
     const origin = req.headers.get('origin') || process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
     
-    for (const schedule of upcomingSchedules) {
+    for (const schedule of schedules) {
       const newStudentIdsForSchedule = newStudentClasses.filter(sc => sc.class_schedule_id === schedule.id).map(sc => sc.student_id);
       
       if (newStudentIdsForSchedule.length > 0) {

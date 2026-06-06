@@ -80,7 +80,7 @@ export default function CalendarioPage() {
   if (loading) return <LoadingState label="Montando grade fixa..." />;
 
   async function triggerNotifications() {
-    if (!window.confirm("Isso verificará as próximas aulas (12h) e enviará notificações Push para os alunos que ainda não foram notificados. Deseja continuar?")) return;
+    if (!window.confirm("Isso verificará todas as aulas de hoje e enviará notificações Push para os alunos matriculados que ainda não foram notificados. Deseja continuar?")) return;
     setTriggering(true);
     try {
       const res = await fetch("/api/cron/notify-today");
