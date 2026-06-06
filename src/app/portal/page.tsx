@@ -43,16 +43,21 @@ export default function StudentPortalPage() {
   const [pushChecking, setPushChecking] = useState(true);
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
 
+  async function reloadData(token?: string) {
+    const { data: session } = await supabase.auth.getSession();
+    const accessToken = token ?? session.session?.access_token ?? "";
+    const response = await fetch("/api/student/portal", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: "no-store",
+    });
+    const payload = await response.json() as PortalData & { error?: string };
+    if (!response.ok) throw new Error(payload.error || "Não foi possível carregar seu portal.");
+    setData(payload);
+  }
+
   useEffect(() => {
     if (!user || user.app_role !== "student") return;
-    supabase.auth.getSession().then(({ data: session }) => fetch("/api/student/portal", {
-      headers: { Authorization: `Bearer ${session.session?.access_token ?? ""}` },
-      cache: "no-store",
-    })).then(async (response) => {
-      const payload = await response.json() as PortalData & { error?: string };
-      if (!response.ok) throw new Error(payload.error || "Não foi possível carregar seu portal.");
-      setData(payload);
-    }).catch((reason: Error) => setError(reason.message));
+    reloadData().catch((reason: Error) => setError(reason.message));
 
     // Check Push status
     if ('serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window) {
@@ -101,7 +106,8 @@ export default function StudentPortalPage() {
         body: JSON.stringify({ subscription, student_id: user!.id })
       });
       setPushEnabled(true);
-      alert('Notificações ativadas com sucesso!');
+      // Reload portal data now that we are unlocked
+      await reloadData();
     } catch (err) {
       console.error('Erro ao assinar push:', err);
       alert('Erro ao ativar notificações. Tente recarregar a página.');
@@ -112,13 +118,8 @@ export default function StudentPortalPage() {
     setLoadingAction(attendanceId);
     try {
       await updateAttendanceStatus(attendanceId, status);
-      setData(current => {
-        if (!current) return current;
-        return {
-          ...current,
-          attendances: current.attendances.map(a => a.id === attendanceId ? { ...a, status } : a)
-        };
-      });
+      // Reload from server to get fresh real IDs and status
+      await reloadData();
     } catch (e: any) {
       alert(e.message || "Erro ao confirmar.");
     } finally {
