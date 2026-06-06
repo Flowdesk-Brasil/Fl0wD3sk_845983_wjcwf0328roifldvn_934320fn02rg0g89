@@ -1,11 +1,11 @@
 "use client";
 
-import { BookOpen, PauseCircle, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { BookOpen, PauseCircle, Plus, RotateCcw, Trash2, Dumbbell } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { EmptyState, ErrorBanner, FieldLabel, LoadingState, Modal, PageHeader, SearchInput, StatusBadge } from "@/components/ui";
-import { createEnrollment, editEnrollment, getEnrollments, getPlans, getStudents, updateEnrollmentStatus, deleteEnrollment } from "@/lib/api";
+import { createEnrollment, editEnrollment, getEnrollments, getPlans, getStudents, updateEnrollmentStatus, deleteEnrollment, getClassSchedules, getStudentClasses, linkStudentToClasses, getClassTypes } from "@/lib/api";
 import { useRealtimeSync } from "@/hooks/use-realtime-sync";
-import type { Enrollment, EnrollmentStatus, Plan, Student } from "@/lib/types";
+import type { Enrollment, EnrollmentStatus, Plan, Student, ClassSchedule, ClassType } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 
 const labels: Record<EnrollmentStatus, string> = { active: "Ativa", suspended: "Suspensa", cancelled: "Cancelada", expired: "Expirada" };
@@ -24,11 +24,20 @@ export default function MatriculasPage() {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<"all" | EnrollmentStatus>("all");
 
+  const [classesModalOpen, setClassesModalOpen] = useState(false);
+  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
+  const [availableSchedules, setAvailableSchedules] = useState<ClassSchedule[]>([]);
+  const [availableClassTypes, setAvailableClassTypes] = useState<ClassType[]>([]);
+  const [selectedSchedules, setSelectedSchedules] = useState<string[]>([]);
+  const [savingClasses, setSavingClasses] = useState(false);
+
   async function load() {
-    const [nextEnrollments, nextStudents, nextPlans] = await Promise.all([getEnrollments(), getStudents(), getPlans()]);
+    const [nextEnrollments, nextStudents, nextPlans, nextSchedules, nextClassTypes] = await Promise.all([getEnrollments(), getStudents(), getPlans(), getClassSchedules(), getClassTypes()]);
     setEnrollments(nextEnrollments);
     setStudents(nextStudents.filter((student) => student.status === "active"));
     setPlans(nextPlans.filter((plan) => plan.active));
+    setAvailableSchedules(nextSchedules.filter(s => s.active));
+    setAvailableClassTypes(nextClassTypes);
     setLoading(false);
   }
   useEffect(() => { void load(); }, []);
@@ -92,6 +101,35 @@ export default function MatriculasPage() {
     }
   }
 
+  async function openManageClasses(studentId: string) {
+    setSelectedStudentId(studentId);
+    setError(null);
+    try {
+      const studentClasses = await getStudentClasses(studentId);
+      setSelectedSchedules(studentClasses.map(sc => sc.class_schedule_id));
+      setClassesModalOpen(true);
+    } catch (e) {
+      setError("Erro ao carregar aulas do aluno.");
+    }
+  }
+
+  async function handleSaveClasses(e: FormEvent) {
+    e.preventDefault();
+    if (!selectedStudentId) return;
+    setSavingClasses(true);
+    setError(null);
+    try {
+      await linkStudentToClasses(selectedStudentId, selectedSchedules);
+      setClassesModalOpen(false);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Erro ao salvar aulas.");
+    } finally {
+      setSavingClasses(false);
+    }
+  }
+
+  const WEEKDAYS = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+
   if (loading) return <LoadingState label="Carregando matrículas..." />;
 
   return (
@@ -124,6 +162,7 @@ export default function MatriculasPage() {
                 <td><StatusBadge tone={tones[item.status]}>{labels[item.status]}</StatusBadge></td>
                 <td><div className="flex gap-2">
                   <button className="icon-btn" title="Editar" onClick={() => openEdit(item)}><BookOpen className="h-4 w-4 text-blue-600" /></button>
+                  <button className="icon-btn" title="Gerenciar Aulas" onClick={() => openManageClasses(item.student_id)}><Dumbbell className="h-4 w-4 text-emerald-600" /></button>
                   {item.status === "active" ? <button className="icon-btn" title="Suspender" onClick={() => void setStatus(item.id, "suspended")}><PauseCircle className="h-4 w-4" /></button> : <button className="icon-btn" title="Reativar" onClick={() => void setStatus(item.id, "active")}><RotateCcw className="h-4 w-4" /></button>}
                   <button className="icon-btn" title="Deletar" onClick={() => void remove(item.id)}><Trash2 className="h-4 w-4 text-red-600" /></button>
                 </div></td>
@@ -170,7 +209,65 @@ export default function MatriculasPage() {
             )}
           </div>
           <label><FieldLabel required>Data de início</FieldLabel><input className="field" type="date" required value={form.start_date} onChange={(event) => setForm({ ...form, start_date: event.target.value })} /></label>
-          <div className="form-actions"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancelar</button><button className="btn btn-primary" type="submit" disabled={form.plan_id.length === 0}>{editId ? "Salvar matrícula" : "Criar matrícula"}</button></div>
+            <div className="form-actions"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancelar</button><button className="btn btn-primary" type="submit" disabled={form.plan_id.length === 0}>{editId ? "Salvar matrícula" : "Criar matrícula"}</button></div>
+        </form>
+      </Modal>
+
+      {/* Modal para gerenciar aulas */}
+      <Modal open={classesModalOpen} onClose={() => setClassesModalOpen(false)} title="Gerenciar Aulas do Aluno" description="Marque os dias e horários que o aluno irá frequentar." size="lg">
+        <form onSubmit={handleSaveClasses} className="grid gap-6">
+          <ErrorBanner message={error} />
+          
+          <div className="grid gap-6 max-h-[60vh] overflow-y-auto pr-2">
+            {availableClassTypes.map(classType => {
+              const schedulesForType = availableSchedules.filter(s => s.class_type_id === classType.id);
+              if (schedulesForType.length === 0) return null;
+              
+              return (
+                <div key={classType.id} className="rounded-xl border border-[#e3e8f0] overflow-hidden">
+                  <div className="bg-[#f8fafc] px-4 py-3 border-b border-[#e3e8f0] flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: classType.color || '#3b82f6' }} />
+                    <h3 className="font-bold text-slate-800">{classType.name}</h3>
+                  </div>
+                  <div className="p-4 grid gap-2 md:grid-cols-2">
+                    {schedulesForType.map(schedule => {
+                      const label = `${WEEKDAYS[schedule.day_of_week]} às ${schedule.time}`;
+                      const isChecked = selectedSchedules.includes(schedule.id);
+                      return (
+                        <label key={schedule.id} className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 transition-colors hover:bg-[#f7f9fc] ${isChecked ? "border-emerald-500 bg-[#ecfdf5]" : "border-[#e3e8f0]"}`}>
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-slate-300 accent-emerald-600"
+                            checked={isChecked}
+                            onChange={(e) => {
+                              setSelectedSchedules(curr =>
+                                e.target.checked ? [...curr, schedule.id] : curr.filter(id => id !== schedule.id)
+                              );
+                            }}
+                          />
+                          <div className="flex flex-col">
+                            <span className={`text-sm font-semibold ${isChecked ? "text-emerald-900" : "text-slate-700"}`}>{label}</span>
+                            <span className="text-xs text-slate-500">{schedule.instructor?.full_name || "Sem professor"}</span>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+            
+            {availableClassTypes.length === 0 && (
+              <p className="text-center text-slate-500 py-8">Nenhuma aula ou horário cadastrado no sistema.</p>
+            )}
+          </div>
+
+          <div className="form-actions flex justify-end gap-2 pt-4 border-t border-[#e3e8f0]">
+            <button type="button" className="btn btn-secondary" onClick={() => setClassesModalOpen(false)}>Cancelar</button>
+            <button className="btn btn-primary bg-emerald-600 hover:bg-emerald-700" type="submit" disabled={savingClasses}>
+              {savingClasses ? "Salvando..." : "Salvar aulas"}
+            </button>
+          </div>
         </form>
       </Modal>
     </div>
