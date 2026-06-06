@@ -30,7 +30,8 @@ export default function MobileAppPage() {
   const [copied, setCopied] = useState(false);
   const [isInstallable, setIsInstallable] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushEnabled, setPushEnabled] = useState(true); // default to true until checked
+  const [pushSupported, setPushSupported] = useState(true);
   const [attendances, setAttendances] = useState<ClassAttendance[]>([]);
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
 
@@ -46,11 +47,19 @@ export default function MobileAppPage() {
 
     // Check Push status
     if ('serviceWorker' in navigator && 'PushManager' in window) {
+      setPushSupported(true);
       navigator.serviceWorker.register('/sw.js').then(reg => {
         reg.pushManager.getSubscription().then(sub => {
-          if (sub) setPushEnabled(true);
+          if (sub) {
+            setPushEnabled(true);
+          } else {
+            setPushEnabled(false);
+          }
         });
       });
+    } else {
+      setPushSupported(false);
+      setPushEnabled(true); // Bypass se não suportar
     }
 
     const handleBeforeInstallPrompt = (e: any) => {
@@ -140,19 +149,23 @@ export default function MobileAppPage() {
         </div>
 
         {/* Notifications & Action Items */}
-        {!pushEnabled && (
-          <div className="bg-yellow-500/10 border border-yellow-400/30 rounded-2xl p-4 mb-6 flex flex-col items-center text-center">
-            <Bell className="h-8 w-8 text-yellow-300 mb-2" />
-            <h3 className="text-white font-bold mb-1">Ative as notificações</h3>
-            <p className="text-yellow-100 text-sm mb-3">Seja avisado sobre suas aulas e confirme presença rapidamente.</p>
-            <button onClick={subscribePush} className="bg-yellow-500 hover:bg-yellow-600 text-yellow-950 font-bold py-2 px-6 rounded-xl transition w-full">
-              Ativar agora
+        {pushSupported && !pushEnabled ? (
+          <div className="bg-white rounded-3xl shadow-2xl p-8 mb-6 flex flex-col items-center text-center mt-10">
+            <div className="bg-blue-100 p-4 rounded-full mb-6">
+              <Bell className="h-12 w-12 text-blue-600 animate-pulse" />
+            </div>
+            <h3 className="text-slate-900 text-2xl font-black mb-3">Ative as notificações!</h3>
+            <p className="text-slate-600 mb-8 leading-relaxed text-sm">
+              Para acessar o seu portal, visualizar seu QR Code e gerenciar suas presenças nas aulas, você precisa permitir que o nosso sistema te envie notificações importantes sobre as suas turmas.
+            </p>
+            <button onClick={subscribePush} className="bg-blue-600 hover:bg-blue-700 text-white shadow-xl shadow-blue-600/30 font-bold py-4 px-8 rounded-2xl transition w-full text-lg">
+              Ativar Notificações
             </button>
           </div>
-        )}
-
-        {attendances.length > 0 && (
-          <div className="mb-6 space-y-4">
+        ) : (
+          <>
+            {attendances.length > 0 && (
+              <div className="mb-6 space-y-4">
             <h2 className="text-white font-bold text-lg flex items-center gap-2"><CalendarClock className="h-5 w-5" /> Suas aulas de hoje</h2>
             {attendances.map(att => (
               <div key={att.id} className="bg-white rounded-2xl p-5 shadow-lg">
@@ -227,6 +240,8 @@ export default function MobileAppPage() {
             <Download className="h-5 w-5" />
             Instalar app no celular
           </button>
+        )}
+          </>
         )}
       </div>
     </div>
