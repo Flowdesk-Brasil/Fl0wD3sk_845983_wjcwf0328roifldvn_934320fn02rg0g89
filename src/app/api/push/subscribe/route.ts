@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase'; // We'll bypass RLS with service role if needed, or just insert.
+import { getAdminClient } from '@/lib/server/supabase-admin';
 
 export async function POST(req: Request) {
   try {
@@ -9,8 +9,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Missing subscription or student_id' }, { status: 400 });
     }
 
+    const admin = getAdminClient();
+    
     // Upsert subscription
-    const { error } = await supabase.from('push_subscriptions').upsert({
+    const { error } = await admin.from('push_subscriptions').upsert({
       id: subscription.endpoint, // use endpoint as id to avoid duplicates
       user_id: student_id,
       endpoint: subscription.endpoint,

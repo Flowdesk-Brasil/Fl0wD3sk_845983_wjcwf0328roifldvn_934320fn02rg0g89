@@ -4,8 +4,8 @@ import { getAdminClient } from '@/lib/server/supabase-admin';
 
 webpush.setVapidDetails(
   'mailto:contato@studio.com.br',
-  process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || '',
-  process.env.VAPID_PRIVATE_KEY || ''
+  process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || 'BE8FMu1NZtQh2QVULUShurqQlruZMOECnnw2HuHmx2X63Iv0jxuDLquhVva4lERZmuMsUE5OjzKRbWi1As0ZQlY',
+  process.env.VAPID_PRIVATE_KEY || '3dO0XqBl8t69E1VevHLFlubTtixtEJeexYoXu4-7MLQ'
 );
 
 export async function POST(req: Request) {

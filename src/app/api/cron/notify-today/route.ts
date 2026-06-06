@@ -6,8 +6,8 @@ import { todayInBrasilia, dayOfWeekInBrasilia } from '@/lib/brazil-date';
 // Setup VAPID once
 webpush.setVapidDetails(
   'mailto:contato@studio.com.br',
-  process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || '',
-  process.env.VAPID_PRIVATE_KEY || ''
+  process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || 'BE8FMu1NZtQh2QVULUShurqQlruZMOECnnw2HuHmx2X63Iv0jxuDLquhVva4lERZmuMsUE5OjzKRbWi1As0ZQlY',
+  process.env.VAPID_PRIVATE_KEY || '3dO0XqBl8t69E1VevHLFlubTtixtEJeexYoXu4-7MLQ'
 );
 
 const DIAS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
@@ -143,8 +143,15 @@ export async function GET() {
     }
 
     // 4. Send push notifications directly (no internal HTTP fetch)
-    let totalPushSent = 0;
     const allStudentIds = [...new Set(studentClasses.map((sc) => sc.student_id))];
+
+    // Fetch profile IDs to match push_subscriptions (which are tied to profile_id)
+    const { data: studentsInfo } = await admin
+      .from('students')
+      .select('id, profile_id')
+      .in('id', allStudentIds);
+
+    let totalPushSent = 0;
 
     for (const schedule of schedules) {
       const studentIdsForSchedule = studentClasses
@@ -153,6 +160,12 @@ export async function GET() {
 
       if (studentIdsForSchedule.length === 0) continue;
 
+      const profileIdsForSchedule = studentIdsForSchedule
+        .map(id => studentsInfo?.find(s => s.id === id)?.profile_id)
+        .filter(Boolean) as string[];
+
+      if (profileIdsForSchedule.length === 0) continue;
+
       const classTypeObj = (schedule as any).class_type;
       const className = Array.isArray(classTypeObj)
         ? classTypeObj[0]?.name
@@ -160,7 +173,7 @@ export async function GET() {
 
       const sent = await sendPushDirect(
         admin,
-        studentIdsForSchedule,
+        profileIdsForSchedule, // Map to auth user IDs
         `Sua aula de ${className} é hoje! 💪`,
         `Horário: ${schedule.time}. Toque para confirmar sua presença!`,
         '/portal'

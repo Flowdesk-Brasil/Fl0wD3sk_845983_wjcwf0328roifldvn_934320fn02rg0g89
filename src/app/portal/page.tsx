@@ -12,7 +12,7 @@ import { supabase } from "@/lib/supabase";
 import type { Student, ClassAttendance } from "@/lib/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
 
-const publicVapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || "BFp3s-vPxhk_OZ7ChaXbZOLeZEvjGIT4aci9yrC9fj6TzJiGPr3Vxyhp_Xn07Igj1Kd6Rn3BsizdQM6jqoZrlg8";
+const publicVapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || "BE8FMu1NZtQh2QVULUShurqQlruZMOECnnw2HuHmx2X63Iv0jxuDLquhVva4lERZmuMsUE5OjzKRbWi1As0ZQlY";
 
 function urlBase64ToUint8Array(base64String: string) {
   const padding = '='.repeat((4 - base64String.length % 4) % 4);
