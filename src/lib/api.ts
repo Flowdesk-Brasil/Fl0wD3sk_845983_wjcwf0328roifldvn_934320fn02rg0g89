@@ -757,14 +757,14 @@ export async function getStudentClasses(studentId: string): Promise<StudentClass
     return (data ?? []) as StudentClass[];
   }
   const schedules = localDB.get("class_schedules");
-  const plans = localDB.get("plans");
+  const classTypes = localDB.get("class_types");
   return localDB.get("student_classes")
     .filter((sc) => sc.student_id === studentId)
     .map((sc) => {
       const schedule = relation(schedules, sc.class_schedule_id);
       return {
         ...sc,
-        class_schedule: schedule ? { ...schedule, class_type: relation(classTypes, schedule.class_type_id) } : null,
+        class_schedule: schedule ? ({ ...schedule, class_type: relation(classTypes, schedule.class_type_id) } as unknown as ClassSchedule) : null,
       };
     });
 }
@@ -787,7 +787,7 @@ export async function getTodayAttendances(studentId: string, dateStr: string): P
       const schedule = relation(schedules, ca.class_schedule_id);
       return {
         ...ca,
-        class_schedule: schedule ? { ...schedule, class_type: relation(classTypes, schedule.class_type_id) } : null,
+        class_schedule: schedule ? ({ ...schedule, class_type: relation(classTypes, schedule.class_type_id) } as unknown as ClassSchedule) : null,
       };
     });
 }
@@ -802,7 +802,7 @@ export async function getAttendancesByDate(dateStr: string): Promise<ClassAttend
     return (data ?? []) as ClassAttendance[];
   }
   const schedules = localDB.get("class_schedules");
-  const plans = localDB.get("plans");
+  const classTypes = localDB.get("class_types");
   const students = localDB.get("students");
   return localDB.get("class_attendances")
     .filter((ca) => ca.date === dateStr)
@@ -811,7 +811,7 @@ export async function getAttendancesByDate(dateStr: string): Promise<ClassAttend
       return {
         ...ca,
         student: relation(students, ca.student_id),
-        class_schedule: schedule ? { ...schedule, class_type: relation(classTypes, schedule.class_type_id) } : null,
+        class_schedule: schedule ? ({ ...schedule, class_type: relation(classTypes, schedule.class_type_id) } as unknown as ClassSchedule) : null,
       };
     });
 }
@@ -819,7 +819,13 @@ export async function getAttendancesByDate(dateStr: string): Promise<ClassAttend
 export async function updateAttendanceStatus(id: string, status: ClassAttendance["status"]) {
   if (status === "confirmed") {
     // Buscar detalhes da presenca
-    const attendance = await get("class_attendances", id) as ClassAttendance;
+    let attendance: ClassAttendance | null = null;
+    if (!shouldUseLocalData()) {
+      const { data } = await supabase.from("class_attendances").select("*").eq("id", id).single();
+      attendance = data as ClassAttendance;
+    } else {
+      attendance = localDB.get("class_attendances").find(a => a.id === id) as ClassAttendance;
+    }
     if (attendance) {
       // Verificar quantas o aluno ja confirmou hoje
       if (!shouldUseLocalData()) {
