@@ -315,7 +315,7 @@ export default function NovoAlunoPage() {
               <div className="flex flex-col gap-2">
                 {schedules.map((schedule) => {
                   const WEEKDAYS = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
-                  const label = `${schedule.plan?.name} - ${WEEKDAYS[schedule.day_of_week]} às ${schedule.time}`;
+                  const label = `${schedule.class_type?.name} - ${WEEKDAYS[schedule.day_of_week]} às ${schedule.time}`;
                   const isChecked = selectedSchedules.includes(schedule.id);
                   return (
                     <label key={schedule.id} className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-colors hover:bg-[#f7f9fc] ${isChecked ? "border-blue-600 bg-[#eff4ff]" : "border-[#e3e8f0]"}`}>

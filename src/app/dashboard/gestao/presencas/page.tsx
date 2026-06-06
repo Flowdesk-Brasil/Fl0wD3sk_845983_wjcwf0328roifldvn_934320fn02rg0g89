@@ -107,9 +107,9 @@ export default function PresencasPage() {
               <div key={group.schedule.id} className="card overflow-hidden">
                 <div className="bg-slate-50 border-b border-slate-100 p-4 flex justify-between items-center">
                   <div className="flex items-center gap-3">
-                    <div className="w-1.5 h-8 rounded-full" style={{ backgroundColor: group.schedule.plan?.color || '#3b82f6' }} />
+                    <div className="w-1.5 h-8 rounded-full" style={{ backgroundColor: group.schedule.class_type?.color || '#3b82f6' }} />
                     <div>
-                      <h2 className="font-bold text-lg text-slate-900">{group.schedule.plan?.name || "Turma"}</h2>
+                      <h2 className="font-bold text-lg text-slate-900">{group.schedule.class_type?.name || "Turma"}</h2>
                       <p className="text-sm font-medium text-slate-500 flex items-center gap-1"><Clock className="h-3.5 w-3.5" /> {group.schedule.time}</p>
                     </div>
                   </div>

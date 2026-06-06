@@ -764,7 +764,7 @@ export async function getStudentClasses(studentId: string): Promise<StudentClass
       const schedule = relation(schedules, sc.class_schedule_id);
       return {
         ...sc,
-        class_schedule: schedule ? { ...schedule, plan: relation(plans, schedule.plan_id) } : null,
+        class_schedule: schedule ? { ...schedule, class_type: relation(classTypes, schedule.class_type_id) } : null,
       };
     });
 }
@@ -780,14 +780,14 @@ export async function getTodayAttendances(studentId: string, dateStr: string): P
     return (data ?? []) as ClassAttendance[];
   }
   const schedules = localDB.get("class_schedules");
-  const plans = localDB.get("plans");
+  const classTypes = localDB.get("class_types");
   return localDB.get("class_attendances")
     .filter((ca) => ca.student_id === studentId && ca.date === dateStr)
     .map((ca) => {
       const schedule = relation(schedules, ca.class_schedule_id);
       return {
         ...ca,
-        class_schedule: schedule ? { ...schedule, plan: relation(plans, schedule.plan_id) } : null,
+        class_schedule: schedule ? { ...schedule, class_type: relation(classTypes, schedule.class_type_id) } : null,
       };
     });
 }
@@ -811,7 +811,7 @@ export async function getAttendancesByDate(dateStr: string): Promise<ClassAttend
       return {
         ...ca,
         student: relation(students, ca.student_id),
-        class_schedule: schedule ? { ...schedule, plan: relation(plans, schedule.plan_id) } : null,
+        class_schedule: schedule ? { ...schedule, class_type: relation(classTypes, schedule.class_type_id) } : null,
       };
     });
 }

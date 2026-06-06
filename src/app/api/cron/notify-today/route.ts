@@ -63,7 +63,7 @@ export async function GET(req: Request) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             student_ids: studentIdsForSchedule,
-            title: `Aula de ${schedule.plan?.name} hoje!`,
+            title: `Aula de ${schedule.class_type?.name} hoje!`,
             body: `Você confirma presença na aula de hoje às ${schedule.time}?`,
             url: `/mobile-app?date=${dateStr}&schedule=${schedule.id}` // Link para a tela de confirmação
           })
