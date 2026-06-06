@@ -90,7 +90,7 @@ export default function StudentPortalPage() {
         alert('Você bloqueou as notificações.');
         return;
       }
-      const registration = await navigator.serviceWorker.ready;
+      const registration = await navigator.serviceWorker.register('/sw.js');
       const subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(publicVapidKey)
