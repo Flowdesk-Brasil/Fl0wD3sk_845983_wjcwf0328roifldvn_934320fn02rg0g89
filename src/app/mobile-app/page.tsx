@@ -127,8 +127,8 @@ export default function MobileAppPage() {
     try {
       await updateAttendanceStatus(attendanceId, status);
       setAttendances(current => current.map(a => a.id === attendanceId ? { ...a, status } : a));
-    } catch (e) {
-      alert("Erro ao confirmar.");
+    } catch (e: any) {
+      alert(e.message || "Erro ao confirmar.");
     } finally {
       setLoadingAction(null);
     }
@@ -171,7 +171,7 @@ export default function MobileAppPage() {
               <div key={att.id} className="bg-white rounded-2xl p-5 shadow-lg">
                 <div className="flex justify-between items-start mb-4">
                   <div>
-                    <h3 className="font-bold text-slate-900 text-lg">{att.class_schedule?.plan?.name || "Aula"}</h3>
+                    <h3 className="font-bold text-slate-900 text-lg">{att.class_schedule?.class_type?.name || "Aula"}</h3>
                     <p className="text-slate-500 font-medium">Hoje às {att.class_schedule?.time}</p>
                   </div>
                   <div className="bg-blue-50 text-blue-700 px-3 py-1 rounded-lg text-sm font-bold border border-blue-100">

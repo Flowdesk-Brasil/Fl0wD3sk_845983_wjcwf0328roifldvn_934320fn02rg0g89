@@ -51,14 +51,56 @@ export async function POST(request: Request) {
       payment.status = "expired";
     }
 
-    const allowed = Boolean(
-      student &&
-      student.status === "active" &&
-      enrollment &&
-      !enrollmentExpired &&
-      payment &&
-      payment.status === "paid"
-    );
+    let reason = !student
+      ? "Codigo nao encontrado."
+      : student.status !== "active"
+        ? "Aluno inativo ou bloqueado."
+        : !enrollment
+          ? "Aluno sem matricula ativa."
+          : enrollmentExpired
+            ? "Matricula expirada. Renove o plano antes de liberar a catraca."
+            : !payment
+              ? "Nenhum pagamento encontrado para esta matricula. Regularize na recepcao."
+              : payment.status === "expired"
+                ? "Pagamento expirado ou vencido. Acesso bloqueado ate regularizacao."
+                : payment.status === "pending"
+                  ? "Pagamento pendente. Receba o pagamento na recepcao antes de liberar a catraca."
+                  : payment.status !== "paid"
+                    ? "Pagamento nao confirmado. Acesso bloqueado."
+                    : null;
+
+    let allowed = !reason;
+
+    if (allowed && student) {
+      const todayDateStr = todayDate();
+      
+      // 1. Validate Max 2 checkins per day
+      const { count: checkinsToday } = await admin.from("checkins")
+        .select("*", { count: "exact", head: true })
+        .eq("student_id", student.id)
+        .eq("status", "allowed")
+        .gte("checked_at", `${todayDateStr}T00:00:00.000Z`)
+        .lte("checked_at", `${todayDateStr}T23:59:59.999Z`);
+        
+      if (checkinsToday !== null && checkinsToday >= 2) {
+        allowed = false;
+        reason = "Limite diario atingido. Permitido no maximo 2 check-ins por dia.";
+      }
+      
+      // 2. Validate confirmed class presence via App
+      if (allowed) {
+        const { count: confirmedClasses } = await admin.from("class_attendances")
+          .select("*", { count: "exact", head: true })
+          .eq("student_id", student.id)
+          .eq("date", todayDateStr)
+          .in("status", ["confirmed", "attended"]);
+          
+        if (confirmedClasses === null || confirmedClasses === 0) {
+          allowed = false;
+          reason = "Acesso bloqueado. Voce precisa confirmar a presenca na aula pelo Portal do Aluno (Notificacao) antes de acessar a catraca!";
+        }
+      }
+    }
 
     if (allowed && student) {
       const windowStart = new Date(Date.now() - 5 * 60 * 1000).toISOString();
@@ -85,23 +127,7 @@ export async function POST(request: Request) {
       recentLocks.set(student.id, Date.now() + 5 * 60 * 1000);
     }
 
-    const reason = !student
-      ? "Codigo nao encontrado."
-      : student.status !== "active"
-        ? "Aluno inativo ou bloqueado."
-        : !enrollment
-          ? "Aluno sem matricula ativa."
-          : enrollmentExpired
-            ? "Matricula expirada. Renove o plano antes de liberar a catraca."
-            : !payment
-              ? "Nenhum pagamento encontrado para esta matricula. Regularize na recepcao."
-              : payment.status === "expired"
-                ? "Pagamento expirado ou vencido. Acesso bloqueado ate regularizacao."
-                : payment.status === "pending"
-                  ? "Pagamento pendente. Receba o pagamento na recepcao antes de liberar a catraca."
-                  : payment.status !== "paid"
-                    ? "Pagamento nao confirmado. Acesso bloqueado."
-                    : null;
+    // Reason is already populated above
 
     const { data: checkin, error } = await admin.from("checkins").insert({
       student_id: student?.id || null,

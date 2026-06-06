@@ -5,8 +5,8 @@ import { ptBR } from "date-fns/locale";
 import { CalendarDays, ChevronLeft, ChevronRight, Clock3, Plus, Trash2, Users } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { EmptyState, ErrorBanner, FieldLabel, LoadingState, Modal, PageHeader } from "@/components/ui";
-import { createClassSchedule, deleteClassSchedule, getClassSchedules, getPlans, getProfiles } from "@/lib/api";
-import type { ClassSchedule, Plan, Profile } from "@/lib/types";
+import { createClassSchedule, deleteClassSchedule, getClassSchedules, getClassTypes, getProfiles } from "@/lib/api";
+import type { ClassSchedule, ClassType, Profile } from "@/lib/types";
 
 const WEEKDAYS = [
   { value: 1, label: "Segunda-feira" },
@@ -21,19 +21,19 @@ const WEEKDAYS = [
 export default function CalendarioPage() {
   const [anchor, setAnchor] = useState(new Date());
   const [schedules, setSchedules] = useState<ClassSchedule[]>([]);
-  const [plans, setPlans] = useState<Plan[]>([]);
+  const [classTypes, setClassTypes] = useState<ClassType[]>([]);
   const [instructors, setInstructors] = useState<Profile[]>([]);
   const [open, setOpen] = useState(false);
   const [selectedSchedule, setSelectedSchedule] = useState<ClassSchedule | null>(null);
   
-  const [form, setForm] = useState({ plan_id: "", instructor_id: "", day_of_week: "1", time: "18:00", capacity: "10" });
+  const [form, setForm] = useState({ class_type_id: "", instructor_id: "", day_of_week: "1", time: "18:00", capacity: "10" });
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   async function load() {
-    const [nextSchedules, nextPlans, profiles] = await Promise.all([getClassSchedules(), getPlans(), getProfiles()]);
+    const [nextSchedules, nextClassTypes, profiles] = await Promise.all([getClassSchedules(), getClassTypes(), getProfiles()]);
     setSchedules(nextSchedules);
-    setPlans(nextPlans.filter((item) => item.active));
+    setClassTypes(nextClassTypes.filter((item) => item.active));
     setInstructors(profiles.filter((item) => item.active && (item.role === "professor" || item.role === "admin")));
     setLoading(false);
   }
@@ -51,14 +51,14 @@ export default function CalendarioPage() {
     setError(null);
     try {
       await createClassSchedule({
-        plan_id: form.plan_id,
+        class_type_id: form.class_type_id,
         instructor_id: form.instructor_id || null,
         day_of_week: Number(form.day_of_week),
         time: form.time,
         capacity: Number(form.capacity),
       });
       setOpen(false);
-      setForm({ plan_id: "", instructor_id: "", day_of_week: "1", time: "18:00", capacity: "10" });
+      setForm({ class_type_id: "", instructor_id: "", day_of_week: "1", time: "18:00", capacity: "10" });
       await load();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Não foi possível criar a turma.");
@@ -121,9 +121,9 @@ export default function CalendarioPage() {
                         key={schedule.id} 
                         onClick={() => setSelectedSchedule(schedule)}
                         className={`text-left rounded p-1.5 border-l-4 text-[10px] hover:bg-slate-50 transition-colors ${!isCurrentMonth && 'opacity-50'}`}
-                        style={{ borderLeftColor: schedule.plan?.color || "#cbd5e1", backgroundColor: `${schedule.plan?.color}15` }}
+                        style={{ borderLeftColor: schedule.class_type?.color || "#cbd5e1", backgroundColor: `${schedule.class_type?.color}15` }}
                       >
-                        <strong className="block truncate text-slate-900">{schedule.time} - {schedule.plan?.name}</strong>
+                        <strong className="block truncate text-slate-900">{schedule.time} - {schedule.class_type?.name}</strong>
                         <span className="text-slate-600 mt-0.5 flex items-center gap-1"><Users className="w-3 h-3" /> {booked}/{schedule.capacity}</span>
                       </button>
                     );
@@ -140,7 +140,7 @@ export default function CalendarioPage() {
       {/* MODAL DE CRIAÇÃO */}
       <Modal open={open} onClose={() => setOpen(false)} title="Programar novo horário fixo" description="Este horário se repetirá toda semana neste mesmo dia." size="sm">
         <form className="grid gap-4" onSubmit={submit}>
-          <label><FieldLabel required>Plano / Aula</FieldLabel><select className="field" required value={form.plan_id} onChange={(event) => { setForm({ ...form, plan_id: event.target.value }); }}><option value="">Selecione um plano</option>{plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select></label>
+          <label><FieldLabel required>Modalidade / Aula</FieldLabel><select className="field" required value={form.class_type_id} onChange={(event) => { setForm({ ...form, class_type_id: event.target.value }); }}><option value="">Selecione uma aula</option>{classTypes.map((cls) => <option key={cls.id} value={cls.id}>{cls.name}</option>)}</select></label>
           <label><FieldLabel>Professor responsável</FieldLabel><select className="field" value={form.instructor_id} onChange={(event) => setForm({ ...form, instructor_id: event.target.value })}><option value="">Sem responsável definido</option>{instructors.map((profile) => <option key={profile.id} value={profile.id}>{profile.full_name}</option>)}</select></label>
           
           <div className="grid grid-cols-2 gap-4">

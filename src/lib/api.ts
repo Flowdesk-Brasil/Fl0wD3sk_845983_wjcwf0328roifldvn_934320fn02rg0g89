@@ -695,13 +695,13 @@ export async function getClassSchedules(): Promise<ClassSchedule[]> {
   if (!shouldUseLocalData()) {
     const { data, error } = await supabase
       .from("class_schedules")
-      .select("*, plan:plans(*), instructor:profiles(id, full_name), student_classes(id, student_id, student:students(id, full_name))")
+      .select("*, class_type:class_types(*), instructor:profiles(id, full_name), student_classes(id, student_id, student:students(id, full_name))")
       .order("day_of_week", { ascending: true })
       .order("time", { ascending: true });
     if (error) return [];
     return (data ?? []) as ClassSchedule[];
   }
-  const plans = localDB.get("plans");
+  const classTypes = localDB.get("class_types");
   const profiles = localDB.get("profiles");
   const students = localDB.get("students");
   const studentClasses = localDB.get("student_classes");
@@ -709,7 +709,7 @@ export async function getClassSchedules(): Promise<ClassSchedule[]> {
     .sort((a, b) => a.day_of_week === b.day_of_week ? a.time.localeCompare(b.time) : a.day_of_week - b.day_of_week)
     .map((schedule) => ({
       ...schedule,
-      plan: relation(plans, schedule.plan_id),
+      class_type: relation(classTypes, schedule.class_type_id),
       instructor: relation(profiles, schedule.instructor_id),
       student_classes: studentClasses.filter((sc) => sc.class_schedule_id === schedule.id).map((sc) => ({
         ...sc,
@@ -719,7 +719,7 @@ export async function getClassSchedules(): Promise<ClassSchedule[]> {
 }
 
 export async function createClassSchedule(values: {
-  plan_id: string;
+  class_type_id: string;
   instructor_id?: string | null;
   day_of_week: number;
   time: string;
@@ -732,6 +732,17 @@ export async function createClassSchedule(values: {
   });
 }
 
+export async function updateClassSchedule(id: string, values: {
+  class_type_id?: string;
+  instructor_id?: string | null;
+  day_of_week?: number;
+  time?: string;
+  capacity?: number;
+  active?: boolean;
+}) {
+  return update("class_schedules", id, values);
+}
+
 export async function deleteClassSchedule(id: string) {
   return remove("class_schedules", id);
 }
@@ -740,7 +751,7 @@ export async function getStudentClasses(studentId: string): Promise<StudentClass
   if (!shouldUseLocalData()) {
     const { data, error } = await supabase
       .from("student_classes")
-      .select("*, class_schedule:class_schedules(*, plan:plans(*))")
+      .select("*, class_schedule:class_schedules(*, class_type:class_types(*))")
       .eq("student_id", studentId);
     if (error) return [];
     return (data ?? []) as StudentClass[];
@@ -806,6 +817,32 @@ export async function getAttendancesByDate(dateStr: string): Promise<ClassAttend
 }
 
 export async function updateAttendanceStatus(id: string, status: ClassAttendance["status"]) {
+  if (status === "confirmed") {
+    // Buscar detalhes da presenca
+    const attendance = await get("class_attendances", id) as ClassAttendance;
+    if (attendance) {
+      // Verificar quantas o aluno ja confirmou hoje
+      if (!shouldUseLocalData()) {
+        const { count } = await supabase
+          .from("class_attendances")
+          .select("*", { count: "exact", head: true })
+          .eq("student_id", attendance.student_id)
+          .eq("date", attendance.date)
+          .in("status", ["confirmed", "attended"]);
+          
+        if (count && count >= 2) {
+          throw new Error("Você atingiu o limite de 2 aulas confirmadas por dia!");
+        }
+      } else {
+        const attendances = localDB.get("class_attendances");
+        const confirmedToday = attendances.filter(a => a.student_id === attendance.student_id && a.date === attendance.date && (a.status === "confirmed" || a.status === "attended")).length;
+        if (confirmedToday >= 2) {
+          throw new Error("Você atingiu o limite de 2 aulas confirmadas por dia!");
+        }
+      }
+    }
+  }
+
   return update("class_attendances", id, { status });
 }
 
