@@ -30,8 +30,9 @@ export default function MobileAppPage() {
   const [copied, setCopied] = useState(false);
   const [isInstallable, setIsInstallable] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [pushEnabled, setPushEnabled] = useState(true); // default to true until checked
+  const [pushEnabled, setPushEnabled] = useState(false);
   const [pushSupported, setPushSupported] = useState(true);
+  const [pushChecking, setPushChecking] = useState(true);
   const [attendances, setAttendances] = useState<ClassAttendance[]>([]);
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
 
@@ -46,20 +47,27 @@ export default function MobileAppPage() {
     getTodayAttendances(user.id, dateStr).then(setAttendances);
 
     // Check Push status
-    if ('serviceWorker' in navigator && 'PushManager' in window) {
+    if ('serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window) {
       setPushSupported(true);
-      navigator.serviceWorker.register('/sw.js').then(reg => {
-        reg.pushManager.getSubscription().then(sub => {
-          if (sub) {
-            setPushEnabled(true);
-          } else {
-            setPushEnabled(false);
-          }
+      if (Notification.permission === 'granted') {
+        navigator.serviceWorker.register('/sw.js').then(reg => {
+          reg.pushManager.getSubscription().then(sub => {
+            if (sub) {
+              setPushEnabled(true);
+            } else {
+              setPushEnabled(false);
+            }
+            setPushChecking(false);
+          });
         });
-      });
+      } else {
+        setPushEnabled(false);
+        setPushChecking(false);
+      }
     } else {
       setPushSupported(false);
-      setPushEnabled(true); // Bypass se não suportar
+      setPushEnabled(true); // Bypass se não suportar nativamente (ex: iOS antigo)
+      setPushChecking(false);
     }
 
     const handleBeforeInstallPrompt = (e: any) => {
@@ -149,17 +157,25 @@ export default function MobileAppPage() {
         </div>
 
         {/* Notifications & Action Items */}
-        {pushSupported && !pushEnabled ? (
+        {pushChecking ? (
+          <div className="bg-white rounded-3xl shadow-2xl p-8 mb-6 flex flex-col items-center text-center mt-10">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
+            <p className="text-slate-600 font-semibold">Verificando segurança...</p>
+          </div>
+        ) : pushSupported && !pushEnabled ? (
           <div className="bg-white rounded-3xl shadow-2xl p-8 mb-6 flex flex-col items-center text-center mt-10">
             <div className="bg-blue-100 p-4 rounded-full mb-6">
               <Bell className="h-12 w-12 text-blue-600 animate-pulse" />
             </div>
-            <h3 className="text-slate-900 text-2xl font-black mb-3">Ative as notificações!</h3>
-            <p className="text-slate-600 mb-8 leading-relaxed text-sm">
-              Para acessar o seu portal, visualizar seu QR Code e gerenciar suas presenças nas aulas, você precisa permitir que o nosso sistema te envie notificações importantes sobre as suas turmas.
+            <h3 className="text-slate-900 text-2xl font-black mb-3">Acesso Protegido</h3>
+            <p className="text-slate-600 mb-8 leading-relaxed text-sm font-medium">
+              O seu QR Code e agendamento de aulas só serão liberados após você permitir o envio de notificações. 
+              {typeof Notification !== 'undefined' && Notification.permission === 'denied' && (
+                <strong className="block mt-4 text-red-600">Você bloqueou as notificações no seu navegador! Por favor, vá nas configurações do navegador/celular, permita as notificações para este site e recarregue a página.</strong>
+              )}
             </p>
             <button onClick={subscribePush} className="bg-blue-600 hover:bg-blue-700 text-white shadow-xl shadow-blue-600/30 font-bold py-4 px-8 rounded-2xl transition w-full text-lg">
-              Ativar Notificações
+              {typeof Notification !== 'undefined' && Notification.permission === 'denied' ? 'Tentar novamente' : 'Permitir Notificações'}
             </button>
           </div>
         ) : (
