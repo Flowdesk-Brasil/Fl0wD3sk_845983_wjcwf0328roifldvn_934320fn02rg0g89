@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import webpush from 'web-push';
-import { supabase } from '@/lib/supabase';
+import { getAdminClient } from '@/lib/server/supabase-admin';
 
 webpush.setVapidDetails(
   'mailto:contato@studio.com.br',
@@ -16,51 +16,57 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Nenhum aluno especificado' }, { status: 400 });
     }
 
-    // Fetch subscriptions
-    const { data: subs, error } = await supabase
+    // Use admin client to bypass RLS when fetching push subscriptions
+    const admin = getAdminClient();
+    const { data: subs, error } = await admin
       .from('push_subscriptions')
-      .select('*')
+      .select('id, endpoint, p256dh, auth')
       .in('user_id', student_ids);
 
     if (error) {
-      return NextResponse.json({ error: 'Erro ao buscar inscrições' }, { status: 500 });
+      return NextResponse.json({ error: 'Erro ao buscar inscrições: ' + error.message }, { status: 500 });
     }
 
     if (!subs || subs.length === 0) {
-      return NextResponse.json({ message: 'Nenhuma inscrição encontrada para os alunos' }, { status: 200 });
+      return NextResponse.json({ message: 'Nenhuma inscrição push encontrada para os alunos.', sent: 0 }, { status: 200 });
     }
 
     const payload = JSON.stringify({
       title: title || 'Corpo & Evolução',
       body: body || 'Nova mensagem',
-      url: url || '/mobile-app',
-      icon: '/icon-192x192.png' // Make sure you have this icon in public/
+      url: url || '/portal',
+      icon: '/icon-192x192.png',
     });
 
-    const sendPromises = subs.map(sub => {
-      const pushSubscription = {
-        endpoint: sub.endpoint,
-        keys: {
-          p256dh: sub.p256dh,
-          auth: sub.auth
+    let sent = 0;
+    const deleteIds: string[] = [];
+
+    await Promise.all(
+      subs.map(async (sub) => {
+        try {
+          await webpush.sendNotification(
+            { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+            payload
+          );
+          sent++;
+        } catch (err: any) {
+          if (err.statusCode === 404 || err.statusCode === 410) {
+            deleteIds.push(sub.id);
+          } else {
+            console.error('Subscription error:', err?.message || err);
+          }
         }
-      };
+      })
+    );
 
-      return webpush.sendNotification(pushSubscription, payload).catch(err => {
-        if (err.statusCode === 404 || err.statusCode === 410) {
-          // Subscription has expired or is no longer valid, we should delete it
-          return supabase.from('push_subscriptions').delete().eq('id', sub.id);
-        } else {
-          console.error('Subscription error:', err);
-        }
-      });
-    });
+    // Cleanup expired subscriptions
+    if (deleteIds.length > 0) {
+      await admin.from('push_subscriptions').delete().in('id', deleteIds);
+    }
 
-    await Promise.all(sendPromises);
-
-    return NextResponse.json({ success: true, sent: subs.length });
-  } catch (error) {
-    console.error("Error sending push:", error);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ success: true, sent, expired: deleteIds.length });
+  } catch (error: any) {
+    console.error('Error sending push:', error);
+    return NextResponse.json({ error: 'Internal Server Error: ' + (error?.message || error) }, { status: 500 });
   }
 }
