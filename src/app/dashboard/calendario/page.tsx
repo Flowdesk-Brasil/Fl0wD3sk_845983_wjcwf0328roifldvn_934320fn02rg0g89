@@ -2,7 +2,7 @@
 
 import { addMonths, eachDayOfInterval, endOfMonth, endOfWeek, format, isSameDay, isSameMonth, startOfMonth, startOfWeek } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { CalendarDays, ChevronLeft, ChevronRight, Clock3, Plus, Trash2, Users } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Clock3, Plus, Trash2, Users, BellRing } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { EmptyState, ErrorBanner, FieldLabel, LoadingState, Modal, PageHeader } from "@/components/ui";
 import { createClassSchedule, deleteClassSchedule, getClassSchedules, getClassTypes, getProfiles } from "@/lib/api";
@@ -29,6 +29,7 @@ export default function CalendarioPage() {
   const [form, setForm] = useState({ class_type_id: "", instructor_id: "", day_of_week: "1", time: "18:00", capacity: "10" });
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [triggering, setTriggering] = useState(false);
 
   async function load() {
     const [nextSchedules, nextClassTypes, profiles] = await Promise.all([getClassSchedules(), getClassTypes(), getProfiles()]);
@@ -78,9 +79,38 @@ export default function CalendarioPage() {
 
   if (loading) return <LoadingState label="Montando grade fixa..." />;
 
+  async function triggerNotifications() {
+    if (!window.confirm("Isso verificará as próximas aulas (12h) e enviará notificações Push para os alunos que ainda não foram notificados. Deseja continuar?")) return;
+    setTriggering(true);
+    try {
+      const res = await fetch("/api/cron/notify-today");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Erro ao disparar notificações.");
+      alert(data.message || "Notificações disparadas com sucesso!");
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setTriggering(false);
+    }
+  }
+
   return (
     <div className="page-stack">
-      <PageHeader eyebrow="Organização de aulas" title="Grade Fixa" description="Crie a grade de aulas da semana. O sistema aplicará essa grade para todos os meses do ano automaticamente." action={<button className="btn btn-primary" onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Novo Horário</button>} />
+      <PageHeader 
+        eyebrow="Organização de aulas" 
+        title="Grade Fixa" 
+        description="Crie a grade de aulas da semana. O sistema aplicará essa grade para todos os meses do ano automaticamente." 
+        action={
+          <div className="flex gap-2">
+            <button className="btn bg-orange-100 text-orange-600 hover:bg-orange-200" disabled={triggering} onClick={triggerNotifications}>
+              <BellRing className="h-4 w-4" /> {triggering ? "Verificando..." : "Alertar alunos"}
+            </button>
+            <button className="btn btn-primary" onClick={() => setOpen(true)}>
+              <Plus className="h-4 w-4" /> Novo Horário
+            </button>
+          </div>
+        } 
+      />
       <ErrorBanner message={error} />
       
       <section className="card">
