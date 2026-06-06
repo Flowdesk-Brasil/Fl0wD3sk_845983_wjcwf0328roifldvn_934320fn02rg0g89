@@ -44,8 +44,13 @@ export default function PlanosPage() {
       await deletePlan(form.id);
       setOpen(false);
       await load();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Erro ao remover plano.");
+    } catch (reason: any) {
+      const msg = reason?.message || String(reason);
+      if (msg.includes("violates foreign key constraint") || msg.includes("foreign key constraint")) {
+        setError("Não é possível excluir este plano porque já existem alunos vinculados a ele. Ao invés de excluir, experimente mudar a Situação dele para Inativo!");
+      } else {
+        setError(reason instanceof Error ? reason.message : "Erro ao remover plano.");
+      }
     }
   }
 
