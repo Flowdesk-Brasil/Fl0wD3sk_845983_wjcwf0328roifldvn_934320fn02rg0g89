@@ -2,31 +2,31 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowRight,
   Check,
-  Clipboard,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   Clock3,
   Globe2,
   LoaderCircle,
+  LockKeyhole,
+  MoreVertical,
+  Plus,
   Search,
   ShieldCheck,
   Sparkles,
+  UserRound,
+  X,
 } from "lucide-react";
+import { DomainSearchSection } from "@/components/domains/DomainSearchSection";
 
 type Mode = "overview" | "acquire" | "transfers";
-
-type DomainResult = {
-  domain: string;
-  extension: string;
-  isAvailable: boolean;
-  price: number;
-  currency: string;
-  isPremium: boolean;
-  reason: string;
-};
 
 type Domain = {
   id: string;
@@ -38,6 +38,7 @@ type Domain = {
   expirationDate?: string | null;
   nameservers?: string[] | null;
   purchasePriceBrl?: number | null;
+  renewalPriceBrl?: number | null;
 };
 
 type Transfer = {
@@ -56,13 +57,9 @@ type Quote = {
   expiresAt: string;
 };
 
-type PixOrder = {
-  orderNumber: number;
-  status: string;
-  amount: number;
-  qrCodeText: string | null;
-  qrCodeDataUri: string | null;
-  expiresAt: string | null;
+type DomainPurchaseContext = {
+  type: "domain";
+  token: string;
 };
 
 type Contact = {
@@ -91,13 +88,19 @@ const emptyContact: Contact = {
   documentNumber: "",
 };
 
-const panelClass = "rounded-[20px] border border-[#141414] bg-[#090909] p-[18px] sm:p-[22px]";
-const inputClass =
-  "h-[44px] w-full rounded-[12px] border border-[#1A1A1A] bg-[#0D0D0D] px-[14px] text-[14px] text-[#E7E7E7] outline-none transition-colors placeholder:text-[#555555] focus:border-[#333333]";
-const buttonClass =
-  "inline-flex h-[42px] items-center justify-center gap-[8px] rounded-[12px] border border-[#1A1A1A] bg-[#111111] px-[15px] text-[13px] font-medium text-[#D8D8D8] transition-colors hover:border-[#282828] hover:bg-[#151515] disabled:cursor-not-allowed disabled:opacity-50";
+const dashboardDomainRoutes = {
+  register: "/dashboard/domains/acquire",
+  ai: "/dashboard/domains/acquire?mode=ai",
+};
+
+const panelClass =
+  "rounded-[26px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#070707_100%)] shadow-[0_24px_80px_rgba(0,0,0,0.38)]";
+const fieldClass =
+  "h-[48px] w-full rounded-[14px] border border-[#202020] bg-[#0D0D0D] px-[14px] text-[14px] font-medium text-[#E8E8E8] outline-none transition-colors placeholder:text-[#5F5F5F] focus:border-[#2F66D0]";
+const secondaryButtonClass =
+  "inline-flex h-[42px] items-center justify-center gap-[8px] rounded-[13px] border border-[#202020] bg-[#101010] px-[14px] text-[13px] font-semibold text-[#D8D8D8] transition-all hover:border-[#303030] hover:bg-[#151515] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50";
 const primaryButtonClass =
-  "inline-flex h-[42px] items-center justify-center gap-[8px] rounded-[12px] border border-[rgba(0,98,255,0.45)] bg-[#0062FF] px-[15px] text-[13px] font-semibold text-white transition-colors hover:bg-[#146FFF] disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex h-[42px] items-center justify-center gap-[8px] rounded-[13px] border border-[rgba(15,98,254,0.55)] bg-[#0F62FE] px-[15px] text-[13px] font-semibold text-white shadow-[0_14px_38px_rgba(15,98,254,0.22)] transition-all hover:bg-[#1D70FF] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50";
 
 function formatBrl(value: number | null | undefined) {
   if (!Number.isFinite(Number(value))) return "A consultar";
@@ -106,7 +109,16 @@ function formatBrl(value: number | null | undefined) {
 
 function formatDate(value?: string | null) {
   if (!value) return "Data pendente";
-  return new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium" }).format(new Date(value));
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Data pendente";
+  return new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium" }).format(date);
+}
+
+function formatShortDate(value?: string | null) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat("pt-BR").format(date);
 }
 
 async function jsonRequest<T>(url: string, init?: RequestInit) {
@@ -116,34 +128,70 @@ async function jsonRequest<T>(url: string, init?: RequestInit) {
   return payload;
 }
 
-function LoadingPanel() {
-  return (
-    <div className={`${panelClass} flex min-h-[180px] items-center justify-center text-[#777777]`}>
-      <LoaderCircle className="mr-[9px] h-[17px] w-[17px] animate-spin" />
-      Carregando sistema de dominios...
-    </div>
-  );
+function accountInitial(name: string) {
+  return (name.trim()[0] || "F").toUpperCase();
 }
 
-function ErrorPanel({ message }: { message: string }) {
-  return <div className={`${panelClass} border-[rgba(220,38,38,0.25)] text-[13px] text-[#E58C8C]`}>{message}</div>;
+function statusCopy(status: string) {
+  const normalized = status.toLowerCase();
+  if (["active", "registered", "completed"].includes(normalized)) return "Ativo";
+  if (normalized === "expired") return "Expirado";
+  if (normalized.includes("payment")) return "Pagamento";
+  if (normalized.includes("transfer")) return "Transferencia";
+  if (normalized.includes("pending") || normalized.includes("requested")) return "Pendente";
+  if (normalized === "failed") return "Falhou";
+  return status.replaceAll("_", " ");
 }
 
 function StatusPill({ status }: { status: string }) {
-  const active = ["active", "completed", "registered"].includes(status);
-  const pending = /pending|waiting|submitted|requested/.test(status);
+  const normalized = status.toLowerCase();
+  const active = ["active", "registered", "completed"].includes(normalized);
+  const expired = normalized === "expired" || normalized === "redemption";
+  const pending = /pending|waiting|requested|payment|transfer/.test(normalized);
+
   return (
     <span
-      className={`inline-flex rounded-full border px-[9px] py-[5px] text-[11px] font-medium ${
+      className={`inline-flex items-center gap-[7px] rounded-full border px-[10px] py-[6px] text-[12px] font-semibold ${
         active
-          ? "border-[rgba(22,163,74,0.28)] bg-[rgba(22,163,74,0.09)] text-[#82D39A]"
-          : pending
-            ? "border-[rgba(234,179,8,0.25)] bg-[rgba(234,179,8,0.08)] text-[#D9BE70]"
-            : "border-[#1B1B1B] bg-[#101010] text-[#858585]"
+          ? "border-[rgba(0,190,160,0.34)] bg-[rgba(0,190,160,0.1)] text-[#74E1C8]"
+          : expired
+            ? "border-[rgba(255,75,135,0.34)] bg-[rgba(255,75,135,0.1)] text-[#FF83AA]"
+            : pending
+              ? "border-[rgba(245,180,70,0.3)] bg-[rgba(245,180,70,0.09)] text-[#E8C878]"
+              : "border-[#242424] bg-[#101010] text-[#9A9A9A]"
       }`}
     >
-      {status.replaceAll("_", " ")}
+      {active ? <Check className="h-[13px] w-[13px]" /> : <Clock3 className="h-[13px] w-[13px]" />}
+      {statusCopy(status)}
     </span>
+  );
+}
+
+function ToggleSwitch({
+  checked,
+  disabled,
+  onClick,
+}: {
+  checked: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={`relative h-[26px] w-[46px] rounded-full transition-all active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-50 ${
+        checked ? "bg-[#6C3AF2]" : "bg-[#686D80]"
+      }`}
+      aria-pressed={checked}
+    >
+      <span
+        className={`absolute top-[3px] h-[20px] w-[20px] rounded-full bg-white shadow-[0_4px_14px_rgba(0,0,0,0.28)] transition-transform ${
+          checked ? "translate-x-[22px]" : "translate-x-[3px]"
+        }`}
+      />
+    </button>
   );
 }
 
@@ -153,13 +201,18 @@ function WorkspaceTabs({ mode }: { mode: Mode }) {
     { mode: "acquire", label: "Adquirir", href: "/dashboard/domains/acquire" },
     { mode: "transfers", label: "Transferencias", href: "/dashboard/domains/transfers" },
   ];
+
   return (
-    <nav className="mb-[16px] flex flex-wrap gap-[8px]">
+    <nav className="mb-[18px] flex flex-wrap gap-[8px]">
       {tabs.map((tab) => (
         <Link
           key={tab.mode}
           href={tab.href}
-          className={`${buttonClass} ${mode === tab.mode ? "!border-[#2459B8] !bg-[#0C2144] !text-[#A8C8FF]" : ""}`}
+          className={`inline-flex h-[38px] items-center rounded-full border px-[14px] text-[13px] font-semibold transition-all ${
+            mode === tab.mode
+              ? "border-[#1B4ED8] bg-[#0F62FE] text-white shadow-[0_12px_34px_rgba(15,98,254,0.24)]"
+              : "border-[#171717] bg-[#0D0D0D] text-[#9F9F9F] hover:border-[#242424] hover:text-[#E7E7E7]"
+          }`}
         >
           {tab.label}
         </Link>
@@ -168,359 +221,259 @@ function WorkspaceTabs({ mode }: { mode: Mode }) {
   );
 }
 
-function ContactFields({ contact, onChange }: { contact: Contact; onChange: (next: Contact) => void }) {
-  function field(key: keyof Contact, value: string) {
-    onChange({ ...contact, [key]: value });
-  }
+function LoadingPanel({ label = "Carregando dominios..." }: { label?: string }) {
   return (
-    <div className="grid gap-[10px] sm:grid-cols-2">
-      <input className={inputClass} placeholder="Nome completo" value={contact.fullName} onChange={(event) => field("fullName", event.target.value)} />
-      <input className={inputClass} placeholder="E-mail do titular" type="email" value={contact.email} onChange={(event) => field("email", event.target.value)} />
-      <input className={inputClass} placeholder="Telefone com DDD" value={contact.phone} onChange={(event) => field("phone", event.target.value)} />
-      <input className={inputClass} placeholder="Endereco e numero" value={contact.street} onChange={(event) => field("street", event.target.value)} />
-      <input className={inputClass} placeholder="Cidade" value={contact.city} onChange={(event) => field("city", event.target.value)} />
-      <div className="grid grid-cols-2 gap-[10px]">
-        <input className={inputClass} placeholder="UF" maxLength={2} value={contact.state} onChange={(event) => field("state", event.target.value.toUpperCase())} />
-        <input className={inputClass} placeholder="CEP" value={contact.postalCode} onChange={(event) => field("postalCode", event.target.value)} />
-      </div>
-      <select className={inputClass} value={contact.documentType} onChange={(event) => field("documentType", event.target.value)}>
-        <option value="cpf">CPF</option>
-        <option value="cnpj">CNPJ</option>
-        <option value="passport">Passaporte</option>
-        <option value="none">Sem documento</option>
-      </select>
-      <input className={inputClass} placeholder="Documento do titular" value={contact.documentNumber} onChange={(event) => field("documentNumber", event.target.value)} />
+    <div className={`${panelClass} flex min-h-[220px] items-center justify-center text-[14px] text-[#8A8A8A]`}>
+      <LoaderCircle className="mr-[9px] h-[17px] w-[17px] animate-spin" />
+      {label}
     </div>
   );
 }
 
-function PixPanel({ order }: { order: PixOrder }) {
-  const [copied, setCopied] = useState(false);
+function ErrorPanel({ message }: { message: string }) {
   return (
-    <section className={`${panelClass} border-[rgba(0,98,255,0.3)]`}>
-      <div className="flex items-start justify-between gap-[14px]">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.14em] text-[#5F88D5]">Pagamento PIX</p>
-          <h3 className="mt-[7px] text-[18px] font-semibold text-[#EEEEEE]">Pedido #{order.orderNumber}</h3>
-          <p className="mt-[7px] text-[13px] text-[#777777]">
-            A ativacao acontece automaticamente depois da aprovacao.
-          </p>
+    <div className="rounded-[18px] border border-[rgba(255,75,95,0.26)] bg-[rgba(255,75,95,0.08)] px-[14px] py-[12px] text-[13px] text-[#FF9BAA]">
+      {message}
+    </div>
+  );
+}
+
+function EmptyDomains() {
+  return (
+    <section className={`${panelClass} flex min-h-[330px] flex-col items-center justify-center px-[22px] text-center`}>
+      <span className="relative inline-flex h-[68px] w-[68px] items-center justify-center rounded-[22px] border border-[#1B1B1B] bg-[#101010] text-[#8FB5FF]">
+        <span className="absolute inset-[-7px] rounded-[28px] border border-[#15264A] opacity-60" />
+        <Globe2 className="h-[28px] w-[28px]" />
+      </span>
+      <h2 className="mt-[20px] text-[22px] font-semibold tracking-[-0.04em] text-[#F1F1F1]">Comece com seu primeiro dominio</h2>
+      <p className="mt-[9px] max-w-[520px] text-[13px] leading-[1.65] text-[#7B7B7B]">
+        Registro, transferencia, renovacao e DNS ficam centralizados na Flowdesk com o mesmo checkout seguro usado em VPS e planos.
+      </p>
+      <Link href="/dashboard/domains/acquire" className={`${primaryButtonClass} mt-[18px]`}>
+        Buscar dominio <ArrowRight className="h-[15px] w-[15px]" />
+      </Link>
+    </section>
+  );
+}
+
+function PromoBanner() {
+  return (
+    <section className={`${panelClass} relative overflow-hidden px-[18px] py-[18px] sm:px-[26px]`}>
+      <span className="pointer-events-none absolute -right-[80px] -top-[120px] h-[240px] w-[240px] rounded-full bg-[rgba(15,98,254,0.14)] blur-[55px]" />
+      <div className="relative z-10 flex flex-col gap-[16px] lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 items-start gap-[13px]">
+          <span className="inline-flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-[15px] border border-[#1D1D1D] bg-[#101010] text-[#DADADA]">
+            <LockKeyhole className="h-[18px] w-[18px]" />
+          </span>
+          <div className="min-w-0">
+            <p className="text-[13px] font-medium text-[#DCDCDC]">Proteja sua identidade na internet</p>
+            <div className="mt-[8px] flex flex-wrap items-center gap-[8px]">
+              <span className="text-[22px] font-semibold tracking-[-0.05em] text-white">
+                flwdesk<span className="text-[#835BFF]">.xyz</span>
+              </span>
+              <span className="text-[13px] text-[#777777]">ou</span>
+              <Link href="/dashboard/domains/acquire" className="text-[13px] font-semibold text-[#8B66FF] hover:text-[#A282FF]">
+                Ver mais opcoes
+              </Link>
+            </div>
+          </div>
         </div>
-        <StatusPill status={order.status} />
-      </div>
-      <div className="mt-[18px] grid gap-[18px] md:grid-cols-[180px_minmax(0,1fr)]">
-        <div className="flex min-h-[180px] items-center justify-center rounded-[16px] border border-[#181818] bg-white p-[10px]">
-          {order.qrCodeDataUri ? (
-            <Image src={order.qrCodeDataUri} alt="QR Code PIX" width={160} height={160} unoptimized />
-          ) : (
-            <LoaderCircle className="h-[24px] w-[24px] animate-spin text-black" />
-          )}
-        </div>
-        <div className="min-w-0">
-          <p className="text-[28px] font-semibold tracking-[-0.04em] text-white">{formatBrl(order.amount)}</p>
-          <p className="mt-[7px] text-[12px] text-[#6F6F6F]">Vencimento: {formatDate(order.expiresAt)}</p>
-          <button
-            type="button"
-            className={`${buttonClass} mt-[18px] w-full`}
-            disabled={!order.qrCodeText}
-            onClick={async () => {
-              if (!order.qrCodeText) return;
-              await navigator.clipboard.writeText(order.qrCodeText);
-              setCopied(true);
-              window.setTimeout(() => setCopied(false), 1800);
-            }}
-          >
-            {copied ? <Check className="h-[15px] w-[15px]" /> : <Clipboard className="h-[15px] w-[15px]" />}
-            {copied ? "Codigo copiado" : "Copiar PIX copia e cola"}
-          </button>
+        <div className="flex flex-wrap items-center gap-[12px] lg:justify-end">
+          <span className="rounded-full bg-[rgba(108,58,242,0.14)] px-[12px] py-[7px] text-[12px] font-semibold text-[#A98CFF]">
+            Economize ate 94%
+          </span>
+          <div>
+            <p className="text-[12px] text-[#8A8A8A] line-through">R$98,99</p>
+            <p className="text-[26px] font-semibold tracking-[-0.05em] text-white">
+              R$5.99<span className="text-[13px] tracking-normal text-[#D8D8D8]">/1o ano</span>
+            </p>
+          </div>
+          <Link href="/dashboard/domains/acquire?domain=flwdesk.xyz" className={secondaryButtonClass}>
+            Compre agora
+          </Link>
         </div>
       </div>
     </section>
   );
 }
 
-function Overview() {
-  const [domains, setDomains] = useState<Domain[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    jsonRequest<{ domains: Domain[] }>("/api/auth/me/domains")
-      .then((payload) => setDomains(payload.domains || []))
-      .catch((reason) => setError(reason instanceof Error ? reason.message : "Falha ao carregar dominios."));
-  }, []);
-  if (error) return <ErrorPanel message={error} />;
-  if (!domains) return <LoadingPanel />;
-  if (!domains.length) {
-    return (
-      <section className={`${panelClass} flex min-h-[280px] flex-col items-center justify-center text-center`}>
-        <span className="inline-flex h-[54px] w-[54px] items-center justify-center rounded-[16px] border border-[#1A1A1A] bg-[#0E0E0E] text-[#8FB5FF]">
-          <Globe2 className="h-[24px] w-[24px]" />
-        </span>
-        <h2 className="mt-[18px] text-[21px] font-semibold tracking-[-0.04em] text-[#EEEEEE]">Compre um dominio agora</h2>
-        <p className="mt-[9px] max-w-[500px] text-[13px] leading-[1.65] text-[#737373]">
-          Registro, renovacao, transferencia e DNS ficam centralizados aqui, sem expor os provedores.
-        </p>
-        <Link href="/dashboard/domains/acquire" className={`${primaryButtonClass} mt-[18px]`}>
-          Buscar dominio <ArrowRight className="h-[15px] w-[15px]" />
-        </Link>
-      </section>
-    );
+function ContactFields({ contact, onChange }: { contact: Contact; onChange: (next: Contact) => void }) {
+  function field(key: keyof Contact, value: string) {
+    onChange({ ...contact, [key]: value });
   }
+
   return (
-    <div className="grid gap-[12px]">
-      {domains.map((domain) => (
-        <article key={domain.id} className={panelClass}>
-          <div className="flex flex-col gap-[14px] sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-[9px]">
-                <h2 className="truncate text-[19px] font-semibold tracking-[-0.04em] text-[#EEEEEE]">{domain.fqdn}</h2>
-                <StatusPill status={domain.status} />
-              </div>
-              <p className="mt-[8px] text-[12px] text-[#6F6F6F]">
-                Renovacao {domain.autoRenew ? "automatica" : "manual"} · expira em {formatDate(domain.expirationDate)}
-              </p>
-            </div>
-            <div className="text-left sm:text-right">
-              <p className="text-[14px] font-medium text-[#D8D8D8]">{formatBrl(domain.purchasePriceBrl)}</p>
-              <p className="mt-[4px] text-[11px] text-[#5F5F5F]">DNS gerenciado pela Flowdesk</p>
-            </div>
-          </div>
-        </article>
-      ))}
+    <div className="grid gap-[10px] sm:grid-cols-2">
+      <input className={fieldClass} placeholder="Nome completo" value={contact.fullName} onChange={(event) => field("fullName", event.target.value)} />
+      <input className={fieldClass} placeholder="E-mail do titular" type="email" value={contact.email} onChange={(event) => field("email", event.target.value)} />
+      <input className={fieldClass} placeholder="Telefone com DDD" value={contact.phone} onChange={(event) => field("phone", event.target.value)} />
+      <input className={fieldClass} placeholder="Endereco e numero" value={contact.street} onChange={(event) => field("street", event.target.value)} />
+      <input className={fieldClass} placeholder="Cidade" value={contact.city} onChange={(event) => field("city", event.target.value)} />
+      <div className="grid grid-cols-2 gap-[10px]">
+        <input className={fieldClass} placeholder="UF" maxLength={2} value={contact.state} onChange={(event) => field("state", event.target.value.toUpperCase())} />
+        <input className={fieldClass} placeholder="CEP" value={contact.postalCode} onChange={(event) => field("postalCode", event.target.value)} />
+      </div>
+      <select className={fieldClass} value={contact.documentType} onChange={(event) => field("documentType", event.target.value)}>
+        <option value="cpf">CPF</option>
+        <option value="cnpj">CNPJ</option>
+        <option value="passport">Passaporte</option>
+        <option value="none">Sem documento</option>
+      </select>
+      <input className={fieldClass} placeholder="Documento do titular" value={contact.documentNumber} onChange={(event) => field("documentNumber", event.target.value)} />
     </div>
   );
 }
 
-function Acquire() {
-  const searchParams = useSearchParams();
-  const [query, setQuery] = useState(searchParams.get("domain") || "");
-  const [results, setResults] = useState<DomainResult[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [selected, setSelected] = useState<DomainResult | null>(null);
-  const [quote, setQuote] = useState<Quote | null>(null);
+function ModalShell({
+  title,
+  description,
+  children,
+  onClose,
+}: {
+  title: string;
+  description: string;
+  children: ReactNode;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[5200] isolate flex items-center justify-center overflow-y-auto px-[18px] py-[28px]">
+      <button
+        type="button"
+        aria-label="Fechar"
+        className="absolute inset-0 bg-[rgba(0,0,0,0.78)] backdrop-blur-[8px]"
+        onClick={onClose}
+      />
+      <div className="relative z-10 w-full max-w-[760px] overflow-hidden rounded-[28px] border border-[#1D1D1D] bg-[#080808] p-[20px] shadow-[0_34px_120px_rgba(0,0,0,0.65)] sm:p-[28px]">
+        <span className="pointer-events-none absolute -right-[90px] -top-[120px] h-[250px] w-[250px] rounded-full bg-[rgba(15,98,254,0.16)] blur-[60px]" />
+        <div className="relative z-10">
+          <div className="flex items-start justify-between gap-[18px]">
+            <div>
+              <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-[#F3F3F3]">{title}</h2>
+              <p className="mt-[10px] max-w-[620px] text-[14px] leading-[1.55] text-[#8A8A8A]">{description}</p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[13px] border border-[#1D1D1D] bg-[#101010] text-[#AFAFAF] transition-colors hover:border-[#303030] hover:text-white"
+            >
+              <X className="h-[16px] w-[16px]" />
+            </button>
+          </div>
+          <div className="mt-[22px]">{children}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function buildDomainPaymentHref(purchaseContext: DomainPurchaseContext) {
+  return `/payment/domain/${encodeURIComponent(purchaseContext.token)}?fresh=1&returnPath=${encodeURIComponent("/dashboard/domains")}`;
+}
+
+function RegisterDomainDialog({
+  fqdn,
+  onClose,
+}: {
+  fqdn: string;
+  onClose: () => void;
+}) {
+  const router = useRouter();
   const [contact, setContact] = useState<Contact>(emptyContact);
+  const [quote, setQuote] = useState<Quote | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pixOrder, setPixOrder] = useState<PixOrder | null>(null);
-
-  async function searchDomains(event?: FormEvent) {
-    event?.preventDefault();
-    if (!query.trim()) return;
-    setSearching(true);
-    setError(null);
-    setSelected(null);
-    setQuote(null);
-    try {
-      const response = await fetch("/api/domains/check", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ domain: query.trim() }),
-      });
-      if (!response.ok || !response.body) throw new Error("Busca de dominios indisponivel.");
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let nextResults: DomainResult[] = [];
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          const chunk = JSON.parse(line) as { isError?: boolean; message?: string; results?: DomainResult[] };
-          if (chunk.isError) throw new Error(chunk.message || "Busca indisponivel.");
-          nextResults = chunk.results || nextResults;
-          setResults(nextResults);
-        }
-      }
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Falha ao pesquisar dominios.");
-    } finally {
-      setSearching(false);
-    }
-  }
 
   useEffect(() => {
-    if (query) void searchDomains();
-    // Busca automatica somente na entrada via /domains.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function selectDomain(result: DomainResult) {
-    setSelected(result);
-    setQuote(null);
-    setPixOrder(null);
+    let cancelled = false;
     setBusy(true);
     setError(null);
-    try {
-      const payload = await jsonRequest<{ quote: Quote }>("/api/auth/me/domains/quote", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fqdn: result.domain, operation: "register", period_years: 1 }),
-      });
-      setQuote(payload.quote);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Falha ao cotar dominio.");
-    } finally {
-      setBusy(false);
-    }
-  }
+    setQuote(null);
 
-  async function createPix() {
+    void jsonRequest<{ quote: Quote }>("/api/auth/me/domains/quote", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fqdn, operation: "register", period_years: 1 }),
+    })
+      .then((payload) => {
+        if (!cancelled) setQuote(payload.quote);
+      })
+      .catch((reason) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : "Falha ao cotar dominio.");
+      })
+      .finally(() => {
+        if (!cancelled) setBusy(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fqdn]);
+
+  async function submit() {
     if (!quote) return;
     setBusy(true);
     setError(null);
     try {
-      const checkout = await jsonRequest<{ purchaseContext: unknown }>("/api/auth/me/domains/checkout", {
+      const checkout = await jsonRequest<{ purchaseContext: DomainPurchaseContext }>("/api/auth/me/domains/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ quoteId: quote.id, contact }),
       });
-      const payment = await jsonRequest<{ order: PixOrder }>("/api/auth/me/payments/pix", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          purchaseContext: checkout.purchaseContext,
-          payerName: contact.fullName,
-          payerDocument: contact.documentNumber,
-          expectedTotalAmount: quote.totalBrl,
-          forceNew: true,
-        }),
-      });
-      setPixOrder(payment.order);
+      router.push(buildDomainPaymentHref(checkout.purchaseContext));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Falha ao gerar pagamento.");
+      setError(reason instanceof Error ? reason.message : "Falha ao preparar checkout.");
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className="space-y-[14px]">
-      <section className={panelClass}>
-        <div className="flex items-center gap-[10px]">
-          <span className="inline-flex h-[38px] w-[38px] items-center justify-center rounded-[12px] border border-[#1A1A1A] bg-[#101010] text-[#8FB5FF]"><Search className="h-[17px] w-[17px]" /></span>
+    <ModalShell
+      title="Finalizar dominio"
+      description="Confirme os dados do titular. O pagamento sera feito na tela segura padrao da Flowdesk."
+      onClose={onClose}
+    >
+      <div className="rounded-[18px] border border-[#181818] bg-[#0D0D0D] px-[14px] py-[13px]">
+        <div className="flex flex-wrap items-center justify-between gap-[12px]">
           <div>
-            <h2 className="text-[17px] font-semibold text-[#EEEEEE]">Encontre seu novo dominio</h2>
-            <p className="mt-[3px] text-[12px] text-[#666666]">Preco final em BRL, ja com a margem de 20%.</p>
+            <p className="text-[12px] uppercase tracking-[0.14em] text-[#6F8EDB]">Dominio selecionado</p>
+            <p className="mt-[5px] text-[20px] font-semibold tracking-[-0.04em] text-white">{fqdn}</p>
+          </div>
+          <div className="text-left sm:text-right">
+            <p className="text-[12px] text-[#777777]">Total do primeiro ano</p>
+            <p className="mt-[4px] text-[24px] font-semibold tracking-[-0.04em] text-white">
+              {busy && !quote ? "Cotando..." : formatBrl(quote?.totalBrl)}
+            </p>
           </div>
         </div>
-        <form className="mt-[16px] flex gap-[9px]" onSubmit={searchDomains}>
-          <input className={inputClass} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="suaempresa.com.br" />
-          <button className={primaryButtonClass} disabled={searching}>
-            {searching ? <LoaderCircle className="h-[15px] w-[15px] animate-spin" /> : <Search className="h-[15px] w-[15px]" />}
-            <span className="hidden sm:inline">Pesquisar</span>
-          </button>
-        </form>
-      </section>
+      </div>
 
-      {error ? <ErrorPanel message={error} /> : null}
+      <div className="mt-[14px]">
+        <ContactFields contact={contact} onChange={setContact} />
+      </div>
 
-      {results.length ? (
-        <section className={panelClass}>
-          <div className="grid gap-[9px]">
-            {results.map((result) => (
-              <button
-                type="button"
-                key={result.domain}
-                disabled={!result.isAvailable || busy}
-                onClick={() => void selectDomain(result)}
-                className={`flex items-center justify-between gap-[14px] rounded-[14px] border px-[14px] py-[13px] text-left transition-colors ${
-                  selected?.domain === result.domain
-                    ? "border-[#2459B8] bg-[#0C1A31]"
-                    : "border-[#171717] bg-[#0C0C0C] hover:border-[#252525]"
-                } disabled:cursor-not-allowed disabled:opacity-45`}
-              >
-                <span>
-                  <span className="block text-[15px] font-medium text-[#E8E8E8]">{result.domain}</span>
-                  <span className="mt-[4px] block text-[11px] text-[#666666]">
-                    {result.isAvailable ? "Disponivel para registro" : result.reason || "Indisponivel"}
-                  </span>
-                </span>
-                <span className="shrink-0 text-[14px] font-semibold text-[#D8D8D8]">{formatBrl(result.price)}</span>
-              </button>
-            ))}
-          </div>
-        </section>
-      ) : null}
+      {error ? <div className="mt-[12px]"><ErrorPanel message={error} /></div> : null}
 
-      {quote && selected ? (
-        <section className={panelClass}>
-          <div className="flex flex-wrap items-start justify-between gap-[12px] border-b border-[#151515] pb-[16px]">
-            <div>
-              <p className="text-[11px] uppercase tracking-[0.14em] text-[#5F88D5]">Finalizar registro</p>
-              <h3 className="mt-[7px] text-[19px] font-semibold text-[#EEEEEE]">{selected.domain}</h3>
-            </div>
-            <p className="text-[22px] font-semibold tracking-[-0.04em] text-white">{formatBrl(quote.totalBrl)}</p>
-          </div>
-          <div className="mt-[16px]">
-            <ContactFields contact={contact} onChange={setContact} />
-            <button type="button" className={`${primaryButtonClass} mt-[14px] w-full`} disabled={busy} onClick={() => void createPix()}>
-              {busy ? <LoaderCircle className="h-[15px] w-[15px] animate-spin" /> : <ShieldCheck className="h-[15px] w-[15px]" />}
-              Gerar PIX e reservar dominio
-            </button>
-          </div>
-        </section>
-      ) : null}
-
-      {pixOrder ? <PixPanel order={pixOrder} /> : null}
-    </div>
+      <div className="mt-[18px] flex flex-col-reverse gap-[10px] sm:flex-row sm:justify-end">
+        <button type="button" className={secondaryButtonClass} onClick={onClose}>Cancelar</button>
+        <button type="button" className={primaryButtonClass} disabled={busy || !quote} onClick={() => void submit()}>
+          {busy ? <LoaderCircle className="h-[15px] w-[15px] animate-spin" /> : <ShieldCheck className="h-[15px] w-[15px]" />}
+          Ir para pagamento
+        </button>
+      </div>
+    </ModalShell>
   );
 }
 
-function Transfers() {
-  const [transfers, setTransfers] = useState<Transfer[] | null>(null);
-  const [domains, setDomains] = useState<Domain[]>([]);
+function TransferInDialog({ onClose }: { onClose: () => void }) {
+  const router = useRouter();
   const [fqdn, setFqdn] = useState("");
   const [authCode, setAuthCode] = useState("");
   const [contact, setContact] = useState<Contact>(emptyContact);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pixOrder, setPixOrder] = useState<PixOrder | null>(null);
-  const [outboundCode, setOutboundCode] = useState<{ fqdn: string; code: string } | null>(null);
 
-  async function loadTransfers() {
-    try {
-      const payload = await jsonRequest<{ transfers: Transfer[] }>("/api/auth/me/domains/transfers");
-      setTransfers(payload.transfers || []);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Falha ao carregar transferencias.");
-    }
-  }
-
-  useEffect(() => {
-    void loadTransfers();
-    jsonRequest<{ domains: Domain[] }>("/api/auth/me/domains")
-      .then((payload) => setDomains(payload.domains || []))
-      .catch(() => setDomains([]));
-  }, []);
-
-  async function createOutboundCode(domain: Domain) {
-    setBusy(true);
-    setError(null);
-    try {
-      if (domain.transferLock) {
-        await jsonRequest(`/api/auth/me/domains/${domain.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "transfer_lock", locked: false }),
-        });
-      }
-      const payload = await jsonRequest<{ authCode: string }>(`/api/auth/me/domains/${domain.id}/auth-code`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirm: true }),
-      });
-      setOutboundCode({ fqdn: domain.fqdn, code: payload.authCode });
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Falha ao gerar Auth Code.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function startTransfer(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError(null);
@@ -528,112 +481,448 @@ function Transfers() {
       const quotePayload = await jsonRequest<{ quote: Quote }>("/api/auth/me/domains/quote", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fqdn, operation: "transfer", period_years: 1 }),
+        body: JSON.stringify({ fqdn: fqdn.trim().toLowerCase(), operation: "transfer", period_years: 1 }),
       });
-      const checkout = await jsonRequest<{ purchaseContext: unknown }>("/api/auth/me/domains/transfers", {
+      const checkout = await jsonRequest<{ purchaseContext: DomainPurchaseContext }>("/api/auth/me/domains/transfers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ quoteId: quotePayload.quote.id, authCode, contact }),
       });
-      const payment = await jsonRequest<{ order: PixOrder }>("/api/auth/me/payments/pix", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          purchaseContext: checkout.purchaseContext,
-          payerName: contact.fullName,
-          payerDocument: contact.documentNumber,
-          expectedTotalAmount: quotePayload.quote.totalBrl,
-          forceNew: true,
-        }),
-      });
-      setPixOrder(payment.order);
-      await loadTransfers();
+      router.push(buildDomainPaymentHref(checkout.purchaseContext));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Falha ao iniciar transferencia.");
+      setError(reason instanceof Error ? reason.message : "Falha ao preparar transferencia.");
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className="space-y-[14px]">
-      <section className={panelClass}>
-        <div className="flex items-start gap-[11px]">
-          <span className="inline-flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-[12px] border border-[#1A1A1A] bg-[#101010] text-[#8FB5FF]"><ArrowRight className="h-[17px] w-[17px]" /></span>
-          <div>
-            <h2 className="text-[17px] font-semibold text-[#EEEEEE]">Trazer dominio para a Flowdesk</h2>
-            <p className="mt-[5px] text-[12px] leading-[1.6] text-[#6F6F6F]">
-              Desbloqueie o dominio no painel atual e informe o Auth Code/EPP. A transferencia usa fallback automatico e, depois de concluida, o DNS passa para a Cloudflare.
-            </p>
-          </div>
+    <ModalShell
+      title="Transferir para Flowdesk"
+      description="Traga um dominio registrado em outro provedor para a sua conta Flowdesk usando o Auth Code/EPP."
+      onClose={onClose}
+    >
+      <form onSubmit={submit}>
+        <div className="grid gap-[10px] sm:grid-cols-2">
+          <input className={fieldClass} value={fqdn} onChange={(event) => setFqdn(event.target.value)} placeholder="dominio.com" />
+          <input className={fieldClass} value={authCode} onChange={(event) => setAuthCode(event.target.value)} placeholder="Auth Code / EPP" />
         </div>
-        <form className="mt-[18px] space-y-[10px]" onSubmit={startTransfer}>
-          <div className="grid gap-[10px] sm:grid-cols-2">
-            <input className={inputClass} value={fqdn} onChange={(event) => setFqdn(event.target.value)} placeholder="dominio.com" />
-            <input className={inputClass} value={authCode} onChange={(event) => setAuthCode(event.target.value)} placeholder="Auth Code / EPP" />
-          </div>
+        <div className="mt-[12px]">
           <ContactFields contact={contact} onChange={setContact} />
-          <button className={`${primaryButtonClass} w-full`} disabled={busy}>
+        </div>
+        {error ? <div className="mt-[12px]"><ErrorPanel message={error} /></div> : null}
+        <div className="mt-[18px] flex flex-col-reverse gap-[10px] sm:flex-row sm:justify-end">
+          <button type="button" className={secondaryButtonClass} onClick={onClose}>Cancelar</button>
+          <button className={primaryButtonClass} disabled={busy}>
             {busy ? <LoaderCircle className="h-[15px] w-[15px] animate-spin" /> : <ArrowRight className="h-[15px] w-[15px]" />}
-            Cotar transferencia e gerar PIX
+            Ir para pagamento
           </button>
-        </form>
-      </section>
-      {error ? <ErrorPanel message={error} /> : null}
-      {pixOrder ? <PixPanel order={pixOrder} /> : null}
-      <section className={panelClass}>
-        <h2 className="text-[16px] font-semibold text-[#EEEEEE]">Transferir para outro painel</h2>
-        <p className="mt-[7px] text-[12px] leading-[1.6] text-[#6F6F6F]">
-          A Flowdesk remove o bloqueio de transferencia e gera o Auth Code para o registrador de destino.
-        </p>
-        {outboundCode ? (
-          <div className="mt-[14px] rounded-[14px] border border-[rgba(0,98,255,0.32)] bg-[#0C1A31] p-[14px]">
-            <p className="text-[12px] text-[#7FA8F3]">{outboundCode.fqdn}</p>
-            <div className="mt-[8px] flex items-center gap-[8px]">
-              <code className="min-w-0 flex-1 truncate rounded-[10px] bg-[#080D16] px-[12px] py-[10px] text-[13px] text-[#E8E8E8]">{outboundCode.code}</code>
-              <button type="button" className={buttonClass} onClick={() => navigator.clipboard.writeText(outboundCode.code)}>
-                <Clipboard className="h-[14px] w-[14px]" /> Copiar
-              </button>
-            </div>
+        </div>
+      </form>
+    </ModalShell>
+  );
+}
+
+function MoveAccountDialog({
+  domains,
+  onClose,
+  onMoved,
+}: {
+  domains: Domain[];
+  onClose: () => void;
+  onMoved: () => void;
+}) {
+  const [domainId, setDomainId] = useState(domains[0]?.id || "");
+  const [target, setTarget] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!domainId) return;
+    setBusy(true);
+    setError(null);
+    setDone(false);
+    try {
+      await jsonRequest(`/api/auth/me/domains/${domainId}/move`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetAccount: target }),
+      });
+      setDone(true);
+      onMoved();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Falha ao mover dominio.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <ModalShell
+      title="Mover dominio para outra conta"
+      description="Selecione um dominio da sua conta e informe o e-mail ou usuario da conta Flowdesk de destino."
+      onClose={onClose}
+    >
+      <form onSubmit={submit}>
+        <div className="grid gap-[10px]">
+          <div className="relative">
+            <select className={`${fieldClass} appearance-none pr-[42px]`} value={domainId} onChange={(event) => setDomainId(event.target.value)}>
+              {domains.map((domain) => (
+                <option key={domain.id} value={domain.id}>{domain.fqdn}</option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-[14px] top-1/2 h-[16px] w-[16px] -translate-y-1/2 text-[#7B7B7B]" />
+          </div>
+          <input className={fieldClass} value={target} onChange={(event) => setTarget(event.target.value)} placeholder="email@conta.com ou usuario" />
+        </div>
+        {done ? (
+          <div className="mt-[12px] rounded-[16px] border border-[rgba(0,190,160,0.28)] bg-[rgba(0,190,160,0.08)] px-[14px] py-[12px] text-[13px] text-[#88E6D2]">
+            Dominio movido para a conta Flowdesk informada.
           </div>
         ) : null}
-        <div className="mt-[14px] grid gap-[8px]">
-          {domains.filter((domain) => domain.status === "active").map((domain) => (
-            <div key={domain.id} className="flex flex-wrap items-center justify-between gap-[12px] rounded-[14px] border border-[#171717] bg-[#0C0C0C] px-[14px] py-[13px]">
-              <div>
-                <p className="text-[14px] font-medium text-[#E3E3E3]">{domain.fqdn}</p>
-                <p className="mt-[4px] text-[11px] text-[#666666]">{domain.transferLock ? "Bloqueio ativo" : "Pronto para transferir"}</p>
-              </div>
-              <button type="button" className={buttonClass} disabled={busy} onClick={() => void createOutboundCode(domain)}>
-                Gerar Auth Code
-              </button>
+        {error ? <div className="mt-[12px]"><ErrorPanel message={error} /></div> : null}
+        <div className="mt-[18px] flex flex-col-reverse gap-[10px] sm:flex-row sm:justify-end">
+          <button type="button" className={secondaryButtonClass} onClick={onClose}>Cancelar</button>
+          <button className={primaryButtonClass} disabled={busy || !domains.length}>
+            {busy ? <LoaderCircle className="h-[15px] w-[15px] animate-spin" /> : <UserRound className="h-[15px] w-[15px]" />}
+            Continuar
+          </button>
+        </div>
+      </form>
+    </ModalShell>
+  );
+}
+
+function Overview() {
+  const [domains, setDomains] = useState<Domain[] | null>(null);
+  const [query, setQuery] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+
+  const loadDomains = useCallback(async () => {
+    try {
+      const payload = await jsonRequest<{ domains: Domain[] }>("/api/auth/me/domains");
+      setError(null);
+      setDomains(payload.domains || []);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Falha ao carregar dominios.");
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadDomains();
+  }, [loadDomains]);
+
+  const filteredDomains = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (!domains) return [];
+    if (!normalized) return domains;
+    return domains.filter((domain) => domain.fqdn.toLowerCase().includes(normalized));
+  }, [domains, query]);
+
+  const activeCount = useMemo(
+    () => (domains || []).filter((domain) => ["active", "registered"].includes(domain.status)).length,
+    [domains],
+  );
+
+  async function toggleAutoRenew(domain: Domain) {
+    setUpdatingId(domain.id);
+    const nextValue = !domain.autoRenew;
+    setDomains((current) =>
+      current?.map((item) => (item.id === domain.id ? { ...item, autoRenew: nextValue } : item)) || current,
+    );
+    try {
+      await jsonRequest(`/api/auth/me/domains/${domain.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "auto_renew", enabled: nextValue }),
+      });
+    } catch (reason) {
+      setDomains((current) =>
+        current?.map((item) => (item.id === domain.id ? { ...item, autoRenew: domain.autoRenew } : item)) || current,
+      );
+      setError(reason instanceof Error ? reason.message : "Falha ao atualizar renovacao.");
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
+  if (error && !domains) return <ErrorPanel message={error} />;
+  if (!domains) return <LoadingPanel />;
+
+  return (
+    <div className="space-y-[16px]">
+      <div className="flex flex-col gap-[14px] sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-[#F2F2F2]">Meus dominios</h2>
+          <p className="mt-[7px] text-[13px] text-[#777777]">
+            {domains.length} dominio(s), {activeCount} ativo(s), DNS e renovacao no mesmo painel.
+          </p>
+        </div>
+        <Link href="/dashboard/domains/acquire" className={`${primaryButtonClass} h-[44px]`}>
+          <Plus className="h-[17px] w-[17px]" />
+          Adicionar novo dominio
+        </Link>
+      </div>
+
+      <PromoBanner />
+
+      {error ? <ErrorPanel message={error} /> : null}
+
+      {!domains.length ? (
+        <EmptyDomains />
+      ) : (
+        <>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-[17px] top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-[#8A8A8A]" />
+            <input
+              className="h-[48px] w-full rounded-[17px] border border-[#1A1A1A] bg-[#0B0B0B] pl-[46px] pr-[16px] text-[14px] text-[#E7E7E7] outline-none transition-colors placeholder:text-[#696969] focus:border-[#2D62C9]"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Pesquisar..."
+            />
+          </div>
+
+          <section className={`${panelClass} overflow-hidden`}>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[920px] border-collapse">
+                <thead>
+                  <tr className="border-b border-[#191919] text-left text-[12px] font-semibold text-[#9A9A9A]">
+                    <th className="w-[58px] px-[18px] py-[16px]">
+                      <span className="inline-flex h-[22px] w-[22px] rounded-[6px] border border-[#2A2A2A] bg-[#0F0F0F]" />
+                    </th>
+                    <th className="px-[12px] py-[16px]">Dominio</th>
+                    <th className="px-[12px] py-[16px]">Status</th>
+                    <th className="px-[12px] py-[16px]">Data de expiracao</th>
+                    <th className="px-[12px] py-[16px]">Renovacao automatica</th>
+                    <th className="px-[18px] py-[16px] text-right">Acoes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredDomains.map((domain) => (
+                    <tr key={domain.id} className="group border-b border-[#151515] last:border-0">
+                      <td className="px-[18px] py-[18px]">
+                        <span className="inline-flex h-[22px] w-[22px] rounded-[6px] border border-[#2A2A2A] bg-[#0F0F0F] transition-colors group-hover:border-[#3A3A3A]" />
+                      </td>
+                      <td className="px-[12px] py-[18px]">
+                        <div className="flex items-center gap-[10px]">
+                          <span className="inline-flex h-[34px] w-[34px] items-center justify-center rounded-[12px] border border-[#1D1D1D] bg-[#101010] text-[13px] font-semibold text-[#DADADA]">
+                            {accountInitial(domain.fqdn)}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="truncate text-[14px] font-semibold text-[#F2F2F2]">{domain.fqdn}</p>
+                            <p className="mt-[4px] text-[11px] text-[#696969]">{domain.provider || "flowdesk"}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-[12px] py-[18px]"><StatusPill status={domain.status} /></td>
+                      <td className="px-[12px] py-[18px] text-[14px] font-medium text-[#E1E1E1]">{formatShortDate(domain.expirationDate)}</td>
+                      <td className="px-[12px] py-[18px]">
+                        <ToggleSwitch checked={domain.autoRenew} disabled={updatingId === domain.id} onClick={() => void toggleAutoRenew(domain)} />
+                      </td>
+                      <td className="px-[18px] py-[18px]">
+                        <div className="flex justify-end gap-[8px]">
+                          <Link href={`/dashboard/domains/acquire?domain=${encodeURIComponent(domain.fqdn)}`} className={secondaryButtonClass}>
+                            Renovar
+                          </Link>
+                          <button type="button" className={secondaryButtonClass}>
+                            Gerenciar
+                          </button>
+                          <button type="button" className="inline-flex h-[42px] w-[42px] items-center justify-center rounded-[13px] border border-[#202020] bg-[#101010] text-[#8B66FF] transition-colors hover:border-[#303030] hover:bg-[#151515]">
+                            <MoreVertical className="h-[17px] w-[17px]" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          ))}
-          {!domains.some((domain) => domain.status === "active") ? (
-            <p className="text-[13px] text-[#666666]">Nenhum dominio ativo disponivel para transferencia de saida.</p>
-          ) : null}
+            <div className="flex flex-col gap-[12px] border-t border-[#151515] px-[18px] py-[15px] text-[13px] text-[#8A8A8A] sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-[10px]">
+                <span>Tamanho da pagina:</span>
+                <span className="inline-flex h-[34px] items-center gap-[8px] rounded-[11px] border border-[#1D1D1D] bg-[#101010] px-[12px] text-[#DCDCDC]">10 <ChevronDown className="h-[14px] w-[14px]" /></span>
+                <span>1 para {filteredDomains.length} de {domains.length}</span>
+              </div>
+              <div className="flex items-center gap-[9px]">
+                <ChevronsLeft className="h-[15px] w-[15px] text-[#5F5F5F]" />
+                <ChevronLeft className="h-[15px] w-[15px] text-[#5F5F5F]" />
+                <span className="text-[#E2E2E2]">Pagina 1 de 1</span>
+                <ChevronRight className="h-[15px] w-[15px] text-[#5F5F5F]" />
+                <ChevronsRight className="h-[15px] w-[15px] text-[#5F5F5F]" />
+              </div>
+            </div>
+          </section>
+        </>
+      )}
+    </div>
+  );
+}
+
+function Acquire() {
+  const searchParams = useSearchParams();
+  const mode = searchParams.get("mode") === "ai" ? "ai" : "register";
+  const initialQuery = searchParams.get("domain") || "";
+  const error = searchParams.get("error");
+  const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
+
+  const routeByMode = useMemo(() => dashboardDomainRoutes, []);
+
+  return (
+    <div className="space-y-[18px]">
+      {error === "checkout_expired" ? (
+        <ErrorPanel message="A cotacao expirou. Pesquise o dominio novamente para gerar um checkout seguro." />
+      ) : error === "checkout_account" ? (
+        <ErrorPanel message="Este checkout pertence a outra conta Flowdesk. Entre com a conta correta para continuar." />
+      ) : null}
+
+      <section className="relative isolate min-h-[560px] overflow-visible rounded-[30px] border border-[#111111] bg-[#040404] px-[18px] py-[28px] shadow-[0_28px_90px_rgba(0,0,0,0.42)] sm:px-[28px]">
+        <div className="pointer-events-none absolute inset-x-0 top-[92px] -translate-y-1/2 opacity-70">
+          <div className="relative left-1/2 aspect-[1542/492] w-[155%] max-w-none -translate-x-1/2 min-[861px]:w-[112%]">
+            <Image
+              src="/cdn/hero-blocks-1.svg"
+              alt=""
+              fill
+              sizes="(max-width: 860px) 160vw, 1340px"
+              className="pointer-events-none select-none object-contain opacity-55"
+              draggable={false}
+            />
+          </div>
+        </div>
+
+        <div className="relative z-10 mx-auto flex max-w-[1280px] flex-col items-center text-center">
+          <div className="inline-flex items-center rounded-full border border-[#171717] bg-[#080808] px-[18px] py-[9px] text-[13px] text-[#BFBFBF]">
+            Encontre a identidade perfeita para seu projeto
+          </div>
+          <h2 className="mt-[20px] max-w-[980px] bg-[linear-gradient(90deg,#DADADA_0%,#C1C1C1_100%)] bg-clip-text text-[38px] leading-[1.08] font-normal tracking-[-0.05em] text-transparent md:text-[52px]">
+            Encontre o seu dominio
+            <span className="block">de forma rapida e segura</span>
+          </h2>
+          <div className="mt-[42px] w-full max-w-[1280px]">
+            <DomainSearchSection
+              initialTab={mode}
+              initialQuery={initialQuery}
+              routeByMode={routeByMode}
+              syncRoute={false}
+              onDomainSelect={setSelectedDomain}
+            />
+          </div>
         </div>
       </section>
-      <section className={panelClass}>
-        <h2 className="text-[16px] font-semibold text-[#EEEEEE]">Transferencias recentes</h2>
+
+      {selectedDomain ? (
+        <RegisterDomainDialog fqdn={selectedDomain} onClose={() => setSelectedDomain(null)} />
+      ) : null}
+    </div>
+  );
+}
+
+function Transfers() {
+  const [transfers, setTransfers] = useState<Transfer[] | null>(null);
+  const [domains, setDomains] = useState<Domain[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [isTransferDialogOpen, setIsTransferDialogOpen] = useState(false);
+  const [isMoveDialogOpen, setIsMoveDialogOpen] = useState(false);
+
+  const loadData = useCallback(async () => {
+    try {
+      const [transferPayload, domainsPayload] = await Promise.all([
+        jsonRequest<{ transfers: Transfer[] }>("/api/auth/me/domains/transfers"),
+        jsonRequest<{ domains: Domain[] }>("/api/auth/me/domains"),
+      ]);
+      setError(null);
+      setTransfers(transferPayload.transfers || []);
+      setDomains(domainsPayload.domains || []);
+    } catch (reason) {
+      setTransfers([]);
+      setError(reason instanceof Error ? reason.message : "Falha ao carregar transferencias.");
+    }
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadData();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadData]);
+
+  return (
+    <div className="space-y-[16px]">
+      <div>
+        <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-[#F2F2F2]">Transferencias</h2>
+        <p className="mt-[7px] text-[13px] text-[#777777]">
+          Transfira dominios de outros provedores para a Flowdesk ou mova um dominio entre contas Flowdesk.
+        </p>
+      </div>
+
+      <section className={`${panelClass} flex min-h-[420px] flex-col items-center justify-center px-[22px] py-[44px] text-center`}>
+        <span className="relative inline-flex h-[82px] w-[82px] items-center justify-center rounded-[28px] border border-[#1B1B1B] bg-[#101010] text-[#8EA8FF]">
+          <span className="absolute inset-[-10px] rounded-[34px] border border-[#1F2B55] opacity-50" />
+          <Globe2 className="h-[34px] w-[34px]" />
+          <ArrowRight className="absolute bottom-[18px] right-[17px] h-[20px] w-[20px] text-[#7D66FF]" />
+        </span>
+        <h3 className="mt-[26px] text-[26px] font-semibold tracking-[-0.05em] text-[#F2F2F2]">
+          Comecar com uma nova transferencia de dominio
+        </h3>
+        <p className="mt-[12px] max-w-[560px] text-[15px] leading-[1.6] text-[#8A8A8A]">
+          Transfira um dominio registrado em outro provedor para a Flowdesk ou mova um dominio para outra conta Flowdesk.
+        </p>
+        <div className="mt-[24px] flex flex-col items-center gap-[12px]">
+          <button type="button" className={`${primaryButtonClass} h-[46px] px-[20px]`} onClick={() => setIsTransferDialogOpen(true)}>
+            Transferir pra Flowdesk
+          </button>
+          <button type="button" className="text-[14px] font-semibold text-[#8B66FF] transition-colors hover:text-[#A282FF]" onClick={() => setIsMoveDialogOpen(true)}>
+            Mover para outra conta
+          </button>
+        </div>
+      </section>
+
+      {error ? <ErrorPanel message={error} /> : null}
+
+      <section className={`${panelClass} p-[18px]`}>
+        <div className="flex flex-wrap items-center justify-between gap-[12px]">
+          <div>
+            <h3 className="text-[18px] font-semibold tracking-[-0.04em] text-[#F1F1F1]">Historico de transferencias</h3>
+            <p className="mt-[6px] text-[12px] text-[#777777]">Status em tempo real das transferencias de entrada.</p>
+          </div>
+          <button type="button" className={secondaryButtonClass} onClick={() => void loadData()}>
+            Atualizar
+          </button>
+        </div>
+
         {!transfers ? (
-          <div className="mt-[18px] flex items-center text-[13px] text-[#777777]"><LoaderCircle className="mr-[8px] h-[15px] w-[15px] animate-spin" />Carregando...</div>
+          <div className="mt-[18px]"><LoadingPanel label="Carregando transferencias..." /></div>
         ) : transfers.length ? (
-          <div className="mt-[14px] grid gap-[8px]">
+          <div className="mt-[16px] grid gap-[9px]">
             {transfers.map((transfer) => (
-              <div key={transfer.id} className="flex flex-wrap items-center justify-between gap-[12px] rounded-[14px] border border-[#171717] bg-[#0C0C0C] px-[14px] py-[13px]">
+              <div key={transfer.id} className="flex flex-col gap-[12px] rounded-[18px] border border-[#181818] bg-[#0D0D0D] px-[14px] py-[13px] sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <p className="text-[14px] font-medium text-[#E3E3E3]">{transfer.fqdn}</p>
-                  <p className="mt-[4px] text-[11px] text-[#666666]">{transfer.direction === "in" ? "Entrada" : "Saida"} · {formatDate(transfer.initiatedAt)}</p>
+                  <p className="text-[15px] font-semibold text-[#F1F1F1]">{transfer.fqdn}</p>
+                  <p className="mt-[5px] text-[12px] text-[#707070]">
+                    {transfer.direction === "in" ? "Entrada" : "Saida"} - {formatDate(transfer.initiatedAt)}
+                  </p>
                 </div>
                 <StatusPill status={transfer.status} />
               </div>
             ))}
           </div>
         ) : (
-          <p className="mt-[12px] text-[13px] text-[#6F6F6F]">Nenhuma transferencia iniciada.</p>
+          <div className="mt-[16px] rounded-[18px] border border-[#181818] bg-[#0D0D0D] px-[14px] py-[18px] text-[13px] text-[#777777]">
+            Nenhuma transferencia iniciada.
+          </div>
         )}
       </section>
+
+      {isTransferDialogOpen ? <TransferInDialog onClose={() => setIsTransferDialogOpen(false)} /> : null}
+      {isMoveDialogOpen ? (
+        <MoveAccountDialog
+          domains={domains}
+          onClose={() => setIsMoveDialogOpen(false)}
+          onMoved={() => void loadData()}
+        />
+      ) : null}
     </div>
   );
 }
@@ -659,7 +948,7 @@ export function FlowAiApiWorkspace() {
   return (
     <div className="mt-[24px] grid gap-[12px] md:grid-cols-3">
       {cards.map((card) => (
-        <section key={card.title} className={panelClass}>
+        <section key={card.title} className={`${panelClass} p-[18px]`}>
           <card.icon className="h-[19px] w-[19px] text-[#8FB5FF]" />
           <h2 className="mt-[14px] text-[16px] font-semibold text-[#EEEEEE]">{card.title}</h2>
           <p className="mt-[7px] text-[12px] leading-[1.6] text-[#6F6F6F]">{card.text}</p>

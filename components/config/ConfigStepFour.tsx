@@ -71,7 +71,7 @@ type ConfigStepFourProps = {
   onApproved?: (order: PixOrder) => void;
 };
 
-export type CheckoutPurchaseContext = {
+type HostingCheckoutPurchaseContext = {
   type: "hosting";
   title: string;
   subtitle?: string | null;
@@ -83,6 +83,24 @@ export type CheckoutPurchaseContext = {
   hostingRegion: string;
   repository?: string | null;
 };
+
+type DomainCheckoutPurchaseContext = {
+  type: "domain";
+  token: string;
+  title: string;
+  subtitle?: string | null;
+  details?: string[];
+  amount?: number;
+  currency?: string;
+  fqdn: string;
+  operation: "register" | "transfer";
+  billingLabel?: string;
+  renewalLabel?: string;
+};
+
+export type CheckoutPurchaseContext =
+  | HostingCheckoutPurchaseContext
+  | DomainCheckoutPurchaseContext;
 
 type PaymentMethod = "pix" | "card";
 type CheckoutRail = StepFourPaymentRail;
@@ -806,7 +824,7 @@ function isCachedPixOrder(value: unknown): value is PixOrder {
 }
 
 function isCustomPaymentSurfacePathname(pathname: string) {
-  return pathname.startsWith("/payment/vps/") || pathname.startsWith("/payment/hosting/");
+  return pathname.startsWith("/payment/vps/") || pathname.startsWith("/payment/hosting/") || pathname.startsWith("/payment/domain/");
 }
 
 function replaceCurrentPlanPath(
@@ -1503,6 +1521,11 @@ function appendPurchaseContextSearchParams(
 ) {
   if (!purchaseContext) return;
   params.set("purchaseType", purchaseContext.type);
+  if (purchaseContext.type === "domain") {
+    params.set("source", "dashboard-domains");
+    params.set("domainToken", purchaseContext.token);
+    return;
+  }
   params.set("source", "dashboard-hosting");
   params.set("hostingKind", purchaseContext.hostingKind);
   params.set("hostingPlan", purchaseContext.hostingPlan);
@@ -3353,17 +3376,17 @@ export function ConfigStepFour({
     lastKnownOrderNumberRef.current = lastKnownOrderNumber;
   }, [lastKnownOrderNumber]);
 
+  const purchaseContextKey = useMemo(() => {
+    if (!purchaseContext) return "none";
+    if (purchaseContext.type === "domain") {
+      return `domain:${purchaseContext.token}:${purchaseContext.operation}:${purchaseContext.fqdn}`;
+    }
+    return `hosting:${purchaseContext.hostingKind}:${purchaseContext.hostingPlan}:${purchaseContext.hostingRegion}:${purchaseContext.repository || ""}`;
+  }, [purchaseContext]);
+
   useEffect(() => {
     setPaymentBootstrapFailed(false);
-  }, [
-    guildId,
-    purchaseContext?.hostingKind,
-    purchaseContext?.hostingPlan,
-    purchaseContext?.hostingRegion,
-    purchaseContext?.repository,
-    selectedBillingPeriodCode,
-    selectedPlanCode,
-  ]);
+  }, [guildId, purchaseContextKey, selectedBillingPeriodCode, selectedPlanCode]);
 
   const documentDigits = useMemo(() => normalizeBrazilDocumentDigits(payerDocument), [payerDocument]);
   const cardDocumentDigits = useMemo(() => normalizeBrazilDocumentDigits(cardDocument), [cardDocument]);
@@ -7010,12 +7033,25 @@ export function ConfigStepFour({
       null) ||
     (shouldShowStatusResultPanel ? currentPaymentStatusLabel : null);
   const planDisplayName = purchaseContext?.title || resolvedPlan.name;
-  const planBillingLabel = purchaseContext ? "/mes" : resolvedPlan.billingLabel;
+  const planBillingLabel = purchaseContext
+    ? purchaseContext.type === "domain"
+      ? purchaseContext.billingLabel || (purchaseContext.operation === "register" ? "/ano" : "")
+      : "/mes"
+    : resolvedPlan.billingLabel;
   const planTotalLabel = resolvedPlan.totalLabel;
   const planPeriodLabel = purchaseContext?.subtitle || resolvedPlan.checkoutPeriodLabel;
-  const planRenewalLabel = purchaseContext ? "Renovacao mensal da hospedagem" : resolvedPlan.renewalLabel;
+  const planRenewalLabel = purchaseContext
+    ? purchaseContext.type === "domain"
+      ? purchaseContext.renewalLabel ||
+        (purchaseContext.operation === "register"
+          ? "Registro anual com DNS gerenciado pela Flowdesk"
+          : "Transferencia de entrada com DNS gerenciado pela Flowdesk")
+      : "Renovacao mensal da hospedagem"
+    : resolvedPlan.renewalLabel;
   const effectiveMonthlyAmount =
-    resolvedPlan.isTrial || resolvedPlan.billingPeriodMonths <= 0
+    isCustomPurchaseCheckout
+      ? activeDiscountPreview.totalAmount
+      : resolvedPlan.isTrial || resolvedPlan.billingPeriodMonths <= 0
       ? activeDiscountPreview.totalAmount
       : roundMoney(
           activeDiscountPreview.totalAmount / resolvedPlan.billingPeriodMonths,
