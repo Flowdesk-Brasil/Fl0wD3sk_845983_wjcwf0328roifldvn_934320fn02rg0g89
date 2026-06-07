@@ -153,6 +153,37 @@ type DashboardTask = {
   priority: number;
 };
 
+type PremiumDashboardVps = {
+  id: string | number;
+  vps_code?: string | null;
+  status?: string | null;
+  github_repo?: string | null;
+  created_at?: string | null;
+};
+
+type PremiumDashboardDomain = {
+  id: string;
+  fqdn: string;
+  status?: string | null;
+};
+
+type PremiumDashboardPayment = {
+  id?: string | number;
+  status?: string | null;
+};
+
+type PremiumDashboardHostingResponse = {
+  projects?: PremiumDashboardVps[];
+};
+
+type PremiumDashboardStats = {
+  activeVpsCount: number;
+  registeredDomainsCount: number;
+  pendingServicesCount: number;
+  uptime: string;
+  loading: boolean;
+};
+
 type DashboardRecentActivity = {
   key: string;
   title: string;
@@ -192,7 +223,7 @@ const TEAM_ICON_OPTIONS = [
     key: "amethyst",
     label: "Amethyst",
     shell:
-      "bg-[radial-gradient(circle_at_30%_20%,#D9A8FF_0%,#7D3BFF_48%,#220842_100%)]",
+      "bg-[radial-gradient(circle_at_30%_20%,#9FC4FF_0%,#0062FF_48%,#061A44_100%)]",
   },
   {
     key: "forest",
@@ -434,35 +465,6 @@ function formatDashboardDate(value: string | null) {
   });
 }
 
-function resolveTaskToneClass(tone: DashboardTask["tone"]) {
-  switch (tone) {
-    case "danger":
-      return {
-        shell: "border-[rgba(255,92,92,0.16)] bg-[linear-gradient(180deg,rgba(15,8,8,0.98)_0%,rgba(8,6,6,0.98)_100%)]",
-        icon: "bg-[rgba(255,92,92,0.12)] text-[#FF7777]",
-        action: "bg-[#F4F4F4] text-[#101010]",
-      };
-    case "warning":
-      return {
-        shell: "border-[rgba(255,190,92,0.16)] bg-[linear-gradient(180deg,rgba(16,12,6,0.98)_0%,rgba(8,7,5,0.98)_100%)]",
-        icon: "bg-[rgba(255,190,92,0.12)] text-[#FFCA79]",
-        action: "bg-[#F4F4F4] text-[#101010]",
-      };
-    case "success":
-      return {
-        shell: "border-[rgba(127,247,176,0.14)] bg-[linear-gradient(180deg,rgba(7,14,10,0.98)_0%,rgba(5,8,6,0.98)_100%)]",
-        icon: "bg-[rgba(127,247,176,0.1)] text-[#9DF0B9]",
-        action: "bg-[linear-gradient(180deg,#FFFFFF_0%,#D8D8D8_100%)] text-[#101010]",
-      };
-    default:
-      return {
-        shell: "border-[rgba(255,255,255,0.08)] bg-[linear-gradient(180deg,rgba(12,12,12,0.98)_0%,rgba(7,7,7,0.98)_100%)]",
-        icon: "bg-[rgba(0,98,255,0.12)] text-[#7EA8FF]",
-        action: "border border-[#242424] bg-[#101010] text-[#DCDCDC]",
-      };
-  }
-}
-
 function AccountAvatar({
   avatarUrl,
   displayName,
@@ -488,7 +490,7 @@ function AccountAvatar({
 
   return (
     <div
-      className={`relative flex items-center justify-center rounded-full bg-[radial-gradient(circle_at_top,#7D3BFF_0%,#3C0F6D_54%,#170822_100%)] font-semibold text-[#F0F0F0] shadow-[0_0_28px_rgba(125,59,255,0.14)] ${className}`.trim()}
+      className={`relative flex items-center justify-center rounded-full bg-[radial-gradient(circle_at_top,#2C78FF_0%,#0B3B91_54%,#06142B_100%)] font-semibold text-[#F0F0F0] shadow-[0_0_28px_rgba(0,98,255,0.16)] ${className}`.trim()}
     >
       {accountInitial(displayName, username)}
       <span className="absolute bottom-[2px] right-[2px] h-[8px] w-[8px] rounded-full bg-[#0062FF]" />
@@ -501,57 +503,55 @@ function DashboardTaskCard({
   onDismiss,
   onNavigate,
   onPrefetch,
+  isSeparated = false,
 }: {
   task: DashboardTask;
   onDismiss: (taskKey: string) => void;
   onNavigate: (href: string) => void;
   onPrefetch: (href: string) => void;
+  isSeparated?: boolean;
 }) {
   const Icon = task.icon;
-  const toneClass = resolveTaskToneClass(task.tone);
 
   return (
     <div
-      className={`group relative w-full overflow-hidden rounded-[22px] border px-[16px] py-[15px] shadow-[0_22px_70px_rgba(0,0,0,0.22)] transition-colors ${toneClass.shell}`}
+      className={`group flex w-full flex-col gap-[14px] px-[16px] py-[16px] transition-colors hover:bg-[#090909] sm:flex-row sm:items-center sm:justify-between sm:px-[20px] ${
+        isSeparated ? "border-t border-[#161616]" : ""
+      }`}
     >
-      <span
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-x-[1px] top-[1px] h-[76px] rounded-t-[21px] bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.055)_0%,transparent_70%)]"
-      />
-      <div className="relative z-10 flex gap-[14px]">
-        <span className={`inline-flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-[14px] ${toneClass.icon}`}>
-          <Icon className="h-[21px] w-[21px]" strokeWidth={2.05} aria-hidden="true" />
+      <div className="flex min-w-0 gap-[14px]">
+        <span className="inline-flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-[14px] border border-[#191919] bg-[#0D0D0D] text-[#AFAFAF]">
+          <Icon className="h-[20px] w-[20px]" strokeWidth={1.95} aria-hidden="true" />
         </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-[10px]">
-            <div className="min-w-0">
-              <p className="line-clamp-2 text-[15px] leading-[1.25] font-semibold tracking-[-0.03em] text-[#F1F1F1]">
-                {task.title}
-              </p>
-              <p className="mt-[6px] line-clamp-2 text-[13px] leading-[1.55] text-[#8A8A8A]">
-                {task.description}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => onDismiss(task.key)}
-              className="inline-flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[10px] text-[#6F6F6F] transition-colors hover:bg-[rgba(255,255,255,0.05)] hover:text-[#E7E7E7]"
-              aria-label="Ocultar tarefa"
-            >
-              <X className="h-[15px] w-[15px]" strokeWidth={2.2} aria-hidden="true" />
-            </button>
-          </div>
-          <button
-            type="button"
-            onMouseEnter={() => onPrefetch(task.href)}
-            onFocus={() => onPrefetch(task.href)}
-            onPointerDown={() => onPrefetch(task.href)}
-            onClick={() => onNavigate(task.href)}
-            className={`mt-[13px] inline-flex h-[42px] items-center justify-center rounded-[13px] px-[17px] text-[14px] font-semibold transition-transform duration-150 ease-out hover:translate-y-[-1px] ${toneClass.action}`}
-          >
-            {task.actionLabel}
-          </button>
+        <div className="min-w-0">
+          <h4 className="truncate text-[16px] leading-none font-semibold tracking-[-0.035em] text-[#F0F0F0]">
+            {task.title}
+          </h4>
+          <p className="mt-[9px] line-clamp-2 max-w-[700px] text-[13px] leading-[1.55] text-[#858585]">
+            {task.description}
+          </p>
         </div>
+      </div>
+
+      <div className="flex shrink-0 items-center justify-end gap-[8px] pl-[56px] sm:pl-0">
+        <button
+          type="button"
+          onMouseEnter={() => onPrefetch(task.href)}
+          onFocus={() => onPrefetch(task.href)}
+          onPointerDown={() => onPrefetch(task.href)}
+          onClick={() => onNavigate(task.href)}
+          className="inline-flex h-[34px] items-center justify-center rounded-full bg-[#F3F3F3] px-[14px] text-[12px] font-semibold text-[#070707] transition-colors hover:bg-white"
+        >
+          {task.actionLabel}
+        </button>
+        <button
+          type="button"
+          onClick={() => onDismiss(task.key)}
+          className="inline-flex h-[34px] w-[34px] items-center justify-center rounded-full text-[#5F5F5F] transition-colors hover:bg-[#111111] hover:text-[#E7E7E7]"
+          aria-label="Ocultar tarefa"
+        >
+          <X className="h-[15px] w-[15px]" strokeWidth={2.1} aria-hidden="true" />
+        </button>
       </div>
     </div>
   );
@@ -603,8 +603,8 @@ function DashboardRecentActivityList({
                   <span className="inline-flex h-[24px] items-center rounded-full border border-[#1B1B1B] bg-[#090909] px-[9px] text-[12px] font-medium text-[#B9B9B9]">
                     {item.eyebrow}
                   </span>
-                  <span className="inline-flex h-[24px] items-center rounded-full border border-[#1B1B1B] bg-[#090909] px-[9px] text-[12px] font-medium text-[#7EE7C1]">
-                    <span className="mr-[6px] h-[7px] w-[7px] rounded-full bg-[#43D6B0]" />
+                  <span className="inline-flex h-[24px] items-center rounded-full border border-[#1B1B1B] bg-[#090909] px-[9px] text-[12px] font-medium text-[#66A3FF]">
+                    <span className="mr-[6px] h-[7px] w-[7px] rounded-full bg-[#0062FF]" />
                     {item.meta}
                   </span>
                 </span>
@@ -831,6 +831,13 @@ export function DashboardWorkspace({
   const [teamActionError, setTeamActionError] = useState<string | null>(null);
   const [isCreatingTeam, setIsCreatingTeam] = useState(false);
   const [acceptingTeamId, setAcceptingTeamId] = useState<number | null>(null);
+  const [premiumStats, setPremiumStats] = useState<PremiumDashboardStats>({
+    activeVpsCount: 0,
+    registeredDomainsCount: 0,
+    pendingServicesCount: 0,
+    uptime: "99.9%",
+    loading: true,
+  });
   const desktopTeamMenuRef = useRef<HTMLDivElement | null>(null);
   const mobileTeamMenuRef = useRef<HTMLDivElement | null>(null);
   const desktopProfileMenuRef = useRef<HTMLDivElement | null>(null);
@@ -1113,33 +1120,33 @@ export function DashboardWorkspace({
     if (tasks.length === 0) {
       tasks.push(
         {
-          key: "redeem-beta-code",
-          icon: Sparkles,
-          title: "Resgate um codigo BETA da FlowAI",
-          description: "Use codigos de campanha para testar API, automacoes e recursos antecipados.",
-          href: "/dashboard/flowai-api",
-          actionLabel: "Resgatar",
+          key: "domain-brand-check",
+          icon: Globe,
+          title: "Proteja sua marca",
+          description: "Garanta seu domínio antes que outra pessoa registre.",
+          href: "/dashboard/domains/acquire",
+          actionLabel: "Buscar Domínio",
           tone: "info",
           priority: 90,
         },
         {
-          key: "domain-brand-check",
-          icon: Globe,
-          title: "Proteja o dominio da sua marca",
-          description: "Pesquise nomes disponiveis antes de publicar loja, comunidade ou painel proprio.",
-          href: "/dashboard/domains/acquire",
-          actionLabel: "Pesquisar",
-          tone: "info",
+          key: "hosting-preview",
+          icon: HardDrive,
+          title: "Escalabilidade",
+          description: "Crie sua primeira VPS em menos de 2 minutos.",
+          href: "/dashboard/hosting",
+          actionLabel: "Criar VPS",
+          tone: "success",
           priority: 91,
         },
         {
-          key: "hosting-preview",
-          icon: HardDrive,
-          title: "Prepare uma VPS para bots e jogos",
-          description: "Planeje hospedagem para Discord, API, sites e servidores de comunidade.",
-          href: "/dashboard/hosting",
-          actionLabel: "Planejar",
-          tone: "success",
+          key: "redeem-beta-code",
+          icon: Sparkles,
+          title: "Automação",
+          description: "Integre APIs e automatize processos do seu negócio.",
+          href: "/dashboard/flowai-api",
+          actionLabel: "Explorar APIs",
+          tone: "info",
           priority: 92,
         },
       );
@@ -1393,6 +1400,47 @@ export function DashboardWorkspace({
       window.removeEventListener("focus", handleDashboardHomeFocus);
     };
   }, [isHomeView, refreshDashboardHomeSignals]);
+
+  useEffect(() => {
+    if (!isHomeView) return;
+
+    let isMounted = true;
+
+    async function loadStats() {
+      try {
+        const [domainsRes, hostingRes, paymentsRes] = await Promise.all([
+          fetch("/api/auth/me/domains", { cache: "no-store" }).then((r) => r.json()).catch(() => null) as Promise<{ domains?: PremiumDashboardDomain[] } | null>,
+          fetch("/api/auth/me/hosting/projects", { cache: "no-store" }).then((r) => r.json()).catch(() => null) as Promise<PremiumDashboardHostingResponse | null>,
+          fetch("/api/auth/me/payments/history", { cache: "no-store" }).then((r) => r.json()).catch(() => null) as Promise<{ orders?: PremiumDashboardPayment[] } | null>,
+        ]);
+        const domains = domainsRes?.domains || [];
+        const projects = hostingRes?.projects || [];
+        const activeVps = projects.filter((project) => project.status === "active" || project.status === "ready" || project.status === "paid");
+        const payments = paymentsRes?.orders || [];
+        const unpaidInvoices = payments.filter((order) => order.status === "pending" || order.status === "unpaid");
+
+        if (isMounted) {
+          setPremiumStats({
+            activeVpsCount: activeVps.length,
+            registeredDomainsCount: domains.length,
+            pendingServicesCount: unpaidInvoices.length,
+            uptime: "99.9%",
+            loading: false,
+          });
+        }
+      } catch (err) {
+        console.error("Failed to load dashboard premium stats:", err);
+        if (isMounted) {
+          setPremiumStats(prev => ({ ...prev, loading: false }));
+        }
+      }
+    }
+
+    loadStats();
+    return () => {
+      isMounted = false;
+    };
+  }, [isHomeView]);
 
   useEffect(() => {
     if (isDomainsActive) {
@@ -2655,62 +2703,130 @@ export function DashboardWorkspace({
 
           <section className="min-w-0">
             {!isHostingOnboardingRoute ? (
-              <LandingReveal delay={36} duration={240}>
-                <div className="relative z-[700] flex flex-col gap-[18px]">
-                  <div className="flex flex-col gap-[14px] md:flex-row md:items-end md:justify-between">
-                    <div>
-                      <LandingGlowTag className="px-[24px]">
-                        Dashboard
-                      </LandingGlowTag>
-                      <h1 className="mt-[18px] bg-[linear-gradient(90deg,#DADADA_0%,#C1C1C1_100%)] bg-clip-text text-[34px] leading-[1.02] font-normal tracking-[-0.05em] text-transparent md:text-[42px]">
-                        {displayView.title}
-                      </h1>
-                      <p className="mt-[14px] max-w-[760px] text-[14px] leading-[1.55] text-[#7D7D7D] md:text-[15px]">
-                        {displayView.description}
-                      </p>
+              isHomeView ? (
+                <LandingReveal delay={36} duration={240}>
+                  <div className="relative z-[700]">
+                    <div className="flex flex-col gap-[22px] border-b border-[#111111] pb-[24px]">
+                      <div className="flex flex-col gap-[16px] md:flex-row md:items-end md:justify-between">
+                        <div className="min-w-0">
+                          <p className="text-[12px] font-medium uppercase tracking-[0.18em] text-[#666666]">
+                            Dashboard
+                          </p>
+                          <h1 className="mt-[12px] max-w-[820px] text-[36px] leading-[0.98] font-semibold tracking-[-0.065em] text-[#F3F3F3] md:text-[52px]">
+                            Bem-vindo de volta, {currentAccount.displayName?.split(" ")[0] || currentAccount.username}
+                          </h1>
+                          <p className="mt-[14px] max-w-[700px] text-[14px] leading-[1.65] text-[#858585] md:text-[15px]">
+                            Uma visão direta da sua infraestrutura, domínios e cobranças. Sem ruído, só o que precisa de ação.
+                          </p>
+                        </div>
+                        <span className="inline-flex h-[34px] w-fit items-center gap-[8px] rounded-full border border-[#181818] bg-[#090909] px-[12px] text-[12px] font-medium text-[#AFAFAF]">
+                          <span className="h-[7px] w-[7px] rounded-full bg-[#0062FF]" />
+                          Atualizado em tempo real
+                        </span>
+                      </div>
+
+                      <div className="grid overflow-hidden rounded-[22px] border border-[#151515] bg-[#050505] sm:grid-cols-2 lg:grid-cols-4">
+                        {[
+                          ["VPS ativas", premiumStats.loading ? "..." : premiumStats.activeVpsCount],
+                          ["Domínios", premiumStats.loading ? "..." : premiumStats.registeredDomainsCount],
+                          ["Pendências", premiumStats.loading ? "..." : premiumStats.pendingServicesCount],
+                          ["Uptime", premiumStats.uptime],
+                        ].map(([label, value], index) => (
+                          <div key={label} className={`border-[#151515] px-[18px] py-[16px] ${index > 0 ? "border-t sm:border-l sm:border-t-0" : ""} ${index >= 2 ? "sm:border-t lg:border-t-0" : ""}`}>
+                            <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-[#686868]">{label}</p>
+                            <p className="mt-[8px] text-[26px] leading-none font-semibold tracking-[-0.045em] text-[#F2F2F2]">{value}</p>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="flex flex-wrap gap-[10px]">
+                        {[
+                          { label: "Criar VPS", href: "/dashboard/hosting", icon: Plus },
+                          { label: "Registrar domínio", href: "/dashboard/domains/acquire", icon: Globe },
+                          { label: "Pagamentos", href: "/account/payment_history", icon: WalletCards },
+                          { label: "Suporte", href: "/support", icon: CircleHelp },
+                        ].map((action) => {
+                          const Icon = action.icon;
+                          return (
+                            <button
+                              key={action.href}
+                              type="button"
+                              onMouseEnter={() => prefetchRoute(action.href)}
+                              onFocus={() => prefetchRoute(action.href)}
+                              onPointerDown={() => prefetchRoute(action.href)}
+                              onClick={() => navigateToHref(action.href)}
+                              className="group inline-flex h-[42px] items-center gap-[9px] rounded-full border border-[#181818] bg-[#080808] px-[15px] text-[13px] font-medium text-[#D7D7D7] transition-colors hover:border-[#242424] hover:bg-[#0D0D0D] hover:text-white"
+                            >
+                              <Icon className="h-[16px] w-[16px] text-[#7A7A7A] transition-colors group-hover:text-[#66A3FF]" strokeWidth={1.9} aria-hidden="true" />
+                              {action.label}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                   </div>
-                </div>
-              </LandingReveal>
+                </LandingReveal>
+              ) : (
+                <LandingReveal delay={36} duration={240}>
+                  <div className="relative z-[700] flex flex-col gap-[18px]">
+                    <div className="flex flex-col gap-[14px] md:flex-row md:items-end md:justify-between">
+                      <div>
+                        <LandingGlowTag className="px-[24px]">
+                          Dashboard
+                        </LandingGlowTag>
+                        <h1 className="mt-[18px] bg-[linear-gradient(90deg,#DADADA_0%,#C1C1C1_100%)] bg-clip-text text-[34px] leading-[1.02] font-normal tracking-[-0.05em] text-transparent md:text-[42px]">
+                          {displayView.title}
+                        </h1>
+                        <p className="mt-[14px] max-w-[760px] text-[14px] leading-[1.55] text-[#7D7D7D] md:text-[15px]">
+                          {displayView.description}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </LandingReveal>
+              )
             ) : null}
 
             {isHomeView && !isHostingOnboardingRoute ? (
               <LandingReveal delay={48} duration={240}>
                 <div className="mt-[24px] space-y-[24px]">
-                  <section aria-label="Suas tarefas">
-                    <div className="mb-[12px] flex flex-wrap items-center justify-between gap-[12px]">
-                      <div className="flex items-center gap-[10px]">
-                        <h2 className="text-[20px] leading-none font-semibold tracking-[-0.04em] text-[#F1F1F1]">
-                          Suas tarefas
-                        </h2>
-                        <span className="inline-flex h-[24px] min-w-[24px] items-center justify-center rounded-full bg-[#D93A6F] px-[7px] text-[12px] font-semibold text-white">
-                          {dashboardTasksTotal}
-                        </span>
+                  {dashboardTasksTotal > 0 && (
+                    <section aria-label="Suas tarefas">
+                      <div className="mb-[12px] flex flex-wrap items-center justify-between gap-[12px]">
+                        <div className="flex items-center gap-[10px]">
+                          <h2 className="text-[20px] leading-none font-semibold tracking-[-0.04em] text-[#F1F1F1]">
+                            Suas tarefas
+                          </h2>
+                          <span className="inline-flex h-[24px] min-w-[24px] items-center justify-center rounded-full border border-[#1B1B1B] bg-[#090909] px-[7px] text-[12px] font-semibold text-[#66A3FF]">
+                            {dashboardTasksTotal}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onMouseEnter={() => prefetchRoute("/account")}
+                          onFocus={() => prefetchRoute("/account")}
+                          onPointerDown={() => prefetchRoute("/account")}
+                          onClick={() => navigateToHref("/account")}
+                          className="inline-flex h-[36px] items-center justify-center rounded-[12px] border border-[#171717] bg-[#0D0D0D] px-[13px] text-[13px] font-medium text-[#AFAFAF] transition-colors hover:border-[#242424] hover:text-[#F1F1F1]"
+                        >
+                          Visualizar conta
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onMouseEnter={() => prefetchRoute("/account")}
-                        onFocus={() => prefetchRoute("/account")}
-                        onPointerDown={() => prefetchRoute("/account")}
-                        onClick={() => navigateToHref("/account")}
-                        className="inline-flex h-[36px] items-center justify-center rounded-[12px] border border-[#171717] bg-[#0D0D0D] px-[13px] text-[13px] font-medium text-[#AFAFAF] transition-colors hover:border-[#242424] hover:text-[#F1F1F1]"
-                      >
-                        Visualizar conta
-                      </button>
-                    </div>
 
-                    <div className="grid w-full gap-[12px]">
-                      {dashboardTasks.map((task) => (
-                        <DashboardTaskCard
-                          key={task.key}
-                          task={task}
-                          onDismiss={handleDismissDashboardTask}
-                          onNavigate={navigateToHref}
-                          onPrefetch={prefetchRoute}
-                        />
-                      ))}
-                    </div>
-                  </section>
+                      <div className="overflow-hidden rounded-[24px] border border-[#161616] bg-[#050505] shadow-[0_24px_80px_rgba(0,0,0,0.22)]">
+                        {dashboardTasks.map((task, index) => (
+                          <DashboardTaskCard
+                            key={task.key}
+                            task={task}
+                            isSeparated={index > 0}
+                            onDismiss={handleDismissDashboardTask}
+                            onNavigate={navigateToHref}
+                            onPrefetch={prefetchRoute}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  )}
 
                   <DashboardRecentActivityList
                     items={recentActivities}
