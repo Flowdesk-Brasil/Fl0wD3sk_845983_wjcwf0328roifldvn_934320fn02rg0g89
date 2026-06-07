@@ -195,32 +195,6 @@ function ToggleSwitch({
   );
 }
 
-function WorkspaceTabs({ mode }: { mode: Mode }) {
-  const tabs: Array<{ mode: Mode; label: string; href: string }> = [
-    { mode: "overview", label: "Meus dominios", href: "/dashboard/domains" },
-    { mode: "acquire", label: "Adquirir", href: "/dashboard/domains/acquire" },
-    { mode: "transfers", label: "Transferencias", href: "/dashboard/domains/transfers" },
-  ];
-
-  return (
-    <nav className="mb-[18px] flex flex-wrap gap-[8px]">
-      {tabs.map((tab) => (
-        <Link
-          key={tab.mode}
-          href={tab.href}
-          className={`inline-flex h-[38px] items-center rounded-full border px-[14px] text-[13px] font-semibold transition-all ${
-            mode === tab.mode
-              ? "border-[#1B4ED8] bg-[#0F62FE] text-white shadow-[0_12px_34px_rgba(15,98,254,0.24)]"
-              : "border-[#171717] bg-[#0D0D0D] text-[#9F9F9F] hover:border-[#242424] hover:text-[#E7E7E7]"
-          }`}
-        >
-          {tab.label}
-        </Link>
-      ))}
-    </nav>
-  );
-}
-
 function LoadingPanel({ label = "Carregando dominios..." }: { label?: string }) {
   return (
     <div className={`${panelClass} flex min-h-[220px] items-center justify-center text-[14px] text-[#8A8A8A]`}>
@@ -945,7 +919,6 @@ function Transfers() {
 export function DomainsWorkspace({ mode }: { mode: Mode }) {
   return (
     <div className="mt-[24px]">
-      <WorkspaceTabs mode={mode} />
       {mode === "overview" ? <Overview /> : mode === "acquire" ? <Acquire /> : <Transfers />}
     </div>
   );
