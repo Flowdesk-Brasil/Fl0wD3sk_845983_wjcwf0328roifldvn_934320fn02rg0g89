@@ -60,6 +60,7 @@ import {
   warmBrowserRoute,
 } from "@/lib/routing/browserWarmup";
 import { useLatchedPendingKey } from "@/lib/ui/useLatchedPendingKey";
+import { useLiveAccountProfile } from "@/hooks/useLiveAccountProfile";
 export { validateTab };
 export type { AccountTab };
 
@@ -317,7 +318,7 @@ export function AccountWorkspace({
   const searchParams = useSearchParams();
   const desktopProfileMenuRef = useRef<HTMLDivElement | null>(null);
   const mobileProfileMenuRef = useRef<HTMLDivElement | null>(null);
-  const currentAccount = useMemo(
+  const initialAccountProfile = useMemo(
     () => ({
       authUserId,
       discordUserId,
@@ -327,6 +328,7 @@ export function AccountWorkspace({
     }),
     [authUserId, avatarUrl, discordUserId, displayName, username],
   );
+  const currentAccount = useLiveAccountProfile(initialAccountProfile);
 
   // Derive active tab from pathname reactively
   const segments = pathname.split("/").filter(Boolean);
@@ -946,17 +948,17 @@ export function AccountWorkspace({
           >
             <div className="flex min-w-0 items-center gap-[10px]">
               <AccountAvatar
-                avatarUrl={avatarUrl}
-                displayName={displayName}
-                username={username}
+                avatarUrl={currentAccount.avatarUrl}
+                displayName={currentAccount.displayName}
+                username={currentAccount.username}
                 size={38}
               />
               <div className="min-w-0">
                 <p className="truncate text-[15px] leading-none font-medium tracking-[-0.03em] text-[#E5E5E5]">
-                  {displayName}
+                  {currentAccount.displayName}
                 </p>
                 <p className="mt-[5px] truncate text-[12px] leading-none text-[#686868]">
-                  @{username}
+                  @{currentAccount.username}
                 </p>
               </div>
             </div>
