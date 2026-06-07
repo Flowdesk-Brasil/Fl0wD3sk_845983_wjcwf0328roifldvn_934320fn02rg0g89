@@ -93,28 +93,64 @@ class FlowSecureFieldError extends Error {
   }
 }
 
+export class FlowSecureDecryptionError extends Error {
+  readonly code = "flowsecure_decryption_failed";
+
+  constructor(message = "Esta etapa segura expirou ou ficou inconsistente. Reabra e tente novamente.") {
+    super(message);
+    this.name = "FlowSecureDecryptionError";
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function resolveFlowSecureMasterSecret() {
+function splitFlowSecureSecretList(value: string | null | undefined) {
+  if (typeof value !== "string") return [];
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function uniqFlowSecureSecrets(values: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  const secrets: string[] = [];
+  for (const value of values) {
+    const normalized = typeof value === "string" ? value.trim() : "";
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    secrets.push(normalized);
+  }
+  return secrets;
+}
+
+function resolveFlowSecureMasterSecrets() {
+  const primaryList = splitFlowSecureSecretList(getServerEnv("FLOWSECURE_MASTER_KEYS"));
+  const previousList = [
+    ...splitFlowSecureSecretList(getServerEnv("FLOWSECURE_PREVIOUS_MASTER_KEYS")),
+    ...splitFlowSecureSecretList(getServerEnv("FLOWSECURE_PREVIOUS_KEYS")),
+  ];
   const candidates = [
     getServerEnv("FLOWSECURE_MASTER_KEY"),
     getServerEnv("FLOWSECURE_MASTER_SECRET"),
+    primaryList[0],
     getServerEnv("AUTH_SECRET"),
     getServerEnv("NEXTAUTH_SECRET"),
     getServerEnv("AUTH_COOKIE_SECRET"),
     getServerEnv("DISCORD_CLIENT_SECRET"),
   ];
 
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim()) {
-      return candidate.trim();
-    }
-  }
+  const secrets = uniqFlowSecureSecrets([
+    ...candidates,
+    ...primaryList,
+    ...previousList,
+  ]);
+  if (secrets.length) return secrets;
 
   if (process.env.NODE_ENV !== "production") {
-    return FLOWSECURE_DEV_FALLBACK_SECRET;
+    return [FLOWSECURE_DEV_FALLBACK_SECRET];
   }
 
   throw new Error(
@@ -122,11 +158,16 @@ function resolveFlowSecureMasterSecret() {
   );
 }
 
+function resolveFlowSecureMasterSecret() {
+  return resolveFlowSecureMasterSecrets()[0];
+}
+
 function deriveFlowSecureKey(input: {
   purpose: FlowSecurePurpose;
   subcontext?: string | null;
+  masterSecret?: string | null;
 }) {
-  const masterSecret = resolveFlowSecureMasterSecret();
+  const masterSecret = input.masterSecret?.trim() || resolveFlowSecureMasterSecret();
   const info = [
     "flowsecure",
     FLOWSECURE_VERSION,
@@ -245,34 +286,37 @@ export function decryptFlowSecureValue(
     throw new Error("Envelope FlowSecure invalido para o contexto solicitado.");
   }
 
-  try {
-    const decipher = crypto.createDecipheriv(
-      "aes-256-gcm",
-      deriveFlowSecureKey({
+  for (const masterSecret of resolveFlowSecureMasterSecrets()) {
+    try {
+      const decipher = crypto.createDecipheriv(
+        "aes-256-gcm",
+        deriveFlowSecureKey({
+          purpose: input.purpose,
+          subcontext: input.subcontext,
+          masterSecret,
+        }),
+        Buffer.from(ivBase64, "base64url"),
+      );
+      decipher.setAAD(buildEnvelopeAad({
         purpose: input.purpose,
-        subcontext: input.subcontext,
-      }),
-      Buffer.from(ivBase64, "base64url"),
-    );
-    decipher.setAAD(buildEnvelopeAad({
-      purpose: input.purpose,
-      aad: input.aad,
-    }));
-    decipher.setAuthTag(Buffer.from(authTagBase64, "base64url"));
+        aad: input.aad,
+      }));
+      decipher.setAuthTag(Buffer.from(authTagBase64, "base64url"));
 
-    return Buffer.concat([
-      decipher.update(Buffer.from(ciphertextBase64, "base64url")),
-      decipher.final(),
-    ]).toString("utf8");
-  } catch {
-    if (input.allowPlaintextFallback) {
-      return normalized;
+      return Buffer.concat([
+        decipher.update(Buffer.from(ciphertextBase64, "base64url")),
+        decipher.final(),
+      ]).toString("utf8");
+    } catch {
+      // tenta a proxima chave do keyring antes de falhar
     }
-
-    throw new Error(
-      "Nao foi possivel validar os dados protegidos. Reabra esta etapa e tente novamente.",
-    );
   }
+
+  if (input.allowPlaintextFallback) {
+    return normalized;
+  }
+
+  throw new FlowSecureDecryptionError();
 }
 
 export function hashFlowSecureValue(

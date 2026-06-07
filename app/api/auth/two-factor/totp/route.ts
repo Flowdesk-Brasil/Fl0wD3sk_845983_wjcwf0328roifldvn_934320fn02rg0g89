@@ -5,6 +5,7 @@ import {
 } from "@/lib/auth/cookies";
 import {
   completePendingTwoFactorLogin,
+  describeTwoFactorLoginError,
   readPendingTwoFactorLogin,
   verifyUserTotp,
 } from "@/lib/auth/twoFactor";
@@ -54,14 +55,19 @@ export async function POST(request: NextRequest) {
     }
     return response;
   } catch (error) {
+    const errorDetails = describeTwoFactorLoginError(
+      error,
+      "Nao foi possivel validar o codigo.",
+    );
     return applyNoStoreHeaders(
       NextResponse.json(
         {
           ok: false,
-          message:
-            error instanceof Error ? error.message : "Nao foi possivel validar o codigo.",
+          message: errorDetails.message,
+          ...(errorDetails.code ? { code: errorDetails.code } : {}),
+          ...(errorDetails.restartRequired ? { restartRequired: true } : {}),
         },
-        { status: 400 },
+        { status: errorDetails.statusCode },
       ),
     );
   }
