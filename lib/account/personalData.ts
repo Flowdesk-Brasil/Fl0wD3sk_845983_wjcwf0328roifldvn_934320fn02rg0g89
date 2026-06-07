@@ -1,4 +1,10 @@
 import { buildDiscordUserAvatarUrl } from "@/lib/auth/avatar";
+import {
+  fetchHostingGitHubProfile,
+  readHostingGitHubToken,
+  revokeHostingGitHubConnectionForUser,
+  storeHostingGitHubTokenForUser,
+} from "@/lib/hosting/github";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 export type LinkedAccountProvider = "discord" | "google" | "microsoft" | "github";
@@ -24,6 +30,14 @@ type PersonalDataUserRow = {
   avatar: string | null;
   profile_avatar_url: string | null;
   profile_avatar_source: string | null;
+};
+
+type GitHubConnectionRow = {
+  github_login: string | null;
+  github_avatar_url: string | null;
+  encrypted_token: string | null;
+  token_status: string | null;
+  created_at: string;
 };
 
 function providerLabel(provider: LinkedAccountProvider) {
@@ -62,13 +76,7 @@ export async function getAccountPersonalData(userId: number) {
       .from("hosting_github_connections")
       .select("github_login, github_avatar_url, encrypted_token, token_status, created_at")
       .eq("user_id", userId)
-      .maybeSingle<{
-        github_login: string | null;
-        github_avatar_url: string | null;
-        encrypted_token: string | null;
-        token_status: string | null;
-        created_at: string;
-      }>(),
+      .maybeSingle<GitHubConnectionRow>(),
     supabase
       .from("auth_user_passkeys")
       .select("id, name, device_type, backed_up, created_at, last_used_at")
@@ -89,9 +97,36 @@ export async function getAccountPersonalData(userId: number) {
   const profiles = new Map(
     (providerProfilesResult.data || []).map((profile) => [profile.provider, profile]),
   );
+  let githubConnection = githubResult.data || null;
+  const githubRevokedByUser =
+    githubConnection?.token_status === "revoked" ||
+    githubConnection?.token_status === "invalid";
+  if (!githubRevokedByUser && !githubConnection?.encrypted_token) {
+    const token = await readHostingGitHubToken(userId).catch(() => null);
+    if (token) {
+      const profile = await fetchHostingGitHubProfile(token).catch(() => null);
+      if (profile) {
+        await storeHostingGitHubTokenForUser({
+          userId,
+          token,
+          login: profile.user.login,
+          accountType: profile.user.type,
+          avatarUrl: profile.user.avatarUrl,
+        }).catch(() => null);
+        githubConnection = {
+          github_login: profile.user.login,
+          github_avatar_url: profile.user.avatarUrl,
+          encrypted_token: "synced",
+          token_status: "active",
+          created_at: new Date().toISOString(),
+        };
+      }
+    }
+  }
   const githubConnected = Boolean(
-    githubResult.data?.encrypted_token &&
-      githubResult.data.token_status !== "revoked",
+    githubConnection?.encrypted_token &&
+      githubConnection.token_status !== "revoked" &&
+      githubConnection.token_status !== "invalid",
   );
   const nativeConnected = Boolean(credentialResult.data);
   const signInCount =
@@ -107,7 +142,7 @@ export async function getAccountPersonalData(userId: number) {
     ["github", githubConnected],
   ] as const).map(([provider, linked]) => {
     const profile = profiles.get(provider);
-    const github = provider === "github" ? githubResult.data : null;
+    const github = provider === "github" ? githubConnection : null;
     return {
       id: provider,
       label: providerLabel(provider),
@@ -160,14 +195,23 @@ export async function unlinkAccountProvider(
 
   if (provider === "github") {
     const [connectionResult, profileResult] = await Promise.all([
-      supabase.from("hosting_github_connections").delete().eq("user_id", userId),
+      revokeHostingGitHubConnectionForUser(userId).then(
+        () => ({ error: null }),
+        (error) => ({ error }),
+      ),
       supabase
         .from("auth_user_provider_profiles")
         .delete()
         .eq("user_id", userId)
         .eq("provider", provider),
     ]);
-    if (connectionResult.error) throw new Error(connectionResult.error.message);
+    if (connectionResult.error) {
+      throw new Error(
+        connectionResult.error instanceof Error
+          ? connectionResult.error.message
+          : "Nao foi possivel revogar GitHub.",
+      );
+    }
     if (profileResult.error) throw new Error(profileResult.error.message);
     return;
   }
@@ -216,7 +260,10 @@ export async function unlinkAccountProvider(
       : provider === "google"
         ? "google_user_id"
         : "microsoft_user_id";
-  const update: Record<string, unknown> = { [column]: null };
+  const update: Record<string, unknown> = {
+    [column]: null,
+    last_auth_method: null,
+  };
 
   if (provider === "discord") {
     update.avatar = null;
@@ -251,6 +298,9 @@ export async function unlinkAccountProvider(
         discord_access_token: null,
         discord_refresh_token: null,
         discord_token_expires_at: null,
+        active_guild_id: null,
+        discord_guilds_cache: null,
+        discord_guilds_cached_at: null,
       })
       .eq("user_id", userId);
   }

@@ -3,16 +3,30 @@ import {
   clearHostingGitHubStateCookie,
   createHostingGitHubHandoffTokenBundle,
   exchangeHostingGitHubCode,
+  fetchHostingGitHubProfile,
   isHostingGitHubConfigured,
   readHostingGitHubStateCookie,
   setHostingGitHubTokenCookie,
+  storeHostingGitHubTokenForUser,
   validateHostingGitHubState,
 } from "@/lib/hosting/github";
+import { getCurrentAuthSessionFromCookie } from "@/lib/auth/session";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 
 const HANDOFF_STORAGE_KEY = "flowdesk_hosting_github_handoff_v1";
 
-function popupHtml(input: { ok: boolean; message: string; handoffToken?: string | null }) {
+type PopupGitHubAccount = {
+  login: string;
+  avatarUrl: string | null;
+};
+
+function popupHtml(input: {
+  ok: boolean;
+  message: string;
+  handoffToken?: string | null;
+  user?: PopupGitHubAccount | null;
+  accounts?: PopupGitHubAccount[];
+}) {
   const payload = {
     source: "flowdesk-hosting-github",
     ...input,
@@ -67,11 +81,45 @@ export async function GET(request: NextRequest) {
 
   try {
     const tokenBundle = await exchangeHostingGitHubCode({ code, request });
+    const session = await getCurrentAuthSessionFromCookie().catch(() => null);
+    let popupUser: PopupGitHubAccount | null = null;
+    let popupAccounts: PopupGitHubAccount[] = [];
+    const profile = await fetchHostingGitHubProfile(tokenBundle.accessToken).catch(() => null);
+    if (profile) {
+      popupUser = {
+        login: profile.user.login,
+        avatarUrl: profile.user.avatarUrl,
+      };
+      popupAccounts = profile.accounts.map((account) => ({
+        login: account.login,
+        avatarUrl: account.avatarUrl,
+      }));
+    }
+    if (session?.user?.id) {
+      await (
+        profile
+          ? storeHostingGitHubTokenForUser({
+            userId: session.user.id,
+            token: tokenBundle.accessToken,
+            refreshToken: tokenBundle.refreshToken,
+            accessTokenExpiresAt: tokenBundle.accessTokenExpiresAt,
+            refreshTokenExpiresAt: tokenBundle.refreshTokenExpiresAt,
+            scope: tokenBundle.scope,
+            tokenType: tokenBundle.tokenType,
+            login: profile.user.login,
+            accountType: profile.user.type,
+            avatarUrl: profile.user.avatarUrl,
+          })
+          : Promise.resolve()
+      ).catch(() => null);
+    }
     const handoffToken = createHostingGitHubHandoffTokenBundle(tokenBundle);
     const response = popupHtml({
       ok: true,
       message: "GitHub conectado com sucesso.",
       handoffToken,
+      user: popupUser,
+      accounts: popupAccounts,
     });
     setHostingGitHubTokenCookie(request, response, tokenBundle.accessToken);
     clearHostingGitHubStateCookie(request, response);

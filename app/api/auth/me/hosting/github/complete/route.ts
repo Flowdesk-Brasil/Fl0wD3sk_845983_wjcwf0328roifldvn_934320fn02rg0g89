@@ -2,6 +2,7 @@
 import {
   consumeHostingGitHubHandoffTokenBundle,
   fetchHostingGitHubProfile,
+  readHostingGitHubToken,
   setHostingGitHubTokenCookie,
   storeHostingGitHubTokenForUser,
 } from "@/lib/hosting/github";
@@ -26,29 +27,31 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const session = await getCurrentAuthSessionFromCookie();
   const tokenBundle = consumeHostingGitHubHandoffTokenBundle(body.handoffToken);
-  if (!tokenBundle) {
+  const fallbackToken = tokenBundle ? null : await readHostingGitHubToken(session?.user?.id);
+  const accessToken = tokenBundle?.accessToken || fallbackToken;
+  if (!accessToken) {
     return applyNoStoreHeaders(
       NextResponse.json({
         ok: false,
         connected: false,
-        message: "Autorizacao temporaria do GitHub expirou ou nao chegou completa.",
-      }, { status: 400 }),
+        message: "GitHub ainda esta confirmando a autorizacao. Aguarde alguns segundos ou consulte o status novamente.",
+      }, { status: 202 }),
     );
   }
 
   try {
-    const session = await getCurrentAuthSessionFromCookie();
-    const profile = await fetchHostingGitHubProfile(tokenBundle.accessToken);
+    const profile = await fetchHostingGitHubProfile(accessToken);
     if (session?.user?.id) {
       await storeHostingGitHubTokenForUser({
         userId: session.user.id,
-        token: tokenBundle.accessToken,
-        refreshToken: tokenBundle.refreshToken,
-        accessTokenExpiresAt: tokenBundle.accessTokenExpiresAt,
-        refreshTokenExpiresAt: tokenBundle.refreshTokenExpiresAt,
-        scope: tokenBundle.scope,
-        tokenType: tokenBundle.tokenType,
+        token: accessToken,
+        refreshToken: tokenBundle?.refreshToken,
+        accessTokenExpiresAt: tokenBundle?.accessTokenExpiresAt,
+        refreshTokenExpiresAt: tokenBundle?.refreshTokenExpiresAt,
+        scope: tokenBundle?.scope,
+        tokenType: tokenBundle?.tokenType,
         login: profile.user.login,
         accountType: profile.user.type,
         avatarUrl: profile.user.avatarUrl,
@@ -59,7 +62,7 @@ export async function POST(request: NextRequest) {
       connected: true,
       ...profile,
     });
-    setHostingGitHubTokenCookie(request, response, tokenBundle.accessToken);
+    setHostingGitHubTokenCookie(request, response, accessToken);
     return applyNoStoreHeaders(response);
   } catch (error) {
     return applyNoStoreHeaders(

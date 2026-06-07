@@ -34,5 +34,5 @@ export function areHostedCardCheckoutsEnabled() {
 }
 
 export function areCardPaymentsEnabled() {
-  return false;
+  return areHostedCardCheckoutsEnabled();
 }

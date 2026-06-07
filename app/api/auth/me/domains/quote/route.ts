@@ -67,12 +67,16 @@ export async function POST(req: Request) {
     });
 
     const {
-      provider: _provider,
-      providerCost: _providerCost,
-      providerCurrency: _providerCurrency,
-      exchangeRateToBrl: _exchangeRateToBrl,
+      provider,
+      providerCost,
+      providerCurrency,
+      exchangeRateToBrl,
       ...publicQuote
     } = quote;
+    void provider;
+    void providerCost;
+    void providerCurrency;
+    void exchangeRateToBrl;
     return NextResponse.json({ ok: true, quote: publicQuote });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro ao gerar cotação.";

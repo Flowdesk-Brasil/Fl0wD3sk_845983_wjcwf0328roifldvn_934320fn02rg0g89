@@ -133,6 +133,7 @@ export function SensitiveActionModal({
       const payload = await postJson("/api/auth/me/security-verification/totp", {
         challengeId,
         code,
+        action,
       });
       await onVerifiedRef.current(String(payload.proof));
     } catch (verifyError) {
@@ -160,7 +161,7 @@ export function SensitiveActionModal({
       });
       const verifyPayload = await postJson(
         "/api/auth/me/security-verification/passkey/verify",
-        { challengeId, response: credential },
+        { challengeId, response: credential, action },
       );
       await onVerifiedRef.current(String(verifyPayload.proof));
     } catch (verifyError) {

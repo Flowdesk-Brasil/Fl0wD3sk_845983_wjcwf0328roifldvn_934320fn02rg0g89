@@ -60,9 +60,9 @@ export function DeleteAccountTab() {
         <div className="mt-[12px] max-w-[600px] leading-[1.6] text-[#B0B0B0]">
           <span>Ao excluir sua conta:</span>
           <ul className="ml-[20px] mt-[8px] list-disc space-y-[4px]">
-            <li>Voce perdera o acesso aos dados e configuracoes dos paineis.</li>
-            <li>Equipes ativas podem perder a posse caso voce seja o administrador primario.</li>
-            <li>Credenciais, sessoes e dispositivos confiaveis serao revogados.</li>
+            <li>Sessoes, chaves API, OAuth, passkeys, 2FA e dispositivos confiaveis serao revogados.</li>
+            <li>Metodos de pagamento salvos, vinculos GitHub e acessos de equipe serao removidos.</li>
+            <li>Historico fiscal, antifraude, auditoria e suporte pode ser retido quando exigido por lei ou seguranca.</li>
           </ul>
         </div>
         <button
@@ -80,7 +80,7 @@ export function DeleteAccountTab() {
           onConfirm={handleDeleteConfirm}
           isProcessing={loading}
           title="Excluir permanentemente"
-          description="Esta acao e irreversivel. Voce perdera o acesso a configuracoes, paineis, pagamentos e tickets associados. Credenciais e sessoes da conta serao revogadas."
+          description="Esta acao e irreversivel. Credenciais, sessoes, chaves API, passkeys, 2FA, tokens OAuth, vinculos GitHub, metodos salvos e acessos ativos serao revogados. Registros legais e antifraude podem ser preservados sem acesso operacional."
           confirmText="Sim, excluir minha conta"
         />
         <SensitiveActionModal

@@ -28,7 +28,6 @@ import {
   HOSTING_PLANS,
   HOSTING_REGIONS,
   HOSTING_STEP_PATH_BY_STEP,
-  MOCK_GITHUB_REPOSITORIES,
   getHostingKindLabel,
   type HostingGitHubAccount,
   type HostingKind,
@@ -802,6 +801,9 @@ function GithubStep({
   function connect() {
     setConnecting(true);
     setMessage(null);
+    try {
+      window.localStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
+    } catch {}
 
     const width = 540;
     const height = 720;
@@ -1677,7 +1679,7 @@ function ReadyStep({
           VPS pronta para gerenciamento
         </h2>
         <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#91B99B]">
-          O identificador foi gerado no formato UUID e a URL final do painel ja esta preparada para quando a tela de gerenciamento for implementada.
+          O identificador foi gerado no formato UUID e o painel de gerenciamento ja esta disponivel para deploys, arquivos, variaveis, console e acompanhamento do runtime.
         </p>
         <div className="mt-[18px] rounded-[16px] border border-[#1D1D1D] bg-[#050505] p-[14px]">
           <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#555555]">URL da VPS</p>
@@ -1814,7 +1816,6 @@ export function HostingWorkspace({
 
   const repository =
     draft.selectedRepository ||
-    MOCK_GITHUB_REPOSITORIES.find((repo) => repo.id === draft.selectedRepositoryId) ||
     null;
   const region = HOSTING_REGIONS.find((item) => item.id === draft.selectedRegionId) || HOSTING_REGIONS[0];
   const plan = draft.kind

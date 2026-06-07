@@ -1198,7 +1198,7 @@ function TrainingTab() {
     { title: "Estratégias no YouTube", duration: "19 min", icon: Zap, available: true },
     { title: "Email marketing para afiliados", duration: "24 min", icon: Bell, available: true },
     { title: "Criando conteúdo que converte", duration: "31 min", icon: Sparkles, available: false },
-    { title: "Vendas com grupos de WhatsApp", duration: "15 min", icon: Users, available: false },
+    { title: "Vendas com grupos de WhatsApp", duration: "15 min", icon: Users, available: true },
   ];
 
   return (
@@ -1218,7 +1218,7 @@ function TrainingTab() {
           {mod.available ? (
             <ArrowRight className="h-[15px] w-[15px] shrink-0 text-[#444]" strokeWidth={1.8} />
           ) : (
-            <span className="rounded-full border border-[#1A1A1A] px-[8px] py-[3px] text-[10px] text-[#555]">Em breve</span>
+            <span className="rounded-full border border-[#1A1A1A] px-[8px] py-[3px] text-[10px] text-[#555]">Bloqueado</span>
           )}
         </div>
       ))}
@@ -1232,8 +1232,8 @@ function TemplatesTab({ profile }: { profile: AffiliateProfile | null }) {
   const templates = [
     { name: "Landing Minimalista", desc: "Design clean para conversão focada.", icon: BarChart3, status: "available", plan: "basic" },
     { name: "Landing Premium", desc: "Visual premium com seções completas.", icon: Zap, status: "available", plan: "pro" },
-    { name: "Página de IA", desc: "Apresente recursos de automação.", icon: Sparkles, status: "soon", plan: "pro" },
-    { name: "Blog de Afiliado", desc: "Conteúdo focado em SEO.", icon: BookOpen, status: "soon", plan: "basic" },
+    { name: "Página de IA", desc: "Apresente recursos de automação.", icon: Sparkles, status: "available", plan: "pro-ai" },
+    { name: "Blog de Afiliado", desc: "Conteúdo focado em SEO.", icon: BookOpen, status: "available", plan: "basic-blog" },
   ];
 
   const handleUseTemplate = (plan: string) => {
@@ -1262,7 +1262,7 @@ function TemplatesTab({ profile }: { profile: AffiliateProfile | null }) {
               </button>
             ) : (
               <span className="inline-flex rounded-full border border-[#1A1A1A] px-[10px] py-[5px] text-[11px] text-[#555]">
-                Em breve
+                Indisponivel
               </span>
             )}
           </div>
@@ -1512,4 +1512,3 @@ export function AffiliatesWorkspace({
     </div>
   );
 }
-

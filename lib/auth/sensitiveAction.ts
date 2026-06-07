@@ -15,9 +15,29 @@ export type SensitiveAccountAction =
 
 type SensitiveActionMetadata = {
   action?: unknown;
+  proof_action?: unknown;
   proof_hash?: unknown;
   verified_at?: unknown;
+  verified_method?: unknown;
 };
+
+export const SENSITIVE_ACCOUNT_ACTIONS = [
+  "account_delete",
+  "email_change",
+  "password_change",
+  "passkey_add",
+  "provider_unlink",
+  "totp_enable",
+  "totp_disable",
+  "passkey_remove",
+] as const satisfies readonly SensitiveAccountAction[];
+
+export function normalizeSensitiveAccountAction(value: unknown) {
+  return typeof value === "string" &&
+    (SENSITIVE_ACCOUNT_ACTIONS as readonly string[]).includes(value)
+    ? (value as SensitiveAccountAction)
+    : null;
+}
 
 type SensitiveActionChallengeRow = {
   id: string;
@@ -112,11 +132,22 @@ export async function readSensitiveActionChallenge(userId: number, challengeId: 
   return result.data;
 }
 
-export async function issueSensitiveActionProof(userId: number, challengeId: string) {
+export async function issueSensitiveActionProof(
+  userId: number,
+  challengeId: string,
+  options?: {
+    action?: SensitiveAccountAction | null;
+    method?: "totp" | "passkey" | null;
+  },
+) {
   const challenge = await readSensitiveActionChallenge(userId, challengeId);
   const proofToken = crypto.randomBytes(48).toString("base64url");
   const proofHash = hashProof(userId, proofToken);
   if (!proofHash) throw new Error("Nao foi possivel proteger a confirmacao.");
+  const proofAction =
+    options?.action ||
+    normalizeSensitiveAccountAction(challenge.metadata?.action) ||
+    null;
 
   const supabase = getSupabaseAdminClientOrThrow();
   const update = await supabase
@@ -124,8 +155,10 @@ export async function issueSensitiveActionProof(userId: number, challengeId: str
     .update({
       metadata: {
         ...(challenge.metadata || {}),
+        ...(proofAction ? { proof_action: proofAction } : {}),
         proof_hash: proofHash,
         verified_at: new Date().toISOString(),
+        ...(options?.method ? { verified_method: options.method } : {}),
       },
     })
     .eq("id", challenge.id)
@@ -153,7 +186,9 @@ export async function requireSensitiveActionProof(
 
   const challenge = await readSensitiveActionChallenge(userId, challengeId);
   const expectedAction =
-    typeof challenge.metadata?.action === "string" ? challenge.metadata.action : "";
+    normalizeSensitiveAccountAction(challenge.metadata?.proof_action) ||
+    normalizeSensitiveAccountAction(challenge.metadata?.action) ||
+    "";
   const expectedHash =
     typeof challenge.metadata?.proof_hash === "string"
       ? challenge.metadata.proof_hash

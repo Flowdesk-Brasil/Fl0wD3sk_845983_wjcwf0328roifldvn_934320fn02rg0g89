@@ -15,9 +15,12 @@ export async function GET() {
   try {
     const user = await getCurrentUserFromSessionCookie();
     if (!user) return NextResponse.json({ ok: false, message: "Nao autenticado." }, { status: 401 });
-    const transfers = (await listUserDomainTransfers({ authUserId: user.id })).map(
-      ({ provider: _provider, providerRef: _providerRef, ...transfer }) => transfer,
-    );
+    const transfers = (await listUserDomainTransfers({ authUserId: user.id })).map((transfer) => {
+      const { provider, providerRef, ...publicTransfer } = transfer;
+      void provider;
+      void providerRef;
+      return publicTransfer;
+    });
     return NextResponse.json({
       ok: true,
       transfers,

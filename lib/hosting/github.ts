@@ -18,7 +18,7 @@ const GITHUB_API_URL = "https://api.github.com";
 const GITHUB_STATE_COOKIE = "flowdesk_hosting_github_state";
 const GITHUB_TOKEN_COOKIE = "flowdesk_hosting_github_token";
 const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
-const HANDOFF_TTL_MS = 2 * 60 * 1000;
+const HANDOFF_TTL_MS = 10 * 60 * 1000;
 const GITHUB_TOKEN_REFRESH_SKEW_MS = 5 * 60 * 1000;
 const HOSTING_GITHUB_OAUTH_SCOPE = "read:user user:email read:org repo workflow admin:repo_hook";
 
@@ -280,6 +280,18 @@ export function setHostingGitHubTokenCookie(
   });
 }
 
+export function clearHostingGitHubTokenCookie(
+  request: NextRequest,
+  response: NextResponse,
+) {
+  clearSharedAuthCookie(request, response, GITHUB_TOKEN_COOKIE, {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    priority: "high",
+  });
+}
+
 function encryptHostingGitHubTokenForUser(userId: number, token: string) {
   return encryptFlowSecureValue(token, {
     purpose: "hosting_github_token",
@@ -428,6 +440,40 @@ export async function markHostingGitHubTokenInvalid(userId: number, reason?: str
       updated_at: new Date().toISOString(),
     })
     .eq("user_id", userId);
+}
+
+export async function revokeHostingGitHubConnectionForUser(userId: number) {
+  const encryptedRevokedMarker = encryptHostingGitHubTokenForUser(
+    userId,
+    `revoked:${crypto.randomBytes(18).toString("base64url")}`,
+  );
+  if (!encryptedRevokedMarker) {
+    throw new Error("Nao foi possivel revogar o token do GitHub com seguranca.");
+  }
+
+  const result = await getSupabaseAdminClientOrThrow()
+    .from("hosting_github_connections")
+    .upsert(
+      {
+        user_id: userId,
+        github_login: null,
+        github_account_type: null,
+        github_avatar_url: null,
+        encrypted_token: encryptedRevokedMarker,
+        encrypted_refresh_token: null,
+        access_token_expires_at: null,
+        refresh_token_expires_at: null,
+        scopes: null,
+        token_type: null,
+        token_status: "revoked",
+        last_validated_at: null,
+        last_error: "Desvinculado pelo usuario.",
+        refreshed_at: null,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" },
+    );
+  if (result.error) throw new Error(result.error.message);
 }
 
 export async function readHostingGitHubToken(userId?: number | null) {

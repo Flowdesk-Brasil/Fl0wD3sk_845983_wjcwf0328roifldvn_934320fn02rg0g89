@@ -91,10 +91,27 @@ type EmailChangeState = {
 };
 
 type SensitiveActionPrompt = {
+  requestKey: string;
   action: SensitiveAccountAction;
   title: string;
   description: string;
   onVerified: (proof: string | null) => void | Promise<void>;
+};
+
+type GitHubAccountPayload = {
+  login?: string | null;
+  avatarUrl?: string | null;
+};
+
+type GitHubLinkPayload = {
+  source?: string;
+  ok?: boolean;
+  message?: string;
+  handoffToken?: string | null;
+  storedAt?: number;
+  connected?: boolean;
+  accounts?: GitHubAccountPayload[];
+  user?: GitHubAccountPayload | null;
 };
 
 const panelClassName =
@@ -105,6 +122,7 @@ const primaryButtonClassName =
   "inline-flex h-[40px] items-center justify-center gap-[8px] rounded-[12px] border border-[rgba(0,98,255,0.45)] bg-[#0062FF] px-[14px] text-[13px] font-semibold text-white transition-colors hover:bg-[#146FFF] disabled:cursor-not-allowed disabled:opacity-50";
 const inputClassName =
   "h-[44px] w-full rounded-[12px] border border-[#1A1A1A] bg-[#0D0D0D] px-[14px] text-[14px] text-[#E7E7E7] outline-none transition-colors placeholder:text-[#555555] focus:border-[#333333]";
+const GITHUB_HANDOFF_STORAGE_KEY = "flowdesk_hosting_github_handoff_v1";
 const providerBrandAssets: Record<
   ProviderId,
   { src: string; imageClassName: string; badgeClassName: string }
@@ -316,8 +334,11 @@ export function PersonalDataTab() {
     setAvatarPreviewUrl(nextUrl);
   }
 
-  function requestSensitiveAction(prompt: SensitiveActionPrompt) {
-    setSensitiveAction(() => prompt);
+  function requestSensitiveAction(prompt: Omit<SensitiveActionPrompt, "requestKey">) {
+    setSensitiveAction(() => ({
+      ...prompt,
+      requestKey: `${prompt.action}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    }));
   }
 
   async function handleSensitiveActionVerified(proof: string | null) {
@@ -424,6 +445,10 @@ export function PersonalDataTab() {
   }
 
   function openGitHubPopup() {
+    try {
+      window.localStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
+    } catch {}
+
     const width = 540;
     const height = 720;
     const left = window.screenX + Math.max(0, (window.outerWidth - width) / 2);
@@ -437,40 +462,159 @@ export function PersonalDataTab() {
       notifications.error("Permita popups para conectar o GitHub.", { title: "Contas e acessos" });
       return;
     }
+    const githubPopup = popup;
 
     setBusyAction("github-link");
-    const timeout = window.setTimeout(() => {
+    let finished = false;
+    let timeoutId = 0;
+    let pollIntervalId = 0;
+    let popupClosedAt: number | null = null;
+
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      window.clearTimeout(timeoutId);
+      window.clearInterval(pollIntervalId);
       window.removeEventListener("message", onMessage);
       setBusyAction(null);
-    }, 120_000);
-    const onMessage = async (event: MessageEvent) => {
-      const payload = event.data as {
-        source?: string;
-        ok?: boolean;
-        message?: string;
-        handoffToken?: string;
-      };
-      if (payload?.source !== "flowdesk-hosting-github") return;
-      window.clearTimeout(timeout);
-      window.removeEventListener("message", onMessage);
-      try {
-        if (!payload.ok || !payload.handoffToken) {
-          throw new Error(payload.message || "GitHub recusou a vinculacao.");
-        }
-        await jsonMutation("/api/auth/me/hosting/github/complete", "POST", {
-          handoffToken: payload.handoffToken,
-        });
-        notifications.success("GitHub vinculado.", { title: "Contas e acessos" });
-        await refresh();
-      } catch (githubError) {
-        notifications.error(
-          githubError instanceof Error ? githubError.message : "Falha ao vincular GitHub.",
-          { title: "Contas e acessos" },
-        );
-      } finally {
-        setBusyAction(null);
-      }
     };
+
+    const applyLinkedGitHubState = async (payload: GitHubLinkPayload) => {
+      const account = payload.accounts?.[0] || payload.user || null;
+      await mutate(
+        (current) => {
+          if (!current?.data) return current;
+          return {
+            ...current,
+            data: {
+              ...current.data,
+              providers: current.data.providers.map((provider) =>
+                provider.id === "github"
+                  ? {
+                      ...provider,
+                      linked: true,
+                      canUnlink: true,
+                      identifier: account?.login || provider.identifier || "GitHub conectado",
+                      avatarUrl: account?.avatarUrl || provider.avatarUrl,
+                      linkedAt: provider.linkedAt || new Date().toISOString(),
+                    }
+                  : provider,
+              ),
+            },
+          };
+        },
+        { revalidate: false },
+      );
+    };
+
+    const readGitHubStatus = async (fallbackError?: unknown) => {
+      const response = await fetch("/api/auth/me/hosting/github/status", {
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => ({}))) as GitHubLinkPayload & {
+        ok?: boolean;
+      };
+      if (!response.ok || !payload.connected) {
+        if (fallbackError instanceof Error) throw fallbackError;
+        throw new Error(payload.message || "GitHub ainda nao foi confirmado neste navegador.");
+      }
+      return payload;
+    };
+
+    const completeGitHubLink = async (handoffToken?: string | null) => {
+      let payload: GitHubLinkPayload;
+      if (handoffToken?.trim()) {
+        try {
+          payload = (await jsonMutation("/api/auth/me/hosting/github/complete", "POST", {
+            handoffToken,
+          })) as GitHubLinkPayload;
+        } catch (completeError) {
+          payload = await readGitHubStatus(completeError);
+        }
+      } else {
+        payload = await readGitHubStatus();
+      }
+      if (!payload.connected && !payload.accounts?.length) {
+        payload = await readGitHubStatus();
+      }
+      await applyLinkedGitHubState(payload);
+      await refresh();
+    };
+
+    const finishFromPayload = async (payload: GitHubLinkPayload) => {
+      if (payload?.source !== "flowdesk-hosting-github") return false;
+      if (!payload.ok) {
+        notifications.error(payload.message || "GitHub recusou a vinculacao.", {
+          title: "Contas e acessos",
+        });
+        finish();
+        return true;
+      }
+      await applyLinkedGitHubState(payload);
+      notifications.success("GitHub vinculado.", { title: "Contas e acessos" });
+      finish();
+      void completeGitHubLink(payload.handoffToken || null).catch(() => {
+        void refresh();
+      });
+      return true;
+    };
+
+    async function pollPopupResult() {
+      if (finished) return;
+      let raw: string | null = null;
+      try {
+        raw = window.localStorage.getItem(GITHUB_HANDOFF_STORAGE_KEY);
+      } catch {
+        raw = null;
+      }
+      if (raw) {
+        try {
+          window.localStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
+          const storedPayload = JSON.parse(raw) as GitHubLinkPayload;
+          if (!storedPayload.storedAt || Date.now() - storedPayload.storedAt < 10 * 60 * 1000) {
+            const processed = await finishFromPayload(storedPayload);
+            if (processed) return;
+          }
+        } catch {
+          // Ignore malformed handoff storage and continue with status fallback.
+        }
+      }
+
+      if (githubPopup.closed) {
+        popupClosedAt = popupClosedAt || Date.now();
+        try {
+          await completeGitHubLink(null);
+          notifications.success("GitHub vinculado.", { title: "Contas e acessos" });
+        } catch (githubError) {
+          if (Date.now() - popupClosedAt < 12_000) {
+            return;
+          }
+          notifications.error(
+            githubError instanceof Error
+              ? githubError.message
+              : "Falha ao confirmar o GitHub apos fechar a janela.",
+            { title: "Contas e acessos" },
+          );
+        } finally {
+          finish();
+        }
+      }
+    }
+
+    function onMessage(event: MessageEvent) {
+      const payload = event.data as GitHubLinkPayload;
+      void finishFromPayload(payload);
+    };
+
+    timeoutId = window.setTimeout(() => {
+      notifications.error("A janela do GitHub demorou para responder. Tente novamente.", {
+        title: "Contas e acessos",
+      });
+      finish();
+    }, 180_000);
+    pollIntervalId = window.setInterval(() => {
+      void pollPopupResult();
+    }, 300);
     window.addEventListener("message", onMessage);
   }
 
@@ -486,7 +630,11 @@ export function PersonalDataTab() {
     });
   }
 
-  async function performUnlink(provider: ProviderData, securityProof: string | null) {
+  async function performUnlink(
+    provider: ProviderData,
+    securityProof: string | null,
+    retriedInvalidProof = false,
+  ) {
     setBusyAction(`unlink-${provider.id}`);
     try {
       await jsonMutation(
@@ -494,13 +642,59 @@ export function PersonalDataTab() {
         "DELETE",
         { securityProof },
       );
+      if (provider.id === "github") {
+        try {
+          window.localStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
+        } catch {}
+      }
+      await mutate(
+        (current) => {
+          if (!current?.data) return current;
+          return {
+            ...current,
+            data: {
+              ...current.data,
+              providers: current.data.providers.map((item) =>
+                item.id === provider.id
+                  ? {
+                      ...item,
+                      linked: false,
+                      canUnlink: false,
+                      identifier: null,
+                      avatarUrl: null,
+                      linkedAt: null,
+                    }
+                  : item,
+              ),
+            },
+          };
+        },
+        { revalidate: false },
+      );
       notifications.success(`${provider.label} desvinculado.`, {
         title: "Contas e acessos",
       });
       await refresh();
     } catch (unlinkError) {
+      const message =
+        unlinkError instanceof Error ? unlinkError.message : "Falha ao desvincular.";
+      if (
+        !retriedInvalidProof &&
+        message.includes("confirmacao de seguranca nao e valida")
+      ) {
+        requestSensitiveAction({
+          action: "provider_unlink",
+          title: `Confirmar desvinculacao do ${provider.label}`,
+          description: "Confirme novamente para remover este provedor desta conta.",
+          onVerified: (proof) => performUnlink(provider, proof, true),
+        });
+        notifications.success("Abra uma nova confirmacao de seguranca para concluir.", {
+          title: "Contas e acessos",
+        });
+        return;
+      }
       notifications.error(
-        unlinkError instanceof Error ? unlinkError.message : "Falha ao desvincular.",
+        message,
         { title: "Contas e acessos" },
       );
     } finally {
@@ -1416,6 +1610,7 @@ export function PersonalDataTab() {
 
       {sensitiveAction ? (
         <SensitiveActionModal
+          key={sensitiveAction.requestKey}
           isOpen
           action={sensitiveAction.action}
           title={sensitiveAction.title}

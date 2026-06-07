@@ -7,6 +7,8 @@ import {
 } from "@simplewebauthn/server";
 import {
   issueSensitiveActionProof,
+  normalizeSensitiveAccountAction,
+  SENSITIVE_ACCOUNT_ACTIONS,
   readSensitiveActionChallenge,
 } from "@/lib/auth/sensitiveAction";
 import { getCurrentAuthSessionFromCookie } from "@/lib/auth/session";
@@ -42,10 +44,12 @@ export async function POST(request: NextRequest) {
           rejectThreatPatterns: false,
         }),
         response: flowSecureDto.unknown(),
+        action: flowSecureDto.optional(flowSecureDto.enum(SENSITIVE_ACCOUNT_ACTIONS)),
       },
       { rejectUnknown: true },
     );
     const challengeId = body.challengeId;
+    const action = normalizeSensitiveAccountAction(body.action);
     const credentialResponse = body.response as AuthenticationResponseJSON | undefined;
 
     const challenge = await readSensitiveActionChallenge(session.user.id, challengeId);
@@ -141,7 +145,10 @@ export async function POST(request: NextRequest) {
         last_used_at: new Date().toISOString(),
       })
       .eq("id", passkeyData.id);
-    const proof = await issueSensitiveActionProof(session.user.id, challengeId);
+    const proof = await issueSensitiveActionProof(session.user.id, challengeId, {
+      action,
+      method: "passkey",
+    });
     return applyNoStoreHeaders(NextResponse.json({ ok: true, proof }));
   } catch (error) {
     return applyNoStoreHeaders(

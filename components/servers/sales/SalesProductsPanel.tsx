@@ -1604,9 +1604,9 @@ function ProductMediaLibraryModal({
                 <Upload className="h-[15px] w-[15px]" />
                 Adicionar midia
               </ServerButton>
-              <ServerButton disabled title="Em breve" className="border-[#2D2440] text-[#8F79FF]">
+              <ServerButton onClick={() => uploadInputRef.current?.click()} title="Use uma imagem gerada externamente ou arquivo local" className="border-[#2D2440] text-[#8F79FF]">
                 <WandSparkles className="h-[15px] w-[15px]" />
-                Gerar imagem
+                Usar imagem
               </ServerButton>
             </div>
             <p className="mt-[12px] text-[13px] text-[#777]">

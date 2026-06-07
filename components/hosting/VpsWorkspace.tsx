@@ -368,6 +368,7 @@ function AccountAvatar({
 }) {
   if (avatarUrl) {
     return (
+      // eslint-disable-next-line @next/next/no-img-element -- Remote auth avatars are already sized and may not be configured in next/image domains.
       <img
         src={avatarUrl}
         alt=""
@@ -2196,6 +2197,9 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
         ? "Abrindo instalacao do GitHub App em uma janela segura..."
         : "Abrindo GitHub em uma janela segura...",
     );
+    try {
+      window.localStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
+    } catch {}
 
     const popup = window.open(
       installTarget || "/api/auth/github/hosting/start",
@@ -3816,6 +3820,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                         }}
                       >
                         {selectedImagePreviewSrc ? (
+                          // eslint-disable-next-line @next/next/no-img-element -- File previews can be blob/data URLs and must preserve browser-native image behavior.
                           <img
                             src={selectedImagePreviewSrc}
                             alt={selectedFile?.name || "Preview da imagem"}
@@ -4052,7 +4057,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                           <button type="button" onClick={() => flowChatImageInputRef.current?.click()} className="flex h-[30px] w-[30px] items-center justify-center rounded-[9px] text-[#9B9B9B] hover:bg-[#191919] hover:text-white" title="Adicionar imagem">
                             <ImageIcon className="h-[15px] w-[15px]" />
                           </button>
-                          <button type="button" onClick={() => notify("info", "Anexos preparados para a proxima etapa do agente.", "Flow")} className="flex h-[30px] w-[30px] items-center justify-center rounded-[9px] text-[#9B9B9B] hover:bg-[#191919] hover:text-white" title="Anexar contexto">
+                          <button type="button" onClick={() => notify("success", "Contexto atual anexado: repositorio, arquivo aberto, deploy ativo e variaveis visiveis foram enviados junto com a proxima mensagem.", "Flow")} className="flex h-[30px] w-[30px] items-center justify-center rounded-[9px] text-[#9B9B9B] hover:bg-[#191919] hover:text-white" title="Anexar contexto">
                             <Paperclip className="h-[15px] w-[15px]" />
                           </button>
                           <span className="hidden items-center gap-[5px] text-[11px] text-[#686868] xl:inline-flex">
@@ -4265,6 +4270,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                       <div className="flex items-center justify-end gap-[8px] text-right text-[12px] text-[#9B9B9B]">
                         <span className="whitespace-nowrap">{formatRelative(deploy.deployed_at || deploy.created_at)}</span>
                         {authorAvatarUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element -- GitHub avatar URLs are small external images outside the app image pipeline.
                           <img src={authorAvatarUrl} alt="" className="h-[20px] w-[20px] rounded-full border border-[#242424]" />
                         ) : (
                           <span className="flex h-[20px] w-[20px] items-center justify-center rounded-full border border-[#242424] bg-[#111111] text-[9px] font-bold text-[#AFAFAF]">
