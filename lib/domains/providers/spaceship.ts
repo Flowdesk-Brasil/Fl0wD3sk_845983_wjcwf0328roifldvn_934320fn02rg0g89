@@ -318,6 +318,23 @@ export const spaceshipAdapter: DomainProviderAdapter = {
     return { authCode: response.data.authCode };
   },
 
+  async updateDomainContact(input) {
+    const domain = input.fqdn || input.providerDomainId;
+    const contactId = await createContact(input.contact);
+    await request(`/v1/domains/${encodeURIComponent(domain)}/contacts`, {
+      method: "PUT",
+      body: JSON.stringify({
+        contacts: {
+          registrant: contactId,
+          admin: contactId,
+          tech: contactId,
+          billing: contactId,
+        },
+      }),
+    });
+    return { providerContactRef: contactId };
+  },
+
   async startTransferIn(input) {
     const parsed = parseDomain(input.fqdn);
     const contactId = await createContact(input.contact);
