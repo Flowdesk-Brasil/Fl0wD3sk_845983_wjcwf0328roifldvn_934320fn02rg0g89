@@ -725,7 +725,12 @@ export async function listUserDomains(authUserId: number) {
     .eq("auth_user_id", authUserId)
     .order("created_at", { ascending: false });
   if (result.error) throw new Error(result.error.message);
-  return (result.data || []).map((row) => mapDomain(row as DomainRow));
+  return (result.data || [])
+    .filter((row) => {
+      const status = String((row as DomainRow).status || "");
+      return !["draft", "quote_created", "payment_pending", "failed", "cancelled"].includes(status);
+    })
+    .map((row) => mapDomain(row as DomainRow));
 }
 
 export async function getUserDomain(authUserId: number, domainId: string) {

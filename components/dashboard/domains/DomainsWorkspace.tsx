@@ -182,7 +182,7 @@ function ToggleSwitch({
       disabled={disabled}
       onClick={onClick}
       className={`relative h-[26px] w-[46px] rounded-full transition-all active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-50 ${
-        checked ? "bg-[#6C3AF2]" : "bg-[#686D80]"
+        checked ? "bg-[#0F62FE]" : "bg-[#686D80]"
       }`}
       aria-pressed={checked}
     >
@@ -256,10 +256,25 @@ function EmptyDomains() {
   );
 }
 
-function PromoBanner() {
+function buildMarketingDomain(domains: Domain[]) {
+  const source = domains.find((domain) => ["active", "registered"].includes(domain.status)) || domains[0] || null;
+  if (!source) {
+    return { domain: "sua-marca.xyz", sld: "sua-marca", extension: "xyz" };
+  }
+
+  const parts = source.fqdn.split(".").filter(Boolean);
+  const sld = parts[0] || source.fqdn;
+  const currentExtension = parts.slice(1).join(".");
+  const extension = ["xyz", "online", "store", "tech", "site"].find((item) => item !== currentExtension) || "xyz";
+  return { domain: `${sld}.${extension}`, sld, extension };
+}
+
+function PromoBanner({ domains }: { domains: Domain[] }) {
+  const suggestion = buildMarketingDomain(domains);
+
   return (
     <section className={`${panelClass} relative overflow-hidden px-[18px] py-[18px] sm:px-[26px]`}>
-      <span className="pointer-events-none absolute -right-[80px] -top-[120px] h-[240px] w-[240px] rounded-full bg-[rgba(15,98,254,0.14)] blur-[55px]" />
+      <span className="pointer-events-none absolute -right-[80px] -top-[120px] h-[240px] w-[240px] rounded-full bg-[rgba(15,98,254,0.16)] blur-[55px]" />
       <div className="relative z-10 flex flex-col gap-[16px] lg:flex-row lg:items-center lg:justify-between">
         <div className="flex min-w-0 items-start gap-[13px]">
           <span className="inline-flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-[15px] border border-[#1D1D1D] bg-[#101010] text-[#DADADA]">
@@ -269,17 +284,17 @@ function PromoBanner() {
             <p className="text-[13px] font-medium text-[#DCDCDC]">Proteja sua identidade na internet</p>
             <div className="mt-[8px] flex flex-wrap items-center gap-[8px]">
               <span className="text-[22px] font-semibold tracking-[-0.05em] text-white">
-                flwdesk<span className="text-[#835BFF]">.xyz</span>
+                {suggestion.sld}<span className="text-[#66A3FF]">.{suggestion.extension}</span>
               </span>
               <span className="text-[13px] text-[#777777]">ou</span>
-              <Link href="/dashboard/domains/acquire" className="text-[13px] font-semibold text-[#8B66FF] hover:text-[#A282FF]">
+              <Link href="/dashboard/domains/acquire" className="text-[13px] font-semibold text-[#66A3FF] hover:text-[#8DB7FF]">
                 Ver mais opcoes
               </Link>
             </div>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-[12px] lg:justify-end">
-          <span className="rounded-full bg-[rgba(108,58,242,0.14)] px-[12px] py-[7px] text-[12px] font-semibold text-[#A98CFF]">
+          <span className="rounded-full bg-[rgba(15,98,254,0.16)] px-[12px] py-[7px] text-[12px] font-semibold text-[#8DB7FF]">
             Economize ate 94%
           </span>
           <div>
@@ -288,7 +303,7 @@ function PromoBanner() {
               R$5.99<span className="text-[13px] tracking-normal text-[#D8D8D8]">/1o ano</span>
             </p>
           </div>
-          <Link href="/dashboard/domains/acquire?domain=flwdesk.xyz" className={secondaryButtonClass}>
+          <Link href={`/dashboard/domains/acquire?domain=${encodeURIComponent(suggestion.domain)}`} className={primaryButtonClass}>
             Compre agora
           </Link>
         </div>
@@ -667,7 +682,7 @@ function Overview() {
         </Link>
       </div>
 
-      <PromoBanner />
+      <PromoBanner domains={domains} />
 
       {error ? <ErrorPanel message={error} /> : null}
 
@@ -730,7 +745,7 @@ function Overview() {
                           <button type="button" className={secondaryButtonClass}>
                             Gerenciar
                           </button>
-                          <button type="button" className="inline-flex h-[42px] w-[42px] items-center justify-center rounded-[13px] border border-[#202020] bg-[#101010] text-[#8B66FF] transition-colors hover:border-[#303030] hover:bg-[#151515]">
+                          <button type="button" className="inline-flex h-[42px] w-[42px] items-center justify-center rounded-[13px] border border-[#202020] bg-[#101010] text-[#66A3FF] transition-colors hover:border-[#303030] hover:bg-[#151515]">
                             <MoreVertical className="h-[17px] w-[17px]" />
                           </button>
                         </div>
@@ -778,7 +793,7 @@ function Acquire() {
         <ErrorPanel message="Este checkout pertence a outra conta Flowdesk. Entre com a conta correta para continuar." />
       ) : null}
 
-      <section className="relative isolate min-h-[560px] overflow-visible rounded-[30px] border border-[#111111] bg-[#040404] px-[18px] py-[28px] shadow-[0_28px_90px_rgba(0,0,0,0.42)] sm:px-[28px]">
+      <section className="relative isolate min-h-[560px] overflow-visible px-0 py-[22px]">
         <div className="pointer-events-none absolute inset-x-0 top-[92px] -translate-y-1/2 opacity-70">
           <div className="relative left-1/2 aspect-[1542/492] w-[155%] max-w-none -translate-x-1/2 min-[861px]:w-[112%]">
             <Image
@@ -858,10 +873,10 @@ function Transfers() {
       </div>
 
       <section className={`${panelClass} flex min-h-[420px] flex-col items-center justify-center px-[22px] py-[44px] text-center`}>
-        <span className="relative inline-flex h-[82px] w-[82px] items-center justify-center rounded-[28px] border border-[#1B1B1B] bg-[#101010] text-[#8EA8FF]">
+        <span className="relative inline-flex h-[82px] w-[82px] items-center justify-center rounded-[28px] border border-[#1B1B1B] bg-[#101010] text-[#8DB7FF]">
           <span className="absolute inset-[-10px] rounded-[34px] border border-[#1F2B55] opacity-50" />
           <Globe2 className="h-[34px] w-[34px]" />
-          <ArrowRight className="absolute bottom-[18px] right-[17px] h-[20px] w-[20px] text-[#7D66FF]" />
+          <ArrowRight className="absolute bottom-[18px] right-[17px] h-[20px] w-[20px] text-[#0F62FE]" />
         </span>
         <h3 className="mt-[26px] text-[26px] font-semibold tracking-[-0.05em] text-[#F2F2F2]">
           Comecar com uma nova transferencia de dominio
@@ -873,7 +888,7 @@ function Transfers() {
           <button type="button" className={`${primaryButtonClass} h-[46px] px-[20px]`} onClick={() => setIsTransferDialogOpen(true)}>
             Transferir pra Flowdesk
           </button>
-          <button type="button" className="text-[14px] font-semibold text-[#8B66FF] transition-colors hover:text-[#A282FF]" onClick={() => setIsMoveDialogOpen(true)}>
+          <button type="button" className="text-[14px] font-semibold text-[#66A3FF] transition-colors hover:text-[#8DB7FF]" onClick={() => setIsMoveDialogOpen(true)}>
             Mover para outra conta
           </button>
         </div>
