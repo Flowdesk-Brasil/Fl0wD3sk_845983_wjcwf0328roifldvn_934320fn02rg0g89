@@ -1,43 +1,21 @@
 import crypto from "node:crypto";
 import { getEnabledTwoFactorMethods } from "@/lib/auth/twoFactor";
+import {
+  isSensitiveActionProofScopeValid,
+  resolveSensitiveActionProofScope,
+  type SensitiveAccountAction,
+  type SensitiveActionMetadata,
+} from "@/lib/auth/sensitiveActionScope";
 import { hashFlowSecureValue } from "@/lib/security/flowSecure";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
-export type SensitiveAccountAction =
-  | "account_delete"
-  | "email_change"
-  | "password_change"
-  | "passkey_add"
-  | "provider_unlink"
-  | "totp_enable"
-  | "totp_disable"
-  | "passkey_remove";
-
-type SensitiveActionMetadata = {
-  action?: unknown;
-  proof_action?: unknown;
-  proof_hash?: unknown;
-  verified_at?: unknown;
-  verified_method?: unknown;
-};
-
-export const SENSITIVE_ACCOUNT_ACTIONS = [
-  "account_delete",
-  "email_change",
-  "password_change",
-  "passkey_add",
-  "provider_unlink",
-  "totp_enable",
-  "totp_disable",
-  "passkey_remove",
-] as const satisfies readonly SensitiveAccountAction[];
-
-export function normalizeSensitiveAccountAction(value: unknown) {
-  return typeof value === "string" &&
-    (SENSITIVE_ACCOUNT_ACTIONS as readonly string[]).includes(value)
-    ? (value as SensitiveAccountAction)
-    : null;
-}
+export {
+  SENSITIVE_ACCOUNT_ACTIONS,
+  isSensitiveActionProofScopeValid,
+  normalizeSensitiveAccountAction,
+  resolveSensitiveActionProofScope,
+} from "@/lib/auth/sensitiveActionScope";
+export type { SensitiveAccountAction } from "@/lib/auth/sensitiveActionScope";
 
 type SensitiveActionChallengeRow = {
   id: string;
@@ -69,6 +47,9 @@ function safeEqual(left: string, right: string) {
 export async function createSensitiveActionChallenge(
   userId: number,
   action: SensitiveAccountAction,
+  options?: {
+    target?: string | null;
+  },
 ) {
   const methods = await getEnabledTwoFactorMethods(userId);
   if (!methods.length) {
@@ -95,7 +76,10 @@ export async function createSensitiveActionChallenge(
       user_id: userId,
       kind: "sensitive_action",
       challenge: crypto.randomBytes(32).toString("base64url"),
-      metadata: { action },
+      metadata: {
+        action,
+        ...(options?.target ? { target: options.target } : {}),
+      },
       expires_at: expiresAt,
     })
     .select("id")
@@ -137,6 +121,7 @@ export async function issueSensitiveActionProof(
   challengeId: string,
   options?: {
     action?: SensitiveAccountAction | null;
+    target?: string | null;
     method?: "totp" | "passkey" | null;
   },
 ) {
@@ -144,10 +129,7 @@ export async function issueSensitiveActionProof(
   const proofToken = crypto.randomBytes(48).toString("base64url");
   const proofHash = hashProof(userId, proofToken);
   if (!proofHash) throw new Error("Nao foi possivel proteger a confirmacao.");
-  const proofAction =
-    options?.action ||
-    normalizeSensitiveAccountAction(challenge.metadata?.action) ||
-    null;
+  const proofScope = resolveSensitiveActionProofScope(challenge.metadata, options);
 
   const supabase = getSupabaseAdminClientOrThrow();
   const update = await supabase
@@ -155,7 +137,8 @@ export async function issueSensitiveActionProof(
     .update({
       metadata: {
         ...(challenge.metadata || {}),
-        ...(proofAction ? { proof_action: proofAction } : {}),
+        ...(proofScope.action ? { proof_action: proofScope.action } : {}),
+        ...(proofScope.target ? { proof_target: proofScope.target } : {}),
         proof_hash: proofHash,
         verified_at: new Date().toISOString(),
         ...(options?.method ? { verified_method: options.method } : {}),
@@ -172,6 +155,9 @@ export async function requireSensitiveActionProof(
   userId: number,
   action: SensitiveAccountAction,
   rawProof: unknown,
+  options?: {
+    target?: string | null;
+  },
 ) {
   const methods = await getEnabledTwoFactorMethods(userId);
   if (!methods.length) return;
@@ -185,17 +171,13 @@ export async function requireSensitiveActionProof(
   }
 
   const challenge = await readSensitiveActionChallenge(userId, challengeId);
-  const expectedAction =
-    normalizeSensitiveAccountAction(challenge.metadata?.proof_action) ||
-    normalizeSensitiveAccountAction(challenge.metadata?.action) ||
-    "";
   const expectedHash =
     typeof challenge.metadata?.proof_hash === "string"
       ? challenge.metadata.proof_hash
       : "";
   const proofHash = hashProof(userId, proofToken);
   if (
-    expectedAction !== action ||
+    !isSensitiveActionProofScopeValid(challenge.metadata, action, options?.target) ||
     !expectedHash ||
     !proofHash ||
     !safeEqual(expectedHash, proofHash)

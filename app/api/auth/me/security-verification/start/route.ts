@@ -36,13 +36,21 @@ export async function POST(request: NextRequest) {
   try {
     const body = parseFlowSecureDto(
       await request.json().catch(() => ({})),
-      { action: flowSecureDto.enum(ACTION_VALUES) },
+      {
+        action: flowSecureDto.enum(ACTION_VALUES),
+        target: flowSecureDto.optional(flowSecureDto.string({
+          maxLength: 80,
+          pattern: /^[A-Za-z0-9:_-]+$/,
+        })),
+      },
       { rejectUnknown: true },
     );
     const action = body.action as SensitiveAccountAction;
     if (!ACTIONS.has(action)) throw new Error("Acao sensivel invalida.");
 
-    const challenge = await createSensitiveActionChallenge(session.user.id, action);
+    const challenge = await createSensitiveActionChallenge(session.user.id, action, {
+      target: typeof body.target === "string" ? body.target : null,
+    });
     return applyNoStoreHeaders(NextResponse.json({ ok: true, ...challenge }));
   } catch (error) {
     return applyNoStoreHeaders(

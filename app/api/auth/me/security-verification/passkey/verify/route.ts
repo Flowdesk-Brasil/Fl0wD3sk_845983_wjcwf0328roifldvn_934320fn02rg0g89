@@ -45,11 +45,16 @@ export async function POST(request: NextRequest) {
         }),
         response: flowSecureDto.unknown(),
         action: flowSecureDto.optional(flowSecureDto.enum(SENSITIVE_ACCOUNT_ACTIONS)),
+        target: flowSecureDto.optional(flowSecureDto.string({
+          maxLength: 80,
+          pattern: /^[A-Za-z0-9:_-]+$/,
+        })),
       },
       { rejectUnknown: true },
     );
     const challengeId = body.challengeId;
     const action = normalizeSensitiveAccountAction(body.action);
+    const target = typeof body.target === "string" ? body.target : null;
     const credentialResponse = body.response as AuthenticationResponseJSON | undefined;
 
     const challenge = await readSensitiveActionChallenge(session.user.id, challengeId);
@@ -147,6 +152,7 @@ export async function POST(request: NextRequest) {
       .eq("id", passkeyData.id);
     const proof = await issueSensitiveActionProof(session.user.id, challengeId, {
       action,
+      target,
       method: "passkey",
     });
     return applyNoStoreHeaders(NextResponse.json({ ok: true, proof }));

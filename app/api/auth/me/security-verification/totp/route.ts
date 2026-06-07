@@ -35,17 +35,23 @@ export async function POST(request: NextRequest) {
         }),
         code: flowSecureDto.string({ maxLength: 6, pattern: /^\d{6}$/ }),
         action: flowSecureDto.optional(flowSecureDto.enum(SENSITIVE_ACCOUNT_ACTIONS)),
+        target: flowSecureDto.optional(flowSecureDto.string({
+          maxLength: 80,
+          pattern: /^[A-Za-z0-9:_-]+$/,
+        })),
       },
       { rejectUnknown: true },
     );
     const challengeId = body.challengeId;
     const action = normalizeSensitiveAccountAction(body.action);
+    const target = typeof body.target === "string" ? body.target : null;
 
     await readSensitiveActionChallenge(session.user.id, challengeId);
     const valid = await verifyUserTotp(session.user.id, body.code);
     if (!valid) throw new Error("Codigo do autenticador invalido.");
     const proof = await issueSensitiveActionProof(session.user.id, challengeId, {
       action,
+      target,
       method: "totp",
     });
     return applyNoStoreHeaders(NextResponse.json({ ok: true, proof }));

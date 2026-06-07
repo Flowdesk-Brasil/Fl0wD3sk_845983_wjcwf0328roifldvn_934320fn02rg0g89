@@ -93,6 +93,7 @@ type EmailChangeState = {
 type SensitiveActionPrompt = {
   requestKey: string;
   action: SensitiveAccountAction;
+  target?: string | null;
   title: string;
   description: string;
   onVerified: (proof: string | null) => void | Promise<void>;
@@ -624,6 +625,7 @@ export function PersonalDataTab() {
     setUnlinkProvider(null);
     requestSensitiveAction({
       action: "provider_unlink",
+      target: `provider:${provider.id}`,
       title: `Confirmar desvinculacao do ${provider.label}`,
       description: "Confirme sua identidade antes de remover este metodo de acesso.",
       onVerified: (proof) => performUnlink(provider, proof),
@@ -684,12 +686,10 @@ export function PersonalDataTab() {
       ) {
         requestSensitiveAction({
           action: "provider_unlink",
+          target: `provider:${provider.id}`,
           title: `Confirmar desvinculacao do ${provider.label}`,
           description: "Confirme novamente para remover este provedor desta conta.",
           onVerified: (proof) => performUnlink(provider, proof, true),
-        });
-        notifications.success("Abra uma nova confirmacao de seguranca para concluir.", {
-          title: "Contas e acessos",
         });
         return;
       }
@@ -1613,6 +1613,7 @@ export function PersonalDataTab() {
           key={sensitiveAction.requestKey}
           isOpen
           action={sensitiveAction.action}
+          target={sensitiveAction.target}
           title={sensitiveAction.title}
           description={sensitiveAction.description}
           onClose={() => setSensitiveAction(null)}
