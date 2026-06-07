@@ -611,11 +611,6 @@ function Overview() {
     return domains.filter((domain) => domain.fqdn.toLowerCase().includes(normalized));
   }, [domains, query]);
 
-  const activeCount = useMemo(
-    () => (domains || []).filter((domain) => ["active", "registered"].includes(domain.status)).length,
-    [domains],
-  );
-
   async function toggleAutoRenew(domain: Domain) {
     setUpdatingId(domain.id);
     const nextValue = !domain.autoRenew;
@@ -643,13 +638,7 @@ function Overview() {
 
   return (
     <div className="space-y-[16px]">
-      <div className="flex flex-col gap-[14px] sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-[#F2F2F2]">Meus dominios</h2>
-          <p className="mt-[7px] text-[13px] text-[#777777]">
-            {domains.length} dominio(s), {activeCount} ativo(s), DNS e renovacao no mesmo painel.
-          </p>
-        </div>
+      <div className="flex justify-end">
         <Link href="/dashboard/domains/acquire" className={`${primaryButtonClass} h-[44px]`}>
           <Plus className="h-[17px] w-[17px]" />
           Adicionar novo dominio
@@ -767,7 +756,7 @@ function Acquire() {
         <ErrorPanel message="Este checkout pertence a outra conta Flowdesk. Entre com a conta correta para continuar." />
       ) : null}
 
-      <section className="relative isolate min-h-[560px] overflow-visible px-0 py-[22px]">
+      <section className="relative isolate min-h-[460px] overflow-visible px-0 py-[4px]">
         <div className="pointer-events-none absolute inset-x-0 top-[92px] -translate-y-1/2 opacity-70">
           <div className="relative left-1/2 aspect-[1542/492] w-[155%] max-w-none -translate-x-1/2 min-[861px]:w-[112%]">
             <Image
@@ -782,14 +771,7 @@ function Acquire() {
         </div>
 
         <div className="relative z-10 mx-auto flex max-w-[1280px] flex-col items-center text-center">
-          <div className="inline-flex items-center rounded-full border border-[#171717] bg-[#080808] px-[18px] py-[9px] text-[13px] text-[#BFBFBF]">
-            Encontre a identidade perfeita para seu projeto
-          </div>
-          <h2 className="mt-[20px] max-w-[980px] bg-[linear-gradient(90deg,#DADADA_0%,#C1C1C1_100%)] bg-clip-text text-[38px] leading-[1.08] font-normal tracking-[-0.05em] text-transparent md:text-[52px]">
-            Encontre o seu dominio
-            <span className="block">de forma rapida e segura</span>
-          </h2>
-          <div className="mt-[42px] w-full max-w-[1280px]">
+          <div className="w-full max-w-[1280px]">
             <DomainSearchSection
               initialTab={mode}
               initialQuery={initialQuery}
@@ -839,13 +821,6 @@ function Transfers() {
 
   return (
     <div className="space-y-[16px]">
-      <div>
-        <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-[#F2F2F2]">Transferencias</h2>
-        <p className="mt-[7px] text-[13px] text-[#777777]">
-          Transfira dominios de outros provedores para a Flowdesk ou mova um dominio entre contas Flowdesk.
-        </p>
-      </div>
-
       <section className={`${panelClass} flex min-h-[420px] flex-col items-center justify-center px-[22px] py-[44px] text-center`}>
         <span className="relative inline-flex h-[82px] w-[82px] items-center justify-center rounded-[28px] border border-[#1B1B1B] bg-[#101010] text-[#8DB7FF]">
           <span className="absolute inset-[-10px] rounded-[34px] border border-[#1F2B55] opacity-50" />
