@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import type { DomainContact } from "@/lib/domains/adapter";
 import { getCurrentUserFromSessionCookie } from "@/lib/auth/session";
 import { prepareDomainCheckout } from "@/lib/domains/domainService";
 import { flowSecureDto, parseFlowSecureDto } from "@/lib/security/flowSecure";
@@ -18,32 +17,12 @@ export async function POST(request: Request) {
       await request.json().catch(() => ({})),
       {
         quoteId: flowSecureDto.string({ maxLength: 80, pattern: /^[A-Za-z0-9-]+$/ }),
-        contact: flowSecureDto.record(),
-      },
-      { rejectUnknown: true },
-    );
-    const contact = parseFlowSecureDto<DomainContact>(
-      body.contact,
-      {
-        fullName: flowSecureDto.personName(),
-        email: flowSecureDto.email(),
-        phone: flowSecureDto.string({ minLength: 8, maxLength: 32 }),
-        street: flowSecureDto.string({ minLength: 3, maxLength: 180 }),
-        city: flowSecureDto.string({ minLength: 2, maxLength: 100 }),
-        state: flowSecureDto.string({ minLength: 2, maxLength: 64 }),
-        postalCode: flowSecureDto.string({ minLength: 3, maxLength: 24 }),
-        country: flowSecureDto.string({ minLength: 2, maxLength: 2 }),
-        documentType: flowSecureDto.enum(["cpf", "cnpj", "passport", "none"] as const),
-        documentNumber: flowSecureDto.optional(
-          flowSecureDto.string({ allowEmpty: true, maxLength: 40 }),
-        ),
       },
       { rejectUnknown: true },
     );
     const result = await prepareDomainCheckout({
       authUserId: user.id,
       quoteId: body.quoteId,
-      contact,
     });
     return NextResponse.json({
       ok: true,

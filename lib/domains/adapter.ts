@@ -89,6 +89,12 @@ export interface DomainProviderAdapter {
   updateNameservers(providerDomainId: string, nameservers: string[], fqdn?: string): Promise<void>;
   setTransferLock(providerDomainId: string, locked: boolean, fqdn?: string): Promise<void>;
   requestAuthCode(providerDomainId: string, fqdn?: string): Promise<{ authCode: string }>;
+  updateDomainContact?(input: {
+    providerDomainId: string;
+    fqdn: string;
+    contact: DomainContact;
+    idempotencyKey: string;
+  }): Promise<{ providerContactRef?: string | null }>;
   startTransferIn(input: {
     fqdn: string;
     authCode: string;
@@ -146,6 +152,8 @@ export type DomainRecord = {
   purchasePriceBrl?: number | null;
   renewalPriceBrl?: number | null;
   paymentOrderId?: number | null;
+  registrantNeedsSetup?: boolean;
+  registrantContactStatus?: "flowdesk_operational" | "owner" | "unknown";
   createdAt: string;
   updatedAt: string;
 };

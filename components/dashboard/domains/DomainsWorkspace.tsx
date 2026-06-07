@@ -39,6 +39,7 @@ type Domain = {
   nameservers?: string[] | null;
   purchasePriceBrl?: number | null;
   renewalPriceBrl?: number | null;
+  registrantNeedsSetup?: boolean;
 };
 
 type Transfer = {
@@ -313,6 +314,14 @@ function ContactFields({ contact, onChange }: { contact: Contact; onChange: (nex
   );
 }
 
+function normalizeContact(value: Partial<Contact> | null | undefined): Contact {
+  return {
+    ...emptyContact,
+    ...(value || {}),
+    documentNumber: value?.documentNumber || "",
+  };
+}
+
 function ModalShell({
   title,
   description,
@@ -343,7 +352,7 @@ function ModalShell({
             <button
               type="button"
               onClick={onClose}
-              className="inline-flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[13px] border border-[#1D1D1D] bg-[#101010] text-[#AFAFAF] transition-colors hover:border-[#303030] hover:text-white"
+              className="inline-flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[13px] bg-transparent text-[#AFAFAF] transition-colors hover:bg-[#121212] hover:text-white"
             >
               <X className="h-[16px] w-[16px]" />
             </button>
@@ -367,7 +376,6 @@ function RegisterDomainDialog({
   onClose: () => void;
 }) {
   const router = useRouter();
-  const [contact, setContact] = useState<Contact>(emptyContact);
   const [quote, setQuote] = useState<Quote | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -406,7 +414,7 @@ function RegisterDomainDialog({
       const checkout = await jsonRequest<{ purchaseContext: DomainPurchaseContext }>("/api/auth/me/domains/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ quoteId: quote.id, contact }),
+        body: JSON.stringify({ quoteId: quote.id }),
       });
       router.push(buildDomainPaymentHref(checkout.purchaseContext));
     } catch (reason) {
@@ -418,8 +426,8 @@ function RegisterDomainDialog({
 
   return (
     <ModalShell
-      title="Finalizar dominio"
-      description="Confirme os dados do titular. O pagamento sera feito na tela segura padrao da Flowdesk."
+      title="Revisar compra do dominio"
+      description="O pagamento acontece primeiro na tela segura da Flowdesk. A titularidade cadastral sera finalizada no gerenciamento do dominio depois da aprovacao."
       onClose={onClose}
     >
       <div className="rounded-[18px] border border-[#181818] bg-[#0D0D0D] px-[14px] py-[13px]">
@@ -437,8 +445,11 @@ function RegisterDomainDialog({
         </div>
       </div>
 
-      <div className="mt-[14px]">
-        <ContactFields contact={contact} onChange={setContact} />
+      <div className="mt-[14px] rounded-[18px] border border-[#18223A] bg-[rgba(15,98,254,0.08)] px-[14px] py-[13px]">
+        <p className="text-[13px] font-semibold text-[#8DB7FF]">Registro protegido pela Flowdesk</p>
+        <p className="mt-[7px] text-[13px] leading-[1.6] text-[#AFAFAF]">
+          Ao aprovar o pagamento, o registrador usa os dados operacionais da Flowdesk para provisionar o dominio sem travar o checkout. Depois, em Meus dominios, voce completa seus dados cadastrais e o painel sincroniza o titular no registrador.
+        </p>
       </div>
 
       {error ? <div className="mt-[12px]"><ErrorPanel message={error} /></div> : null}
@@ -458,7 +469,6 @@ function TransferInDialog({ onClose }: { onClose: () => void }) {
   const router = useRouter();
   const [fqdn, setFqdn] = useState("");
   const [authCode, setAuthCode] = useState("");
-  const [contact, setContact] = useState<Contact>(emptyContact);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -475,7 +485,7 @@ function TransferInDialog({ onClose }: { onClose: () => void }) {
       const checkout = await jsonRequest<{ purchaseContext: DomainPurchaseContext }>("/api/auth/me/domains/transfers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ quoteId: quotePayload.quote.id, authCode, contact }),
+        body: JSON.stringify({ quoteId: quotePayload.quote.id, authCode }),
       });
       router.push(buildDomainPaymentHref(checkout.purchaseContext));
     } catch (reason) {
@@ -488,7 +498,7 @@ function TransferInDialog({ onClose }: { onClose: () => void }) {
   return (
     <ModalShell
       title="Transferir para Flowdesk"
-      description="Traga um dominio registrado em outro provedor para a sua conta Flowdesk usando o Auth Code/EPP."
+      description="Traga um dominio registrado em outro provedor usando o Auth Code/EPP. Depois da aprovacao, finalize os dados cadastrais no gerenciamento."
       onClose={onClose}
     >
       <form onSubmit={submit}>
@@ -496,8 +506,8 @@ function TransferInDialog({ onClose }: { onClose: () => void }) {
           <input className={fieldClass} value={fqdn} onChange={(event) => setFqdn(event.target.value)} placeholder="dominio.com" />
           <input className={fieldClass} value={authCode} onChange={(event) => setAuthCode(event.target.value)} placeholder="Auth Code / EPP" />
         </div>
-        <div className="mt-[12px]">
-          <ContactFields contact={contact} onChange={setContact} />
+        <div className="mt-[12px] rounded-[18px] border border-[#18223A] bg-[rgba(15,98,254,0.08)] px-[14px] py-[13px] text-[13px] leading-[1.6] text-[#AFAFAF]">
+          A transferencia sera iniciada com os dados operacionais da Flowdesk para acelerar a entrada. Assim que o dominio aparecer no painel, atualize os dados do titular para sincronizar o registro no seu nome.
         </div>
         {error ? <div className="mt-[12px]"><ErrorPanel message={error} /></div> : null}
         <div className="mt-[18px] flex flex-col-reverse gap-[10px] sm:flex-row sm:justify-end">
@@ -505,6 +515,97 @@ function TransferInDialog({ onClose }: { onClose: () => void }) {
           <button className={primaryButtonClass} disabled={busy}>
             {busy ? <LoaderCircle className="h-[15px] w-[15px] animate-spin" /> : <ArrowRight className="h-[15px] w-[15px]" />}
             Ir para pagamento
+          </button>
+        </div>
+      </form>
+    </ModalShell>
+  );
+}
+
+function RegistrantProfileDialog({
+  domain,
+  onClose,
+  onUpdated,
+}: {
+  domain: Domain;
+  onClose: () => void;
+  onUpdated: (domain: Domain) => void;
+}) {
+  const [contact, setContact] = useState<Contact>(emptyContact);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    setContact(emptyContact);
+
+    void jsonRequest<{ contact: Partial<Contact> | null }>(`/api/auth/me/domains/${domain.id}/contact`)
+      .then((payload) => {
+        if (!cancelled) setContact(normalizeContact(payload.contact));
+      })
+      .catch((reason) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : "Falha ao carregar cadastro.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [domain.id]);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setError(null);
+    try {
+      const payload = await jsonRequest<{ domain: Domain }>(`/api/auth/me/domains/${domain.id}/contact`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contact }),
+      });
+      onUpdated(payload.domain);
+      onClose();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Falha ao atualizar cadastro.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <ModalShell
+      title="Finalizar cadastro do dominio"
+      description="Preencha os dados reais do titular para sincronizar a titularidade cadastral no registrador."
+      onClose={onClose}
+    >
+      <div className="rounded-[18px] border border-[#181818] bg-[#0D0D0D] px-[14px] py-[13px]">
+        <p className="text-[12px] uppercase tracking-[0.14em] text-[#6F8EDB]">Dominio selecionado</p>
+        <p className="mt-[5px] text-[20px] font-semibold tracking-[-0.04em] text-white">{domain.fqdn}</p>
+        {domain.registrantNeedsSetup ? (
+          <p className="mt-[8px] text-[13px] leading-[1.55] text-[#8A8A8A]">
+            Este dominio foi provisionado com os dados operacionais da Flowdesk para liberar o checkout. Ao salvar,
+            o painel troca o contato do registrador para os dados abaixo.
+          </p>
+        ) : (
+          <p className="mt-[8px] text-[13px] leading-[1.55] text-[#8A8A8A]">
+            Atualize os dados cadastrais quando o titular, documento ou endereco mudarem.
+          </p>
+        )}
+      </div>
+
+      <form onSubmit={submit} className="mt-[14px]">
+        {loading ? <LoadingPanel label="Carregando cadastro..." /> : <ContactFields contact={contact} onChange={setContact} />}
+        {error ? <div className="mt-[12px]"><ErrorPanel message={error} /></div> : null}
+        <div className="mt-[18px] flex flex-col-reverse gap-[10px] sm:flex-row sm:justify-end">
+          <button type="button" className={secondaryButtonClass} onClick={onClose}>Cancelar</button>
+          <button className={primaryButtonClass} disabled={loading || saving}>
+            {saving ? <LoaderCircle className="h-[15px] w-[15px] animate-spin" /> : <ShieldCheck className="h-[15px] w-[15px]" />}
+            Salvar titular
           </button>
         </div>
       </form>
@@ -589,6 +690,7 @@ function Overview() {
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [registrantDomain, setRegistrantDomain] = useState<Domain | null>(null);
 
   const loadDomains = useCallback(async () => {
     try {
@@ -631,6 +733,12 @@ function Overview() {
     } finally {
       setUpdatingId(null);
     }
+  }
+
+  function handleRegistrantUpdated(nextDomain: Domain) {
+    setDomains((current) =>
+      current?.map((item) => (item.id === nextDomain.id ? { ...item, ...nextDomain } : item)) || current,
+    );
   }
 
   if (error && !domains) return <ErrorPanel message={error} />;
@@ -691,7 +799,9 @@ function Overview() {
                           </span>
                           <div className="min-w-0">
                             <p className="truncate text-[14px] font-semibold text-[#F2F2F2]">{domain.fqdn}</p>
-                            <p className="mt-[4px] text-[11px] text-[#696969]">{domain.provider || "flowdesk"}</p>
+                            <p className={`mt-[4px] text-[11px] ${domain.registrantNeedsSetup ? "text-[#8DB7FF]" : "text-[#696969]"}`}>
+                              {domain.registrantNeedsSetup ? "Cadastro do titular pendente" : domain.provider || "flowdesk"}
+                            </p>
                           </div>
                         </div>
                       </td>
@@ -705,8 +815,12 @@ function Overview() {
                           <Link href={`/dashboard/domains/acquire?domain=${encodeURIComponent(domain.fqdn)}`} className={secondaryButtonClass}>
                             Renovar
                           </Link>
-                          <button type="button" className={secondaryButtonClass}>
-                            Gerenciar
+                          <button
+                            type="button"
+                            className={domain.registrantNeedsSetup ? primaryButtonClass : secondaryButtonClass}
+                            onClick={() => setRegistrantDomain(domain)}
+                          >
+                            {domain.registrantNeedsSetup ? "Finalizar cadastro" : "Dados cadastrais"}
                           </button>
                           <button type="button" className="inline-flex h-[42px] w-[42px] items-center justify-center rounded-[13px] border border-[#202020] bg-[#101010] text-[#66A3FF] transition-colors hover:border-[#303030] hover:bg-[#151515]">
                             <MoreVertical className="h-[17px] w-[17px]" />
@@ -735,6 +849,13 @@ function Overview() {
           </section>
         </>
       )}
+      {registrantDomain ? (
+        <RegistrantProfileDialog
+          domain={registrantDomain}
+          onClose={() => setRegistrantDomain(null)}
+          onUpdated={handleRegistrantUpdated}
+        />
+      ) : null}
     </div>
   );
 }
