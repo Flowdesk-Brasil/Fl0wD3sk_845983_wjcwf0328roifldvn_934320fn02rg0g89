@@ -29,10 +29,10 @@ import { buildBrowserRoutingTargetFromInternalPath } from "@/lib/routing/subdoma
 
 // Data
 
-const MOCK_RANKING = [
+const FEATURED_RANKING = [
   {
     rank: 1,
-    name: "Joao S.",
+    name: "Afiliado Diamond",
     level: "diamond" as AffiliateLevel,
     sales: 87,
     commission: "R$ 12.480",
@@ -40,7 +40,7 @@ const MOCK_RANKING = [
   },
   {
     rank: 2,
-    name: "Marina A.",
+    name: "Afiliado Pro",
     level: "diamond" as AffiliateLevel,
     sales: 64,
     commission: "R$ 9.216",
@@ -48,7 +48,7 @@ const MOCK_RANKING = [
   },
   {
     rank: 3,
-    name: "Pedro R.",
+    name: "Afiliado Gold",
     level: "gold" as AffiliateLevel,
     sales: 41,
     commission: "R$ 5.904",
@@ -253,7 +253,7 @@ function LevelCard({ level }: { level: AffiliateLevel }) {
   );
 }
 
-function RankPodium({ entry }: { entry: typeof MOCK_RANKING[0] }) {
+function RankPodium({ entry }: { entry: typeof FEATURED_RANKING[0] }) {
   const config = AFFILIATE_LEVELS[entry.level];
   const rankColors = ["#FFFFFF", "#E5E5E5", "#AFAFAF"] as const;
   const rankColor = rankColors[entry.rank - 1];
@@ -659,7 +659,7 @@ export function AffiliatesLanding({ isAuthenticated }: { isAuthenticated: boolea
           </div>
         </LandingReveal>
         <div className="mt-[48px] grid gap-[16px] sm:grid-cols-3">
-          {MOCK_RANKING.map((entry, i) => (
+          {FEATURED_RANKING.map((entry, i) => (
             <LandingReveal key={entry.rank} delay={i * 80}>
               <RankPodium entry={entry} />
             </LandingReveal>

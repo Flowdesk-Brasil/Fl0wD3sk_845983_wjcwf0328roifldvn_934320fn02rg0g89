@@ -14,7 +14,10 @@ import {
   readPendingTwoFactorLogin,
 } from "@/lib/auth/twoFactor";
 import { issueTrustedDevice } from "@/lib/auth/trustedDevice";
-import { resolveWebAuthnRpId } from "@/lib/auth/webauthn";
+import {
+  normalizeWebAuthnCredentialId,
+  resolveWebAuthnRpId,
+} from "@/lib/auth/webauthn";
 import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
@@ -45,11 +48,16 @@ export async function POST(request: NextRequest) {
 
     const pending = await readPendingTwoFactorLogin(challengeId);
     const supabase = getSupabaseAdminClientOrThrow();
-    const passkey = await supabase
+    const normalizedCredentialId =
+      normalizeWebAuthnCredentialId(credentialResponse.id) || credentialResponse.id;
+    const normalizedRawId =
+      credentialResponse.rawId && normalizeWebAuthnCredentialId(credentialResponse.rawId);
+
+    let passkey = await supabase
       .from("auth_user_passkeys")
       .select("id, credential_id, public_key, counter, transports")
       .eq("user_id", pending.payload.userId)
-      .eq("credential_id", credentialResponse.id)
+      .eq("credential_id", normalizedCredentialId)
       .maybeSingle<{
         id: string;
         credential_id: string;
@@ -57,7 +65,53 @@ export async function POST(request: NextRequest) {
         counter: number;
         transports: string[];
       }>();
-    if (passkey.error || !passkey.data) {
+
+    if (!passkey.error && !passkey.data && normalizedRawId) {
+      passkey = await supabase
+        .from("auth_user_passkeys")
+        .select("id, credential_id, public_key, counter, transports")
+        .eq("user_id", pending.payload.userId)
+        .eq("credential_id", normalizedRawId)
+        .maybeSingle<{
+          id: string;
+          credential_id: string;
+          public_key: string;
+          counter: number;
+          transports: string[];
+        }>();
+    }
+
+    let fallbackPasskey:
+      | {
+          id: string;
+          credential_id: string;
+          public_key: string;
+          counter: number;
+          transports: string[];
+        }
+      | null = null;
+
+    if (!passkey.error && !passkey.data) {
+      const allPasskeys = await supabase
+        .from("auth_user_passkeys")
+        .select("id, credential_id, public_key, counter, transports")
+        .eq("user_id", pending.payload.userId)
+        .limit(20);
+      if (!allPasskeys.error && allPasskeys.data) {
+        fallbackPasskey = allPasskeys.data.find((candidate) => {
+          const candidateId =
+            normalizeWebAuthnCredentialId(candidate.credential_id) ||
+            candidate.credential_id;
+          return (
+            candidateId === normalizedCredentialId ||
+            (normalizedRawId ? candidateId === normalizedRawId : false)
+          );
+        }) || null;
+      }
+    }
+
+    const passkeyData = passkey.data || fallbackPasskey;
+    if (passkey.error || !passkeyData) {
       throw new Error("Esta Passkey nao pertence a conta.");
     }
 
@@ -67,10 +121,10 @@ export async function POST(request: NextRequest) {
       expectedOrigin: request.nextUrl.origin,
       expectedRPID: resolveWebAuthnRpId(request),
       credential: {
-        id: passkey.data.credential_id as Base64URLString,
-        publicKey: new Uint8Array(Buffer.from(passkey.data.public_key, "base64url")),
-        counter: Number(passkey.data.counter || 0),
-        transports: passkey.data.transports as AuthenticatorTransportFuture[],
+        id: passkeyData.credential_id as Base64URLString,
+        publicKey: new Uint8Array(Buffer.from(passkeyData.public_key, "base64url")),
+        counter: Number(passkeyData.counter || 0),
+        transports: passkeyData.transports as AuthenticatorTransportFuture[],
       },
       requireUserVerification: true,
     });
@@ -82,7 +136,7 @@ export async function POST(request: NextRequest) {
         counter: verification.authenticationInfo.newCounter,
         last_used_at: new Date().toISOString(),
       })
-      .eq("id", passkey.data.id);
+      .eq("id", passkeyData.id);
 
     const completed = await completePendingTwoFactorLogin(challengeId);
     const response = applyNoStoreHeaders(

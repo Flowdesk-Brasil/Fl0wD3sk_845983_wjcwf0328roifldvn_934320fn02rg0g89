@@ -7,10 +7,15 @@ import {
 } from "@simplewebauthn/server";
 import {
   issueSensitiveActionProof,
+  normalizeSensitiveAccountAction,
+  SENSITIVE_ACCOUNT_ACTIONS,
   readSensitiveActionChallenge,
 } from "@/lib/auth/sensitiveAction";
 import { getCurrentAuthSessionFromCookie } from "@/lib/auth/session";
-import { resolveWebAuthnRpId } from "@/lib/auth/webauthn";
+import {
+  normalizeWebAuthnCredentialId,
+  resolveWebAuthnRpId,
+} from "@/lib/auth/webauthn";
 import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
@@ -39,20 +44,28 @@ export async function POST(request: NextRequest) {
           rejectThreatPatterns: false,
         }),
         response: flowSecureDto.unknown(),
+        action: flowSecureDto.optional(flowSecureDto.enum(SENSITIVE_ACCOUNT_ACTIONS)),
       },
       { rejectUnknown: true },
     );
     const challengeId = body.challengeId;
+    const action = normalizeSensitiveAccountAction(body.action);
     const credentialResponse = body.response as AuthenticationResponseJSON | undefined;
 
     const challenge = await readSensitiveActionChallenge(session.user.id, challengeId);
     if (!credentialResponse?.id) throw new Error("Resposta da Passkey invalida.");
+
+    const normalizedCredentialId =
+      normalizeWebAuthnCredentialId(credentialResponse.id) || credentialResponse.id;
+    const normalizedRawId =
+      credentialResponse.rawId && normalizeWebAuthnCredentialId(credentialResponse.rawId);
     const supabase = getSupabaseAdminClientOrThrow();
-    const passkey = await supabase
+
+    let passkey = await supabase
       .from("auth_user_passkeys")
       .select("id, credential_id, public_key, counter, transports")
       .eq("user_id", session.user.id)
-      .eq("credential_id", credentialResponse.id)
+      .eq("credential_id", normalizedCredentialId)
       .maybeSingle<{
         id: string;
         credential_id: string;
@@ -60,7 +73,53 @@ export async function POST(request: NextRequest) {
         counter: number;
         transports: string[];
       }>();
-    if (passkey.error || !passkey.data) {
+
+    if (!passkey.error && !passkey.data && normalizedRawId) {
+      passkey = await supabase
+        .from("auth_user_passkeys")
+        .select("id, credential_id, public_key, counter, transports")
+        .eq("user_id", session.user.id)
+        .eq("credential_id", normalizedRawId)
+        .maybeSingle<{
+          id: string;
+          credential_id: string;
+          public_key: string;
+          counter: number;
+          transports: string[];
+        }>();
+    }
+
+    let fallbackPasskey:
+      | {
+          id: string;
+          credential_id: string;
+          public_key: string;
+          counter: number;
+          transports: string[];
+        }
+      | null = null;
+
+    if (!passkey.error && !passkey.data) {
+      const allPasskeys = await supabase
+        .from("auth_user_passkeys")
+        .select("id, credential_id, public_key, counter, transports")
+        .eq("user_id", session.user.id)
+        .limit(20);
+      if (!allPasskeys.error && allPasskeys.data) {
+        fallbackPasskey = allPasskeys.data.find((candidate) => {
+          const candidateId =
+            normalizeWebAuthnCredentialId(candidate.credential_id) ||
+            candidate.credential_id;
+          return (
+            candidateId === normalizedCredentialId ||
+            (normalizedRawId ? candidateId === normalizedRawId : false)
+          );
+        }) || null;
+      }
+    }
+
+    const passkeyData = passkey.data || fallbackPasskey;
+    if (passkey.error || !passkeyData) {
       throw new Error("Esta Passkey nao pertence a conta.");
     }
 
@@ -70,10 +129,10 @@ export async function POST(request: NextRequest) {
       expectedOrigin: request.nextUrl.origin,
       expectedRPID: resolveWebAuthnRpId(request),
       credential: {
-        id: passkey.data.credential_id as Base64URLString,
-        publicKey: new Uint8Array(Buffer.from(passkey.data.public_key, "base64url")),
-        counter: Number(passkey.data.counter || 0),
-        transports: passkey.data.transports as AuthenticatorTransportFuture[],
+        id: passkeyData.credential_id as Base64URLString,
+        publicKey: new Uint8Array(Buffer.from(passkeyData.public_key, "base64url")),
+        counter: Number(passkeyData.counter || 0),
+        transports: passkeyData.transports as AuthenticatorTransportFuture[],
       },
       requireUserVerification: true,
     });
@@ -85,8 +144,11 @@ export async function POST(request: NextRequest) {
         counter: verification.authenticationInfo.newCounter,
         last_used_at: new Date().toISOString(),
       })
-      .eq("id", passkey.data.id);
-    const proof = await issueSensitiveActionProof(session.user.id, challengeId);
+      .eq("id", passkeyData.id);
+    const proof = await issueSensitiveActionProof(session.user.id, challengeId, {
+      action,
+      method: "passkey",
+    });
     return applyNoStoreHeaders(NextResponse.json({ ok: true, proof }));
   } catch (error) {
     return applyNoStoreHeaders(

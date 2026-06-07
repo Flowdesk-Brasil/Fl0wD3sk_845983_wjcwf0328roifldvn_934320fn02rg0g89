@@ -4,7 +4,10 @@ import {
   type RegistrationResponseJSON,
 } from "@simplewebauthn/server";
 import { getCurrentAuthSessionFromCookie } from "@/lib/auth/session";
-import { resolveWebAuthnRpId } from "@/lib/auth/webauthn";
+import {
+  normalizeWebAuthnCredentialId,
+  resolveWebAuthnRpId,
+} from "@/lib/auth/webauthn";
 import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
@@ -79,6 +82,8 @@ export async function POST(request: NextRequest) {
     }
 
     const info = verification.registrationInfo;
+    const normalizedCredentialId =
+      normalizeWebAuthnCredentialId(info.credential.id) || info.credential.id;
     const name =
       typeof body.name === "string" && body.name.trim()
         ? body.name.trim().slice(0, 64)
@@ -86,7 +91,7 @@ export async function POST(request: NextRequest) {
     const insert = await supabase.from("auth_user_passkeys").upsert(
       {
         user_id: session.user.id,
-        credential_id: info.credential.id,
+        credential_id: normalizedCredentialId,
         public_key: Buffer.from(info.credential.publicKey).toString("base64url"),
         counter: info.credential.counter,
         transports: info.credential.transports || [],

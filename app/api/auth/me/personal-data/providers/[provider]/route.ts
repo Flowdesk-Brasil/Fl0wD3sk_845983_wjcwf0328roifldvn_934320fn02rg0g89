@@ -3,8 +3,15 @@ import {
   unlinkAccountProvider,
   type LinkedAccountProvider,
 } from "@/lib/account/personalData";
-import { getCurrentAuthSessionFromCookie } from "@/lib/auth/session";
+import {
+  getCurrentAuthSessionFromCookie,
+  invalidateAuthSessionCache,
+} from "@/lib/auth/session";
 import { requireSensitiveActionProof } from "@/lib/auth/sensitiveAction";
+import {
+  clearHostingGitHubStateCookie,
+  clearHostingGitHubTokenCookie,
+} from "@/lib/hosting/github";
 import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
@@ -54,8 +61,19 @@ export async function DELETE(
       body.securityProof,
     );
     await unlinkAccountProvider(session.user.id, provider);
+    invalidateAuthSessionCache();
+    const response = NextResponse.json({
+      ok: true,
+      provider,
+      linked: false,
+      message: "Conta desvinculada com sucesso.",
+    });
+    if (provider === "github") {
+      clearHostingGitHubTokenCookie(request, response);
+      clearHostingGitHubStateCookie(request, response);
+    }
     return applyNoStoreHeaders(
-      NextResponse.json({ ok: true, message: "Conta desvinculada com sucesso." }),
+      response,
     );
   } catch (error) {
     return applyNoStoreHeaders(

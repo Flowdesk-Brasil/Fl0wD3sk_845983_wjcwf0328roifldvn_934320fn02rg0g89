@@ -5,7 +5,10 @@ import {
   type Base64URLString,
 } from "@simplewebauthn/server";
 import { readPendingTwoFactorLogin } from "@/lib/auth/twoFactor";
-import { resolveWebAuthnRpId } from "@/lib/auth/webauthn";
+import {
+  normalizeWebAuthnCredentialId,
+  resolveWebAuthnRpId,
+} from "@/lib/auth/webauthn";
 import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
@@ -42,14 +45,30 @@ export async function POST(request: NextRequest) {
       throw new Error("Nenhuma Passkey disponivel para esta conta.");
     }
 
+    const allowCredentials = passkeys.data
+      .map((passkey) => {
+        const normalizedId = normalizeWebAuthnCredentialId(passkey.credential_id);
+        if (!normalizedId) return null;
+        return {
+          id: normalizedId as Base64URLString,
+          transports: passkey.transports as AuthenticatorTransportFuture[],
+        };
+      })
+      .filter(
+        (credential): credential is {
+          id: Base64URLString;
+          transports: AuthenticatorTransportFuture[];
+        } => Boolean(credential),
+      );
+    if (!allowCredentials.length) {
+      throw new Error("Nenhuma Passkey disponivel para esta conta.");
+    }
+
     const options = await generateAuthenticationOptions({
       rpID: resolveWebAuthnRpId(request),
       timeout: 60_000,
       userVerification: "required",
-      allowCredentials: passkeys.data.map((passkey) => ({
-        id: passkey.credential_id as Base64URLString,
-        transports: passkey.transports as AuthenticatorTransportFuture[],
-      })),
+      allowCredentials,
     });
     const update = await supabase
       .from("auth_security_challenges")
