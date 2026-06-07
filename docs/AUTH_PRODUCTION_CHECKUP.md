@@ -6,6 +6,7 @@ Use este roteiro depois de configurar `.env.local` e tambem antes de publicar em
 
 - `NEXT_PUBLIC_SITE_URL` ou dominio publico correto da aplicacao.
 - `FLOWSECURE_MASTER_KEY` forte e igual entre builds do mesmo ambiente.
+- Em rotacao de segredo, mantenha a chave antiga em `FLOWSECURE_PREVIOUS_MASTER_KEYS` ate todos os logins 2FA, TOTP e sessoes antigas expirarem ou serem reemitidos.
 - `GITHUB_CLIENT_ID` e `GITHUB_CLIENT_SECRET`.
 - `GITHUB_HOSTING_REDIRECT_URI` em producao: `https://seu-dominio.com/api/auth/github/hosting/callback`.
 - `NEXT_PUBLIC_MERCADO_PAGO_CARD_PUBLIC_KEY` ou chave publica equivalente.
@@ -33,6 +34,7 @@ Use este roteiro depois de configurar `.env.local` e tambem antes de publicar em
 3. Cadastre uma passkey em `/account/security`.
 4. Ative TOTP/2FA, salve os codigos de recuperacao e teste uma acao sensivel.
 5. Revogue uma passkey e confirme que ela nao autentica mais.
+6. Em producao com mais de uma instancia, confirme que todas usam o mesmo `FLOWSECURE_MASTER_KEY`; se trocar a chave, publique a antiga tambem em `FLOWSECURE_PREVIOUS_MASTER_KEYS`.
 
 ## Cartao e recorrencia
 

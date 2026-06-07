@@ -80,6 +80,8 @@ type EmailPasswordResponse = {
 type EmailOtpResponse = {
   ok: boolean;
   message?: string;
+  code?: string;
+  restartRequired?: boolean;
   redirectTo?: string;
   requiresTwoFactor?: boolean;
   twoFactorChallengeId?: string;
@@ -97,10 +99,21 @@ const otpBoxClassName =
 const PASSWORD_SUBMIT_BASE_COOLDOWN_MS = 1600;
 const PASSWORD_SUBMIT_MAX_COOLDOWN_MS = 12000;
 const PASSWORD_FAILURE_RESET_WINDOW_MS = 45_000;
+const TWO_FACTOR_RESTART_REQUIRED_CODE = "two_factor_restart_required";
 
 function getPasswordCooldownLabel(remainingMs: number) {
   const seconds = Math.max(1, Math.ceil(remainingMs / 1000));
   return `Aguarde ${seconds}s`;
+}
+
+function shouldRestartTwoFactor(payload: {
+  code?: string;
+  restartRequired?: boolean;
+} | null | undefined) {
+  return Boolean(
+    payload?.restartRequired ||
+      payload?.code === TWO_FACTOR_RESTART_REQUIRED_CODE,
+  );
 }
 
 function WhiteActionButton({
@@ -446,6 +459,31 @@ export function LoginPanel({
     });
   }
 
+  function resetTwoFactorLogin(message?: string) {
+    const normalizedMessage =
+      message?.trim() ||
+      "Sua segunda etapa expirou. Inicie o login novamente.";
+    setStage("chooser");
+    setTwoFactorChallengeId("");
+    setTwoFactorMethods([]);
+    setSelectedTwoFactorMethod(null);
+    setTwoFactorCode("");
+    setOtpCode("");
+    setChallengeId("");
+    setOtpExpiresAt(null);
+    setOtpResendAvailableAt(null);
+    try {
+      const url = new URL(window.location.href);
+      for (const key of ["twoFactor", "challenge", "methods", "expiresAt"]) {
+        url.searchParams.delete(key);
+      }
+      window.history.replaceState(null, "", url.toString());
+    } catch {
+      // limpeza de URL e apenas uma melhoria de recuperacao
+    }
+    showErrorNotification(normalizedMessage, "Login reiniciado");
+  }
+
   function clearPasswordSubmitCooldown() {
     setPasswordCooldownUntil(null);
     setPasswordCooldownNow(Date.now());
@@ -780,6 +818,10 @@ export function LoginPanel({
       });
       const payload = (await response.json().catch(() => ({}))) as EmailOtpResponse;
       if (!response.ok || !payload.ok || !payload.redirectTo) {
+        if (shouldRestartTwoFactor(payload)) {
+          resetTwoFactorLogin(payload.message);
+          return;
+        }
         throw new Error(payload.message || "Nao foi possivel validar o autenticador.");
       }
       window.location.replace(payload.redirectTo);
@@ -806,9 +848,15 @@ export function LoginPanel({
       const optionsPayload = (await optionsResponse.json().catch(() => ({}))) as {
         ok?: boolean;
         message?: string;
+        code?: string;
+        restartRequired?: boolean;
         options?: Parameters<typeof startAuthentication>[0]["optionsJSON"];
       };
       if (!optionsResponse.ok || !optionsPayload.ok || !optionsPayload.options) {
+        if (shouldRestartTwoFactor(optionsPayload)) {
+          resetTwoFactorLogin(optionsPayload.message);
+          return;
+        }
         throw new Error(optionsPayload.message || "Nao foi possivel iniciar a Passkey.");
       }
       const credential = await startAuthentication({
@@ -825,6 +873,10 @@ export function LoginPanel({
       });
       const verifyPayload = (await verifyResponse.json().catch(() => ({}))) as EmailOtpResponse;
       if (!verifyResponse.ok || !verifyPayload.ok || !verifyPayload.redirectTo) {
+        if (shouldRestartTwoFactor(verifyPayload)) {
+          resetTwoFactorLogin(verifyPayload.message);
+          return;
+        }
         throw new Error(verifyPayload.message || "Nao foi possivel validar a Passkey.");
       }
       window.location.replace(verifyPayload.redirectTo);

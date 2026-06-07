@@ -11,6 +11,7 @@ import {
 } from "@/lib/auth/cookies";
 import {
   completePendingTwoFactorLogin,
+  describeTwoFactorLoginError,
   readPendingTwoFactorLogin,
 } from "@/lib/auth/twoFactor";
 import { issueTrustedDevice } from "@/lib/auth/trustedDevice";
@@ -154,14 +155,19 @@ export async function POST(request: NextRequest) {
     }
     return response;
   } catch (error) {
+    const errorDetails = describeTwoFactorLoginError(
+      error,
+      "Nao foi possivel validar a Passkey.",
+    );
     return applyNoStoreHeaders(
       NextResponse.json(
         {
           ok: false,
-          message:
-            error instanceof Error ? error.message : "Nao foi possivel validar a Passkey.",
+          message: errorDetails.message,
+          ...(errorDetails.code ? { code: errorDetails.code } : {}),
+          ...(errorDetails.restartRequired ? { restartRequired: true } : {}),
         },
-        { status: 400 },
+        { status: errorDetails.statusCode },
       ),
     );
   }

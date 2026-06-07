@@ -4,7 +4,10 @@ import {
   type AuthenticatorTransportFuture,
   type Base64URLString,
 } from "@simplewebauthn/server";
-import { readPendingTwoFactorLogin } from "@/lib/auth/twoFactor";
+import {
+  describeTwoFactorLoginError,
+  readPendingTwoFactorLogin,
+} from "@/lib/auth/twoFactor";
 import {
   normalizeWebAuthnCredentialId,
   resolveWebAuthnRpId,
@@ -79,14 +82,19 @@ export async function POST(request: NextRequest) {
 
     return applyNoStoreHeaders(NextResponse.json({ ok: true, options }));
   } catch (error) {
+    const errorDetails = describeTwoFactorLoginError(
+      error,
+      "Nao foi possivel iniciar a Passkey.",
+    );
     return applyNoStoreHeaders(
       NextResponse.json(
         {
           ok: false,
-          message:
-            error instanceof Error ? error.message : "Nao foi possivel iniciar a Passkey.",
+          message: errorDetails.message,
+          ...(errorDetails.code ? { code: errorDetails.code } : {}),
+          ...(errorDetails.restartRequired ? { restartRequired: true } : {}),
         },
-        { status: 400 },
+        { status: errorDetails.statusCode },
       ),
     );
   }

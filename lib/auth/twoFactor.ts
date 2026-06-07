@@ -3,12 +3,17 @@ import * as OTPAuth from "otpauth";
 import type { PendingOtpSessionContext } from "@/lib/auth/emailOtp";
 import { createSessionForUser } from "@/lib/auth/session";
 import {
+  buildFlowSecureDiagnosticFingerprint,
+  FlowSecureDecryptionError,
   decryptFlowSecureValue,
   encryptFlowSecureValue,
 } from "@/lib/security/flowSecure";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 export type TwoFactorMethod = "totp" | "passkey";
+export const TWO_FACTOR_RESTART_REQUIRED_CODE = "two_factor_restart_required";
+const TWO_FACTOR_RESTART_REQUIRED_MESSAGE =
+  "Sua segunda etapa de login expirou ou foi renovada. Inicie o login novamente.";
 
 type PendingTwoFactorPayload = {
   userId: number;
@@ -25,10 +30,112 @@ type PendingTwoFactorRow = {
   challenge: string;
   metadata: {
     payload_encrypted?: unknown;
+    flowsecure_key_fingerprint?: unknown;
   } | null;
   expires_at: string;
   consumed_at: string | null;
 };
+
+export class PendingTwoFactorLoginError extends Error {
+  readonly code = TWO_FACTOR_RESTART_REQUIRED_CODE;
+  readonly statusCode = 409;
+  readonly restartRequired = true;
+
+  constructor(message = TWO_FACTOR_RESTART_REQUIRED_MESSAGE) {
+    super(message);
+    this.name = "PendingTwoFactorLoginError";
+  }
+}
+
+export function describeTwoFactorLoginError(error: unknown, fallbackMessage: string) {
+  if (error instanceof PendingTwoFactorLoginError) {
+    return {
+      statusCode: error.statusCode,
+      message: error.message,
+      code: error.code,
+      restartRequired: error.restartRequired,
+    };
+  }
+
+  return {
+    statusCode: 400,
+    message:
+      error instanceof Error ? error.message : fallbackMessage,
+    code: null,
+    restartRequired: false,
+  };
+}
+
+function buildTwoFactorFlowSecureFingerprint(userId: number) {
+  return buildFlowSecureDiagnosticFingerprint(
+    {
+      purpose: "auth_two_factor_login",
+      userId,
+      version: 2,
+    },
+    {
+      prefix: "fs2fa",
+      subcontext: "auth_two_factor_login",
+      maxPayloadLength: 256,
+    },
+  );
+}
+
+function isPendingTwoFactorPayload(value: unknown): value is PendingTwoFactorPayload {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Partial<PendingTwoFactorPayload>;
+  return (
+    typeof candidate.userId === "number" &&
+    Number.isSafeInteger(candidate.userId) &&
+    typeof candidate.redirectTo === "string" &&
+    typeof candidate.rememberSession === "boolean" &&
+    (candidate.ipAddress === null || typeof candidate.ipAddress === "string") &&
+    (candidate.userAgent === null || typeof candidate.userAgent === "string")
+  );
+}
+
+async function invalidateUnreadablePendingTwoFactorLogin(input: {
+  row: PendingTwoFactorRow;
+  reason: string;
+  error: unknown;
+  keyFingerprintMatches: boolean | null;
+}) {
+  const invalidatedAt = new Date().toISOString();
+  const metadata =
+    input.row.metadata && typeof input.row.metadata === "object"
+      ? input.row.metadata
+      : {};
+  const errorName = input.error instanceof Error ? input.error.name : typeof input.error;
+  const errorCode =
+    input.error instanceof FlowSecureDecryptionError
+      ? input.error.code
+      : null;
+
+  console.warn("[Auth2FA] pending login challenge invalidated", {
+    challengeId: input.row.id,
+    userId: input.row.user_id,
+    reason: input.reason,
+    errorName,
+    errorCode,
+    keyFingerprintMatches: input.keyFingerprintMatches,
+  });
+
+  const supabase = getSupabaseAdminClientOrThrow();
+  await supabase
+    .from("auth_security_challenges")
+    .update({
+      consumed_at: invalidatedAt,
+      metadata: {
+        ...metadata,
+        invalidated_at: invalidatedAt,
+        invalidated_reason: input.reason,
+        invalidated_error: errorName,
+        key_fingerprint_matches: input.keyFingerprintMatches,
+      },
+    })
+    .eq("id", input.row.id)
+    .is("consumed_at", null);
+}
 
 export async function getEnabledTwoFactorMethods(userId: number) {
   const supabase = getSupabaseAdminClientOrThrow();
@@ -61,6 +168,7 @@ export async function createPendingTwoFactorLoginIfNeeded(
     aad: String(payload.userId),
   });
   if (!encrypted) throw new Error("Nao foi possivel proteger a segunda etapa.");
+  const keyFingerprint = buildTwoFactorFlowSecureFingerprint(payload.userId);
 
   const supabase = getSupabaseAdminClientOrThrow();
   await supabase
@@ -75,7 +183,11 @@ export async function createPendingTwoFactorLoginIfNeeded(
       user_id: payload.userId,
       kind: "two_factor_login",
       challenge: crypto.randomBytes(32).toString("base64url"),
-      metadata: { payload_encrypted: encrypted },
+      metadata: {
+        payload_encrypted: encrypted,
+        flowsecure_key_fingerprint: keyFingerprint,
+        payload_schema: "auth_two_factor_login.v2",
+      },
       expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
     })
     .select("id, expires_at")
@@ -110,15 +222,40 @@ export async function readPendingTwoFactorLogin(challengeId: string) {
     typeof result.data.metadata?.payload_encrypted === "string"
       ? result.data.metadata.payload_encrypted
       : null;
-  const decrypted = decryptFlowSecureValue(encrypted, {
-    purpose: "auth_two_factor_login",
-    aad: String(result.data.user_id),
-  });
-  if (!decrypted) throw new Error("Nao foi possivel validar a segunda etapa.");
+  const storedFingerprint =
+    typeof result.data.metadata?.flowsecure_key_fingerprint === "string"
+      ? result.data.metadata.flowsecure_key_fingerprint
+      : null;
+  const currentFingerprint = buildTwoFactorFlowSecureFingerprint(result.data.user_id);
+
+  let payload: PendingTwoFactorPayload;
+  try {
+    const decrypted = decryptFlowSecureValue(encrypted, {
+      purpose: "auth_two_factor_login",
+      aad: String(result.data.user_id),
+    });
+    if (!decrypted) throw new Error("missing_two_factor_payload");
+
+    const parsed = JSON.parse(decrypted) as unknown;
+    if (!isPendingTwoFactorPayload(parsed) || parsed.userId !== result.data.user_id) {
+      throw new Error("invalid_two_factor_payload");
+    }
+    payload = parsed;
+  } catch (error) {
+    await invalidateUnreadablePendingTwoFactorLogin({
+      row: result.data,
+      reason: "payload_unreadable",
+      error,
+      keyFingerprintMatches: storedFingerprint
+        ? storedFingerprint === currentFingerprint
+        : null,
+    });
+    throw new PendingTwoFactorLoginError();
+  }
 
   return {
     row: result.data,
-    payload: JSON.parse(decrypted) as PendingTwoFactorPayload,
+    payload,
   };
 }
 
@@ -135,10 +272,20 @@ export async function verifyUserTotp(userId: number, code: unknown) {
     .maybeSingle<{ secret_encrypted: string; enabled: boolean }>();
   if (!result.data?.enabled) return false;
 
-  const secret = decryptFlowSecureValue(result.data.secret_encrypted, {
-    purpose: "auth_totp_secret",
-    aad: String(userId),
-  });
+  let secret: string | null = null;
+  try {
+    secret = decryptFlowSecureValue(result.data.secret_encrypted, {
+      purpose: "auth_totp_secret",
+      aad: String(userId),
+    });
+  } catch (error) {
+    console.warn("[Auth2FA] TOTP secret unreadable", {
+      userId,
+      errorName: error instanceof Error ? error.name : typeof error,
+      errorCode:
+        error instanceof FlowSecureDecryptionError ? error.code : null,
+    });
+  }
   if (!secret) return false;
 
   const totp = new OTPAuth.TOTP({
