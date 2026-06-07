@@ -1598,7 +1598,9 @@ export async function GET(request: Request) {
     const purchaseContext = resolvePurchaseContext({
       type:
         url.searchParams.get("purchaseType") ||
+        (url.searchParams.get("source") === "dashboard-domains" ? "domain" : null) ||
         (url.searchParams.get("source") === "dashboard-hosting" ? "hosting" : null),
+      token: url.searchParams.get("domainToken"),
       hostingKind: url.searchParams.get("hostingKind"),
       hostingPlan: url.searchParams.get("hostingPlan"),
       hostingRegion: url.searchParams.get("hostingRegion"),

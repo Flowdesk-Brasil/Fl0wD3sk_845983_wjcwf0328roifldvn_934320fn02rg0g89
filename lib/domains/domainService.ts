@@ -74,6 +74,7 @@ type DomainRow = {
   tld: string;
   provider: DomainProviderName;
   provider_domain_id: string | null;
+  registrant_contact_id?: string | null;
   status: DomainRecord["status"];
   registration_period: number;
   auto_renew: boolean;
@@ -118,6 +119,13 @@ type DomainPaymentOrder = {
   amount?: string | number | null;
   currency?: string | null;
   provider_payload?: unknown;
+};
+
+type DomainMoveTargetUser = {
+  id: number;
+  email: string | null;
+  username: string | null;
+  display_name: string | null;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -778,6 +786,119 @@ export async function requestDomainAuthCode(input: { authUserId: number; domainI
   if (!provider || !domain.provider_domain_id) throw new Error("Registrador do dominio indisponivel.");
   if (domain.transfer_lock) throw new Error("Desative o bloqueio de transferencia antes de solicitar o Auth Code.");
   return provider.requestAuthCode(domain.provider_domain_id, domain.fqdn);
+}
+
+async function findDomainMoveTargetUser(targetAccount: string) {
+  const normalized = targetAccount.trim().toLowerCase();
+  if (!/^[a-z0-9._%+\-@]{3,254}$/i.test(normalized)) {
+    throw new Error("Informe um e-mail ou usuario Flowdesk valido.");
+  }
+
+  const supabase = getSupabaseAdminClientOrThrow();
+  const candidates = new Map<number, DomainMoveTargetUser>();
+  const addCandidate = (user: Record<string, unknown>) => {
+    const id = Number(user.id);
+    if (!Number.isInteger(id) || id <= 0) return;
+    candidates.set(id, {
+      id,
+      email: typeof user.email === "string" ? user.email : null,
+      username: typeof user.username === "string" ? user.username : null,
+      display_name: typeof user.display_name === "string" ? user.display_name : null,
+    });
+  };
+
+  if (normalized.includes("@")) {
+    const byEmail = await supabase
+      .from("auth_users")
+      .select("id, email, username, display_name")
+      .ilike("email", normalized)
+      .limit(2);
+    if (byEmail.error) throw new Error(byEmail.error.message);
+    for (const user of byEmail.data || []) addCandidate(user as Record<string, unknown>);
+  }
+
+  const byUsername = await supabase
+    .from("auth_users")
+    .select("id, email, username, display_name")
+    .ilike("username", normalized.replace(/^@/, ""))
+    .limit(2);
+  if (byUsername.error) throw new Error(byUsername.error.message);
+  for (const user of byUsername.data || []) addCandidate(user as Record<string, unknown>);
+
+  if (candidates.size === 0) throw new Error("Conta Flowdesk de destino nao encontrada.");
+  if (candidates.size > 1) throw new Error("Mais de uma conta corresponde ao destino. Use o e-mail completo.");
+
+  return Array.from(candidates.values())[0];
+}
+
+export async function moveDomainToFlowdeskAccount(input: {
+  authUserId: number;
+  domainId: string;
+  targetAccount: string;
+}) {
+  const domain = await getDomainRow(input.authUserId, input.domainId);
+  if (!["active", "registered", "expired", "suspended", "client_hold", "server_hold"].includes(domain.status)) {
+    throw new Error("Somente dominios ja registrados podem ser movidos para outra conta.");
+  }
+
+  const targetUser = await findDomainMoveTargetUser(input.targetAccount);
+  if (targetUser.id === input.authUserId) {
+    throw new Error("Esse dominio ja pertence a esta conta.");
+  }
+
+  const supabase = getSupabaseAdminClientOrThrow();
+  const existingTargetDomain = await supabase
+    .from("domains")
+    .select("id")
+    .eq("auth_user_id", targetUser.id)
+    .eq("fqdn", domain.fqdn)
+    .maybeSingle<{ id: string }>();
+  if (existingTargetDomain.error) throw new Error(existingTargetDomain.error.message);
+  if (existingTargetDomain.data) {
+    throw new Error("A conta de destino ja possui esse dominio.");
+  }
+
+  const now = new Date().toISOString();
+  const moved = await supabase
+    .from("domains")
+    .update({
+      auth_user_id: targetUser.id,
+      updated_at: now,
+    })
+    .eq("id", domain.id)
+    .eq("auth_user_id", input.authUserId)
+    .select("*")
+    .single<DomainRow>();
+  if (moved.error || !moved.data) throw new Error(moved.error?.message || "Falha ao mover dominio.");
+
+  await Promise.all([
+    supabase.from("domain_dns_records").update({ auth_user_id: targetUser.id }).eq("domain_id", domain.id),
+    supabase.from("domain_transfers").update({ auth_user_id: targetUser.id }).eq("domain_id", domain.id),
+    domain.registrant_contact_id
+      ? supabase.from("domain_contacts").update({ auth_user_id: targetUser.id }).eq("id", domain.registrant_contact_id)
+      : Promise.resolve({ error: null }),
+  ]);
+
+  await logDomainEvent({
+    domainId: domain.id,
+    authUserId: input.authUserId,
+    eventType: "internal_account_move_completed",
+    payload: {
+      fromAuthUserId: input.authUserId,
+      toAuthUserId: targetUser.id,
+      targetUsername: targetUser.username || null,
+    },
+  });
+
+  return {
+    domain: mapDomain(moved.data),
+    target: {
+      id: targetUser.id,
+      username: targetUser.username,
+      displayName: targetUser.display_name,
+      email: targetUser.email,
+    },
+  };
 }
 
 export async function listUserDomainTransfers(input: { authUserId: number }) {
