@@ -161,6 +161,7 @@ export async function getAccountPersonalData(userId: number) {
 
   return {
     profile: {
+      authUserId: user.id,
       displayName: user.display_name,
       username: user.username,
       email: user.email,

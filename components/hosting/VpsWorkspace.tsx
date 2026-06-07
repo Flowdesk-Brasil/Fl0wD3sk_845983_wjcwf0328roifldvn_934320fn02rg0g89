@@ -55,6 +55,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { useNotifications } from "@/components/notifications/NotificationsProvider";
+import { useLiveAccountProfile } from "@/hooks/useLiveAccountProfile";
 import { buildDiscordAuthStartHref, buildLoginHref } from "@/lib/auth/paths";
 
 type RuntimeStatus = "online" | "offline" | "restarting" | "deploying" | "crashed" | "suspended" | "unknown";
@@ -1597,7 +1598,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
   const autoSyncedDeploymentsRef = useRef(false);
   const initializedExplorerRef = useRef(false);
   const logsClearedAtRef = useRef<number | null>(null);
-  const currentAccount = snapshot.account;
+  const currentAccount = useLiveAccountProfile(snapshot.account);
   const latestMetric = snapshot.metrics[snapshot.metrics.length - 1] || null;
   const shouldShowTabSkeleton = Boolean(pendingTab && pendingTab === tab);
   const centeredMainTabs = tab === "overview" || tab === "metrics" || tab === "env";

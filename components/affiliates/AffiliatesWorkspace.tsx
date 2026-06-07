@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import {
@@ -31,6 +31,7 @@ import {
 import { LandingReveal } from "@/components/landing/LandingReveal";
 import { LandingGlowTag } from "@/components/landing/LandingGlowTag";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
+import { useLiveAccountProfile } from "@/hooks/useLiveAccountProfile";
 import { buildLoginHref } from "@/lib/auth/paths";
 import { formatCurrency, getLevelConfig } from "@/lib/affiliates/affiliateLevels";
 import type {
@@ -67,6 +68,7 @@ type NavItem = {
 };
 
 export type AffiliatesWorkspaceProps = {
+  authUserId: number;
   displayName: string;
   username: string;
   avatarUrl: string | null;
@@ -1286,6 +1288,7 @@ function MousePointerClickIcon({ className, strokeWidth }: { className?: string;
 void MousePointerClickIcon;
 
 export function AffiliatesWorkspace({
+  authUserId,
   displayName,
   username,
   avatarUrl,
@@ -1297,6 +1300,16 @@ export function AffiliatesWorkspace({
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [sidebarSearch, setSidebarSearch] = useState("");
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
+  const initialAccountProfile = useMemo(
+    () => ({
+      authUserId,
+      displayName,
+      username,
+      avatarUrl,
+    }),
+    [authUserId, avatarUrl, displayName, username],
+  );
+  const currentAccount = useLiveAccountProfile(initialAccountProfile);
 
   const { profile, stats, insight, links, conversions, withdrawals, ranking, settings, loading, reload } = useAffiliateData();
 
@@ -1428,13 +1441,13 @@ export function AffiliatesWorkspace({
             className="flex w-full items-center justify-between gap-[12px] rounded-[18px] border border-[#111111] bg-[#080808] px-[10px] py-[10px] text-left transition-colors hover:border-[#1A1A1A] hover:bg-[#0B0B0B]"
           >
             <div className="flex min-w-0 items-center gap-[10px]">
-              <AccountAvatar avatarUrl={avatarUrl} displayName={displayName} size={38} />
+              <AccountAvatar avatarUrl={currentAccount.avatarUrl} displayName={currentAccount.displayName} size={38} />
               <div className="min-w-0">
                 <p className="truncate text-[15px] leading-none font-medium tracking-[-0.03em] text-[#E5E5E5]">
-                  {displayName}
+                  {currentAccount.displayName}
                 </p>
                 <p className="mt-[5px] truncate text-[12px] leading-none text-[#686868]">
-                  @{username}
+                  @{currentAccount.username}
                 </p>
               </div>
             </div>

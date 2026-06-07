@@ -39,6 +39,7 @@ import {
 import { getFriendlyWebAuthnError } from "@/lib/auth/webauthnClient";
 import { getPasswordPolicyChecklist } from "@/lib/auth/passwordPolicy";
 import { useBodyScrollLock } from "@/lib/ui/useBodyScrollLock";
+import { publishLiveAccountProfile } from "@/hooks/useLiveAccountProfile";
 
 type ProviderId = "discord" | "google" | "microsoft" | "github";
 
@@ -55,6 +56,7 @@ type ProviderData = {
 
 type PersonalData = {
   profile: {
+    authUserId: number;
     displayName: string;
     username: string;
     email: string | null;
@@ -313,6 +315,10 @@ export function PersonalDataTab() {
   const [totpQrCode, setTotpQrCode] = useState<string | null>(null);
   const [totpSecret, setTotpSecret] = useState<string | null>(null);
   const [totpCode, setTotpCode] = useState("");
+  const liveProfileAuthUserId = data?.profile?.authUserId ?? null;
+  const liveProfileAvatarUrl = data?.profile?.avatarUrl ?? null;
+  const liveProfileDisplayName = data?.profile?.displayName ?? "";
+  const liveProfileUsername = data?.profile?.username ?? "";
 
   useEffect(() => {
     return () => {
@@ -321,6 +327,24 @@ export function PersonalDataTab() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof liveProfileAuthUserId !== "number") return;
+    publishLiveAccountProfile({
+      authUserId: liveProfileAuthUserId,
+      displayName: liveProfileDisplayName,
+      username: liveProfileUsername,
+      avatarUrl: avatarPreviewUrl || liveProfileAvatarUrl,
+    }, {
+      persist: !avatarPreviewUrl,
+    });
+  }, [
+    avatarPreviewUrl,
+    liveProfileAuthUserId,
+    liveProfileAvatarUrl,
+    liveProfileDisplayName,
+    liveProfileUsername,
+  ]);
 
   async function refresh() {
     await mutate();

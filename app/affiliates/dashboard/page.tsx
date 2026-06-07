@@ -46,6 +46,7 @@ export default async function AffiliatesDashboardPage({
 
   return (
     <AffiliatesWorkspace
+      authUserId={user.id}
       displayName={user.username}
       username={user.username}
       avatarUrl={resolveAuthUserAvatarUrl(user)}

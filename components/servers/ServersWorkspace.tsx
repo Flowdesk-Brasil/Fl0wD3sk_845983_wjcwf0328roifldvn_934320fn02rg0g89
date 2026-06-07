@@ -91,6 +91,7 @@ import {
 } from "@/lib/routing/browserWarmup";
 import { useLatchedPendingKey } from "@/lib/ui/useLatchedPendingKey";
 import { fetchClientData } from "@/lib/performance/clientData";
+import { useLiveAccountProfile } from "@/hooks/useLiveAccountProfile";
 
 type ServersWorkspaceProps = {
   displayName: string;
@@ -1445,8 +1446,7 @@ function ServerGridCard({
 }
 
 export function ServersWorkspace({
-  displayName,
-  currentAccount,
+  currentAccount: initialCurrentAccount,
   initialGuildId = null,
   initialTab = "settings",
   initialSettingsSection = "overview",
@@ -1457,6 +1457,7 @@ export function ServersWorkspace({
 }: ServersWorkspaceProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const currentAccount = useLiveAccountProfile(initialCurrentAccount);
   const workspaceCacheKey = `${currentAccount.authUserId}:${currentAccount.discordUserId ?? "no-discord"}`;
   const initialServersSnapshot =
     initialServers ?? readManagedServersMemoryCache(workspaceCacheKey);
@@ -3411,7 +3412,7 @@ export function ServersWorkspace({
             )}
             <div className="min-w-0">
               <p className="truncate text-[15px] leading-none font-medium tracking-[-0.03em] text-[#E5E5E5]">
-                {selectedTeam ? selectedTeam.name : displayName}
+                {selectedTeam ? selectedTeam.name : currentAccount.displayName}
               </p>
               <p className="mt-[5px] truncate text-[12px] leading-none text-[#6D6D6D]">{teamSummaryLabel}</p>
             </div>

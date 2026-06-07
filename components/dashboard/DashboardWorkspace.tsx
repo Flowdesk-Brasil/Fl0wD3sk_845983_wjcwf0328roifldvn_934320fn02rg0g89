@@ -75,6 +75,7 @@ import {
 } from "@/lib/teams/selectedTeamStorage";
 import { useLatchedPendingKey } from "@/lib/ui/useLatchedPendingKey";
 import { useBodyScrollLock } from "@/lib/ui/useBodyScrollLock";
+import { useLiveAccountProfile } from "@/hooks/useLiveAccountProfile";
 
 type DashboardWorkspaceProps = {
   currentAccount: {
@@ -762,7 +763,7 @@ function DashboardNavButton({
 }
 
 export function DashboardWorkspace({
-  currentAccount,
+  currentAccount: initialCurrentAccount,
   initialServers = null,
   initialTeams = null,
   initialPendingInvites = null,
@@ -780,6 +781,7 @@ export function DashboardWorkspace({
   const router = useRouter();
   const pathname = usePathname();
   const [, startSidebarNavigationTransition] = useTransition();
+  const currentAccount = useLiveAccountProfile(initialCurrentAccount);
   const workspaceCacheKey = `${currentAccount.authUserId}:${currentAccount.discordUserId}`;
   const initialServersSnapshot =
     initialServers ?? readManagedServersMemoryCache(workspaceCacheKey);
