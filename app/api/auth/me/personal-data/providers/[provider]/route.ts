@@ -59,6 +59,7 @@ export async function DELETE(
       session.user.id,
       "provider_unlink",
       body.securityProof,
+      { target: `provider:${provider}` },
     );
     await unlinkAccountProvider(session.user.id, provider);
     invalidateAuthSessionCache();

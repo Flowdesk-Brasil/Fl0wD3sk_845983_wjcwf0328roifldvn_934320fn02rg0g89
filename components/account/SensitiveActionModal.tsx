@@ -17,6 +17,7 @@ import { useBodyScrollLock } from "@/lib/ui/useBodyScrollLock";
 type SensitiveActionModalProps = {
   isOpen: boolean;
   action: SensitiveAccountAction;
+  target?: string | null;
   title: string;
   description: string;
   onClose: () => void;
@@ -55,6 +56,7 @@ async function postJson(url: string, body: unknown) {
 export function SensitiveActionModal({
   isOpen,
   action,
+  target,
   title,
   description,
   onClose,
@@ -84,7 +86,10 @@ export function SensitiveActionModal({
     setCode("");
     setError(null);
 
-    void postJson("/api/auth/me/security-verification/start", { action })
+    void postJson("/api/auth/me/security-verification/start", {
+      action,
+      ...(target ? { target } : {}),
+    })
       .then(async (payload) => {
         if (cancelled) return;
         const response = payload as StartResponse;
@@ -114,7 +119,7 @@ export function SensitiveActionModal({
     return () => {
       cancelled = true;
     };
-  }, [action, isOpen]);
+  }, [action, isOpen, target]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -134,6 +139,7 @@ export function SensitiveActionModal({
         challengeId,
         code,
         action,
+        ...(target ? { target } : {}),
       });
       await onVerifiedRef.current(String(payload.proof));
     } catch (verifyError) {
@@ -161,7 +167,7 @@ export function SensitiveActionModal({
       });
       const verifyPayload = await postJson(
         "/api/auth/me/security-verification/passkey/verify",
-        { challengeId, response: credential, action },
+        { challengeId, response: credential, action, ...(target ? { target } : {}) },
       );
       await onVerifiedRef.current(String(verifyPayload.proof));
     } catch (verifyError) {

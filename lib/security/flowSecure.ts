@@ -264,14 +264,14 @@ export function decryptFlowSecureValue(
       decipher.update(Buffer.from(ciphertextBase64, "base64url")),
       decipher.final(),
     ]).toString("utf8");
-  } catch (error) {
+  } catch {
     if (input.allowPlaintextFallback) {
       return normalized;
     }
 
-    throw error instanceof Error
-      ? error
-      : new Error("Nao foi possivel descriptografar o valor protegido.");
+    throw new Error(
+      "Nao foi possivel validar os dados protegidos. Reabra esta etapa e tente novamente.",
+    );
   }
 }
 
