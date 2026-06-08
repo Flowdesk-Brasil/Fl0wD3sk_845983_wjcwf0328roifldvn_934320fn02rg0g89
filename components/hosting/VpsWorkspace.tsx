@@ -53,6 +53,7 @@ import {
   X,
   ZoomIn,
   ZoomOut,
+  Rocket,
 } from "lucide-react";
 import { useNotifications } from "@/components/notifications/NotificationsProvider";
 import { useLiveAccountProfile } from "@/hooks/useLiveAccountProfile";
@@ -1802,6 +1803,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
           ...current.project,
           runtimeStatus: payload.project?.runtime_status || current.project.runtimeStatus,
           runtimeLastSeenAt: payload.project?.runtime_last_seen_at || current.project.runtimeLastSeenAt,
+          status: payload.project?.status || current.project.status,
         },
         metrics: payload.metric ? [...current.metrics.slice(-47), payload.metric] : current.metrics,
         logs: logsPaused ? current.logs : mergeUniqueLogs(current.logs, incomingLogs),
@@ -2892,6 +2894,32 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     };
     return snapshot.fileTree.map(filterNode).filter((item): item is VpsFileNode => Boolean(item));
   }, [fileQuery, snapshot.fileTree]);
+
+  if (snapshot.project.status === "provisioning" || snapshot.project.status === "pending_provision" || snapshot.project.status === "pending_payment") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#050505] p-6 font-sans">
+        <div className="w-full max-w-[500px] rounded-[24px] border border-[#171717] bg-[#0A0A0A] p-[38px] text-center shadow-[0_24px_80px_rgba(0,0,0,0.28)]">
+          <span className="mx-auto flex h-[64px] w-[64px] items-center justify-center rounded-[20px] border border-[#202020] bg-[#111111] text-white">
+            <Rocket className="h-[28px] w-[28px]" />
+          </span>
+          <h2 className="mt-[24px] text-[24px] font-semibold tracking-[-0.04em] text-white">
+            Preparando sua VPS...
+          </h2>
+          <p className="mt-[12px] text-[14px] leading-[1.6] text-[#8E8E8E]">
+            Estamos alocando os recursos na regiao escolhida, configurando seu ambiente isolado e integrando o GitHub.
+            <br /><br />
+            Volte aqui em cerca de <strong className="text-white">3 minutos</strong>. Voce tambem sera avisado por e-mail assim que a maquina estiver online e pronta para uso.
+          </p>
+          <div className="mt-[36px] flex flex-col items-center justify-center gap-[14px]">
+            <Loader2 className="h-[24px] w-[24px] animate-spin text-[#0F62FE]" />
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#555555]">
+              Provisionando infraestrutura
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <main className="flowdesk-vps-ui min-h-screen bg-[#050505] text-[#F1F1F1]">

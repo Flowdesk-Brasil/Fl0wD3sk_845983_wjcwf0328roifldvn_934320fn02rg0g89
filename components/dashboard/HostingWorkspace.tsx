@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -216,7 +216,7 @@ function resolveProjectCardStatus(project: HostingProjectCard) {
   if (paymentStatus === "refunded" || paymentStatus === "partially_refunded" || billingStatus === "refunded") {
     return { label: "Restornada ate vencimento", tone: "warning" as const, accessUntil };
   }
-  if (project.status === "active") {
+  if (project.status === "active" || project.runtime_status === "online") {
     return { label: "Ativa", tone: "success" as const, accessUntil };
   }
   return { label: "Provisionando", tone: "info" as const, accessUntil };
@@ -440,10 +440,10 @@ function HostingProjectsOverview({
                   <div className="flex flex-wrap items-start justify-between gap-[12px]">
                     <div className="min-w-0">
                       <h3 className="truncate text-[20px] font-semibold tracking-[-0.04em] text-white">
-                        {project.github_repo}
+                        {project.github_repo.length > 15 ? project.github_repo.slice(0, 15) + "..." : project.github_repo}
                       </h3>
                       <p className="mt-[5px] truncate font-mono text-[12px] text-[#858585]">
-                        {project.github_owner}/{project.github_repo} - {project.github_branch}
+                        {project.github_owner}/{project.github_repo.length > 15 ? project.github_repo.slice(0, 15) + "..." : project.github_repo} - {project.github_branch}
                       </p>
                     </div>
                     <span className={`rounded-full border px-[10px] py-[6px] text-[11px] font-bold uppercase tracking-[0.12em] ${statusClass}`}>
