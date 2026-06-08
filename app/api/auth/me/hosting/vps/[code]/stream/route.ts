@@ -127,7 +127,7 @@ export async function GET(_request: NextRequest, { params }: RouteProps) {
                daemonPayload.status === "online" &&
                (project.status === "provisioning" || project.status === "pending_provision")
             ) {
-               await supabaseAdmin
+               await supabase
                  .from("hosting_projects")
                  .update({ status: "active", runtime_status: "online" })
                  .eq("id", project.id);
