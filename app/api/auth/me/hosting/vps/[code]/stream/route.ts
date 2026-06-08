@@ -139,8 +139,10 @@ export async function GET(_request: NextRequest, { params }: RouteProps) {
                .in("status", ["provisioning", "pending_provision"])
                .select("id");
              
-             projectResult.data.status = "active";
-             projectResult.data.runtime_status = daemonPayload.status;
+             if (projectResult.data) {
+               projectResult.data.status = "active";
+               projectResult.data.runtime_status = daemonPayload.status;
+             }
 
              if (updatedRows && updatedRows.length > 0) {
                void sendVpsProvisionedEmailSafe({

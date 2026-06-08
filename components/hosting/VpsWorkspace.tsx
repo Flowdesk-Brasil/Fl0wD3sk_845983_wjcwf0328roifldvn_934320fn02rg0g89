@@ -1787,7 +1787,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     const events = new EventSource(`/api/auth/me/hosting/vps/${snapshot.project.vpsCode}/stream`);
     events.addEventListener("snapshot", (event) => {
       const payload = JSON.parse((event as MessageEvent).data) as {
-        project?: { runtime_status?: RuntimeStatus; runtime_last_seen_at?: string | null };
+        project?: { runtime_status?: RuntimeStatus; runtime_last_seen_at?: string | null; status?: string };
         metric?: VpsMetric | null;
         logs?: VpsLog[];
         actions?: Array<Record<string, unknown>>;
