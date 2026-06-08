@@ -251,7 +251,7 @@ export async function POST(request: NextRequest) {
 
   // Aciona o deploy no Daemon recém configurado na Hostinger
   try {
-    const daemonUrl = `http://2.25.183.234:5001/api/v1/projects/${project.vps_code}/deploy`;
+    const daemonUrl = `http://2.25.183.234:5001/v1/vps/${project.vps_code}/actions/deploy`;
     const daemonToken = "flowdesk-super-secret-token-v1"; // Mesma chave gerada para o server
     
     // Fazendo a chamada Fire-and-Forget
