@@ -727,6 +727,7 @@ export async function sendSupportTicketOpenedEmailSafe(input: {
     ],
     action: normalizeUrl(input.channelUrl)
       ? { label: "ABRIR TICKET", href: input.channelUrl as string }
+      : null,
   }).catch((error) => {
     console.warn("[transactional-email] support-ticket failed:", error);
   });
