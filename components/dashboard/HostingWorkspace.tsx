@@ -1364,11 +1364,11 @@ function HostingPlanCard({
   onSelect: () => void;
 }) {
   return (
-    <div className="relative w-full max-w-[372px] justify-self-center min-[1580px]:max-w-none">
+    <div className="relative w-full max-w-[372px] justify-self-center xl:max-w-none">
       {plan.recommended ? (
         <>
-          <div className="pointer-events-none absolute inset-x-0 top-0 z-10 hidden h-[304px] rounded-[25px] bg-[#0062FF] min-[1580px]:top-[-43px] min-[1580px]:block" />
-          <div className="absolute inset-x-0 top-0 z-30 hidden h-[45px] items-center justify-center px-[20px] text-center text-[13px] leading-none font-medium tracking-[0.02em] text-white min-[1580px]:top-[-43px] min-[1580px]:flex">
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-10 hidden h-[304px] rounded-[25px] bg-[#0062FF] xl:top-[-43px] xl:block" />
+          <div className="absolute inset-x-0 top-0 z-30 hidden h-[45px] items-center justify-center px-[20px] text-center text-[13px] leading-none font-medium tracking-[0.02em] text-white xl:top-[-43px] xl:flex">
             RECOMENDADO
           </div>
         </>
@@ -1376,7 +1376,7 @@ function HostingPlanCard({
       <article
         className={`relative z-20 flex h-full flex-col items-start overflow-hidden rounded-[24px] bg-[#0A0A0A] px-[20px] pb-[18px] pt-[20px] text-left ${
           plan.recommended
-            ? "shadow-[inset_0_0_0_2px_#0062FF] min-[1580px]:shadow-[inset_2px_0_0_#0062FF,inset_-2px_0_0_#0062FF,inset_0_-2px_0_#0062FF]"
+            ? "shadow-[inset_0_0_0_2px_#0062FF] xl:shadow-[inset_2px_0_0_#0062FF,inset_-2px_0_0_#0062FF,inset_0_-2px_0_#0062FF]"
             : "shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]"
         }`}
       >
@@ -1462,7 +1462,7 @@ function PlanStep({
           Continuar
         </ActionButton>
       </div>
-      <div className="grid w-full max-w-[372px] grid-cols-1 items-start justify-items-center gap-x-[12px] gap-y-[26px] md:max-w-[756px] md:grid-cols-2 xl:max-w-none xl:grid-cols-3 xl:justify-items-stretch">
+      <div className="grid w-full max-w-[372px] grid-cols-1 items-start justify-items-center gap-x-[12px] gap-y-[26px] md:gap-y-[64px] xl:gap-y-[72px] md:max-w-[756px] md:grid-cols-2 md:gap-y-[64px] xl:max-w-none xl:grid-cols-3 xl:justify-items-stretch">
         {plans.map((plan) => (
           <HostingPlanCard
             key={plan.id}
