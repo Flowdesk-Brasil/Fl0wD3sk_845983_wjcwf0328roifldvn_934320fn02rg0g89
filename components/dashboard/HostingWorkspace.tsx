@@ -1462,7 +1462,7 @@ function PlanStep({
           Continuar
         </ActionButton>
       </div>
-      <div className="grid w-full max-w-[372px] grid-cols-1 items-start justify-items-center gap-x-[12px] gap-y-[26px] min-[900px]:max-w-[756px] min-[900px]:grid-cols-2 min-[1580px]:max-w-none min-[1580px]:grid-cols-3 min-[1580px]:justify-items-stretch">
+      <div className="grid w-full max-w-[372px] grid-cols-1 items-start justify-items-center gap-x-[12px] gap-y-[26px] md:max-w-[756px] md:grid-cols-2 xl:max-w-none xl:grid-cols-3 xl:justify-items-stretch">
         {plans.map((plan) => (
           <HostingPlanCard
             key={plan.id}
