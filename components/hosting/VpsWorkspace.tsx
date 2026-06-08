@@ -944,14 +944,16 @@ function deploymentPrimaryBadge(deploy: VpsDeployment) {
   return { label: "Ready", className: "border-[rgba(52,168,83,0.32)] bg-[rgba(52,168,83,0.1)] text-[#9BE7AC]" };
 }
 
-function deploymentEnvironmentBadges(deploy: VpsDeployment, productionBranch: string) {
+function deploymentEnvironmentBadges(deploy: VpsDeployment, productionBranch: string, isActiveProduction: boolean) {
   const pullRequestUrl = deploymentMetadataString(deploy, "pullRequestUrl");
   const isProduction = deploy.environment === "production" && deploy.branch === productionBranch && !pullRequestUrl;
   const badges = [
     {
       label: isProduction ? "Production" : deploy.environment === "development" ? "Development" : "Preview",
       className: isProduction
-        ? "border-[rgba(15,98,254,0.36)] bg-[#0F62FE] text-white"
+        ? isActiveProduction
+          ? "border-[rgba(15,98,254,0.36)] bg-[#0F62FE] text-white"
+          : "border-[#2A2A2A] bg-[#060606] text-[#808080]"
         : "border-[#2A2A2A] bg-[#060606] text-[#DADADA]",
     },
   ];
@@ -4206,22 +4208,33 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
 
             <div className="min-h-0 flex-1 overflow-auto [scrollbar-color:#2A2A2A_#050505] [scrollbar-gutter:stable] [scrollbar-width:thin]">
               <div className="min-w-[1180px]">
-                <div className="grid grid-cols-[minmax(360px,1.8fr)_132px_116px_112px_minmax(190px,0.9fr)_120px_54px] border-b border-[#101010] bg-[#060606] px-[12px] py-[9px] text-[10px] font-bold uppercase tracking-[0.12em] text-[#565656]">
-                  <span>Deployment</span>
-                  <span>Status</span>
-                  <span>Environment</span>
-                  <span>Commit</span>
-                  <span>Branch</span>
-                  <span className="text-right">Updated</span>
-                  <span />
-                </div>
-                {filteredDeployments.length ? filteredDeployments.map((deploy) => {
-                  const commitUrl = deploymentMetadataString(deploy, "commitUrl") ||
-                    (deploy.commit_sha ? `${snapshot.project.repository.htmlUrl}/commit/${deploy.commit_sha}` : null);
-                  const pullRequestUrl = deploymentMetadataString(deploy, "pullRequestUrl");
-                  const authorAvatarUrl = deploymentMetadataString(deploy, "authorAvatarUrl");
-                  const statusBadge = deploymentPrimaryBadge(deploy);
-                  const environmentBadges = deploymentEnvironmentBadges(deploy, snapshot.project.repository.branch);
+                {(() => {
+                  const activeProductionDeployId = snapshot.deployments.find((d) => 
+                    d.environment === "production" && 
+                    d.branch === snapshot.project.repository.branch && 
+                    !deploymentMetadataString(d, "pullRequestUrl") &&
+                    deploymentStatusFamily(d.status) === "ready"
+                  )?.id;
+
+                  return (
+                    <>
+                      <div className="grid grid-cols-[minmax(360px,1.8fr)_132px_116px_112px_minmax(190px,0.9fr)_120px_54px] border-b border-[#101010] bg-[#060606] px-[12px] py-[9px] text-[10px] font-bold uppercase tracking-[0.12em] text-[#565656]">
+                        <span>Deployment</span>
+                        <span>Status</span>
+                        <span>Environment</span>
+                        <span>Commit</span>
+                        <span>Branch</span>
+                        <span className="text-right">Updated</span>
+                        <span />
+                      </div>
+                      {filteredDeployments.length ? filteredDeployments.map((deploy) => {
+                        const commitUrl = deploymentMetadataString(deploy, "commitUrl") ||
+                          (deploy.commit_sha ? `${snapshot.project.repository.htmlUrl}/commit/${deploy.commit_sha}` : null);
+                        const pullRequestUrl = deploymentMetadataString(deploy, "pullRequestUrl");
+                        const authorAvatarUrl = deploymentMetadataString(deploy, "authorAvatarUrl");
+                        const statusBadge = deploymentPrimaryBadge(deploy);
+                        const environmentBadges = deploymentEnvironmentBadges(deploy, snapshot.project.repository.branch, deploy.id === activeProductionDeployId);
+
                   return (
                     <article key={deploy.id} className={`relative grid min-h-[56px] grid-cols-[minmax(360px,1.8fr)_132px_116px_112px_minmax(190px,0.9fr)_120px_54px] items-center border-b border-[#101010] px-[12px] text-[12px] transition-colors hover:bg-[#0B0B0B] ${deploymentMenuId === deploy.id ? "z-[170]" : "z-0"}`}>
                       <div className="min-w-0 pr-[18px]">
@@ -4322,6 +4335,9 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                     </div>
                   </div>
                 )}
+                    </>
+                  );
+                })()}
               </div>
             </div>
           </section>
