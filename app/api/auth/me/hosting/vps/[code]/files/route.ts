@@ -409,18 +409,60 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
       path: `/v1/vps/${loaded.project.vps_code}/files?path=${encodeURIComponent(path)}${sync ? "&recursive=1" : ""}`,
       timeoutMs: 12_000,
     });
+    
     if (raw && path) {
       const response = buildRawFileResponse(path, extractFilePayload(payload));
       if (response) return response;
       throw new Error("Arquivo bruto indisponivel no agente.");
-    } else {
-      return applyNoStoreHeaders(
-        NextResponse.json({
-          ok: true,
-          ...(isRecord(payload) ? payload : { payload }),
-        }),
-      );
+    } 
+
+    const agentPayload = isRecord(payload) ? payload : { payload };
+    const treeEmpty = !agentPayload.tree || (Array.isArray(agentPayload.tree) && agentPayload.tree.length === 0);
+
+    if (treeEmpty && !path) {
+      // VPS ta online mas ta vazia (sem deploy). Mostra do github!
+      let githubFailed = false;
+      let tree = null;
+      const token = await readHostingGitHubToken(loaded.session.user.id).catch(() => null);
+      if (token) {
+        tree = await fetchHostingGitHubRepositoryTree({
+          token,
+          owner: loaded.project.github_owner,
+          repo: loaded.project.github_repo,
+          branch: loaded.project.github_branch,
+        }).catch((error) => {
+          githubFailed = isPermanentHostingGitHubAuthError(error);
+          return null;
+        });
+      }
+
+      if (tree) {
+        return applyNoStoreHeaders(
+          NextResponse.json({ ok: true, tree, agentConnected: true, source: "github" }),
+        );
+      } else {
+        return applyNoStoreHeaders(
+          NextResponse.json({
+            ok: true,
+            tree: [],
+            agentConnected: true,
+            reconnectRequired: !token || githubFailed,
+            message: !token
+              ? "Reconecte o GitHub para espelhar os arquivos na VPS vazia."
+              : githubFailed
+                ? "Nao consegui validar o GitHub deste repositorio. Reconecte a conta."
+                : "Repositorio vazio ou sem arquivos suportados.",
+          }),
+        );
+      }
     }
+
+    return applyNoStoreHeaders(
+      NextResponse.json({
+        ok: true,
+        ...agentPayload,
+      }),
+    );
   } catch {
     const runtimePayload = isRecord(loaded.project.runtime_status_payload)
       ? loaded.project.runtime_status_payload

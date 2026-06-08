@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentAuthSessionFromCookie } from "@/lib/auth/session";
 import {
   appendVpsEvent,
+  decryptEnvValue,
   getHostingProjectForUser,
   normalizeVpsCode,
   requestVpsAgent,
@@ -9,6 +10,7 @@ import {
   resolveRuntimeStatus,
   type VpsAction,
 } from "@/lib/hosting/vpsRuntime";
+import { readHostingGitHubToken } from "@/lib/hosting/github";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 
@@ -33,6 +35,47 @@ function nextRuntimeStatusForAction(action: VpsAction) {
   if (action === "restart") return "restarting" as const;
   if (action === "deploy" || action === "rollback") return "deploying" as const;
   return "unknown" as const;
+}
+
+/** Busca todas as env vars do projeto no Supabase, descriptografa e monta o .env */
+async function buildEnvFileContent(projectId: number): Promise<string> {
+  const supabase = getSupabaseAdminClientOrThrow();
+  const { data } = await supabase
+    .from("hosting_vps_env_vars")
+    .select("key, encrypted_value, visible_value, sensitive, environment")
+    .eq("hosting_project_id", projectId)
+    .order("environment")
+    .order("key");
+
+  if (!data?.length) return "";
+
+  // Production takes priority; merge all envs, production overwrites others
+  const merged: Record<string, string> = {};
+  for (const env of ["development", "preview", "production"]) {
+    for (const row of data.filter((r) => r.environment === env)) {
+      try {
+        const value = row.sensitive !== false && row.encrypted_value
+          ? decryptEnvValue(row.encrypted_value) ?? (row.visible_value || "")
+          : (row.visible_value || "");
+        if (value !== null && value !== undefined) {
+          merged[row.key] = value;
+        }
+      } catch {
+        // Skip rows that fail to decrypt
+      }
+    }
+  }
+
+  const lines = Object.entries(merged).map(([key, value]) => {
+    const escaped = String(value)
+      .replace(/\\/g, "\\\\")
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, "\\n")
+      .replace(/\r/g, "\\r");
+    return `${key}="${escaped}"`;
+  });
+
+  return lines.join("\n") + "\n";
 }
 
 export async function POST(request: NextRequest, { params }: RouteProps) {
@@ -77,6 +120,7 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
         .eq("id", project.payment_order_id)
         .maybeSingle<{ status: string; expires_at: string | null }>()
     : { data: null };
+
   const accessState = resolveHostingAccessState({
     projectStatus: project.status,
     billingStatus: project.billing_status,
@@ -109,22 +153,52 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
     .from("hosting_projects")
     .update({
       runtime_status: nextRuntimeStatusForAction(action),
-      runtime_status_payload: {
-        lastAction: action,
-        startedAt: new Date().toISOString(),
-      },
+      runtime_status_payload: { lastAction: action, startedAt: new Date().toISOString() },
       runtime_last_seen_at: new Date().toISOString(),
     })
     .eq("id", project.id);
 
   try {
+    // ── Step 1: Always push .env BEFORE start/restart/deploy ─────────────────
+    if (action === "deploy" || action === "start" || action === "restart") {
+      const envContent = await buildEnvFileContent(project.id);
+      if (envContent.trim()) {
+        await requestVpsAgent({
+          project,
+          method: "POST",
+          path: `/v1/vps/${project.vps_code}/env`,
+          body: { env: envContent },
+          timeoutMs: 10_000,
+        }).catch(() => null); // Non-fatal: continue even if env push fails
+      }
+    }
+
+    // ── Step 2: Build the final action body ───────────────────────────────────
+    let finalBody: Record<string, unknown> = { ...(body as Record<string, unknown>) };
+
+    if (action === "deploy") {
+      const githubToken = await readHostingGitHubToken(session.user.id).catch(() => null);
+      // Use token in URL only for private repos - avoids JSON escaping issues
+      const tokenPart = githubToken ? `${githubToken}@` : "";
+      finalBody = {
+        ...finalBody,
+        // Build clean URL - token goes in basic auth position
+        gitUrl: project.github_owner
+          ? `https://${tokenPart}github.com/${project.github_owner}/${project.github_repo}.git`
+          : undefined,
+        branch: project.github_branch || "main",
+      };
+    }
+
+    // ── Step 3: Send action to daemon ─────────────────────────────────────────
     const payload = await requestVpsAgent<Record<string, unknown>>({
       project,
       method: "POST",
       path: `/v1/vps/${project.vps_code}/actions/${action}`,
-      body,
-      timeoutMs: action === "deploy" ? 45_000 : 15_000,
+      body: finalBody,
+      timeoutMs: action === "deploy" ? 120_000 : 20_000,
     });
+
     const runtimeStatus = resolveRuntimeStatus(payload.status);
 
     await supabase
@@ -135,17 +209,19 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
         runtime_last_seen_at: new Date().toISOString(),
       })
       .eq("id", project.id);
+
     await appendVpsEvent({
       projectId: project.id,
       userId: session.user.id,
       action,
       status: "succeeded",
       message: `Acao ${action} concluida.`,
-      requestPayload: body,
+      requestPayload: { ...finalBody, gitUrl: finalBody.gitUrl ? "[REDACTED]" : undefined },
       responsePayload: payload,
     });
 
     return applyNoStoreHeaders(NextResponse.json({ ok: true, status: runtimeStatus, payload }));
+
   } catch (error) {
     const message = error instanceof Error ? error.message : "Falha ao executar acao.";
     await appendVpsEvent({
@@ -156,6 +232,7 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
       message,
       requestPayload: body,
     });
+
     await supabase
       .from("hosting_vps_logs")
       .insert({
@@ -165,6 +242,15 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
         message,
         metadata: { action },
       });
+
+    await supabase
+      .from("hosting_projects")
+      .update({
+        runtime_status: action === "stop" ? "offline" : "crashed",
+        runtime_status_payload: { error: message, action },
+        runtime_last_seen_at: new Date().toISOString(),
+      })
+      .eq("id", project.id);
 
     return applyNoStoreHeaders(
       NextResponse.json({ ok: false, message }, { status: 503 }),

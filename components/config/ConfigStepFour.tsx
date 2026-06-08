@@ -141,6 +141,7 @@ type PixOrder = {
     | "trial_activation"
     | null;
   finalizationStatus?: "settled" | "pending" | "refunded" | null;
+  finalizationError?: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -1313,6 +1314,33 @@ function normalizeConfigReturnPathFromQuery(value: string | null) {
   return normalized;
 }
 
+function normalizeDashboardReturnPathFromQuery(value: string | null) {
+  if (!value) return null;
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 600) return null;
+  if (!normalized.startsWith("/")) return null;
+  if (normalized.startsWith("//")) return null;
+  if (!normalized.startsWith("/dashboard") && !normalized.startsWith("/payment")) return null;
+  return normalized;
+}
+
+function getFinalizationMessage(order: PixOrder | null | undefined, defaultPendingMessage: string) {
+  if (!order) return defaultPendingMessage;
+  const isDomain = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("return") === "domain";
+  if (order.finalizationStatus === "pending") {
+    if (order.finalizationError) {
+      if (isDomain) {
+        return `Pagamento aprovado! Porém, ocorreu um erro ao registrar o domínio: "${order.finalizationError}". Verifique se o CPF/CNPJ é válido ou se há alguma restrição na plataforma de domínios.`;
+      }
+      return `Pagamento aprovado! Porém, ocorreu um erro na liberação: "${order.finalizationError}". Por favor, verifique com o suporte técnico.`;
+    }
+    if (isDomain) {
+      return "Pagamento aprovado. Registrando e liberando o domínio na conta...";
+    }
+  }
+  return defaultPendingMessage;
+}
+
 function normalizeServersTabFromQuery(value: string | null) {
   const normalized = (value || "").trim().toLowerCase();
   if (normalized === "payments") return "payments";
@@ -1378,6 +1406,16 @@ function resolveApprovedRedirectConfig(
     return {
       targetUrl: target.href,
       delayMs: 800,
+    };
+  }
+
+  if (returnTarget === "domain") {
+    const rawReturnPath = params.get("returnPath");
+    const safeReturnPath = normalizeDashboardReturnPathFromQuery(rawReturnPath) || "/dashboard/domains";
+    const target = buildBrowserRoutingTargetFromInternalPath(safeReturnPath);
+    return {
+      targetUrl: target.href,
+      delayMs: 3000,
     };
   }
 
@@ -3363,7 +3401,7 @@ export function ConfigStepFour({
       clearCheckoutStatusQuery();
       setPixOrder(null);
       setLastKnownOrderNumber(null);
-      setPhase("checkout");
+      setPhase("cart");
       setSelectedRail(null);
       setCopied(false);
       setMethodMessage(null);
@@ -4608,12 +4646,13 @@ export function ConfigStepFour({
             const benefitDelivered = isApprovedPaymentBenefitDelivered(
               payload.order,
             );
+            const isDomain = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("return") === "domain";
             setMethodMessage(
               payload.licenseActive
                 ? buildActiveLicenseMessage(payload.licenseExpiresAt)
                 : benefitDelivered
-                  ? "Pagamento aprovado para a conta."
-                  : "Pagamento aprovado. Finalizando a liberacao do plano na conta...",
+                  ? (isDomain ? "Pagamento aprovado! Seu domínio foi liberado com sucesso." : "Pagamento aprovado para a conta.")
+                  : getFinalizationMessage(payload.order, "Pagamento aprovado. Finalizando a liberacao do plano na conta..."),
             );
             setCheckoutStatusQuery({ order: payload.order, guildId: activeGuildId });
             if (benefitDelivered && onApproved) {
@@ -5850,12 +5889,13 @@ export function ConfigStepFour({
 
         setView("methods");
         const benefitDelivered = isApprovedPaymentBenefitDelivered(payload.order);
+        const isDomain = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("return") === "domain";
         setMethodMessage(
           payload.licenseActive
             ? buildActiveLicenseMessage(payload.licenseExpiresAt)
             : benefitDelivered
-              ? "Pagamento aprovado para a conta."
-              : "Pagamento aprovado. Finalizando a liberacao do plano na conta...",
+              ? (isDomain ? "Pagamento aprovado! Seu domínio foi liberado com sucesso." : "Pagamento aprovado para a conta.")
+              : getFinalizationMessage(payload.order, "Pagamento aprovado. Finalizando a liberacao do plano na conta..."),
         );
         setCheckoutStatusQuery({ order: payload.order, guildId });
         if (benefitDelivered && onApproved) {
@@ -6341,12 +6381,13 @@ export function ConfigStepFour({
         setView("methods");
         setPhase("checkout");
         const benefitDelivered = isApprovedPaymentBenefitDelivered(payload.order);
+        const isDomain = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("return") === "domain";
         setMethodMessage(
           payload.licenseActive
             ? buildActiveLicenseMessage(payload.licenseExpiresAt)
             : benefitDelivered
-              ? "Pagamento aprovado para a conta."
-              : "Pagamento aprovado. Finalizando a liberacao do plano na conta...",
+              ? (isDomain ? "Pagamento aprovado! Seu domínio foi liberado com sucesso." : "Pagamento aprovado para a conta.")
+              : getFinalizationMessage(payload.order, "Pagamento aprovado. Finalizando a liberacao do plano na conta..."),
         );
         setCheckoutStatusQuery({ order: payload.order, guildId });
         if (benefitDelivered && onApproved) {
@@ -6627,12 +6668,13 @@ export function ConfigStepFour({
           return;
         }
 
+        const isDomain = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("return") === "domain";
         setMethodMessage(
           payload.licenseActive
             ? buildActiveLicenseMessage(payload.licenseExpiresAt)
             : isApprovedPaymentBenefitDelivered(payload.order)
-              ? "Pagamento com cartao aprovado."
-              : "Pagamento aprovado. Finalizando a liberacao do plano na conta...",
+              ? (isDomain ? "Pagamento aprovado! Seu domínio foi liberado com sucesso." : "Pagamento com cartao aprovado.")
+              : getFinalizationMessage(payload.order, "Pagamento aprovado. Finalizando a liberacao do plano na conta..."),
         );
         setCheckoutStatusQuery({ order: payload.order, guildId });
         if (isApprovedPaymentBenefitDelivered(payload.order) && onApproved) {

@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
@@ -1065,15 +1065,18 @@ function parseDotEnv(content: string) {
 }
 
 function logFingerprint(log: VpsLog, fallbackIndex = 0) {
-  if (log.id !== undefined && log.id !== null) return `id:${log.id}`;
-  return [
-    "log",
-    log.emitted_at || "",
-    log.level || "",
-    log.source || "",
-    log.message || "",
-    fallbackIndex,
-  ].join(":");
+  // Ignoramos log.id porque a API do daemon gera pseudo-ids (índices), e a lista desliza.
+  const coreStr = `${log.level || ""}:${log.source || ""}:${log.message || ""}`;
+  let hash = 0;
+  for (let i = 0; i < coreStr.length; i++) hash = Math.imul(31, hash) + coreStr.charCodeAt(i) | 0;
+  
+  // Para evitar que a exata mesma mensagem repetida de verdade e válida seja comida se já passou de 1 ocorrência
+  // Nós adicionamos o emit_at ou fallbackIndex apenas se a mensagem for curtinha
+  if (coreStr.length < 5) {
+    return `log:${hash}:${log.emitted_at || fallbackIndex}`;
+  }
+  
+  return `log:${hash}`;
 }
 
 function mergeUniqueLogs(current: VpsLog[], incoming: VpsLog[]) {
@@ -1809,11 +1812,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     return () => events.close();
   }, [logsPaused, notify, snapshot.project.vpsCode]);
 
-  useEffect(() => {
-    if (!logsPaused) {
-      consoleRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-    }
-  }, [logsPaused, snapshot.logs.length, tab]);
+  // Auto-scroll removed to allow native flex-col-reverse anchoring
 
   useEffect(() => {
     if (!flowChatOpen) return;
@@ -2031,7 +2030,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     }
   }
 
-  async function runAction(action: "start" | "stop" | "restart" | "sync") {
+  async function runAction(action: "start" | "stop" | "restart" | "sync" | "deploy") {
     if (busyAction) return;
     setBusyAction(action);
     setSnapshot((current) => ({
@@ -2866,7 +2865,8 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     !normalizedSidebarSearch ||
     normalizeSearchText(`${item.label} ${item.id}`).includes(normalizedSidebarSearch),
   );
-  const actionItems: Array<{ id: "start" | "restart" | "stop" | "sync"; label: string; icon: typeof Play }> = [
+  const actionItems: Array<{ id: "start" | "restart" | "stop" | "sync" | "deploy"; label: string; icon: typeof Play }> = [
+    { id: "deploy", label: "Deploy (Clonar + Iniciar)", icon: Upload },
     { id: "start", label: "Iniciar VPS", icon: Play },
     { id: "restart", label: "Reiniciar VPS", icon: RotateCcw },
     { id: "stop", label: "Parar VPS", icon: Power },

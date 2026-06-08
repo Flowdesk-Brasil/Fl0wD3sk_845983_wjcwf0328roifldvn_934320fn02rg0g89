@@ -686,6 +686,21 @@ async function githubFetch<TValue>(path: string, token: string) {
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      const retryResponse = await fetch(`${GITHUB_API_URL}${path}`, {
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${token}`,
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+        cache: "no-store",
+      });
+      if (!retryResponse.ok) {
+        throw await createHostingGitHubApiError(retryResponse);
+      }
+      return await retryResponse.json() as TValue;
+    }
     throw await createHostingGitHubApiError(response);
   }
 

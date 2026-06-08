@@ -83,7 +83,7 @@ type DashboardWorkspaceProps = {
     discordUserId: string | null;
     displayName: string;
     username: string;
-    avatarUrl: string | null;
+    avatarUrl: string | null; globalName?: string | null; email?: string | null;
   };
   initialServers?: ManagedServer[] | null;
   initialTeams?: UserTeam[] | null;
@@ -782,6 +782,44 @@ export function DashboardWorkspace({
   const pathname = usePathname();
   const [, startSidebarNavigationTransition] = useTransition();
   const currentAccount = useLiveAccountProfile(initialCurrentAccount);
+  const greetingName = useMemo(() => {
+    let name = currentAccount.displayName?.trim();
+    if (!name && currentAccount.globalName) {
+      name = currentAccount.globalName.trim();
+    }
+    if (!name && currentAccount.username) {
+      name = currentAccount.username.trim();
+    }
+    if (!name && currentAccount.email) {
+      name = currentAccount.email.split("@")[0].trim();
+    }
+    if (name) {
+      const words = name.split(/\s+/);
+      const firstRealWordIndex = words.findIndex(w => 
+        /[a-zA-Z0-9\u00C0-\u00FF\u0100-\u017F]/.test(w)
+      );
+      if (firstRealWordIndex !== -1) {
+        const realWord = words[firstRealWordIndex];
+        const match = realWord.match(/^([^a-zA-Z0-9\u00C0-\u00FF\u0100-\u017F]*)(.*)$/);
+        if (match) {
+          const prefixSymbols = match[1] || "";
+          const actualName = match[2] || "";
+          const capitalizedActual = actualName 
+            ? actualName.charAt(0).toUpperCase() + actualName.slice(1)
+            : "";
+          const resolvedRealWord = `${prefixSymbols}${capitalizedActual}`;
+          if (firstRealWordIndex > 0) {
+            const symbolsBefore = words.slice(0, firstRealWordIndex).join(" ");
+            return `${symbolsBefore} ${resolvedRealWord}`.trim();
+          }
+          return resolvedRealWord;
+        }
+      }
+      const firstWord = words[0] || "";
+      return firstWord;
+    }
+    return "Cliente";
+  }, [currentAccount.displayName, currentAccount.globalName, currentAccount.username, currentAccount.email]);
   const workspaceCacheKey = `${currentAccount.authUserId}:${currentAccount.discordUserId}`;
   const initialServersSnapshot =
     initialServers ?? readManagedServersMemoryCache(workspaceCacheKey);
@@ -2713,7 +2751,7 @@ export function DashboardWorkspace({
                             Dashboard
                           </p>
                           <h1 className="mt-[12px] max-w-[820px] text-[36px] leading-[0.98] font-semibold tracking-[-0.065em] text-[#F3F3F3] md:text-[52px]">
-                            Bem-vindo de volta, {currentAccount.displayName?.split(" ")[0] || currentAccount.username}
+                            Bem-vindo de volta, {greetingName}
                           </h1>
                           <p className="mt-[14px] max-w-[700px] text-[14px] leading-[1.65] text-[#858585] md:text-[15px]">
                             Uma visão direta da sua infraestrutura, domínios e cobranças. Sem ruído, só o que precisa de ação.

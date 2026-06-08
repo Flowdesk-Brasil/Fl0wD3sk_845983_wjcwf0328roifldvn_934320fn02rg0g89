@@ -249,6 +249,28 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Aciona o deploy no Daemon recém configurado na Hostinger
+  try {
+    const daemonUrl = `http://2.25.183.234:5001/api/v1/projects/${project.vps_code}/deploy`;
+    const daemonToken = "flowdesk-super-secret-token-v1"; // Mesma chave gerada para o server
+    
+    // Fazendo a chamada Fire-and-Forget
+    fetch(daemonUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${daemonToken}`
+      },
+      body: JSON.stringify({
+        gitUrl: repository.htmlUrl ? `${repository.htmlUrl}.git` : `https://github.com/${repository.fullName}.git`,
+        branch: repository.branch || "main"
+      })
+    }).catch(console.error); // Continua mesmo se der erro pra não afetar a resposta do usuário
+    
+  } catch (err) {
+    console.error("Falha ao comunicar com o VPS Daemon:", err);
+  }
+
   return applyNoStoreHeaders(
     NextResponse.json({
       ok: true,

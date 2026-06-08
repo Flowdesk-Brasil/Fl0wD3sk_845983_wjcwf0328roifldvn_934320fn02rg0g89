@@ -47,7 +47,53 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
       NextResponse.json({ ok: false, message: error.message }, { status: 500 }),
     );
   }
-  const logs = (data || []).filter((log) =>
+
+  // Fetch logs directly from the VPS daemon
+  let daemonLogs: any[] = [];
+  try {
+    const { requestVpsAgent } = await import("@/lib/hosting/vpsRuntime");
+    const logsPayload = await requestVpsAgent({
+      project: loaded.project,
+      path: `/v1/vps/${loaded.project.vps_code}/logs?lines=500`,
+      method: "GET",
+      timeoutMs: 3000
+    }).catch(() => null) as Record<string, any> | null;
+    
+    if (logsPayload?.logs && typeof logsPayload.logs === 'string') {
+      const rawLines = logsPayload.logs.split('\n');
+      const junkPatterns = [
+        "realtimeService",
+        "Subscription TIMED_OUT",
+        "synced 1/1 mensagens",
+        "MaxListenersExceededWarning",
+      ];
+      
+      let lastMessage = "";
+      for (let i = 0; i < rawLines.length; i++) {
+        const line = rawLines[i].trim();
+        if (!line || line === "[STDERR]") continue;
+        
+        if (junkPatterns.some(p => line.includes(p))) continue;
+        
+        const cleanMsg = line.replace(/^\d+\|[^|]+\|\s*/, '').trim();
+        if (cleanMsg === lastMessage && cleanMsg.length > 5) continue;
+        lastMessage = cleanMsg;
+
+        const isError = cleanMsg.toLowerCase().includes('error') || cleanMsg.toLowerCase().includes('exception') || cleanMsg.toLowerCase().includes('falha');
+        daemonLogs.push({
+          id: i,
+          level: isError ? 'error' : 'info',
+          source: 'bot',
+          message: cleanMsg,
+        });
+      }
+      daemonLogs = daemonLogs.slice(-200); // Last 200 logs
+    }
+  } catch(e) {}
+
+  const allLogs = [...(data || []), ...daemonLogs];
+
+  const logs = allLogs.filter((log) =>
     search ? String(log.message || "").toLowerCase().includes(search) : true,
   );
   return applyNoStoreHeaders(NextResponse.json({ ok: true, logs: logs.reverse() }));

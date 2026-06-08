@@ -14,7 +14,7 @@ function hasActiveModal() {
 }
 
 function clearStaleInteractionLocks() {
-  if (typeof document === "undefined" || hasActiveModal()) {
+  if (typeof document === "undefined") {
     return;
   }
 

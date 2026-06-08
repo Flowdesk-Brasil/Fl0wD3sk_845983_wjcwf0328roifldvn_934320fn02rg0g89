@@ -233,6 +233,28 @@ function readOrderFinalizationStatus(providerPayload: unknown) {
   return null;
 }
 
+function readOrderFinalizationError(providerPayload: unknown) {
+  if (!providerPayload || typeof providerPayload !== "object" || Array.isArray(providerPayload)) {
+    return null;
+  }
+
+  const payloadRecord = providerPayload as Record<string, unknown>;
+  const rawFinalization =
+    payloadRecord.flowdesk_finalization &&
+    typeof payloadRecord.flowdesk_finalization === "object" &&
+    !Array.isArray(payloadRecord.flowdesk_finalization)
+      ? (payloadRecord.flowdesk_finalization as Record<string, unknown>)
+      : payloadRecord.finalization &&
+          typeof payloadRecord.finalization === "object" &&
+          !Array.isArray(payloadRecord.finalization)
+        ? (payloadRecord.finalization as Record<string, unknown>)
+        : null;
+
+  return rawFinalization && typeof rawFinalization.lastError === "string"
+    ? rawFinalization.lastError.trim()
+    : null;
+}
+
 function toApiOrder(
   record: PaymentOrderRecord,
   checkoutAccessToken: string | null = null,
@@ -271,6 +293,7 @@ function toApiOrder(
     planTransitionKind: transition?.kind || null,
     planTransitionExecution: transition?.execution || null,
     finalizationStatus: readOrderFinalizationStatus(record.provider_payload),
+    finalizationError: readOrderFinalizationError(record.provider_payload),
     createdAt: record.created_at,
     updatedAt: record.updated_at,
   };

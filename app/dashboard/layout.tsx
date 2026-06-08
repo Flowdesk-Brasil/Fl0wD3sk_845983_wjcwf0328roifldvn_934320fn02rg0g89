@@ -44,6 +44,8 @@ async function DashboardLayoutContent({
         displayName: user.display_name,
         username: user.username,
         avatarUrl: resolveAuthUserAvatarUrl(user),
+        globalName: user.global_name,
+        email: user.email,
       }}
       initialServers={managedServers}
       initialTeams={teamsSnapshot.teams}

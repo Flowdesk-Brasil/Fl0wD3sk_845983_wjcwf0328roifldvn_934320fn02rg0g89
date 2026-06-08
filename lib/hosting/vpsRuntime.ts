@@ -1,4 +1,4 @@
-﻿import { createHash, createHmac } from "crypto";
+import { createHash, createHmac } from "crypto";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import type { HostingKind } from "@/lib/hosting/catalog";
 import {
@@ -213,7 +213,7 @@ export async function requestVpsAgent<T = unknown>(input: AgentRequestInput): Pr
   const baseUrl = resolveAgentBaseUrl();
   const token = resolveAgentToken();
   if (!baseUrl || !token) {
-    throw new Error("Agente Windows da VPS nao configurado no backend.");
+    throw new Error("Agente da VPS nao configurado no backend.");
   }
 
   const controller = new AbortController();

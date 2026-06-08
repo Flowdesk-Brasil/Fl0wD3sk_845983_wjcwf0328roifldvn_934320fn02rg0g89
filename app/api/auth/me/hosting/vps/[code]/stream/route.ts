@@ -94,11 +94,72 @@ export async function GET(_request: NextRequest, { params }: RouteProps) {
           lastLogId = Math.max(...logs.map((log) => Number(log.id) || 0));
         }
 
+        let currentMetric = metricsResult.data?.[0] || null;
+        const isMetricOld = !currentMetric || (Date.now() - new Date(currentMetric.sampled_at).getTime()) > 15000;
+        let daemonLogs: any[] = [];
+
+        try {
+          const { requestVpsAgent } = await import("@/lib/hosting/vpsRuntime");
+          
+          // Request metrics and logs concurrently from daemon
+          const [daemonPayload, logsPayload] = await Promise.all([
+            isMetricOld ? requestVpsAgent({
+              project, path: `/v1/vps/${project.vps_code}/metrics`, method: "GET", timeoutMs: 3000
+            }).catch(() => null) : null,
+            
+            requestVpsAgent({
+              project, path: `/v1/vps/${project.vps_code}/logs?lines=20`, method: "GET", timeoutMs: 3000
+            }).catch(() => null)
+          ]) as [Record<string, any> | null, Record<string, any> | null];
+          
+          if (daemonPayload?.metric) {
+            currentMetric = {
+               id: Date.now(),
+               cpu_percent: daemonPayload.metric.cpu || 0, // Máquina
+               app_cpu_percent: daemonPayload.metric.cpu || 0, // App
+               ram_percent: (daemonPayload.metric.memory || 0) / (1024 * 1024 * 1024), // Approx % para uso total 
+               app_ram_mb: (daemonPayload.metric.memory || 0) / (1024 * 1024), // Em MB para o painel
+               sampled_at: new Date().toISOString()
+            };
+          }
+
+          if (logsPayload?.logs && typeof logsPayload.logs === 'string') {
+            const rawLines = logsPayload.logs.split('\n');
+            const junkPatterns = [
+              "realtimeService",
+              "Subscription TIMED_OUT",
+              "synced 1/1 mensagens",
+              "MaxListenersExceededWarning",
+            ];
+            
+            let lastMessage = "";
+            for (let i = 0; i < rawLines.length; i++) {
+              const line = rawLines[i].trim();
+              if (!line || line === "[STDERR]") continue;
+              
+              if (junkPatterns.some(p => line.includes(p))) continue;
+              
+              const cleanMsg = line.replace(/^\d+\|[^|]+\|\s*/, '').trim();
+              if (cleanMsg === lastMessage && cleanMsg.length > 5) continue; // Deduplicate
+              lastMessage = cleanMsg;
+
+              const isError = cleanMsg.toLowerCase().includes('error') || cleanMsg.toLowerCase().includes('exception') || cleanMsg.toLowerCase().includes('falha');
+              daemonLogs.push({
+                id: i, // Fake ID based on PM2 absolute file position/chunk index
+                level: isError ? 'error' : 'info',
+                source: 'bot',
+                message: cleanMsg,
+              });
+            }
+            daemonLogs = daemonLogs.slice(-100); // Keep UI fast, last 100 useful logs
+          }
+        } catch(e) {}
+
         if (closed) return;
         send("snapshot", {
           project: projectResult.data,
-          metric: metricsResult.data?.[0] || null,
-          logs,
+          metric: currentMetric,
+          logs: [...logs, ...daemonLogs],
           actions: actionsResult.data || [],
           at: new Date().toISOString(),
         });

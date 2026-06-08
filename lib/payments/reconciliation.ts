@@ -35,6 +35,7 @@ import {
 import {
   buildRefundOutcome,
   finalizePaymentRefundOutcome,
+  logLedgerEvent,
 } from "@/lib/payments/refunds";
 import { parseUtcTimestampMs } from "@/lib/time/utcTimestamp";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
@@ -160,14 +161,15 @@ function mergeProviderPayload(
 async function createPaymentOrderEventSafe(
   paymentOrderId: number,
   eventType: string,
-  eventPayload: PaymentOrderEventPayload,
+  eventPayload: Record<string, unknown>,
+  orderRecord?: any,
 ) {
   try {
-    const supabase = getSupabaseAdminClientOrThrow();
-    await supabase.from("payment_order_events").insert({
-      payment_order_id: paymentOrderId,
-      event_type: eventType,
-      event_payload: eventPayload,
+    await logLedgerEvent({
+      paymentOrderId,
+      order: orderRecord || { id: paymentOrderId },
+      eventType,
+      payload: eventPayload,
     });
   } catch {
     // telemetria nao deve quebrar reconciliacao
@@ -458,6 +460,7 @@ async function reconcilePaymentOrderWithFetchedProviderPayment(
           providerPaymentId,
           reason: "approved_after_setup_timeout",
         },
+        order
       );
 
       invalidatePaymentOrderQueryCaches({
@@ -548,7 +551,7 @@ async function reconcilePaymentOrderWithFetchedProviderPayment(
         providerPaymentId,
         reason: renewalDecision.reason,
         previousApprovedOrderNumber: existingCoverage?.order.order_number || null,
-      });
+      }, order);
 
       invalidatePaymentOrderQueryCaches({
         userId: refundedOrder.user_id,
@@ -669,17 +672,46 @@ async function reconcilePaymentOrderWithFetchedProviderPayment(
     );
   }
 
-  await createPaymentOrderEventSafe(order.id, "provider_payment_reconciled", {
-    source,
-    providerPaymentId,
-    providerStatus,
-    providerStatusDetail,
-    resolvedStatus,
-    diagnosticCategory: diagnostic.category,
-    txId: paymentIdentifiers.txId,
-    endToEndId: paymentIdentifiers.endToEndId,
-    providerLastUpdatedAt: trustedTimestamps.lastUpdatedAt,
-  });
+  if (order.status !== resolvedStatus) {
+    let eventType = "payment_updated";
+    if (resolvedStatus === "approved") eventType = "payment_approved";
+    else if (resolvedStatus === "rejected") eventType = "payment_rejected";
+    else if (resolvedStatus === "cancelled") eventType = "payment_cancelled";
+    else if (resolvedStatus === "expired") eventType = "payment_expired";
+    else if (resolvedStatus === "failed") eventType = "payment_failed";
+    
+    await logLedgerEvent({
+      paymentOrderId: order.id,
+      order: {
+        ...order,
+        status: resolvedStatus,
+      },
+      eventType,
+      payload: {
+        previousStatus: order.status,
+        providerStatus,
+        providerStatusDetail,
+        source,
+      }
+    });
+  }
+
+  await createPaymentOrderEventSafe(
+    order.id,
+    "provider_payment_reconciled",
+    {
+      source,
+      providerPaymentId,
+      providerStatus,
+      providerStatusDetail,
+      resolvedStatus,
+      diagnosticCategory: diagnostic.category,
+      txId: paymentIdentifiers.txId,
+      endToEndId: paymentIdentifiers.endToEndId,
+      providerLastUpdatedAt: trustedTimestamps.lastUpdatedAt,
+    },
+    order,
+  );
 
   let finalOrder = updatedOrderResult.data;
   if (updatedOrderResult.data.status === "approved") {
