@@ -5,6 +5,7 @@ import {
   normalizeVpsCode,
 } from "@/lib/hosting/vpsRuntime";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
+import { sendVpsProvisionedEmailSafe } from "@/lib/mail/transactional";
 
 type RouteProps = {
   params: Promise<{ code: string }>;
@@ -95,7 +96,7 @@ export async function GET(_request: NextRequest, { params }: RouteProps) {
         }
 
         let currentMetric = metricsResult.data?.[0] || null;
-        const isMetricOld = !currentMetric || (Date.now() - new Date(currentMetric.sampled_at).getTime()) > 15000;
+        const isMetricOld = !currentMetric || (Date.now() - new Date(currentMetric.sampled_at).getTime()) > 15000 || project.status === "provisioning" || project.status === "pending_provision";
         let daemonLogs: any[] = [];
 
         try {
@@ -121,17 +122,35 @@ export async function GET(_request: NextRequest, { params }: RouteProps) {
                app_ram_mb: (daemonPayload.metric.memory || 0) / (1024 * 1024), // Em MB para o painel
                sampled_at: new Date().toISOString()
             };
+          }
 
-            // Auto-heal status if daemon responds and project is stuck in provisioning
-            if (
-               daemonPayload.status === "online" &&
-               (project.status === "provisioning" || project.status === "pending_provision")
-            ) {
-               await supabase
-                 .from("hosting_projects")
-                 .update({ status: "active", runtime_status: "online" })
-                 .eq("id", project.id);
-            }
+          // Auto-heal status if daemon responds and project is stuck in provisioning
+          if (
+             daemonPayload &&
+             daemonPayload.status && 
+             daemonPayload.status !== "unknown" &&
+             daemonPayload.metric &&
+             (project.status === "provisioning" || project.status === "pending_provision")
+          ) {
+             const { data: updatedRows } = await supabase
+               .from("hosting_projects")
+               .update({ status: "active", runtime_status: daemonPayload.status })
+               .eq("id", project.id)
+               .in("status", ["provisioning", "pending_provision"])
+               .select("id");
+             
+             projectResult.data.status = "active";
+             projectResult.data.runtime_status = daemonPayload.status;
+
+             if (updatedRows && updatedRows.length > 0) {
+               void sendVpsProvisionedEmailSafe({
+                 userId: project.user_id,
+                 vpsCode: project.vps_code,
+                 repoName: project.github_repo || "Seu projeto",
+                 planName: "Hospedagem Flowdesk",
+                 dashboardUrl: `https://www.flwdesk.com/vps/${project.vps_code}`,
+               });
+             }
           }
 
           if (logsPayload?.logs && typeof logsPayload.logs === 'string') {
