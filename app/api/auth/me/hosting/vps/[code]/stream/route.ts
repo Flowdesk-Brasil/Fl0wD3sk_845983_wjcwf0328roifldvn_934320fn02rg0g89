@@ -121,6 +121,17 @@ export async function GET(_request: NextRequest, { params }: RouteProps) {
                app_ram_mb: (daemonPayload.metric.memory || 0) / (1024 * 1024), // Em MB para o painel
                sampled_at: new Date().toISOString()
             };
+
+            // Auto-heal status if daemon responds and project is stuck in provisioning
+            if (
+               daemonPayload.status === "online" &&
+               (project.status === "provisioning" || project.status === "pending_provision")
+            ) {
+               await supabaseAdmin
+                 .from("hosting_projects")
+                 .update({ status: "active", runtime_status: "online" })
+                 .eq("id", project.id);
+            }
           }
 
           if (logsPayload?.logs && typeof logsPayload.logs === 'string') {

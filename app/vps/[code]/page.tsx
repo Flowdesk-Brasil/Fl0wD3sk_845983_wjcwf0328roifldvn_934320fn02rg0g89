@@ -1,3 +1,4 @@
+import { Loader2, Rocket } from "lucide-react";
 import { notFound, redirect } from "next/navigation";
 import { AppMaintenanceScreen } from "@/components/common/AppMaintenanceScreen";
 import { VpsWorkspace, type VpsWorkspaceSnapshot } from "@/components/hosting/VpsWorkspace";
@@ -291,6 +292,33 @@ export default async function VpsPanelPage({ params }: VpsPanelPageProps) {
       />
     );
   }
+
+  if (project.status === "provisioning" || project.status === "pending_provision" || project.status === "pending_payment") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#050505] p-6 font-sans">
+        <div className="w-full max-w-[500px] rounded-[24px] border border-[#171717] bg-[#0A0A0A] p-[38px] text-center shadow-[0_24px_80px_rgba(0,0,0,0.28)]">
+          <span className="mx-auto flex h-[64px] w-[64px] items-center justify-center rounded-[20px] border border-[#202020] bg-[#111111] text-white">
+            <Rocket className="h-[28px] w-[28px]" />
+          </span>
+          <h2 className="mt-[24px] text-[24px] font-semibold tracking-[-0.04em] text-white">
+            Preparando sua VPS...
+          </h2>
+          <p className="mt-[12px] text-[14px] leading-[1.6] text-[#8E8E8E]">
+            Estamos alocando os recursos na regiao escolhida, configurando seu ambiente isolado e integrando o GitHub.
+            <br /><br />
+            Volte aqui em cerca de <strong className="text-white">3 minutos</strong>. Voce tambem sera avisado por e-mail assim que a maquina estiver online e pronta para uso.
+          </p>
+          <div className="mt-[36px] flex flex-col items-center justify-center gap-[14px]">
+            <Loader2 className="h-[24px] w-[24px] animate-spin text-[#0F62FE]" />
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#555555]">
+              Provisionando infraestrutura
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const runtimePayload = isRecord(project.runtime_status_payload)
     ? project.runtime_status_payload
     : {};
