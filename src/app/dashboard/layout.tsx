@@ -2,7 +2,7 @@
 
 import type { LucideIcon } from "lucide-react";
 import {
-  Activity, BarChart3, Bell, BookOpen, CalendarDays, ChevronDown, CreditCard, Database, Dumbbell, LayoutDashboard,
+  Activity, BarChart3, Bell, BookOpen, CalendarDays, ChevronDown, CreditCard, Database, LayoutDashboard,
   LogOut, Menu, Package, QrCode, ScrollText, Search, Settings, Shield, Users, X, ShoppingCart, Boxes, Tag, Truck, ScanLine
 } from "lucide-react";
 import Link from "next/link";
@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { PosTerminalListener } from "@/components/pos-terminal";
 import { CheckinSidebar } from "@/components/checkin-sidebar";
 import { FaceTerminalListener } from "@/components/face-terminal";
+import { BrandIcon } from "@/components/brand-logo";
 
 interface NavItem {
   href: string;
@@ -135,9 +136,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
       )}>
         <div className="flex h-[74px] items-center justify-between border-b border-white/[.07] px-5">
           <Link href="/dashboard" className="flex items-center gap-3">
-            <span className="grid h-10 w-10 place-items-center rounded-xl bg-blue-500 text-white shadow-lg shadow-blue-500/20">
-              <Dumbbell className="h-5 w-5" />
-            </span>
+            <BrandIcon size={40} className="rounded-xl shadow-lg shadow-white/5" />
             <span>
               <strong className="block text-sm tracking-[-.02em]">Corpo & Evolução</strong>
               <small className="text-[10px] font-medium uppercase tracking-[.15em] text-white/40">Workspace</small>

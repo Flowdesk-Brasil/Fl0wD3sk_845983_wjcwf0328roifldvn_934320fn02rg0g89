@@ -7,8 +7,8 @@ export default function manifest(): MetadataRoute.Manifest {
     description: "Portal e gestão do Studio Corpo & Evolução.",
     start_url: "/portal",
     display: "standalone",
-    background_color: "#f7f9fc",
-    theme_color: "#1a73e8",
+    background_color: "#0C0C0C",
+    theme_color: "#0C0C0C",
     orientation: "portrait",
     icons: [
       {

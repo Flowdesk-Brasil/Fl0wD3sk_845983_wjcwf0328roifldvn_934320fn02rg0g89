@@ -5,6 +5,7 @@ import jsQR from "jsqr";
 import { UserCheck, ScanFace, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import * as faceapi from '@vladmandic/face-api';
+import { Screensaver } from "@/components/screensaver";
 
 interface QRScannerReceiverProps {
   onRead: (code: string) => void;
@@ -325,6 +326,15 @@ export function QRScannerReceiver({ onRead, disabled }: QRScannerReceiverProps) 
           </div>
         </div>
       )}
+
+      {/* Screensaver - activates after 10s of no motion */}
+      <Screensaver
+        videoRef={videoRef}
+        idleTimeout={10}
+        isReady={isReady}
+        isOverlayActive={disabled || !!detectedFace || !!error || !isReady}
+      />
     </div>
   );
 }
+

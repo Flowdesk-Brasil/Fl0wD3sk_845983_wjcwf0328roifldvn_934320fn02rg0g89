@@ -1,17 +1,17 @@
-﻿"use client";
+"use client";
 
 import {
   ArrowRight,
   BarChart3,
   CheckCircle2,
   Database,
-  Dumbbell,
   Lock,
   Mail,
   Settings2,
   ShieldCheck,
   UserRound,
 } from "lucide-react";
+import { BrandIcon, BrandLogoWhite } from "@/components/brand-logo";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { IconInput } from "@/components/form-controls";
@@ -111,7 +111,7 @@ export default function LoginPage() {
       <section className="relative hidden overflow-hidden bg-[#0f1b2d] p-10 text-white lg:flex lg:flex-col lg:justify-between xl:p-14">
         <div className="absolute inset-0 opacity-30 [background-image:radial-gradient(circle_at_20%_20%,#1a73e8_0,transparent_28%),radial-gradient(circle_at_75%_75%,#20c997_0,transparent_26%)]" />
         <div className="relative flex items-center gap-3">
-          <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/10 ring-1 ring-white/15"><Dumbbell className="h-5 w-5" /></div>
+          <BrandIcon size={44} className="rounded-2xl ring-1 ring-white/15" />
           <div><strong className="block text-sm">Corpo & Evolução</strong><span className="text-xs text-white/55">Gestão inteligente para studios</span></div>
         </div>
 
@@ -138,7 +138,7 @@ export default function LoginPage() {
       <section className="flex min-h-screen min-w-0 items-center justify-center overflow-x-hidden bg-[#f7f9fc] p-5 sm:p-10">
         <div className="min-w-0 w-[calc(100vw-2.5rem)] max-w-md sm:w-full">
           <div className="mb-7 flex items-center gap-3 lg:hidden">
-            <div className="grid h-11 w-11 place-items-center rounded-2xl bg-blue-600 text-white"><Dumbbell className="h-5 w-5" /></div>
+            <BrandIcon size={44} className="rounded-2xl" />
             <strong className="text-sm text-[#172033]">Corpo & Evolução</strong>
           </div>
 
