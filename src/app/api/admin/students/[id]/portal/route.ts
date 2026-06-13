@@ -1,10 +1,11 @@
 import { sendStudioEmail } from "@/lib/server/mail";
-import { apiErrorResponse, ApiError, requireRole } from "@/lib/server/supabase-admin";
+import { apiErrorResponse, ApiError, requireRole, getClientIp, logAudit } from "@/lib/server/supabase-admin";
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const { admin } = await requireRole(request, ["admin", "receptionist"]);
+    const { admin, profile: operator } = await requireRole(request, ["admin", "receptionist"]);
     const { id } = await context.params;
+    const ip = getClientIp(request);
     const { data: student, error } = await admin.from("students").select("id, full_name, email, profile_id").eq("id", id).single();
     if (error || !student) throw new ApiError("Aluno não encontrado.", 404);
     if (!student.email) throw new ApiError("Cadastre o e-mail do aluno antes de liberar o portal.");
@@ -56,6 +57,21 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       sections: [{ label: "Login", value: student.email }],
       footer: "O link é pessoal. Após criar a senha, você poderá acessar o portal normalmente.",
     });
+
+    // Audit log
+    await logAudit(admin, {
+      userId: operator.id,
+      action: "INSERT",
+      entity: "portal_access",
+      entityId: student.id,
+      details: {
+        student_name: student.full_name,
+        email: student.email,
+        portal_created: !student.profile_id,
+      },
+      ip,
+    });
+
     return Response.json({ ok: true, email: student.email, profileId });
   } catch (reason) {
     return apiErrorResponse(reason);

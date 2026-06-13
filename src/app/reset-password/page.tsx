@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -59,13 +59,15 @@ function ResetPasswordForm() {
       setLoading(false);
     } else {
       setSuccess(true);
+      const nextUrl = searchParams.get("next");
       setTimeout(() => {
-        router.push("/portal");
-      }, 3000);
+        router.push(nextUrl || "/portal");
+      }, 2000);
     }
   }
 
   if (success) {
+    const nextUrl = searchParams.get("next");
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
         <div className="w-full max-w-md rounded-3xl bg-white p-8 shadow-xl text-center space-y-4">
@@ -73,7 +75,11 @@ function ResetPasswordForm() {
             <CheckCircle2 className="h-8 w-8" />
           </div>
           <h2 className="text-2xl font-bold text-slate-900">Senha atualizada!</h2>
-          <p className="text-slate-500">Sua senha foi redefinida com sucesso. Redirecionando para o portal...</p>
+          <p className="text-slate-500">
+            {nextUrl
+              ? "Sua senha foi criada com sucesso. Redirecionando para assinar seu contrato..."
+              : "Sua senha foi redefinida com sucesso. Redirecionando para o portal..."}
+          </p>
         </div>
       </div>
     );

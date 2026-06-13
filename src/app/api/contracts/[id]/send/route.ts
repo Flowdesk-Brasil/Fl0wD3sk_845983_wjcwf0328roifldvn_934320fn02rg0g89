@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { sendStudioEmail } from "@/lib/server/mail";
-import { apiErrorResponse, ApiError, requireRole } from "@/lib/server/supabase-admin";
+import { apiErrorResponse, ApiError, requireRole, getClientIp, logAudit } from "@/lib/server/supabase-admin";
 
 function hashToken(token: string) {
   return crypto.createHash("sha256").update(token).digest("hex");
@@ -8,8 +8,9 @@ function hashToken(token: string) {
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const { admin } = await requireRole(request, ["admin", "receptionist"]);
+    const { admin, profile: operator } = await requireRole(request, ["admin", "receptionist"]);
     const { id } = await context.params;
+    const ip = getClientIp(request);
     const { data: contract, error } = await admin
       .from("contracts")
       .select("id, status, student:students(id, full_name, email), plan:plans(name)")
@@ -59,6 +60,22 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       throw mailError;
     }
     await admin.from("contracts").update({ sent_at: new Date().toISOString() }).eq("id", id);
+
+    // Audit log
+    await logAudit(admin, {
+      userId: operator.id,
+      action: "UPDATE",
+      entity: "contracts",
+      entityId: id,
+      details: {
+        action: "contract_sent_for_signature",
+        student_name: student.full_name,
+        plan: plan?.name,
+        sent_to: student.email,
+      },
+      ip,
+    });
+
     return Response.json({ ok: true, sentTo: student.email });
   } catch (reason) {
     return apiErrorResponse(reason);

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "@/lib/supabase";
 import * as faceapi from '@vladmandic/face-api';
+import { getDeviceId } from "@/lib/device-id";
 
 function getGreeting() {
   const hour = new Date().getHours();
@@ -39,9 +40,12 @@ export function QrScanner({
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const faceMatcherRef = useRef<faceapi.FaceMatcher | null>(null);
   const [detectedFace, setDetectedFace] = useState<{ id: string; name: string; photo_url: string } | null>(null);
+  const [isConfirming, setIsConfirming] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState<string>("Iniciando Reconhecimento Facial...");
   const [isReady, setIsReady] = useState(false);
   const cooldownRef = useRef(0);
+  const labeledDescriptorsRef = useRef<faceapi.LabeledFaceDescriptors[]>([]);
+  const modelsLoadedRef = useRef(false);
 
   const stop = useCallback(() => {
     if (frameRef.current) cancelAnimationFrame(frameRef.current);
@@ -63,30 +67,43 @@ export function QrScanner({
   useEffect(() => { openRef.current = open; }, [open]);
   const interruptedRef = useRef(false);
 
+  // Auto-abrir após reload se solicitado
+  useEffect(() => {
+    if (sessionStorage.getItem("autoOpenScanner") === "true") {
+      sessionStorage.removeItem("autoOpenScanner");
+      setOpen(true);
+    }
+  }, []);
+
   useEffect(() => {
     const channel = supabase.channel("face-scan-qr-interrupt", { config: { broadcast: { self: true } } })
-      .on("broadcast", { event: "START_SCAN" }, () => {
+      .on("broadcast", { event: "START_SCAN" }, ({ payload }) => {
+        if (payload?.targetDeviceId && payload.targetDeviceId !== getDeviceId()) return;
         if (openRef.current) {
           interruptedRef.current = true;
           close();
         }
       })
-      .on("broadcast", { event: "STOP_SCAN" }, () => {
+      .on("broadcast", { event: "STOP_SCAN" }, ({ payload }) => {
+        if (payload?.targetDeviceId && payload.targetDeviceId !== getDeviceId()) return;
         if (interruptedRef.current) {
           interruptedRef.current = false;
           setOpen(true);
         }
       })
-      .on("broadcast", { event: "SCAN_RESULT" }, () => {
+      .on("broadcast", { event: "SCAN_RESULT" }, ({ payload }) => {
+        if (payload?.targetDeviceId && payload.targetDeviceId !== getDeviceId()) return;
         if (interruptedRef.current) {
           interruptedRef.current = false;
           setOpen(true);
         }
       })
-      .on("broadcast", { event: "REBOOT_CAMERA" }, () => {
+      .on("broadcast", { event: "REBOOT_CAMERA" }, ({ payload }) => {
+        if (payload?.targetDeviceId && payload.targetDeviceId !== getDeviceId()) return;
         if (openRef.current) {
-          window.location.reload();
+          sessionStorage.setItem("autoOpenScanner", "true");
         }
+        window.location.reload();
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -104,6 +121,7 @@ export function QrScanner({
         await faceapi.nets.faceLandmark68Net.loadFromUri('/models');
         await faceapi.nets.faceRecognitionNet.loadFromUri('/models');
         
+        modelsLoadedRef.current = true;
         setLoadingMsg("Sincronizando banco de rostos (Aguarde)...");
         const { data: students } = await supabase.from('students').select('id, full_name, photo_url').not('photo_url', 'is', null);
         if (students && students.length > 0 && mounted) {
@@ -130,8 +148,11 @@ export function QrScanner({
                console.warn("Could not load face for:", s.full_name, e);
             }
           }
-          if (labeledDescriptors.length > 0 && mounted) {
-            faceMatcherRef.current = new faceapi.FaceMatcher(labeledDescriptors, 0.55);
+          if (mounted) {
+            labeledDescriptorsRef.current = labeledDescriptors;
+            if (labeledDescriptors.length > 0) {
+              faceMatcherRef.current = new faceapi.FaceMatcher(labeledDescriptors, 0.55);
+            }
           }
         }
         if (mounted) {
@@ -148,6 +169,52 @@ export function QrScanner({
     }
     loadFaces();
     return () => { mounted = false; };
+  }, [open]);
+
+  // REALTIME: Sincroniza novos alunos automaticamente via broadcast (sem reabrir o site)
+  useEffect(() => {
+    if (!open) return;
+    
+    const channel = supabase.channel('students-sync', { config: { broadcast: { self: true } } })
+      .on('broadcast', { event: 'STUDENT_FACE_UPDATED' }, async ({ payload }: any) => {
+        if (!modelsLoadedRef.current) return;
+        const { id, full_name, photo_url } = payload;
+        if (!photo_url || !id || !full_name) return;
+        
+        try {
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          img.src = photo_url;
+          await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = reject;
+          });
+          
+          const detection = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 })).withFaceLandmarks().withFaceDescriptor();
+          
+          if (detection) {
+            const label = id + "|||" + full_name + "|||" + photo_url;
+            const updated = labeledDescriptorsRef.current.filter(d => !d.label.startsWith(id + "|||"));
+            updated.push(new faceapi.LabeledFaceDescriptors(label, [detection.descriptor]));
+            labeledDescriptorsRef.current = updated;
+            faceMatcherRef.current = new faceapi.FaceMatcher(updated, 0.55);
+            console.log(`[CATRACA REALTIME] Novo rosto sincronizado: ${full_name}`);
+          }
+        } catch (e) {
+          console.warn("[CATRACA REALTIME] Erro ao processar rosto:", e);
+        }
+      })
+      .on('broadcast', { event: 'STUDENT_FACE_REMOVED' }, ({ payload }: any) => {
+        const { id } = payload;
+        if (!id) return;
+        const updated = labeledDescriptorsRef.current.filter(d => !d.label.startsWith(id + "|||"));
+        labeledDescriptorsRef.current = updated;
+        faceMatcherRef.current = updated.length > 0 ? new faceapi.FaceMatcher(updated, 0.55) : null;
+        console.log(`[CATRACA REALTIME] Rosto removido: ${id}`);
+      })
+      .subscribe();
+    
+    return () => { supabase.removeChannel(channel); };
   }, [open]);
 
   useEffect(() => () => stop(), [stop]);
@@ -263,6 +330,7 @@ export function QrScanner({
                     readingRef.current = true;
                     setDetectedFace({ id, name, photo_url });
                     overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+                    frameRef.current = requestAnimationFrame(scan);
                     return; 
                   } else {
                     lastMatch = 'unknown';
@@ -338,22 +406,27 @@ export function QrScanner({
   }, [close, onRead, open, stop]);
 
   const confirmFace = async () => {
-    if (!detectedFace) return;
-    const res = await onRead(detectedFace.id);
-    setDetectedFace(null);
-    if (res) {
-      const isAllowed = res.status === "allowed";
-      setValidationResult({
-        status: isAllowed ? 'allowed' : 'denied',
-        name: res.student?.full_name?.split(" ")[0] || "Aluno",
-        message: res.duplicate ? "Check-in já realizado" : res.reason || (isAllowed ? "Acesso liberado" : "Acesso negado")
-      });
-      setTimeout(() => {
-        setValidationResult(null);
+    if (!detectedFace || isConfirming) return;
+    setIsConfirming(true);
+    try {
+      const res = await onRead(detectedFace.id);
+      setDetectedFace(null);
+      if (res) {
+        const isAllowed = res.status === "allowed";
+        setValidationResult({
+          status: isAllowed ? 'allowed' : 'denied',
+          name: res.student?.full_name?.split(" ")[0] || "Aluno",
+          message: res.duplicate ? "Check-in já realizado" : res.reason || (isAllowed ? "Acesso liberado" : "Acesso negado")
+        });
+        setTimeout(() => {
+          setValidationResult(null);
+          readingRef.current = false;
+        }, 2000);
+      } else {
         readingRef.current = false;
-      }, 2000);
-    } else {
-      readingRef.current = false;
+      }
+    } finally {
+      setIsConfirming(false);
     }
   };
 
@@ -441,8 +514,10 @@ export function QrScanner({
              <p className="text-xl text-slate-600 font-bold mb-8 uppercase tracking-wide">{detectedFace.name}</p>
              
              <div className="flex gap-4 w-full">
-                <button onClick={cancelFace} className="flex-1 py-4 rounded-2xl font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition">Não sou eu</button>
-                <button onClick={confirmFace} className="flex-1 py-4 rounded-2xl font-black text-white bg-green-600 hover:bg-green-700 transition shadow-lg text-lg uppercase tracking-wider">Confirmar</button>
+                <button onClick={cancelFace} disabled={isConfirming} className="flex-1 py-4 rounded-2xl font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition disabled:opacity-50">Não sou eu</button>
+                <button onClick={confirmFace} disabled={isConfirming} className="flex-1 py-4 rounded-2xl font-black text-white bg-green-600 hover:bg-green-700 transition shadow-lg text-lg uppercase tracking-wider flex items-center justify-center gap-2">
+                  {isConfirming ? <><Loader2 className="h-5 w-5 animate-spin" /> Validando</> : 'Confirmar'}
+                </button>
              </div>
           </div>
         </div>

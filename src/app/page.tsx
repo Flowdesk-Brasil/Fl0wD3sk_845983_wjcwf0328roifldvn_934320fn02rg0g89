@@ -11,7 +11,7 @@ import {
   ShieldCheck,
   UserRound,
 } from "lucide-react";
-import { BrandIcon, BrandLogoWhite } from "@/components/brand-logo";
+import { BrandIcon } from "@/components/brand-logo";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { IconInput } from "@/components/form-controls";

@@ -1,11 +1,12 @@
-﻿"use client";
+"use client";
 
-import { Download, Eye, Mail, Plus, RefreshCw, Send, Users } from "lucide-react";
+import { Download, Eye, Mail, Plus, RefreshCw, Send, Trash2, Users, Rocket } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { StudentQrCard } from "@/components/student-qr-card";
 import { EmptyState, ErrorBanner, LoadingState, Modal, PageHeader, SearchInput, StatusBadge } from "@/components/ui";
-import { getStudents, releaseStudentPortal, updateStudent } from "@/lib/api";
+import { getStudents, releaseStudentPortal, updateStudent, deleteStudent, onboardStudent } from "@/lib/api";
+import { useRealtimeSync } from "@/hooks/use-realtime-sync";
 import type { Student, StudentStatus } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 
@@ -27,6 +28,7 @@ export default function AlunosPage() {
     setLoading(false);
   }
   useEffect(() => { void load(); }, []);
+  useRealtimeSync(load);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -53,6 +55,24 @@ export default function AlunosPage() {
     setSelected(updated);
   }
 
+  async function handleOnboard() {
+    if (!selected) return;
+    setWorking(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await onboardStudent(selected.id);
+      const contractMsg = result.contractSent ? " O link para assinatura do contrato foi incluído no mesmo e-mail." : "";
+      setMessage(`Acesso enviado para ${result.email}.${contractMsg}`);
+      await load();
+      setSelected((current) => current ? { ...current, profile_id: result.profileId || current.profile_id } : current);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Não foi possível realizar o onboarding.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
   async function releasePortal() {
     if (!selected) return;
     setWorking(true);
@@ -65,6 +85,27 @@ export default function AlunosPage() {
       setSelected((current) => current ? { ...current, profile_id: result.profileId || current.profile_id } : current);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Não foi possível liberar o portal.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!selected) return;
+    const confirm1 = window.confirm(`⚠️ ATENÇÃO: Você está prestes a EXCLUIR PERMANENTEMENTE o aluno "${selected.full_name}" e TODOS os seus dados:\n\n• Matrículas\n• Pagamentos\n• Contratos\n• Check-ins\n• Aulas vinculadas\n• Conta do portal\n\nEsta ação é IRREVERSÍVEL. Deseja continuar?`);
+    if (!confirm1) return;
+    const confirm2 = window.confirm(`ÚLTIMA CONFIRMAÇÃO: Digitar OK para excluir "${selected.full_name}" permanentemente.\n\nTem certeza absoluta?`);
+    if (!confirm2) return;
+    
+    setWorking(true);
+    setError(null);
+    try {
+      await deleteStudent(selected.id);
+      setSelected(null);
+      setMessage(`Aluno "${selected.full_name}" e todos os dados associados foram excluídos.`);
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Não foi possível excluir o aluno.");
     } finally {
       setWorking(false);
     }
@@ -108,9 +149,15 @@ export default function AlunosPage() {
               <div className="grid grid-cols-2 gap-3 rounded-2xl bg-[#f7f9fc] p-4 text-xs flex-1"><div><span className="field-label">CPF</span><strong>{selected.cpf}</strong></div><div><span className="field-label">Nascimento</span><strong>{formatDate(selected.birth_date)}</strong></div><div><span className="field-label">Telefone</span><strong>{selected.phone}</strong></div><div><span className="field-label">E-mail</span><strong>{selected.email || "Não informado"}</strong></div></div>
             </div>
             <div>
-              <span className="field-label">Portal do aluno</span>
+              <span className="field-label">Onboarding automático</span>
+              <p className="text-[11px] text-[#657085] mb-2">Cria conta no portal, envia senha e link para assinar contrato em UM único e-mail.</p>
               <div className="flex flex-col gap-2">
-                <button className="btn btn-primary w-fit" disabled={working || !selected.email} onClick={() => void releasePortal()}><Send className="h-4 w-4" /> {working ? "Enviando acesso..." : selected.profile_id ? "Reenviar acesso por e-mail" : "Liberar portal e enviar acesso"}</button>
+                <button className="btn btn-primary w-fit" disabled={working || !selected.email} onClick={() => void handleOnboard()}>
+                  <Rocket className="h-4 w-4" /> {working ? "Processando..." : "Onboard: Senha + Contrato"}
+                </button>
+                {selected.profile_id && <button className="btn btn-secondary w-fit" disabled={working || !selected.email} onClick={() => void releasePortal()}>
+                  <Send className="h-4 w-4" /> Reenviar acesso por e-mail
+                </button>}
                 {selected.profile_id && <button className="btn btn-secondary w-fit" disabled={working || !selected.email} onClick={async () => {
                   setWorking(true);
                   setError(null);
@@ -138,10 +185,17 @@ export default function AlunosPage() {
                 ))}
               </div>
             </div>
-            <div className="pt-2 border-t border-[#e3e8f0]">
+            <div className="pt-2 border-t border-[#e3e8f0] grid gap-2">
               <Link href={`/dashboard/alunos/${selected.id}/editar`} className="btn btn-primary w-full justify-center">
                 Editar Cadastro e Reconhecimento Facial
               </Link>
+              <button
+                className="btn w-full justify-center bg-red-50 text-red-600 hover:bg-red-100 border border-red-200"
+                disabled={working}
+                onClick={() => void handleDelete()}
+              >
+                <Trash2 className="h-4 w-4" /> Excluir aluno permanentemente
+              </button>
             </div>
           </div>
         </div>}

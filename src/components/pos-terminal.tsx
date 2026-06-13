@@ -5,6 +5,7 @@ import { getPayments } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import type { Payment } from "@/lib/types";
 import { X, Mail } from "lucide-react";
+import { getDeviceId } from "@/lib/device-id";
 
 export function PosTerminalListener({ email }: { email: string }) {
   const [activePayment, setActivePayment] = useState<any | null>(null);
@@ -98,6 +99,7 @@ export function PosTerminalListener({ email }: { email: string }) {
         "broadcast",
         { event: "SHOW_PIX" },
         async ({ payload }) => {
+          if (payload.targetDeviceId && payload.targetDeviceId !== getDeviceId()) return;
           if (payload.payment_id) {
             ignoredIds.current.delete(payload.payment_id);
             const fullPayment = await fetchFullPayment(payload.payment_id);
@@ -113,6 +115,7 @@ export function PosTerminalListener({ email }: { email: string }) {
         "broadcast",
         { event: "SHOW_PIX_SALE" },
         async ({ payload }) => {
+          if (payload.targetDeviceId && payload.targetDeviceId !== getDeviceId()) return;
           if (payload.sale_id) {
             ignoredIds.current.delete(payload.sale_id);
             // We use payload directly to be instant, bypass DB

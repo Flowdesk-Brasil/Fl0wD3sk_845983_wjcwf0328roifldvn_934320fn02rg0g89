@@ -1,13 +1,16 @@
-﻿"use client";
+"use client";
 
 import { ArrowLeft, CalendarDays, Clock3, MapPin, Save, UserRound, Users, Camera } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, type FormEvent } from "react";
 import { ErrorBanner, FieldLabel, PageHeader } from "@/components/ui";
-import { createClassBooking, updateStudent, getClassSessions } from "@/lib/api";
-import type { ClassSession } from "@/lib/types";
+import { getStudentById, updateStudent, getClassSchedules, getStudentClasses, linkStudentToClasses } from "@/lib/api";
+import { useDeviceSelector } from "@/components/device-selector";
+import type { ClassSchedule } from "@/lib/types";
 import { calculateIMC, digitsOnly, formatDateTime, maskCEP, maskCPF, maskPhone } from "@/lib/utils";
+import { supabase } from "@/lib/supabase";
+import { use } from "react";
 
 interface StudentForm {
   full_name: string;
@@ -66,62 +69,61 @@ function TextField({
   );
 }
 
-import { supabase } from "@/lib/supabase";
-import { use } from "react";
-
 export default function EditarAlunoPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
   const router = useRouter();
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [cepStatus, setCepStatus] = useState<string | null>(null);
-  const [sessions, setSessions] = useState<ClassSession[]>([]);
-  const [selectedSessions, setSelectedSessions] = useState<string[]>([]);
+  const [schedules, setSchedules] = useState<ClassSchedule[]>([]);
+  const [selectedSchedules, setSelectedSchedules] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [facialScanActive, setFacialScanActive] = useState(false);
   const [streamFrame, setStreamFrame] = useState<string | null>(null);
   const [loadingInitial, setLoadingInitial] = useState(true);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const { selectDevice, DeviceSelectorModal } = useDeviceSelector();
 
   useEffect(() => {
-    supabase.from("students").select("*").eq("id", resolvedParams.id).single().then(({ data }) => {
-      if (data) {
-        setForm({
-          full_name: data.full_name || "",
-          email: data.email || "",
-          cpf: data.cpf || "",
-          rg: data.rg || "",
-          birth_date: data.birth_date || "",
-          gender: data.gender || "",
-          phone: data.phone || "",
-          whatsapp: data.whatsapp || "",
-          cep: data.cep || "",
-          street: data.street || "",
-          number: data.number || "",
-          complement: data.complement || "",
-          neighborhood: data.neighborhood || "",
-          city: data.city || "",
-          state: data.state || "",
-          weight: data.weight?.toString() || "",
-          height: data.height?.toString() || "",
-          objective: data.objective || "",
-          emergency_contact: data.emergency_contact || "",
-          emergency_phone: data.emergency_phone || "",
-          observations: data.observations || "",
-          photo_base64: null,
-        });
-        
-        // fetch photo url directly from storage
-        const photoUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/student-photos/${data.id}.jpg?t=${Date.now()}`;
-        
-        // try to preload photo to see if it exists
-        const img = new Image();
-        img.onload = () => setForm(prev => ({ ...prev, photo_base64: photoUrl }));
-        img.src = photoUrl;
-
-      }
-      setLoadingInitial(false);
-    });
+    Promise.all([
+      getStudentById(resolvedParams.id).then((data) => {
+        if (data) {
+          setForm({
+            full_name: data.full_name || "",
+            email: data.email || "",
+            cpf: data.cpf || "",
+            rg: data.rg || "",
+            birth_date: data.birth_date || "",
+            gender: data.gender || "",
+            phone: data.phone || "",
+            whatsapp: data.whatsapp || "",
+            cep: data.cep || "",
+            street: data.street || "",
+            number: data.number || "",
+            complement: data.complement || "",
+            neighborhood: data.neighborhood || "",
+            city: data.city || "",
+            state: data.state || "",
+            weight: data.weight?.toString() || "",
+            height: data.height?.toString() || "",
+            objective: data.objective || "",
+            emergency_contact: data.emergency_contact || "",
+            emergency_phone: data.emergency_phone || "",
+            observations: data.observations || "",
+            photo_base64: null,
+          });
+          
+          if (data.photo_url) {
+            const photoUrl = `${data.photo_url}?t=${Date.now()}`;
+            const img = new Image();
+            img.onload = () => setForm(prev => ({ ...prev, photo_base64: photoUrl }));
+            img.src = photoUrl;
+          }
+        }
+      }),
+      getClassSchedules().then((items) => setSchedules(items.filter((item) => item.active))),
+      getStudentClasses(resolvedParams.id).then((classes) => setSelectedSchedules(classes.map(c => c.class_schedule_id)))
+    ]).finally(() => setLoadingInitial(false));
   }, [resolvedParams.id]);
 
   useEffect(() => {
@@ -145,9 +147,11 @@ export default function EditarAlunoPage({ params }: { params: Promise<{ id: stri
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  function startFacialScan() {
+  async function startFacialScan() {
+    const targetDeviceId = await selectDevice();
+    if (targetDeviceId === null) return;
     setFacialScanActive(true);
-    channelRef.current?.send({ type: "broadcast", event: "START_SCAN" });
+    channelRef.current?.send({ type: "broadcast", event: "START_SCAN", payload: { targetDeviceId } });
   }
 
   function captureFacialScan() {
@@ -193,14 +197,6 @@ export default function EditarAlunoPage({ params }: { params: Promise<{ id: stri
     return () => controller.abort();
   }, [form.cep]);
 
-  useEffect(() => {
-    getClassSessions().then((items) => setSessions(items.filter((item) =>
-      item.status === "scheduled" &&
-      new Date(item.start_at).getTime() > Date.now() &&
-      (item.bookings || []).filter((booking) => booking.status === "confirmed" || booking.status === "attended").length < item.capacity
-    )));
-  }, []);
-
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaving(true);
@@ -243,17 +239,33 @@ export default function EditarAlunoPage({ params }: { params: Promise<{ id: stri
           });
           const photo_url = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/student-photos/${student.id}.jpg?t=${Date.now()}`;
           await supabase.from("students").update({ photo_url }).eq("id", student.id);
+          
+          supabase.channel("students-sync", { config: { broadcast: { self: false } } }).send({
+            type: "broadcast",
+            event: "STUDENT_FACE_UPDATED",
+            payload: { id: student.id, full_name: form.full_name, photo_url }
+          });
         } catch (e) {
           console.error("Failed to upload photo", e);
         }
       } else if (!form.photo_base64) {
         try {
-          await supabase.storage.from("student-photos").remove([`${student.id}.jpg`]);
+          const { error: storageError } = await supabase.storage.from("student-photos").remove([`${student.id}.jpg`]);
+          if (storageError) console.error("Failed to remove photo from bucket", storageError);
+          
           await supabase.from("students").update({ photo_url: null }).eq("id", student.id);
-        } catch (e) {}
+          
+          supabase.channel("students-sync", { config: { broadcast: { self: false } } }).send({
+            type: "broadcast",
+            event: "STUDENT_FACE_REMOVED",
+            payload: { id: student.id }
+          });
+        } catch (e) {
+          console.error("Error removing photo", e);
+        }
       }
 
-      await Promise.all(selectedSessions.map((sessionId) => createClassBooking(sessionId, student.id)));
+      await linkStudentToClasses(student.id, selectedSchedules);
       router.push("/dashboard/alunos");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Não foi possível salvar o aluno.");
@@ -352,18 +364,23 @@ export default function EditarAlunoPage({ params }: { params: Promise<{ id: stri
         </section>
 
         <section className="card">
-          <div className="card-header"><div><h2>Horários de aulas</h2><p>Vincule o aluno Ã s próximas aulas com vagas disponíveis</p></div><CalendarDays className="h-5 w-5 text-blue-600" /></div>
+          <div className="card-header"><div><h2>Grade de Aulas</h2><p>Vincule o aluno aos horários fixos semanais</p></div><CalendarDays className="h-5 w-5 text-blue-600" /></div>
           <div className="card-body">
-            {sessions.length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{sessions.slice(0, 12).map((session) => {
-              const booked = (session.bookings || []).filter((booking) => booking.status === "confirmed" || booking.status === "attended").length;
-              const selected = selectedSessions.includes(session.id);
-              return <label key={session.id} className={`cursor-pointer rounded-2xl border p-4 transition ${selected ? "border-blue-500 bg-blue-50" : "border-[#e3e8f0] hover:border-blue-300"}`}>
-                <input className="sr-only" type="checkbox" checked={selected} onChange={() => setSelectedSessions((current) => current.includes(session.id) ? current.filter((id) => id !== session.id) : [...current, session.id])} />
-                <strong className="block text-sm">{session.class_type?.name || "Aula"}</strong>
-                <span className="mt-2 flex items-center gap-1.5 text-[11px] text-[#657085]"><Clock3 className="h-3.5 w-3.5" /> {formatDateTime(session.start_at)}</span>
-                <span className="mt-1 flex items-center gap-1.5 text-[11px] text-[#657085]"><Users className="h-3.5 w-3.5" /> {session.capacity - booked} vagas restantes</span>
-              </label>;
-            })}</div> : <p className="rounded-xl bg-[#f7f9fc] p-4 text-xs text-[#657085]">Nenhum horário disponível. Crie aulas na aba Calendário para vinculá-las durante o cadastro.</p>}
+            {!schedules.length ? <p className="text-sm text-[#657085]">Nenhum horário fixo cadastrado na grade.</p> : (
+              <div className="flex flex-col gap-2">
+                {schedules.map((schedule) => {
+                  const WEEKDAYS = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+                  const label = `${schedule.class_type?.name} - ${WEEKDAYS[schedule.day_of_week]} às ${schedule.time}`;
+                  const isChecked = selectedSchedules.includes(schedule.id);
+                  return (
+                    <label key={schedule.id} className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-colors hover:bg-[#f7f9fc] ${isChecked ? "border-blue-600 bg-[#eff4ff]" : "border-[#e3e8f0]"}`}>
+                      <input type="checkbox" className="h-4 w-4 rounded border-[#cbd5e1] text-blue-600 focus:ring-blue-600" checked={isChecked} onChange={(event) => setSelectedSchedules(event.target.checked ? [...selectedSchedules, schedule.id] : selectedSchedules.filter((id) => id !== schedule.id))} />
+                      <span className={`text-sm font-medium ${isChecked ? "text-blue-900" : "text-[#172033]"}`}>{label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </section>
 
@@ -372,6 +389,8 @@ export default function EditarAlunoPage({ params }: { params: Promise<{ id: stri
           <button className="btn btn-primary" disabled={saving} type="submit"><Save className="h-4 w-4" /> {saving ? "Salvando..." : "Salvar aluno"}</button>
         </div>
       </form>
+
+      <DeviceSelectorModal />
     </div>
   );
 }

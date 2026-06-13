@@ -1,9 +1,11 @@
-﻿"use client";
+"use client";
 
 import { Check, CheckCircle2, Copy, CreditCard, QrCode, RotateCcw, WalletCards } from "lucide-react";
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { EmptyState, ErrorBanner, FieldLabel, LoadingState, Modal, PageHeader, SearchInput, StatusBadge } from "@/components/ui";
+import { useDeviceSelector } from "@/components/device-selector";
+import { useRealtimeSync } from "@/hooks/use-realtime-sync";
 import { createPixPayment, getPayments, markPaymentPaid, updatePaymentStatus } from "@/lib/api";
 import type { Payment, PaymentMethod, PaymentStatus } from "@/lib/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
@@ -22,6 +24,7 @@ export default function PagamentosPage() {
   const [working, setWorking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<"pending" | "paid" | "history">("pending");
 
   const load = useCallback(async () => {
     const data = await getPayments();
@@ -30,6 +33,9 @@ export default function PagamentosPage() {
     setLoading(false);
   }, []);
   useEffect(() => { void load(); }, [load]);
+  
+  const { selectDevice, DeviceSelectorModal } = useDeviceSelector();
+  useRealtimeSync(load);
   
   useEffect(() => {
     if (!pix || pix.status === "paid") return;
@@ -58,8 +64,15 @@ export default function PagamentosPage() {
 
   const filtered = useMemo(() => {
     const query = search.toLowerCase();
-    return payments.filter((item) => !query || item.reference.toLowerCase().includes(query) || item.student?.full_name.toLowerCase().includes(query));
-  }, [payments, search]);
+    return payments.filter((item) => {
+      const matchSearch = !query || item.reference.toLowerCase().includes(query) || item.student?.full_name.toLowerCase().includes(query);
+      let matchStatus = false;
+      if (statusFilter === "pending") matchStatus = item.status === "pending";
+      else if (statusFilter === "paid") matchStatus = item.status === "paid";
+      else matchStatus = ["cancelled", "expired", "refunded"].includes(item.status);
+      return matchSearch && matchStatus;
+    });
+  }, [payments, search, statusFilter]);
 
   async function receive() {
     if (!selected) return;
@@ -124,7 +137,20 @@ export default function PagamentosPage() {
         <article className="card metric-card"><div className="metric-top"><div className="metric-icon badge-yellow"><WalletCards className="h-5 w-5" /></div></div><strong>{formatCurrency(receivable)}</strong><p>Saldo pendente</p></article>
       </div>
       <section className="card">
-        <div className="table-toolbar"><SearchInput value={search} onChange={setSearch} placeholder="Buscar referência ou aluno..." /><StatusBadge tone="blue">{payments.length} cobranças</StatusBadge></div>
+        <div className="table-toolbar">
+          <SearchInput value={search} onChange={setSearch} placeholder="Buscar referência ou aluno..." />
+          <div className="flex flex-wrap gap-1 rounded-xl bg-[#f3f6fb] p-1">
+            {([["pending", "Em Aberto"], ["paid", "Recebidos"], ["history", "Histórico"]] as const).map(([value, label]) => (
+              <button 
+                key={value} 
+                onClick={() => setStatusFilter(value as any)} 
+                className={`rounded-lg px-3 py-2 text-[11px] font-semibold transition ${statusFilter === value ? "bg-white text-blue-600 shadow-sm" : "text-[#657085] hover:text-[#172033]"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
         {filtered.length ? <div className="table-wrap"><table className="data-table">
           <thead><tr><th>Referência</th><th>Aluno</th><th>Valor</th><th className="hide-mobile">Vencimento</th><th className="hide-mobile">Método</th><th>Status</th><th>Ação</th></tr></thead>
           <tbody>{filtered.map((payment) => (
@@ -159,26 +185,29 @@ export default function PagamentosPage() {
             <p className="text-xs leading-5 text-[#657085]">A tela atualiza automaticamente quando o Mercado Pago confirmar o pagamento.</p>
             <div className="flex flex-col gap-2 w-full mt-2">
               <button className="btn btn-secondary w-full justify-center" disabled={!pix.pix_code} onClick={() => void copyPix()}>{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />} {copied ? "Código copiado" : "Copiar PIX copia e cola"}</button>
-              <button className="btn btn-primary w-full justify-center bg-indigo-600 hover:bg-indigo-700 border-indigo-600 text-white" onClick={() => {
+              <button className="btn btn-primary w-full justify-center bg-indigo-600 hover:bg-indigo-700 border-indigo-600 text-white" onClick={async () => {
+                const targetDeviceId = await selectDevice();
+                if (targetDeviceId === null) return;
+                
                 const { supabase } = require("@/lib/supabase");
                 const channelName = "pos-terminal-channel";
                 
-                // Get existing channel if any
                 let channel = supabase.getChannels().find((c: any) => c.topic === `realtime:${channelName}`);
                 if (!channel) {
                   channel = supabase.channel(channelName);
                 }
 
-                // If already joined, just send
+                const sendSignal = () => {
+                  channel.send({ type: "broadcast", event: "SHOW_PIX", payload: { payment_id: pix.id, targetDeviceId } });
+                  alert("Sinal enviado!");
+                };
+
                 if (channel.state === "joined") {
-                  channel.send({ type: "broadcast", event: "SHOW_PIX", payload: { payment_id: pix.id } });
-                  alert("Sinal re-enviado para o celular admin!");
+                  sendSignal();
                 } else {
-                  // Otherwise subscribe and wait for SUBSCRIBED
                   channel.subscribe((status: string) => {
                     if (status === "SUBSCRIBED") {
-                      channel.send({ type: "broadcast", event: "SHOW_PIX", payload: { payment_id: pix.id } });
-                      alert("Sinal enviado para o celular admin!");
+                      sendSignal();
                     }
                   });
                 }
@@ -187,6 +216,8 @@ export default function PagamentosPage() {
           </>}
         </div>}
       </Modal>
+
+      <DeviceSelectorModal />
     </div>
   );
 }

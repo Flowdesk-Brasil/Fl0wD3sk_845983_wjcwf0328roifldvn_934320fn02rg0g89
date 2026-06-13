@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Camera, X } from "lucide-react";
+import { getDeviceId } from "@/lib/device-id";
 
 export function FaceTerminalListener({ email }: { email: string }) {
   const [scanning, setScanning] = useState(false);
@@ -20,13 +21,16 @@ export function FaceTerminalListener({ email }: { email: string }) {
     const channel = supabase.channel("face-scan-channel", {
       config: { broadcast: { self: true } }
     })
-      .on("broadcast", { event: "START_SCAN" }, () => {
+      .on("broadcast", { event: "START_SCAN" }, ({ payload }) => {
+        if (payload?.targetDeviceId && payload.targetDeviceId !== getDeviceId()) return;
         setScanning(true);
       })
-      .on("broadcast", { event: "CAPTURE_SCAN" }, () => {
+      .on("broadcast", { event: "CAPTURE_SCAN" }, ({ payload }) => {
+        if (payload?.targetDeviceId && payload.targetDeviceId !== getDeviceId()) return;
         captureFrame(channel);
       })
-      .on("broadcast", { event: "STOP_SCAN" }, () => {
+      .on("broadcast", { event: "STOP_SCAN" }, ({ payload }) => {
+        if (payload?.targetDeviceId && payload.targetDeviceId !== getDeviceId()) return;
         setScanning(false);
       })
       .subscribe();
@@ -68,7 +72,13 @@ export function FaceTerminalListener({ email }: { email: string }) {
           canvas.height = 240;
           const ctx = canvas.getContext("2d");
           if (!ctx) return;
-          ctx.drawImage(videoRef.current, 0, 0, 320, 240);
+          const zoom = 1.5;
+          const sw = videoRef.current.videoWidth / zoom;
+          const sh = videoRef.current.videoHeight / zoom;
+          const sx = (videoRef.current.videoWidth - sw) / 2;
+          const sy = (videoRef.current.videoHeight - sh) / 2;
+          
+          ctx.drawImage(videoRef.current, sx, sy, sw, sh, 0, 0, 320, 240);
           const frameBase64 = canvas.toDataURL("image/jpeg", 0.4);
           
           channelRef.current.send({
@@ -99,11 +109,18 @@ export function FaceTerminalListener({ email }: { email: string }) {
   const captureFrame = (channel: any) => {
     if (!videoRef.current) return;
     const canvas = document.createElement("canvas");
-    canvas.width = videoRef.current.videoWidth;
-    canvas.height = videoRef.current.videoHeight;
+    const zoom = 1.5;
+    const sw = videoRef.current.videoWidth / zoom;
+    const sh = videoRef.current.videoHeight / zoom;
+    const sx = (videoRef.current.videoWidth - sw) / 2;
+    const sy = (videoRef.current.videoHeight - sh) / 2;
+
+    canvas.width = sw;
+    canvas.height = sh;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    ctx.drawImage(videoRef.current, 0, 0);
+    
+    ctx.drawImage(videoRef.current, sx, sy, sw, sh, 0, 0, sw, sh);
     const base64 = canvas.toDataURL("image/jpeg", 0.7);
     
     // Envia a foto capturada
@@ -125,7 +142,8 @@ export function FaceTerminalListener({ email }: { email: string }) {
         autoPlay 
         playsInline 
         muted 
-        className="w-full h-full object-cover scale-x-[-1]" 
+        className="w-full h-full object-cover origin-center" 
+        style={{ transform: "scaleX(-1.5) scaleY(1.5)" }}
       />
       
       <div className="absolute top-8 left-8 right-8 flex justify-between items-center z-10">

@@ -48,3 +48,39 @@ export function apiErrorResponse(reason: unknown) {
   const message = reason instanceof Error ? reason.message : "Erro interno do servidor.";
   return Response.json({ error: message }, { status });
 }
+
+/** Extract real client IP from request headers (supports Vercel, CF, nginx proxies) */
+export function getClientIp(request: Request): string | null {
+  return (
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    request.headers.get("x-real-ip") ||
+    request.headers.get("cf-connecting-ip") ||
+    null
+  );
+}
+
+/** Insert a row into audit_logs with full traceability */
+export async function logAudit(
+  admin: SupabaseClient,
+  opts: {
+    userId?: string | null;
+    action: "INSERT" | "UPDATE" | "DELETE";
+    entity: string;
+    entityId?: string | null;
+    details: Record<string, unknown> | string;
+    ip?: string | null;
+  },
+) {
+  try {
+    await admin.from("audit_logs").insert({
+      user_id: opts.userId ?? null,
+      action: opts.action,
+      entity: opts.entity,
+      entity_id: opts.entityId ?? null,
+      details: typeof opts.details === "string" ? opts.details : JSON.stringify(opts.details),
+      ip_address: opts.ip ?? null,
+    });
+  } catch {
+    // Never let audit failures break business logic
+  }
+}

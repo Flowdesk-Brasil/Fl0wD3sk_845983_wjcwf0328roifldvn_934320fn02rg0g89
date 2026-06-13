@@ -38,7 +38,17 @@ export default function CheckinReceiverPage() {
       })
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
+    // REALTIME: Atualiza lista de alunos quando novo aluno é cadastrado
+    const studentsChannel = supabase.channel('students-list-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'students' } as any, async () => {
+        setStudents(await getStudents());
+      })
+      .subscribe();
+
+    return () => { 
+      supabase.removeChannel(channel);
+      supabase.removeChannel(studentsChannel);
+    };
   }, []);
 
   const handleQRCode = useCallback(
