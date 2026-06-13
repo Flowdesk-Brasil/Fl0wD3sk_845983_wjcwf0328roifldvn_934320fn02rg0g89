@@ -1,10 +1,12 @@
 import { apiErrorResponse, ApiError, requireRole } from "@/lib/server/supabase-admin";
 import { todayInBrasilia, dayOfWeekInBrasilia } from "@/lib/brazil-date";
+import { createContractSigningLink, ensurePendingContractForStudent, resolveAppOrigin } from "@/lib/server/student-onboarding";
 
 export async function GET(request: Request) {
   try {
     const { admin, user } = await requireRole(request, ["student"]);
     const { data: student, error } = await admin.from("students").select("*").eq("profile_id", user.id).single();
+    if (student?.id) await ensurePendingContractForStudent(admin, student.id);
     if (error || !student) throw new ApiError("Cadastro de aluno não vinculado ao portal.", 404);
 
     const dateStr = todayInBrasilia();      // "YYYY-MM-DD" no fuso de Brasília
@@ -98,11 +100,22 @@ export async function GET(request: Request) {
       return timeA.localeCompare(timeB);
     });
 
+    const pendingContract = (contracts || []).find((contract: any) => contract.status === "pending") ?? null;
+    const requiredContract = pendingContract
+      ? {
+          id: pendingContract.id,
+          plan: pendingContract.plan ?? null,
+          created_at: pendingContract.created_at,
+          signingUrl: await createContractSigningLink(admin, pendingContract.id, resolveAppOrigin(request)),
+        }
+      : null;
+
     return Response.json({
       student,
       attendances: mergedAttendances,
       payments: payments || [],
       contracts: contracts || [],
+      requiredContract,
     });
   } catch (reason) {
     return apiErrorResponse(reason);

@@ -15,6 +15,18 @@ function ResetPasswordForm() {
 
   const searchParams = useSearchParams();
   const token = searchParams.get("token");
+  const nextUrl = searchParams.get("next");
+
+  function safeRedirectTarget() {
+    if (!nextUrl) return "/portal";
+    try {
+      const parsed = new URL(nextUrl, window.location.origin);
+      if (parsed.origin !== window.location.origin) return "/portal";
+      return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    } catch {
+      return "/portal";
+    }
+  }
 
   useEffect(() => {
     const handleAuth = async () => {
@@ -59,15 +71,13 @@ function ResetPasswordForm() {
       setLoading(false);
     } else {
       setSuccess(true);
-      const nextUrl = searchParams.get("next");
       setTimeout(() => {
-        router.push(nextUrl || "/portal");
+        router.push(safeRedirectTarget());
       }, 2000);
     }
   }
 
   if (success) {
-    const nextUrl = searchParams.get("next");
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
         <div className="w-full max-w-md rounded-3xl bg-white p-8 shadow-xl text-center space-y-4">

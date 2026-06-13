@@ -114,7 +114,7 @@ export async function releaseStudentPortal(id: string) {
     method: "POST",
     headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` },
   });
-  const payload = await response.json() as { email?: string; profileId?: string; error?: string };
+  const payload = await response.json() as { email?: string; profileId?: string; contractSent?: boolean; contractCreated?: boolean; error?: string };
   if (!response.ok) throw new Error(payload.error ?? "Não foi possível liberar o portal.");
   return payload;
 }
@@ -137,7 +137,7 @@ export async function onboardStudent(id: string) {
     method: "POST",
     headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` },
   });
-  const payload = await response.json() as { email?: string; profileId?: string; contractSent?: boolean; error?: string };
+  const payload = await response.json() as { email?: string; profileId?: string; contractSent?: boolean; contractCreated?: boolean; error?: string };
   if (!response.ok) throw new Error(payload.error ?? "Não foi possível realizar o onboarding.");
   return payload;
 }

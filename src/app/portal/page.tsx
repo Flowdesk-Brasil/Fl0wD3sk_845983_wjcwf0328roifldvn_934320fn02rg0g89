@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarDays, Check, CheckCircle2, Copy, CreditCard, FileCheck2, LogOut, QrCode, Bell, CalendarClock, XCircle } from "lucide-react";
+import { CalendarDays, Check, CheckCircle2, Copy, CreditCard, FileCheck2, FileSignature, LogOut, QrCode, Bell, XCircle } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import { useEffect, useState } from "react";
@@ -28,6 +28,7 @@ type PortalData = {
   attendances: ClassAttendance[];
   payments: Array<{ id: string; reference: string; total_amount: number; status: string; due_date: string; pix_code?: string; pix_qr_base64?: string }>;
   contracts: Array<{ id: string; status: string; signed_at?: string | null; created_at: string; plan?: { name: string } }>;
+  requiredContract?: { id: string; created_at: string; signingUrl: string; plan?: { name: string } | null } | null;
 };
 
 export default function StudentPortalPage() {
@@ -181,6 +182,51 @@ export default function StudentPortalPage() {
         <header className="flex items-center justify-between gap-4"><div><p className="eyebrow">Portal do aluno</p><h1 className="page-title">{data?.student.full_name || user.full_name}</h1></div><button className="btn btn-secondary" onClick={() => void logout()}><LogOut className="h-4 w-4" /> Sair</button></header>
         <ErrorBanner message={error} />
         {data && <>
+        {data.requiredContract ? (
+          <section className="card overflow-hidden">
+            <div className="grid gap-0 lg:grid-cols-[1fr_360px]">
+              <div className="card-body grid gap-5 p-6 sm:p-8">
+                <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-lg shadow-blue-600/20">
+                  <FileSignature className="h-7 w-7" />
+                </div>
+                <div>
+                  <p className="eyebrow">Primeiro acesso</p>
+                  <h2 className="mt-2 text-2xl font-black text-[#172033]">Assine seu contrato para liberar o portal</h2>
+                  <p className="mt-3 max-w-2xl text-sm leading-6 text-[#657085]">
+                    Seu cadastro ja esta ativo, mas o QR Code, aulas, financeiro e demais recursos ficam bloqueados ate a assinatura digital do contrato pendente.
+                  </p>
+                </div>
+                <div className="grid gap-3 rounded-2xl border border-[#e3e8f0] bg-[#fbfcfe] p-4 sm:grid-cols-2">
+                  <div>
+                    <span className="field-label">Plano</span>
+                    <strong className="mt-1 block text-sm text-[#172033]">{data.requiredContract.plan?.name || "Plano contratado"}</strong>
+                  </div>
+                  <div>
+                    <span className="field-label">Status</span>
+                    <StatusBadge tone="yellow">Contrato pendente</StatusBadge>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <Link className="btn btn-primary" href={data.requiredContract.signingUrl}>
+                    <FileCheck2 className="h-4 w-4" /> Revisar e assinar agora
+                  </Link>
+                  <button className="btn btn-secondary" onClick={() => void reloadData()}>
+                    Ja assinei, atualizar portal
+                  </button>
+                </div>
+              </div>
+              <aside className="border-t border-[#e3e8f0] bg-[#f7f9fc] p-6 lg:border-l lg:border-t-0">
+                <h3 className="text-sm font-bold text-[#172033]">O que acontece depois</h3>
+                <div className="mt-4 grid gap-3 text-sm text-[#657085]">
+                  <div className="rounded-xl bg-white p-4 shadow-sm"><strong className="block text-[#172033]">1. Leitura</strong><span>Leia o contrato completo e confirme os termos.</span></div>
+                  <div className="rounded-xl bg-white p-4 shadow-sm"><strong className="block text-[#172033]">2. CPF</strong><span>Informe o CPF do titular para validar a assinatura.</span></div>
+                  <div className="rounded-xl bg-white p-4 shadow-sm"><strong className="block text-[#172033]">3. Portal liberado</strong><span>Volte para o portal e acesse QR Code, aulas e cobranças.</span></div>
+                </div>
+              </aside>
+            </div>
+          </section>
+        ) : (
+        <>
         {pushChecking ? (
           <div className="bg-white rounded-3xl shadow-xl p-8 mb-6 flex flex-col items-center text-center mt-10 max-w-md mx-auto">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
@@ -240,6 +286,8 @@ export default function StudentPortalPage() {
             <section className="card"><div className="card-header"><div><h2>Financeiro</h2><p>Últimas cobranças</p></div><CreditCard className="h-5 w-5 text-blue-600" /></div><div className="table-wrap"><table className="data-table"><tbody>{data.payments.map((payment) => <tr key={payment.id}><td><strong>{payment.reference}</strong><small className="mt-1 block text-[#8d97aa]">Vence em {formatDate(payment.due_date)}</small></td><td>{formatCurrency(Number(payment.total_amount))}</td><td><StatusBadge tone={payment.status === "paid" ? "green" : payment.status === "cancelled" ? "red" : "yellow"}>{payment.status === "paid" ? "Pago" : payment.status === "cancelled" ? "Cancelado" : "Pendente"}</StatusBadge></td><td>{payment.status !== "paid" && <button className="btn btn-primary min-h-8 px-3 py-1.5 text-[10px]" disabled={working === payment.id} onClick={() => void generatePix(payment.id)}><QrCode className="mr-1.5 h-3.5 w-3.5" /> Pagar com PIX</button>}</td></tr>)}</tbody></table></div></section>
             <section className="card"><div className="card-header"><div><h2>Contratos</h2><p>Documentos vinculados</p></div><FileCheck2 className="h-5 w-5 text-blue-600" /></div><div className="table-wrap"><table className="data-table"><tbody>{data.contracts.map((contract) => <tr key={contract.id}><td><strong>{contract.plan?.name || "Contrato"}</strong><small className="mt-1 block text-[#8d97aa]">{formatDate(contract.created_at)}</small></td><td><StatusBadge tone={contract.status === "signed" ? "green" : "yellow"}>{contract.status === "signed" ? "Assinado" : "Pendente"}</StatusBadge></td></tr>)}</tbody></table></div></section>
           </div>
+        </>
+        )}
         </>
         )}
         </>

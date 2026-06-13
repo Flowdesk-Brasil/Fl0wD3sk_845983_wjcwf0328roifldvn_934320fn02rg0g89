@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { CheckCircle2, FileCheck2, Loader2, ShieldCheck, FileText } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useState, useRef, type FormEvent, type UIEvent } from "react";
 import { ErrorBanner, FieldLabel } from "@/components/ui";
 import { maskCPF, cn } from "@/lib/utils";
@@ -77,7 +78,7 @@ export function SignatureForm({ token }: { token: string }) {
   }
 
   if (loading) return <main className="grid min-h-screen place-items-center bg-[#f7f9fc]"><Loader2 className="h-7 w-7 animate-spin text-blue-600" /></main>;
-  if (signed) return <main className="grid min-h-screen place-items-center bg-[#f7f9fc] p-5"><section className="card max-w-lg p-8 text-center"><CheckCircle2 className="mx-auto h-14 w-14 text-green-600" /><h1 className="mt-5 text-2xl font-bold">Contrato assinado</h1><p className="mt-2 text-sm text-[#657085]">A confirmação já foi registrada no painel do Studio Corpo & Evolução.</p></section></main>;
+  if (signed) return <main className="grid min-h-screen place-items-center bg-[#f7f9fc] p-5"><section className="card max-w-lg p-8 text-center"><CheckCircle2 className="mx-auto h-14 w-14 text-green-600" /><h1 className="mt-5 text-2xl font-bold">Contrato assinado</h1><p className="mt-2 text-sm text-[#657085]">A confirmação já foi registrada no painel do Studio Corpo & Evolução.</p><Link className="btn btn-primary mt-5" href="/portal">Ir para o portal</Link></section></main>;
 
   return (
     <main className="min-h-screen bg-[#f7f9fc] p-4 sm:p-8">
