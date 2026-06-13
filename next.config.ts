@@ -4,6 +4,10 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
+  webpack: (config) => {
+    config.module.exprContextCritical = false;
+    return config;
+  },
   allowedDevOrigins: ["192.168.18.136", "localhost"],
   poweredByHeader: false,
   async headers() {
