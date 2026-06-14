@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { format, addDays, subDays } from "date-fns";
+import { addDays, format, subDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { Bell, Calendar as CalendarIcon, CheckCircle2, ChevronLeft, ChevronRight, Clock, UserX, XCircle, AlertCircle } from "lucide-react";
-import { PageHeader, LoadingState, Avatar } from "@/components/ui";
+import { AlertCircle, Bell, Calendar as CalendarIcon, CheckCircle2, ChevronLeft, ChevronRight, Clock, XCircle } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Avatar, LoadingState, PageHeader } from "@/components/ui";
 import { getAttendancesByDate } from "@/lib/api";
 import type { ClassAttendance } from "@/lib/types";
 
@@ -16,28 +16,27 @@ export default function PresencasPage() {
 
   async function loadData() {
     setLoading(true);
-    const dateStr = format(currentDate, 'yyyy-MM-dd'); // Usa data local do browser, sem shift UTC
+    const dateStr = format(currentDate, "yyyy-MM-dd");
     const data = await getAttendancesByDate(dateStr);
     setAttendances(data);
     setLoading(false);
   }
 
   useEffect(() => {
-    loadData();
-    // Refresh a cada 30 segundos
-    const interval = setInterval(loadData, 30000);
+    void loadData();
+    const interval = setInterval(() => void loadData(), 30000);
     return () => clearInterval(interval);
   }, [currentDate]);
 
   async function handleNotifyToday() {
     setSendingPush(true);
     try {
-      const res = await fetch('/api/cron/notify-today');
+      const res = await fetch("/api/cron/notify-today");
       const data = await res.json();
-      alert(data.message || 'Notificações enviadas (ou processo concluído).');
-      loadData();
-    } catch (e) {
-      alert("Erro ao disparar notificações.");
+      alert(data.message || "Notificacoes enviadas.");
+      await loadData();
+    } catch {
+      alert("Erro ao disparar notificacoes.");
     } finally {
       setSendingPush(false);
     }
@@ -45,15 +44,10 @@ export default function PresencasPage() {
 
   const groupedBySchedule = attendances.reduce((acc, att) => {
     const key = att.class_schedule_id;
-    if (!acc[key]) {
-      acc[key] = {
-        schedule: att.class_schedule,
-        attendances: []
-      };
-    }
+    if (!acc[key]) acc[key] = { schedule: att.class_schedule, attendances: [] };
     acc[key].attendances.push(att);
     return acc;
-  }, {} as Record<string, { schedule: any, attendances: ClassAttendance[] }>);
+  }, {} as Record<string, { schedule: any; attendances: ClassAttendance[] }>);
 
   const schedulesArray = Object.values(groupedBySchedule).sort((a, b) => {
     return (a.schedule?.time || "").localeCompare(b.schedule?.time || "");
@@ -61,85 +55,112 @@ export default function PresencasPage() {
 
   return (
     <div className="page-stack">
-      <PageHeader 
-        eyebrow="Gestão" 
-        title="Controle de Presenças" 
-        description="Acompanhe quem confirmou presença nas aulas e dispare notificações." 
+      <PageHeader
+        eyebrow="Gestao"
+        title="Controle de Presencas"
+        description="Aulas do dia com alunos pendentes, confirmados e ausentes em tempo real."
         action={
-          <button 
-            className="btn btn-primary bg-blue-600 hover:bg-blue-700" 
-            onClick={handleNotifyToday} 
-            disabled={sendingPush}
-          >
-            <Bell className="h-4 w-4" /> 
-            {sendingPush ? 'Enviando...' : 'Notificar Alunos de Hoje'}
+          <button className="btn btn-primary bg-blue-600 hover:bg-blue-700" onClick={handleNotifyToday} disabled={sendingPush}>
+            <Bell className="h-4 w-4" />
+            {sendingPush ? "Enviando..." : "Notificar alunos de hoje"}
           </button>
         }
       />
 
-      <div className="flex items-center justify-between bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
-        <button className="btn btn-secondary" onClick={() => setCurrentDate(d => subDays(d, 1))}><ChevronLeft className="h-4 w-4" /> Anterior</button>
-        <div className="flex items-center gap-2 font-bold text-lg text-slate-800">
+      <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <button className="btn btn-secondary" onClick={() => setCurrentDate((date) => subDays(date, 1))}>
+          <ChevronLeft className="h-4 w-4" /> Anterior
+        </button>
+        <div className="flex items-center gap-2 text-lg font-bold text-slate-800">
           <CalendarIcon className="h-5 w-5 text-blue-600" />
           {format(currentDate, "EEEE, dd 'de' MMMM", { locale: ptBR })}
         </div>
-        <button className="btn btn-secondary" onClick={() => setCurrentDate(d => addDays(d, 1))}>Próximo <ChevronRight className="h-4 w-4" /></button>
+        <button className="btn btn-secondary" onClick={() => setCurrentDate((date) => addDays(date, 1))}>
+          Proximo <ChevronRight className="h-4 w-4" />
+        </button>
       </div>
 
       {loading ? (
-        <LoadingState label="Carregando presenças..." />
+        <LoadingState label="Carregando presencas..." />
       ) : schedulesArray.length === 0 ? (
-        <div className="card p-12 text-center flex flex-col items-center text-slate-500">
-          <Clock className="h-12 w-12 text-slate-300 mb-4" />
-          <h3 className="text-lg font-bold text-slate-700">Nenhuma ocorrência registrada</h3>
-          <p className="text-sm max-w-sm mt-2">
-            As presenças são geradas automaticamente quando as notificações são disparadas ou quando um aluno confirma pelo app.
-          </p>
+        <div className="card flex flex-col items-center p-12 text-center text-slate-500">
+          <Clock className="mb-4 h-12 w-12 text-slate-300" />
+          <h3 className="text-lg font-bold text-slate-700">Nenhuma aula encontrada</h3>
+          <p className="mt-2 max-w-sm text-sm">Quando houver alunos vinculados a aulas deste dia, a lista sera montada automaticamente.</p>
         </div>
       ) : (
         <div className="grid gap-6">
           {schedulesArray.map((group) => {
-            const confirmed = group.attendances.filter(a => a.status === 'confirmed' || a.status === 'attended').length;
-            const cancelled = group.attendances.filter(a => a.status === 'cancelled' || a.status === 'missed').length;
-            const pending = group.attendances.filter(a => a.status === 'pending').length;
+            const confirmed = group.attendances.filter((att) => att.status === "confirmed" || att.status === "attended").length;
+            const cancelled = group.attendances.filter((att) => att.status === "cancelled" || att.status === "missed").length;
+            const pending = group.attendances.filter((att) => att.status === "pending").length;
 
             return (
-              <div key={group.schedule.id} className="card overflow-hidden">
-                <div className="bg-slate-50 border-b border-slate-100 p-4 flex justify-between items-center">
+              <section key={group.schedule?.id ?? group.attendances[0]?.class_schedule_id} className="card overflow-hidden">
+                <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 p-4">
                   <div className="flex items-center gap-3">
-                    <div className="w-1.5 h-8 rounded-full" style={{ backgroundColor: group.schedule.class_type?.color || '#3b82f6' }} />
+                    <div className="h-9 w-1.5 rounded-full" style={{ backgroundColor: group.schedule?.class_type?.color || "#3b82f6" }} />
                     <div>
-                      <h2 className="font-bold text-lg text-slate-900">{group.schedule.class_type?.name || "Turma"}</h2>
-                      <p className="text-sm font-medium text-slate-500 flex items-center gap-1"><Clock className="h-3.5 w-3.5" /> {group.schedule.time}</p>
+                      <h2 className="text-lg font-bold text-slate-900">{group.schedule?.class_type?.name || "Turma"}</h2>
+                      <p className="flex items-center gap-1 text-sm font-medium text-slate-500"><Clock className="h-3.5 w-3.5" /> {group.schedule?.time || "--:--"}</p>
                     </div>
                   </div>
-                  <div className="flex gap-4 text-sm font-medium">
-                    <span className="flex items-center gap-1.5 text-green-600 bg-green-50 px-2 py-1 rounded-lg"><CheckCircle2 className="h-4 w-4" /> {confirmed} Confirmados</span>
-                    <span className="flex items-center gap-1.5 text-red-600 bg-red-50 px-2 py-1 rounded-lg"><XCircle className="h-4 w-4" /> {cancelled} Ausentes</span>
-                    <span className="flex items-center gap-1.5 text-yellow-600 bg-yellow-50 px-2 py-1 rounded-lg"><AlertCircle className="h-4 w-4" /> {pending} Pendentes</span>
+                  <div className="flex flex-wrap justify-end gap-2 text-sm font-medium">
+                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-green-50 px-2 py-1 text-green-600"><CheckCircle2 className="h-4 w-4" /> {confirmed}</span>
+                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-red-50 px-2 py-1 text-red-600"><XCircle className="h-4 w-4" /> {cancelled}</span>
+                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-yellow-50 px-2 py-1 text-yellow-700"><AlertCircle className="h-4 w-4" /> {pending}</span>
                   </div>
                 </div>
-                
-                <div className="p-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                  {group.attendances.map(att => (
-                    <div key={att.id} className="flex items-center gap-3 p-3 rounded-xl border border-slate-100 shadow-sm hover:shadow-md transition">
-                      <Avatar src={att.student?.photo_url} fallback={att.student?.full_name || '?'} size="sm" />
-                      <div className="flex-1 overflow-hidden">
-                        <p className="text-sm font-bold text-slate-900 truncate">{att.student?.full_name}</p>
-                        {att.status === 'pending' && <p className="text-xs text-yellow-600 font-medium">Aguardando...</p>}
-                        {att.status === 'confirmed' && <p className="text-xs text-green-600 font-medium">Confirmado</p>}
-                        {att.status === 'attended' && <p className="text-xs text-green-700 font-medium">Presente (Catraca)</p>}
-                        {att.status === 'cancelled' && <p className="text-xs text-red-500 font-medium">Não virá</p>}
-                        {att.status === 'missed' && <p className="text-xs text-slate-500 font-medium">Faltou</p>}
-                      </div>
-                    </div>
-                  ))}
+
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[680px] text-left text-sm">
+                    <thead className="border-b border-slate-100 text-[11px] font-black uppercase tracking-[.12em] text-slate-400">
+                      <tr>
+                        <th className="px-4 py-3">Aluno</th>
+                        <th className="px-4 py-3">Status</th>
+                        <th className="px-4 py-3">Horario</th>
+                        <th className="px-4 py-3 text-right">Confirmacao</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {group.attendances.map((att) => (
+                        <tr key={att.id} className={`${att.status === "pending" ? "opacity-45" : "opacity-100"} ${att.status === "confirmed" || att.status === "attended" ? "bg-green-50/40" : ""}`}>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-3">
+                              <Avatar src={att.student?.photo_url} fallback={att.student?.full_name || "?"} size="sm" />
+                              <div>
+                                <p className="font-bold text-slate-900">{att.student?.full_name || "Aluno"}</p>
+                                <p className="text-xs text-slate-400">Vinculado a turma</p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3"><AttendanceBadge status={att.status} /></td>
+                          <td className="px-4 py-3 text-slate-600">{group.schedule?.time || "--:--"}</td>
+                          <td className="px-4 py-3 text-right">
+                            {att.status === "confirmed" || att.status === "attended" ? (
+                              <CheckCircle2 className="ml-auto h-6 w-6 text-green-600" />
+                            ) : (
+                              <span className="text-xs font-semibold text-slate-400">Aguardando</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-              </div>
+              </section>
             );
           })}
         </div>
       )}
     </div>
   );
+}
+
+function AttendanceBadge({ status }: { status: ClassAttendance["status"] }) {
+  if (status === "confirmed") return <span className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-2.5 py-1 text-xs font-bold text-green-700"><CheckCircle2 className="h-3.5 w-3.5" /> Confirmado</span>;
+  if (status === "attended") return <span className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-2.5 py-1 text-xs font-bold text-green-800"><CheckCircle2 className="h-3.5 w-3.5" /> Presente</span>;
+  if (status === "cancelled") return <span className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-2.5 py-1 text-xs font-bold text-red-600"><XCircle className="h-3.5 w-3.5" /> Nao vira</span>;
+  if (status === "missed") return <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-500">Faltou</span>;
+  return <span className="inline-flex items-center gap-1.5 rounded-full bg-yellow-50 px-2.5 py-1 text-xs font-bold text-yellow-700"><AlertCircle className="h-3.5 w-3.5" /> Pendente</span>;
 }

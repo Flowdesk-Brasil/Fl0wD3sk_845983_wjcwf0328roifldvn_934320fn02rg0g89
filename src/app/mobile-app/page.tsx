@@ -133,7 +133,8 @@ export default function MobileAppPage() {
   const answerAttendance = async (attendanceId: string, status: "confirmed" | "cancelled") => {
     setLoadingAction(attendanceId);
     try {
-      await updateAttendanceStatus(attendanceId, status);
+      const attendance = attendances.find((item) => item.id === attendanceId);
+      await updateAttendanceStatus(attendance ?? attendanceId, status);
       setAttendances(current => current.map(a => a.id === attendanceId ? { ...a, status } : a));
     } catch (e: any) {
       alert(e.message || "Erro ao confirmar.");

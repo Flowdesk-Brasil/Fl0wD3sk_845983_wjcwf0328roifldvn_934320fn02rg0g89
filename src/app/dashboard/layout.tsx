@@ -44,6 +44,7 @@ const NAV: { title: string; items: NavItem[] }[] = [
     items: [
       { href: "/dashboard/pagamentos", label: "Financeiro", icon: CreditCard, roles: ["admin", "receptionist"] },
       { href: "/dashboard/calendario", label: "Calendário", icon: CalendarDays, roles: ["admin", "receptionist", "professor"] },
+      { href: "/dashboard/gestao/presencas", label: "Presenças", icon: Activity, roles: ["admin", "receptionist", "professor"] },
       { href: "/dashboard/checkin", label: "Check-in", icon: QrCode, roles: ["admin", "receptionist"] },
       { href: "/dashboard/relatorios", label: "Relatórios", icon: BarChart3, roles: ["admin"] },
       { href: "/dashboard/notificacoes", label: "Comunicados", icon: Bell, roles: ["admin"] },
@@ -80,6 +81,7 @@ const PAGE_NAMES: Record<string, string> = {
   contratos: "Contratos",
   pagamentos: "Financeiro",
   calendario: "Calendário",
+  presencas: "Presenças",
   checkin: "Check-in",
   pdv: "Caixa (PDV)",
   produtos: "Produtos",

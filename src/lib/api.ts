@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { localDB } from "@/lib/localDB";
 import { shouldUseLocalData, supabase } from "@/lib/supabase";
@@ -61,7 +61,7 @@ async function update<T extends TableName>(
 ): Promise<LocalTables[T]> {
   if (shouldUseLocalData()) {
     const row = localDB.update(table, id, values);
-    if (!row) throw new Error("Registro não encontrado.");
+    if (!row) throw new Error("Registro nÃ£o encontrado.");
     notifyDbChange();
     return row;
   }
@@ -118,7 +118,7 @@ export async function releaseStudentPortal(id: string) {
     headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` },
   });
   const payload = await response.json() as { email?: string; profileId?: string; contractSent?: boolean; contractPending?: boolean; contractCreated?: boolean; error?: string };
-  if (!response.ok) throw new Error(payload.error ?? "Não foi possível liberar o portal.");
+  if (!response.ok) throw new Error(payload.error ?? "NÃ£o foi possÃ­vel liberar o portal.");
   return payload;
 }
 
@@ -129,7 +129,7 @@ export async function resetStudentPassword(id: string) {
     headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` },
   });
   const payload = await response.json() as { email?: string; error?: string };
-  if (!response.ok) throw new Error(payload.error ?? "Não foi possível enviar o link de redefinição de senha.");
+  if (!response.ok) throw new Error(payload.error ?? "NÃ£o foi possÃ­vel enviar o link de redefiniÃ§Ã£o de senha.");
   return payload;
 }
 
@@ -143,7 +143,7 @@ export async function onboardStudent(id: string) {
     headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` },
   });
   const payload = await response.json() as { email?: string; profileId?: string; contractSent?: boolean; contractPending?: boolean; contractCreated?: boolean; error?: string };
-  if (!response.ok) throw new Error(payload.error ?? "Não foi possível realizar o onboarding.");
+  if (!response.ok) throw new Error(payload.error ?? "NÃ£o foi possÃ­vel realizar o onboarding.");
   return payload;
 }
 
@@ -226,7 +226,7 @@ export async function deleteStudent(id: string) {
     headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` },
   });
   const payload = await response.json() as { ok?: boolean; deleted?: string; error?: string };
-  if (!response.ok) throw new Error(payload.error ?? "Não foi possível excluir o aluno.");
+  if (!response.ok) throw new Error(payload.error ?? "NÃ£o foi possÃ­vel excluir o aluno.");
   notifyDbChange();
   return true;
 }
@@ -294,7 +294,7 @@ export async function createEnrollment(values: {
     }
   }
 
-  if (!plan) throw new Error("Plano não encontrado.");
+  if (!plan) throw new Error("Plano nÃ£o encontrado.");
   const end = new Date(`${values.start_date}T12:00:00`);
   end.setDate(end.getDate() + plan.duration_days);
   const plain = await insert("enrollments", {
@@ -322,7 +322,7 @@ export async function createEnrollment(values: {
     student_id: values.student_id,
     plan_id: finalPlanId,
     enrollment_id: plain.id,
-    document_text: `Termo de adesão ao plano ${plan.name}.`,
+    document_text: `Termo de adesÃ£o ao plano ${plan.name}.`,
     status: "pending",
     signed_at: null,
   });
@@ -361,7 +361,7 @@ export async function editEnrollment(id: string, values: {
     }
   }
 
-  if (!plan) throw new Error("Plano não encontrado.");
+  if (!plan) throw new Error("Plano nÃ£o encontrado.");
   const end = new Date(`${values.start_date}T12:00:00`);
   end.setDate(end.getDate() + plan.duration_days);
 
@@ -399,7 +399,7 @@ export async function editEnrollment(id: string, values: {
     }
   }
 
-  // Se não tinha nenhum pagamento pendente, criar um novo (garante que financeiro nunca fica vazio)
+  // Se nÃ£o tinha nenhum pagamento pendente, criar um novo (garante que financeiro nunca fica vazio)
   if (!hasPendingPayment) {
     await insert("payments", {
       reference: `MEN-${Date.now().toString().slice(-8)}`,
@@ -548,7 +548,7 @@ export async function createPixPayment(id: string): Promise<Payment> {
     headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` },
   });
   const payload = await response.json() as { payment?: Payment; error?: string };
-  if (!response.ok || !payload.payment) throw new Error(payload.error ?? "Não foi possível gerar o PIX.");
+  if (!response.ok || !payload.payment) throw new Error(payload.error ?? "NÃ£o foi possÃ­vel gerar o PIX.");
   return payload.payment;
 }
 
@@ -606,7 +606,7 @@ export async function processCheckin(code: string): Promise<Checkin & { student?
       .filter((item) => item.enrollment_id === enrollment.id)
       .sort((a, b) => b.due_date.localeCompare(a.due_date))[0] ?? null
     : null;
-  const today = todayInBrasilia(); // Data no fuso de Brasília
+  const today = todayInBrasilia(); // Data no fuso de BrasÃ­lia
   const enrollmentExpired = Boolean(enrollment?.end_date && enrollment.end_date < today);
   const effectivePayment = payment && payment.status === "pending" && payment.due_date < today
     ? { ...payment, status: "expired" as const }
@@ -633,16 +633,16 @@ export async function processCheckin(code: string): Promise<Checkin & { student?
         enrollment,
         payment: effectivePayment,
         duplicate: true,
-        reason: "Check-in já confirmado nos últimos 5 minutos. Nenhum novo registro foi criado.",
+        reason: "Check-in jÃ¡ confirmado nos Ãºltimos 5 minutos. Nenhum novo registro foi criado.",
       };
     }
   }
   let reason = !student
-    ? "Código não encontrado."
+    ? "CÃ³digo nÃ£o encontrado."
     : student.status !== "active"
       ? "Aluno inativo ou bloqueado."
       : !enrollment
-        ? "Aluno sem matrícula ativa."
+        ? "Aluno sem matrÃ­cula ativa."
         : null;
   if (student?.status === "active" && enrollment) {
     reason = enrollmentExpired
@@ -753,7 +753,7 @@ export async function sendContractForSignature(id: string) {
     headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` },
   });
   const payload = await response.json() as { sentTo?: string; error?: string };
-  if (!response.ok) throw new Error(payload.error ?? "Não foi possível enviar o contrato.");
+  if (!response.ok) throw new Error(payload.error ?? "NÃ£o foi possÃ­vel enviar o contrato.");
   return payload;
 }
 
@@ -786,7 +786,7 @@ export async function createProfile(values: Pick<Profile, "full_name" | "email" 
     body: JSON.stringify(values),
   });
   const payload = (await response.json()) as { profile?: Profile; error?: string };
-  if (!response.ok || !payload.profile) throw new Error(payload.error ?? "Não foi possível criar o usuário.");
+  if (!response.ok || !payload.profile) throw new Error(payload.error ?? "NÃ£o foi possÃ­vel criar o usuÃ¡rio.");
   return payload.profile;
 }
 
@@ -798,7 +798,7 @@ export async function deleteProfile(id: string) {
     headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` },
   });
   const payload = await response.json() as { error?: string };
-  if (!response.ok) throw new Error(payload.error ?? "Não foi possível remover o usuário.");
+  if (!response.ok) throw new Error(payload.error ?? "NÃ£o foi possÃ­vel remover o usuÃ¡rio.");
   return true;
 }
 
@@ -841,7 +841,7 @@ export async function uploadContractTemplate(file: File) {
     body,
   });
   const payload = await response.json() as { path?: string; name?: string; error?: string };
-  if (!response.ok) throw new Error(payload.error ?? "Não foi possível enviar o PDF.");
+  if (!response.ok) throw new Error(payload.error ?? "NÃ£o foi possÃ­vel enviar o PDF.");
   return payload;
 }
 
@@ -868,15 +868,15 @@ export async function deleteClassType(id: string) {
       .select("*", { count: "exact", head: true })
       .eq("class_type_id", id);
       
-    if (error) throw new Error("Erro ao verificar dependências.");
+    if (error) throw new Error("Erro ao verificar dependÃªncias.");
     if (count && count > 0) {
-      throw new Error("Esta aula possui horários cadastrados na Grade Fixa. Exclua ou altere os horários antes de excluir a modalidade.");
+      throw new Error("Esta aula possui horÃ¡rios cadastrados na Grade Fixa. Exclua ou altere os horÃ¡rios antes de excluir a modalidade.");
     }
   } else {
     const schedules = localDB.get("class_schedules");
     const used = schedules.some((s) => s.class_type_id === id);
     if (used) {
-      throw new Error("Esta aula possui horários cadastrados na Grade Fixa. Exclua ou altere os horários antes de excluir a modalidade.");
+      throw new Error("Esta aula possui horÃ¡rios cadastrados na Grade Fixa. Exclua ou altere os horÃ¡rios antes de excluir a modalidade.");
     }
   }
   
@@ -917,7 +917,7 @@ export async function createClassSession(values: {
   notes?: string | null;
 }) {
   const type = (await getClassTypes()).find((item) => item.id === values.class_type_id);
-  if (!type) throw new Error("Tipo de aula não encontrado.");
+  if (!type) throw new Error("Tipo de aula nÃ£o encontrado.");
   const start = new Date(values.start_at);
   const end = new Date(start.getTime() + type.duration_minutes * 60 * 1000);
   return insert("class_sessions", {
@@ -940,9 +940,9 @@ export async function createClassBooking(sessionId: string, studentId: string): 
   }
   const sessions = await getClassSessions();
   const session = sessions.find((item) => item.id === sessionId);
-  if (!session) throw new Error("Horário não encontrado.");
+  if (!session) throw new Error("HorÃ¡rio nÃ£o encontrado.");
   const occupied = (session.bookings || []).filter((item) => item.status === "confirmed" || item.status === "attended").length;
-  if (occupied >= session.capacity) throw new Error(`A aula ${session.class_type?.name || ""} está lotada.`);
+  if (occupied >= session.capacity) throw new Error(`A aula ${session.class_type?.name || ""} estÃ¡ lotada.`);
   return insert("class_bookings", {
     session_id: sessionId,
     student_id: studentId,
@@ -1052,12 +1052,14 @@ export async function getTodayAttendances(studentId: string, dateStr: string): P
 
 export async function getAttendancesByDate(dateStr: string): Promise<ClassAttendance[]> {
   if (!shouldUseLocalData()) {
-    const { data, error } = await supabase
-      .from("class_attendances")
-      .select("*, student:students(id, full_name, photo_url), class_schedule:class_schedules(*, plan:plans(*))")
-      .eq("date", dateStr);
-    if (error) return [];
-    return (data ?? []) as ClassAttendance[];
+    const { data: session } = await supabase.auth.getSession();
+    const response = await fetch(`/api/admin/attendances?date=${encodeURIComponent(dateStr)}`, {
+      headers: { Authorization: `Bearer ${session.session?.access_token ?? ""}` },
+      cache: "no-store",
+    });
+    const payload = await response.json() as { attendances?: ClassAttendance[]; error?: string };
+    if (!response.ok) throw new Error(payload.error ?? "Nao foi possivel carregar presencas.");
+    return payload.attendances ?? [];
   }
   const schedules = localDB.get("class_schedules");
   const classTypes = localDB.get("class_types");
@@ -1074,50 +1076,50 @@ export async function getAttendancesByDate(dateStr: string): Promise<ClassAttend
     });
 }
 
-export async function updateAttendanceStatus(id: string, status: ClassAttendance["status"]) {
+export async function updateAttendanceStatus(attendanceOrId: string | ClassAttendance, status: ClassAttendance["status"]) {
+  const id = typeof attendanceOrId === "string" ? attendanceOrId : attendanceOrId.id;
+  if (!shouldUseLocalData()) {
+    const { data: session } = await supabase.auth.getSession();
+    const response = await fetch("/api/student/attendance", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.session?.access_token ?? ""}`,
+      },
+      body: JSON.stringify({
+        attendanceId: id,
+        classScheduleId: typeof attendanceOrId === "string" ? undefined : attendanceOrId.class_schedule_id,
+        date: typeof attendanceOrId === "string" ? undefined : attendanceOrId.date,
+        status,
+      }),
+    });
+    const payload = await response.json() as ClassAttendance & { error?: string };
+    if (!response.ok) throw new Error(payload.error ?? "Nao foi possivel atualizar presenca.");
+    notifyDbChange();
+    return payload;
+  }
+
   if (status === "confirmed") {
-    // Buscar detalhes da presenca
-    let attendance: ClassAttendance | null = null;
-    if (!shouldUseLocalData()) {
-      const { data } = await supabase.from("class_attendances").select("*").eq("id", id).single();
-      attendance = data as ClassAttendance;
-    } else {
-      attendance = localDB.get("class_attendances").find(a => a.id === id) as ClassAttendance;
-    }
+    const attendance = localDB.get("class_attendances").find(a => a.id === id) as ClassAttendance;
     if (attendance) {
-      // Verificar quantas o aluno ja confirmou hoje
-      if (!shouldUseLocalData()) {
-        const { count } = await supabase
-          .from("class_attendances")
-          .select("*", { count: "exact", head: true })
-          .eq("student_id", attendance.student_id)
-          .eq("date", attendance.date)
-          .in("status", ["confirmed", "attended"]);
-          
-        if (count && count >= 2) {
-          throw new Error("Você atingiu o limite de 2 aulas confirmadas por dia!");
-        }
-      } else {
-        const attendances = localDB.get("class_attendances");
-        const confirmedToday = attendances.filter(a => a.student_id === attendance.student_id && a.date === attendance.date && (a.status === "confirmed" || a.status === "attended")).length;
-        if (confirmedToday >= 2) {
-          throw new Error("Você atingiu o limite de 2 aulas confirmadas por dia!");
-        }
-      }
+      const attendances = localDB.get("class_attendances");
+      const confirmedToday = attendances.filter(a => a.student_id === attendance.student_id && a.date === attendance.date && a.class_schedule_id !== attendance.class_schedule_id && (a.status === "confirmed" || a.status === "attended")).length;
+      if (confirmedToday >= 2) throw new Error("Voce atingiu o limite de 2 aulas confirmadas por dia!");
     }
   }
 
   return update("class_attendances", id, { status });
 }
-
 export async function linkStudentToClasses(studentId: string, classScheduleIds: string[]) {
+  const uniqueClassScheduleIds = [...new Set(classScheduleIds.filter(Boolean))];
   if (!shouldUseLocalData()) {
     // Delete existing
     await supabase.from("student_classes").delete().eq("student_id", studentId);
     // Insert new
-    if (classScheduleIds.length > 0) {
-      await supabase.from("student_classes").insert(
-        classScheduleIds.map(id => ({ student_id: studentId, class_schedule_id: id }))
+    if (uniqueClassScheduleIds.length > 0) {
+      await supabase.from("student_classes").upsert(
+        uniqueClassScheduleIds.map(id => ({ student_id: studentId, class_schedule_id: id })),
+        { onConflict: "student_id,class_schedule_id", ignoreDuplicates: true },
       );
     }
     return;
@@ -1128,7 +1130,7 @@ export async function linkStudentToClasses(studentId: string, classScheduleIds: 
   for (const sc of existing) {
     localDB.delete("student_classes", sc.id);
   }
-  for (const id of classScheduleIds) {
+  for (const id of uniqueClassScheduleIds) {
     localDB.insert("student_classes", { student_id: studentId, class_schedule_id: id });
   }
 }
@@ -1136,8 +1138,8 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   const [students, enrollments, payments, checkins] = await Promise.all([
     getStudents(), getEnrollments(), getPayments(), getCheckins(),
   ]);
-  const month = currentMonthInBrasilia(); // Mês no fuso de Brasília
-  const currentDate = todayInBrasilia();   // Data no fuso de Brasília
+  const month = currentMonthInBrasilia(); // MÃªs no fuso de BrasÃ­lia
+  const currentDate = todayInBrasilia();   // Data no fuso de BrasÃ­lia
   const activeEnrollments = enrollments.filter((item) => item.status === "active").length;
   return {
     totalStudents: students.length,
@@ -1170,7 +1172,7 @@ export async function getRevenueSeries(): Promise<RevenuePoint[]> {
 }
 
 // ==========================================
-// MÓDULO ERP (ESTOQUE E PDV)
+// MÃ“DULO ERP (ESTOQUE E PDV)
 // ==========================================
 
 export async function getSuppliers() {
@@ -1350,7 +1352,7 @@ export async function createPixSale(id: string): Promise<Sale> {
     headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` },
   });
   const payload = await response.json() as { sale?: Sale; error?: string };
-  if (!response.ok || !payload.sale) throw new Error(payload.error ?? "Não foi possível gerar o PIX da venda.");
+  if (!response.ok || !payload.sale) throw new Error(payload.error ?? "NÃ£o foi possÃ­vel gerar o PIX da venda.");
   return payload.sale;
 }
 
@@ -1374,19 +1376,19 @@ export async function deletePlan(id: string) {
       .select("*", { count: "exact", head: true })
       .eq("plan_id", id);
     if (count && count > 0) {
-      throw new Error("Não é possível excluir este plano porque existem matrículas vinculadas. Mude a situação para Inativo.");
+      throw new Error("NÃ£o Ã© possÃ­vel excluir este plano porque existem matrÃ­culas vinculadas. Mude a situaÃ§Ã£o para Inativo.");
     }
     const { count: contractCount } = await supabase
       .from("contracts")
       .select("*", { count: "exact", head: true })
       .eq("plan_id", id);
     if (contractCount && contractCount > 0) {
-      throw new Error("Não é possível excluir este plano porque existem contratos vinculados. Mude a situação para Inativo.");
+      throw new Error("NÃ£o Ã© possÃ­vel excluir este plano porque existem contratos vinculados. Mude a situaÃ§Ã£o para Inativo.");
     }
   } else {
     const enrollments = localDB.get("enrollments").filter(e => e.plan_id === id);
     if (enrollments.length > 0) {
-      throw new Error("Não é possível excluir este plano porque existem matrículas vinculadas. Mude a situação para Inativo.");
+      throw new Error("NÃ£o Ã© possÃ­vel excluir este plano porque existem matrÃ­culas vinculadas. Mude a situaÃ§Ã£o para Inativo.");
     }
   }
   return remove("plans", id);
