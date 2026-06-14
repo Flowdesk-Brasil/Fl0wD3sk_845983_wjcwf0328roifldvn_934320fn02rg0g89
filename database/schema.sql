@@ -126,7 +126,7 @@ create table if not exists notifications (
 );
 
 create table if not exists push_subscriptions (
-  id uuid primary key default gen_random_uuid(),
+  id text primary key default gen_random_uuid()::text,
   user_id uuid not null,
   endpoint text not null,
   p256dh text not null,

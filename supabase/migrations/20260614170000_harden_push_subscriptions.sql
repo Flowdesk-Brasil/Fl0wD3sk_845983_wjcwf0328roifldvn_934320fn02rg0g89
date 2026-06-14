@@ -1,7 +1,7 @@
 create extension if not exists "pgcrypto";
 
 create table if not exists push_subscriptions (
-  id uuid primary key default gen_random_uuid(),
+  id text primary key default gen_random_uuid()::text,
   user_id uuid not null,
   endpoint text not null,
   p256dh text not null,
@@ -12,7 +12,7 @@ create table if not exists push_subscriptions (
   created_at timestamptz not null default now()
 );
 
-alter table push_subscriptions add column if not exists id uuid default gen_random_uuid();
+alter table push_subscriptions add column if not exists id text;
 alter table push_subscriptions add column if not exists user_id uuid;
 alter table push_subscriptions add column if not exists endpoint text;
 alter table push_subscriptions add column if not exists p256dh text;
@@ -22,9 +22,28 @@ alter table push_subscriptions add column if not exists permission text;
 alter table push_subscriptions add column if not exists last_seen_at timestamptz not null default now();
 alter table push_subscriptions add column if not exists created_at timestamptz not null default now();
 
+do $$
+declare
+  id_type text;
+begin
+  select data_type
+    into id_type
+  from information_schema.columns
+  where table_schema = 'public'
+    and table_name = 'push_subscriptions'
+    and column_name = 'id';
+
+  if id_type = 'uuid' then
+    execute 'alter table push_subscriptions alter column id set default gen_random_uuid()';
+    execute 'update push_subscriptions set id = gen_random_uuid() where id is null';
+  else
+    execute 'alter table push_subscriptions alter column id set default gen_random_uuid()::text';
+    execute 'update push_subscriptions set id = gen_random_uuid()::text where id is null';
+  end if;
+end $$;
+
 update push_subscriptions
-set id = coalesce(id, gen_random_uuid()),
-    last_seen_at = coalesce(last_seen_at, created_at, now()),
+set last_seen_at = coalesce(last_seen_at, created_at, now()),
     created_at = coalesce(created_at, now());
 
 delete from push_subscriptions

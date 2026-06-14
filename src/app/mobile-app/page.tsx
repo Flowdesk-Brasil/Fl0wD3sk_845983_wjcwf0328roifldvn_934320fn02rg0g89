@@ -5,9 +5,10 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRouter } from "next/navigation";
 import { getTodayAttendances, updateAttendanceStatus } from "@/lib/api";
+import { supabase } from "@/lib/supabase";
 import type { ClassAttendance } from "@/lib/types";
 
-const publicVapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || "BFp3s-vPxhk_OZ7ChaXbZOLeZEvjGIT4aci9yrC9fj6TzJiGPr3Vxyhp_Xn07Igj1Kd6Rn3BsizdQM6jqoZrlg8";
+const publicVapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || "BE8FMu1NZtQh2QVULUShurqQlruZMOECnnw2HuHmx2X63Iv0jxuDLquhVva4lERZmuMsUE5OjzKRbWi1As0ZQlY";
 
 function urlBase64ToUint8Array(base64String: string) {
   const padding = '='.repeat((4 - base64String.length % 4) % 4);
@@ -36,6 +37,24 @@ export default function MobileAppPage() {
   const [attendances, setAttendances] = useState<ClassAttendance[]>([]);
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
 
+  async function savePushSubscription(subscription: PushSubscription) {
+    const { data: session } = await supabase.auth.getSession();
+    const response = await fetch('/api/push/subscribe', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.session?.access_token ?? ""}`,
+      },
+      body: JSON.stringify({
+        subscription,
+        permission: typeof Notification !== 'undefined' ? Notification.permission : 'unsupported',
+        profile_id: user?.id,
+        student_id: user?.id,
+      }),
+    });
+    if (!response.ok) throw new Error('Nao foi possivel registrar este dispositivo.');
+  }
+
   useEffect(() => {
     if (!user) {
       router.replace("/");
@@ -51,9 +70,15 @@ export default function MobileAppPage() {
       setPushSupported(true);
       if (Notification.permission === 'granted') {
         navigator.serviceWorker.register('/sw.js').then(reg => {
-          reg.pushManager.getSubscription().then(sub => {
+          reg.update().catch(() => {});
+          reg.pushManager.getSubscription().then(async sub => {
             if (sub) {
-              setPushEnabled(true);
+              try {
+                await savePushSubscription(sub);
+                setPushEnabled(true);
+              } catch {
+                setPushEnabled(false);
+              }
             } else {
               setPushEnabled(false);
             }
@@ -110,17 +135,16 @@ export default function MobileAppPage() {
         return;
       }
 
-      const registration = await navigator.serviceWorker.ready;
+      const registration = await navigator.serviceWorker.register('/sw.js');
+      await registration.update().catch(() => {});
+      const existing = await registration.pushManager.getSubscription();
+      if (existing) await existing.unsubscribe();
       const subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(publicVapidKey)
       });
 
-      await fetch('/api/push/subscribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subscription, student_id: user!.id })
-      });
+      await savePushSubscription(subscription);
 
       setPushEnabled(true);
       alert('Notificações ativadas com sucesso!');

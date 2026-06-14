@@ -50,6 +50,20 @@ function urlBase64ToUint8Array(base64String: string) {
   return outputArray;
 }
 
+function bufferSourceToUint8Array(value?: BufferSource | null) {
+  if (!value) return null;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+}
+
+function samePushApplicationKey(subscription: PushSubscription) {
+  const currentKey = bufferSourceToUint8Array(subscription.options.applicationServerKey);
+  if (!currentKey) return true;
+  const configuredKey = urlBase64ToUint8Array(publicVapidKey);
+  if (currentKey.length !== configuredKey.length) return false;
+  return currentKey.every((value, index) => value === configuredKey[index]);
+}
+
 function classMet(name?: string | null) {
   const text = (name || "").toLowerCase();
   if (text.includes("jump")) return 7.5;
@@ -114,21 +128,20 @@ export default function StudentPortalPage() {
 
     if ("serviceWorker" in navigator && "PushManager" in window && "Notification" in window) {
       setPushSupported(true);
-      navigator.serviceWorker.register("/sw.js").then((reg) => {
-        reg.pushManager.getSubscription().then(async (sub) => {
-          try {
-            if (sub && Notification.permission === "granted") {
-              await savePushSubscription(sub);
-              setPushEnabled(true);
-            } else {
-              setPushEnabled(false);
-            }
-          } catch {
+      navigator.serviceWorker.register("/sw.js").then(async (reg) => {
+        try {
+          await reg.update().catch(() => {});
+          if (Notification.permission === "granted") {
+            await ensurePushSubscription(reg);
+            setPushEnabled(true);
+          } else {
             setPushEnabled(false);
-          } finally {
-            setPushChecking(false);
           }
-        });
+        } catch {
+          setPushEnabled(false);
+        } finally {
+          setPushChecking(false);
+        }
       }).catch(() => {
         setPushEnabled(false);
         setPushChecking(false);
@@ -164,6 +177,22 @@ export default function StudentPortalPage() {
       const payload = await response.json().catch(() => ({}));
       throw new Error(payload.error || "Nao foi possivel registrar notificacoes.");
     }
+  }
+
+  async function ensurePushSubscription(registration: ServiceWorkerRegistration, forceRenew = false) {
+    let subscription = await registration.pushManager.getSubscription();
+    if (subscription && (forceRenew || !samePushApplicationKey(subscription))) {
+      await subscription.unsubscribe().catch(() => {});
+      subscription = null;
+    }
+    if (!subscription) {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicVapidKey),
+      });
+    }
+    await savePushSubscription(subscription);
+    return subscription;
   }
 
   async function showLocalNotification(title: string, message: string) {
@@ -231,13 +260,8 @@ export default function StudentPortalPage() {
         return;
       }
       const registration = await navigator.serviceWorker.register("/sw.js");
-      const existing = await registration.pushManager.getSubscription();
-      if (existing) await existing.unsubscribe();
-      const subscription = await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(publicVapidKey),
-      });
-      await savePushSubscription(subscription);
+      await registration.update().catch(() => {});
+      await ensurePushSubscription(registration, true);
       setPushEnabled(true);
       await reloadData();
     } catch {
