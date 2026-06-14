@@ -21,6 +21,7 @@ export async function GET(request: Request) {
       { data: weeklyClasses },
       { data: payments },
       { data: contracts },
+      { data: notifications },
     ] = await Promise.all([
       ensureStudentAttendancesForDate(admin, student.id, dateStr),
       admin
@@ -40,6 +41,12 @@ export async function GET(request: Request) {
         .eq("student_id", student.id)
         .order("created_at", { ascending: false })
         .limit(12),
+      admin
+        .from("notifications")
+        .select("id, title, message, created_at")
+        .or(`target_type.eq.all,target_id.eq.${student.id}`)
+        .order("created_at", { ascending: false })
+        .limit(8),
     ]);
 
     const pendingContract = (contracts || []).find((contract: any) => contract.status === "pending") ?? null;
@@ -58,6 +65,7 @@ export async function GET(request: Request) {
       weeklyClasses: (weeklyClasses || []).filter((item: any) => item.class_schedule?.active !== false),
       payments: payments || [],
       contracts: contracts || [],
+      notifications: notifications || [],
       requiredContract,
     });
   } catch (reason) {

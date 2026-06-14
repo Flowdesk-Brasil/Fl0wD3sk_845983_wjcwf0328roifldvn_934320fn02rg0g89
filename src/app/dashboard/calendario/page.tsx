@@ -8,6 +8,15 @@ import { EmptyState, ErrorBanner, FieldLabel, LoadingState, Modal, PageHeader } 
 import { createClassSchedule, deleteClassSchedule, getClassSchedules, getClassTypes, getProfiles } from "@/lib/api";
 import type { ClassSchedule, ClassType, Profile } from "@/lib/types";
 
+type NotifyResult = {
+  message?: string;
+  pendingStudents?: number;
+  registeredDevices?: number;
+  targetsWithoutDevice?: number;
+  pushSent?: number;
+  inAppNotifications?: number;
+};
+
 const WEEKDAYS = [
   { value: 1, label: "Segunda-feira" },
   { value: 2, label: "Terça-feira" },
@@ -30,6 +39,7 @@ export default function CalendarioPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [triggering, setTriggering] = useState(false);
+  const [notifyResult, setNotifyResult] = useState<NotifyResult | null>(null);
 
   async function load() {
     const [nextSchedules, nextClassTypes, profiles] = await Promise.all([getClassSchedules(), getClassTypes(), getProfiles()]);
@@ -86,9 +96,9 @@ export default function CalendarioPage() {
       const res = await fetch("/api/cron/notify-today");
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Erro ao disparar notificações.");
-      alert(data.message || "Notificações disparadas com sucesso!");
+      setNotifyResult(data);
     } catch (e: any) {
-      alert(e.message);
+      setNotifyResult({ message: e.message || "Erro ao disparar notificacoes." });
     } finally {
       setTriggering(false);
     }
@@ -112,6 +122,23 @@ export default function CalendarioPage() {
         } 
       />
       <ErrorBanner message={error} />
+
+      {notifyResult && (
+        <section className="rounded-2xl border border-orange-100 bg-orange-50 p-4 text-orange-950 shadow-sm">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[.14em] text-orange-500">Resultado do alerta</p>
+              <strong className="mt-1 block text-sm">{notifyResult.message || "Verificacao concluida."}</strong>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+              <span className="rounded-xl bg-white px-3 py-2 font-bold shadow-sm">Push: {notifyResult.pushSent ?? 0}</span>
+              <span className="rounded-xl bg-white px-3 py-2 font-bold shadow-sm">App: {notifyResult.inAppNotifications ?? 0}</span>
+              <span className="rounded-xl bg-white px-3 py-2 font-bold shadow-sm">Dispositivos: {notifyResult.registeredDevices ?? 0}</span>
+              <span className="rounded-xl bg-white px-3 py-2 font-bold shadow-sm">Sem aparelho: {notifyResult.targetsWithoutDevice ?? 0}</span>
+            </div>
+          </div>
+        </section>
+      )}
       
       <section className="card">
         <div className="card-header border-b border-[#e3e8f0] pb-4">

@@ -1,9 +1,9 @@
 "use client";
 
-import { Activity, Bell, CalendarDays, Check, CheckCircle2, ChevronRight, Copy, CreditCard, FileCheck2, FileSignature, Flame, Home, LogOut, QrCode, Timer, UserRound, XCircle } from "lucide-react";
+import { Activity, Bell, CalendarDays, Check, CheckCircle2, ChevronRight, Copy, CreditCard, Expand, FileCheck2, FileSignature, Flame, Home, LogOut, QrCode, Timer, UserRound, XCircle } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { StudentQrCard } from "@/components/student-qr-card";
 import { ErrorBanner, LoadingState, Modal } from "@/components/ui";
 import { useAuth } from "@/contexts/AuthContext";
@@ -34,6 +34,7 @@ type PortalData = {
   weeklyClasses: StudentClassLink[];
   payments: Array<{ id: string; reference: string; total_amount: number; status: string; due_date: string; pix_code?: string; pix_qr_base64?: string }>;
   contracts: Array<{ id: string; status: string; signed_at?: string | null; created_at: string; plan?: { name: string } }>;
+  notifications?: Array<{ id: string; title: string; message: string; created_at: string }>;
   requiredContract?: { id: string; created_at: string; signingUrl: string; plan?: { name: string } | null } | null;
 };
 
@@ -79,6 +80,12 @@ export default function StudentPortalPage() {
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushSupported, setPushSupported] = useState(true);
   const [pushChecking, setPushChecking] = useState(true);
+  const [appAlert, setAppAlert] = useState<{ title: string; message: string } | null>(null);
+  const appAlertTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (appAlertTimeoutRef.current) window.clearTimeout(appAlertTimeoutRef.current);
+  }, []);
 
   async function reloadData(token?: string) {
     const { data: session } = await supabase.auth.getSession();
@@ -97,12 +104,30 @@ export default function StudentPortalPage() {
     if (tab === "qr" || tab === "payments" || tab === "classes" || tab === "settings" || tab === "home") setActiveTab(tab);
     reloadData().catch((reason: Error) => setError(reason.message));
 
+    function requestPortalFullscreen() {
+      const requestFullscreen = document.documentElement.requestFullscreen;
+      if (!document.fullscreenElement && requestFullscreen) void requestFullscreen.call(document.documentElement).catch(() => {});
+    }
+
+    window.addEventListener("pointerdown", requestPortalFullscreen, { once: true });
+    window.addEventListener("touchstart", requestPortalFullscreen, { once: true });
+
     if ("serviceWorker" in navigator && "PushManager" in window && "Notification" in window) {
       setPushSupported(true);
       navigator.serviceWorker.register("/sw.js").then((reg) => {
-        reg.pushManager.getSubscription().then((sub) => {
-          setPushEnabled(Boolean(sub && Notification.permission === "granted"));
-          setPushChecking(false);
+        reg.pushManager.getSubscription().then(async (sub) => {
+          try {
+            if (sub && Notification.permission === "granted") {
+              await savePushSubscription(sub);
+              setPushEnabled(true);
+            } else {
+              setPushEnabled(false);
+            }
+          } catch {
+            setPushEnabled(false);
+          } finally {
+            setPushChecking(false);
+          }
         });
       }).catch(() => {
         setPushEnabled(false);
@@ -113,7 +138,86 @@ export default function StudentPortalPage() {
       setPushEnabled(true);
       setPushChecking(false);
     }
+
+    return () => {
+      window.removeEventListener("pointerdown", requestPortalFullscreen);
+      window.removeEventListener("touchstart", requestPortalFullscreen);
+    };
   }, [user]);
+
+  async function savePushSubscription(subscription: PushSubscription) {
+    const { data: session } = await supabase.auth.getSession();
+    const response = await fetch("/api/push/subscribe", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.session?.access_token ?? ""}`,
+      },
+      body: JSON.stringify({
+        subscription,
+        permission: "Notification" in window ? Notification.permission : "unsupported",
+        profile_id: user?.id,
+        student_id: data?.student.id,
+      }),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error || "Nao foi possivel registrar notificacoes.");
+    }
+  }
+
+  async function showLocalNotification(title: string, message: string) {
+    setAppAlert({ title, message });
+    if (appAlertTimeoutRef.current) window.clearTimeout(appAlertTimeoutRef.current);
+    appAlertTimeoutRef.current = window.setTimeout(() => setAppAlert(null), 6500);
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      await registration.showNotification(title, {
+        body: message,
+        icon: "/icon-192x192.png",
+        badge: "/icon-192x192.png",
+        tag: "class-attendance-today",
+        data: { url: "/portal?tab=classes" },
+      });
+    } catch {
+      new Notification(title, { body: message, icon: "/icon-192x192.png" });
+    }
+  }
+
+  useEffect(() => {
+    if (!data?.student.id) return;
+    function handleNotification(payload: { new: Record<string, unknown> }) {
+      const notification = payload.new as { id?: string; title?: string; message?: string; created_at?: string };
+      setData((current) => current
+        ? {
+            ...current,
+            notifications: [
+              {
+                id: notification.id || `local-${Date.now()}`,
+                title: notification.title || "Corpo & Evolucao",
+                message: notification.message || "Voce tem um novo aviso.",
+                created_at: notification.created_at || new Date().toISOString(),
+              },
+              ...(current.notifications ?? []),
+            ].slice(0, 8),
+          }
+        : current);
+      void showLocalNotification(notification.title || "Corpo & Evolucao", notification.message || "Voce tem um novo aviso.");
+    }
+
+    const studentChannel = supabase.channel(`student-notifications-${data.student.id}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `target_id=eq.${data.student.id}` }, handleNotification)
+      .subscribe();
+    const globalChannel = supabase.channel(`student-global-notifications-${data.student.id}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: "target_type=eq.all" }, handleNotification)
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(studentChannel);
+      supabase.removeChannel(globalChannel);
+    };
+  }, [data?.student.id]);
 
   async function subscribePush() {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
@@ -133,11 +237,7 @@ export default function StudentPortalPage() {
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(publicVapidKey),
       });
-      await fetch("/api/push/subscribe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subscription, student_id: user!.id }),
-      });
+      await savePushSubscription(subscription);
       setPushEnabled(true);
       await reloadData();
     } catch {
@@ -239,6 +339,18 @@ export default function StudentPortalPage() {
           </button>
         </header>
 
+        {appAlert && (
+          <div className="mt-4 rounded-[24px] border border-blue-300/25 bg-blue-500/20 p-4 shadow-2xl backdrop-blur-xl">
+            <div className="flex items-start gap-3">
+              <div className="grid h-10 w-10 place-items-center rounded-2xl bg-white text-black"><Bell className="h-5 w-5" /></div>
+              <div>
+                <strong className="block text-sm">{appAlert.title}</strong>
+                <p className="mt-1 text-xs leading-5 text-white/65">{appAlert.message}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
         <ErrorBanner message={error} />
 
         {pushChecking ? (
@@ -249,10 +361,20 @@ export default function StudentPortalPage() {
               <div className="grid h-12 w-12 place-items-center rounded-2xl bg-blue-500/20 text-blue-200"><Bell className="h-6 w-6" /></div>
               <div className="flex-1">
                 <h2 className="font-black">Ative alertas push</h2>
-                <p className="mt-1 text-xs leading-5 text-white/50">Receba aviso de aula como notificacao de banco e confirme com um toque.</p>
+                <p className="mt-1 text-xs leading-5 text-white/50">Receba aviso de aula na tela do celular. Se o aparelho bloquear, o aviso ainda aparece dentro do app.</p>
               </div>
             </div>
             <button onClick={subscribePush} className="mt-5 min-h-12 w-full rounded-full bg-white font-black text-black">Permitir notificacoes</button>
+          </GlassCard>
+        ) : !pushSupported ? (
+          <GlassCard className="mt-5">
+            <div className="flex items-center gap-4">
+              <div className="grid h-12 w-12 place-items-center rounded-2xl bg-white/10 text-white"><Bell className="h-6 w-6" /></div>
+              <div className="flex-1">
+                <h2 className="font-black">Avisos internos ativos</h2>
+                <p className="mt-1 text-xs leading-5 text-white/50">Este navegador nao liberou push nativo, mas o portal mostra avisos em tempo real quando estiver aberto.</p>
+              </div>
+            </div>
           </GlassCard>
         ) : null}
 
@@ -290,6 +412,19 @@ export default function StudentPortalPage() {
             </section>
 
             {nextClass ? <ClassCard attendance={nextClass} loadingAction={loadingAction} onAnswer={answerAttendance} featured /> : <EmptyDark text="Nenhuma aula pendente para hoje." />}
+
+            {data?.notifications?.[0] && (
+              <GlassCard>
+                <div className="flex items-start gap-3">
+                  <div className="grid h-10 w-10 place-items-center rounded-2xl bg-blue-500/25 text-blue-100"><Bell className="h-5 w-5" /></div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-black uppercase tracking-[.14em] text-white/40">Ultimo aviso</p>
+                    <strong className="mt-1 block text-sm">{data.notifications[0].title}</strong>
+                    <p className="mt-1 text-xs leading-5 text-white/55">{data.notifications[0].message}</p>
+                  </div>
+                </div>
+              </GlassCard>
+            )}
 
             <button onClick={() => setActiveTab("qr")} className="flex items-center justify-between rounded-[30px] border border-white/10 bg-white p-5 text-left text-black shadow-2xl">
               <div>
@@ -349,8 +484,19 @@ export default function StudentPortalPage() {
             </GlassCard>
             <GlassCard>
               <div className="flex items-center justify-between">
-                <div><strong>Notificacoes push</strong><p className="mt-1 text-xs text-white/50">{pushEnabled ? "Ativas neste dispositivo" : "Nao ativadas"}</p></div>
-                {!pushEnabled && <button onClick={subscribePush} className="rounded-full bg-white px-4 py-2 text-xs font-black text-black">Ativar</button>}
+                <div><strong>Notificacoes</strong><p className="mt-1 text-xs text-white/50">{pushEnabled ? "Push do aparelho e avisos internos ativos" : pushSupported ? "Avisos internos ativos. Falta liberar push do aparelho." : "Avisos internos ativos neste navegador."}</p></div>
+                {!pushEnabled && pushSupported && <button onClick={subscribePush} className="rounded-full bg-white px-4 py-2 text-xs font-black text-black">Ativar</button>}
+              </div>
+            </GlassCard>
+            <GlassCard>
+              <div className="flex items-center justify-between">
+                <div><strong>Tela cheia</strong><p className="mt-1 text-xs text-white/50">Oculta controles do navegador quando permitido.</p></div>
+                <button onClick={() => {
+                  const requestFullscreen = document.documentElement.requestFullscreen;
+                  if (requestFullscreen) void requestFullscreen.call(document.documentElement).catch(() => {});
+                }} className="grid h-11 w-11 place-items-center rounded-full bg-white text-black" aria-label="Ativar tela cheia">
+                  <Expand className="h-5 w-5" />
+                </button>
               </div>
             </GlassCard>
             <GlassCard>

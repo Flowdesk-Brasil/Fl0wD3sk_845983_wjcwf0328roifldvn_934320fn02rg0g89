@@ -125,6 +125,18 @@ create table if not exists notifications (
   check ((target_type = 'all' and target_id is null) or (target_type = 'student' and target_id is not null))
 );
 
+create table if not exists push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null,
+  endpoint text not null,
+  p256dh text not null,
+  auth text not null,
+  user_agent text,
+  permission text,
+  last_seen_at timestamptz not null default now(),
+  created_at timestamptz not null default now()
+);
+
 create table if not exists audit_logs (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references profiles(id) on delete set null,
@@ -157,6 +169,8 @@ create index if not exists idx_enrollments_student_status on enrollments(student
 create index if not exists idx_payments_status_due_date on payments(status, due_date);
 create index if not exists idx_checkins_checked_at on checkins(checked_at desc);
 create index if not exists idx_audit_logs_created_at on audit_logs(created_at desc);
+create unique index if not exists idx_push_subscriptions_endpoint on push_subscriptions(endpoint);
+create index if not exists idx_push_subscriptions_user_id on push_subscriptions(user_id);
 
 create or replace function set_updated_at()
 returns trigger language plpgsql as $$
@@ -267,6 +281,7 @@ alter table contracts enable row level security;
 alter table payments enable row level security;
 alter table checkins enable row level security;
 alter table notifications enable row level security;
+alter table push_subscriptions enable row level security;
 alter table audit_logs enable row level security;
 alter table settings enable row level security;
 
@@ -307,6 +322,13 @@ create policy checkins_own_read on checkins for select to authenticated using (e
 
 drop policy if exists notifications_staff_access on notifications;
 create policy notifications_staff_access on notifications for all to authenticated using (is_staff()) with check (is_staff());
+drop policy if exists notifications_student_read on notifications;
+create policy notifications_student_read on notifications for select to authenticated using (
+  target_type = 'all'
+  or exists (select 1 from students s where s.id = notifications.target_id and s.profile_id = auth.uid())
+);
+drop policy if exists push_subscriptions_staff_access on push_subscriptions;
+create policy push_subscriptions_staff_access on push_subscriptions for all to authenticated using (is_staff()) with check (is_staff());
 drop policy if exists audit_admin_read on audit_logs;
 create policy audit_admin_read on audit_logs for select to authenticated using (is_admin());
 drop policy if exists settings_staff_read on settings;

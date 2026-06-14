@@ -8,11 +8,22 @@ import { Avatar, LoadingState, PageHeader } from "@/components/ui";
 import { getAttendancesByDate } from "@/lib/api";
 import type { ClassAttendance } from "@/lib/types";
 
+type NotifyResult = {
+  message?: string;
+  pendingStudents?: number;
+  registeredDevices?: number;
+  targetsWithoutDevice?: number;
+  pushSent?: number;
+  inAppNotifications?: number;
+  expiredSubscriptions?: number;
+};
+
 export default function PresencasPage() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [attendances, setAttendances] = useState<ClassAttendance[]>([]);
   const [loading, setLoading] = useState(true);
   const [sendingPush, setSendingPush] = useState(false);
+  const [notifyResult, setNotifyResult] = useState<NotifyResult | null>(null);
 
   async function loadData() {
     setLoading(true);
@@ -33,10 +44,11 @@ export default function PresencasPage() {
     try {
       const res = await fetch("/api/cron/notify-today");
       const data = await res.json();
-      alert(data.message || "Notificacoes enviadas.");
+      if (!res.ok) throw new Error(data.error || "Erro ao disparar notificacoes.");
+      setNotifyResult(data);
       await loadData();
-    } catch {
-      alert("Erro ao disparar notificacoes.");
+    } catch (reason: any) {
+      setNotifyResult({ message: reason?.message || "Erro ao disparar notificacoes." });
     } finally {
       setSendingPush(false);
     }
@@ -66,6 +78,23 @@ export default function PresencasPage() {
           </button>
         }
       />
+
+      {notifyResult && (
+        <section className="rounded-2xl border border-blue-100 bg-blue-50 p-4 text-blue-950 shadow-sm">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[.14em] text-blue-500">Central de notificacoes</p>
+              <strong className="mt-1 block text-sm">{notifyResult.message || "Verificacao concluida."}</strong>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+              <span className="rounded-xl bg-white px-3 py-2 font-bold shadow-sm">Push: {notifyResult.pushSent ?? 0}</span>
+              <span className="rounded-xl bg-white px-3 py-2 font-bold shadow-sm">App: {notifyResult.inAppNotifications ?? 0}</span>
+              <span className="rounded-xl bg-white px-3 py-2 font-bold shadow-sm">Dispositivos: {notifyResult.registeredDevices ?? 0}</span>
+              <span className="rounded-xl bg-white px-3 py-2 font-bold shadow-sm">Sem aparelho: {notifyResult.targetsWithoutDevice ?? 0}</span>
+            </div>
+          </div>
+        </section>
+      )}
 
       <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <button className="btn btn-secondary" onClick={() => setCurrentDate((date) => subDays(date, 1))}>

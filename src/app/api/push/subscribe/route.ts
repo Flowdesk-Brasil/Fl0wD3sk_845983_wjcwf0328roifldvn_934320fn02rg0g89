@@ -1,24 +1,37 @@
 import { NextResponse } from "next/server";
-import { getAdminClient } from "@/lib/server/supabase-admin";
+import { getAdminClient, requireRole } from "@/lib/server/supabase-admin";
 
 export async function POST(req: Request) {
   try {
-    const { subscription, student_id } = await req.json();
+    const { subscription, student_id, profile_id, permission } = await req.json();
 
-    if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth || !student_id) {
-      return NextResponse.json({ error: "Missing subscription or student_id" }, { status: 400 });
+    if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) {
+      return NextResponse.json({ error: "Missing subscription" }, { status: 400 });
     }
 
-    const admin = getAdminClient();
-    await admin.from("push_subscriptions").delete().eq("endpoint", subscription.endpoint);
+    const bearerToken = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim();
+    let admin = getAdminClient();
+    let userId = typeof profile_id === "string" ? profile_id : typeof student_id === "string" ? student_id : null;
 
-    const { error } = await admin.from("push_subscriptions").insert({
-      user_id: student_id,
+    if (bearerToken) {
+      const auth = await requireRole(req, ["student"]);
+      admin = auth.admin;
+      userId = auth.user.id;
+    }
+
+    if (!userId) {
+      return NextResponse.json({ error: "Missing authenticated user" }, { status: 401 });
+    }
+
+    const { error } = await admin.from("push_subscriptions").upsert({
+      user_id: userId,
       endpoint: subscription.endpoint,
       p256dh: subscription.keys.p256dh,
       auth: subscription.keys.auth,
-      created_at: new Date().toISOString(),
-    });
+      user_agent: req.headers.get("user-agent"),
+      permission: typeof permission === "string" ? permission : null,
+      last_seen_at: new Date().toISOString(),
+    }, { onConflict: "endpoint" });
 
     if (error) {
       console.error("Error saving subscription:", error);

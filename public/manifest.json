@@ -4,10 +4,15 @@
   "description": "Portal do aluno e check-in do Studio Corpo & Evolucao.",
   "start_url": "/portal",
   "scope": "/",
-  "display": "standalone",
+  "id": "/portal",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
   "background_color": "#0C0C0C",
   "theme_color": "#0C0C0C",
   "orientation": "portrait-primary",
+  "launch_handler": {
+    "client_mode": "focus-existing"
+  },
   "icons": [
     {
       "src": "/icon-192x192.png",

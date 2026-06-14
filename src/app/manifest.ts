@@ -6,10 +6,26 @@ export default function manifest(): MetadataRoute.Manifest {
     short_name: "Corpo & Evolucao",
     description: "Portal e gestao do Studio Corpo & Evolucao.",
     start_url: "/portal",
-    display: "standalone",
+    scope: "/",
+    id: "/portal",
+    display: "fullscreen",
+    display_override: ["fullscreen", "standalone"],
     background_color: "#0C0C0C",
     theme_color: "#0C0C0C",
     orientation: "portrait",
+    categories: ["business", "fitness"],
+    launch_handler: {
+      client_mode: "focus-existing",
+    },
+    shortcuts: [
+      {
+        name: "Ver QR Code",
+        short_name: "QR Code",
+        description: "Visualize seu QR code para check-in",
+        url: "/portal?tab=qr",
+        icons: [{ src: "/icon-192x192.png", sizes: "192x192", type: "image/png" }],
+      },
+    ],
     icons: [
       {
         src: "/icon-192x192.png",

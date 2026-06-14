@@ -1,5 +1,11 @@
 self.addEventListener("push", function (event) {
-  const data = event.data ? event.data.json() : {};
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = { title: "Corpo & Evolucao", body: event.data ? event.data.text() : "Voce tem uma atualizacao no app." };
+  }
+
   const options = {
     body: data.body || "Voce tem uma atualizacao no app.",
     icon: data.icon || "/icon-192x192.png",

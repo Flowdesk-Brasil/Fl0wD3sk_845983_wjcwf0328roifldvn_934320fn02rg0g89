@@ -220,6 +220,9 @@ export interface PushSubscriptionRow {
   endpoint: string;
   p256dh: string;
   auth: string;
+  user_agent?: string | null;
+  permission?: string | null;
+  last_seen_at?: string | null;
   created_at: string;
 }
 
