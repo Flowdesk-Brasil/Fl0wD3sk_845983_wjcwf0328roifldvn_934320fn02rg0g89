@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Barcode, CheckCircle2, Eraser, PackageSearch, Printer, RotateCcw, ScanBarcode, Search, Tag } from "lucide-react";
+import { AlertTriangle, Barcode, CheckCircle2, Eraser, PackageSearch, Printer, RotateCcw, ScanBarcode, Search, Tag } from "lucide-react";
 import { getProducts } from "@/lib/api";
 import {
   LABEL_SIZES,
@@ -21,10 +21,8 @@ type QuantityMap = Record<string, number>;
 
 type MatrixRow = {
   color: string;
-  cells: Partial<Record<(typeof LABEL_SIZES)[number], Product>>;
+  cells: Record<string, Product | undefined>;
 };
-
-const EMPTY_ROWS = Array.from({ length: 4 }, (_, index) => index);
 
 function productHaystack(product: Product) {
   return normalizeProductText([
@@ -35,6 +33,10 @@ function productHaystack(product: Product) {
     product.category,
     product.subcategory,
     product.brand,
+    product.variant_color,
+    product.variant_size,
+    product.variant_label,
+    product.primary_barcode,
   ].filter(Boolean).join(" "));
 }
 
@@ -58,13 +60,13 @@ function compareProducts(a: Product, b: Product) {
   );
 }
 
-function toMatrixRows(products: Product[]): MatrixRow[] {
+function toMatrixRows(products: Product[], sizes: string[]): MatrixRow[] {
   const rows = new Map<string, MatrixRow>();
   for (const product of products) {
     const meta = getLabelProductMeta(product);
     const row = rows.get(meta.color) ?? { color: meta.color, cells: {} };
-    if (meta.size && LABEL_SIZES.includes(meta.size as (typeof LABEL_SIZES)[number])) {
-      row.cells[meta.size as (typeof LABEL_SIZES)[number]] = product;
+    if (meta.size && sizes.includes(meta.size)) {
+      row.cells[meta.size] = product;
     }
     rows.set(meta.color, row);
   }
@@ -83,6 +85,7 @@ export default function ReimpressaoEtiquetasPage() {
   const [quantities, setQuantities] = useState<QuantityMap>({});
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [printerInfo, setPrinterInfo] = useState<{ status: "ok" | "warning" | "unknown"; message: string } | null>(null);
 
   useEffect(() => {
     getProducts()
@@ -126,13 +129,29 @@ export default function ReimpressaoEtiquetasPage() {
 
   const groupedProducts = useMemo(() => {
     if (!selectedProduct) return searchResults;
+    const rootId = selectedProduct.parent_product_id ?? selectedProduct.id;
+    const sameFamily = activeProducts.filter((product) => product.id === rootId || product.parent_product_id === rootId);
+    if (sameFamily.length > 1) return sameFamily.sort(compareProducts);
+
     const selectedMeta = getLabelProductMeta(selectedProduct);
     const sameBase = activeProducts.filter((product) => getLabelProductMeta(product).baseName === selectedMeta.baseName);
     const group = sameBase.length > 1 ? sameBase : searchResults.length ? searchResults : [selectedProduct];
     return [...new Map(group.map((product) => [product.id, product])).values()].sort(compareProducts);
   }, [activeProducts, searchResults, selectedProduct]);
 
-  const matrixRows = useMemo(() => toMatrixRows(groupedProducts), [groupedProducts]);
+  const visibleSizes = useMemo(() => {
+    const sizes = groupedProducts
+      .map((product) => getLabelProductMeta(product).size)
+      .filter((size): size is string => Boolean(size) && LABEL_SIZES.includes(size as (typeof LABEL_SIZES)[number]));
+    return LABEL_SIZES.filter((size) => sizes.includes(size));
+  }, [groupedProducts]);
+
+  const shouldUseSizeMatrix = visibleSizes.length > 0 && groupedProducts.filter((product) => {
+    const size = getLabelProductMeta(product).size;
+    return Boolean(size && LABEL_SIZES.includes(size as (typeof LABEL_SIZES)[number]) && visibleSizes.includes(size as (typeof LABEL_SIZES)[number]));
+  }).length > 1;
+
+  const matrixRows = useMemo(() => toMatrixRows(groupedProducts, visibleSizes), [groupedProducts, visibleSizes]);
 
   const selectedItems = useMemo<ProductLabelPrintItem[]>(() => {
     return groupedProducts
@@ -193,6 +212,23 @@ export default function ReimpressaoEtiquetasPage() {
     }, 350);
   }
 
+  async function checkPrinter() {
+    setPrinterInfo({ status: "unknown", message: "Verificando impressoras instaladas no Windows..." });
+    try {
+      const response = await fetch("/api/printers/diagnostics", { cache: "no-store" });
+      const payload = await response.json() as { status?: "ok" | "warning" | "unknown"; message?: string };
+      setPrinterInfo({
+        status: payload.status ?? (response.ok ? "ok" : "warning"),
+        message: payload.message ?? "Diagnostico concluido.",
+      });
+    } catch {
+      setPrinterInfo({
+        status: "warning",
+        message: "Nao foi possivel validar a impressora por API. No Windows, confirme se a PT260 usa driver grafico da fabricante, nao Generic / Text Only.",
+      });
+    }
+  }
+
   if (loading) return <LoadingState label="Carregando produtos da loja..." />;
 
   return (
@@ -250,7 +286,7 @@ export default function ReimpressaoEtiquetasPage() {
                 <ScanBarcode className="mx-auto h-10 w-10 text-[#8d97aa]" />
                 <h3 className="mt-4 text-sm font-black text-[#172033]">Pronto para bipar o produto</h3>
                 <p className="mx-auto mt-2 max-w-lg text-xs leading-6 text-[#657085]">
-                  Aponte o leitor para o codigo de barras ou digite o codigo. Depois ajuste as quantidades na grade e envie para a etiquetadora 40x30.
+                  Aponte o leitor para o codigo de barras ou digite o codigo. Depois ajuste as quantidades na tabela e envie para a etiquetadora 40x30.
                 </p>
               </div>
             ) : searchResults.length === 0 ? (
@@ -293,21 +329,40 @@ export default function ReimpressaoEtiquetasPage() {
                     </div>
                   </div>
 
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold text-[#657085]">
+                      {shouldUseSizeMatrix
+                        ? "Tabela inteligente por cor e somente pelos tamanhos encontrados nesse produto."
+                        : "Produto simples ou sem numeracao: informe a quantidade direto na linha do item."}
+                    </p>
+                    <StatusBadge tone="blue">{groupedProducts.length} item(ns)</StatusBadge>
+                  </div>
+
                   <div className="table-wrap rounded-xl border border-[#e3e8f0] bg-white">
                     <table className="data-table">
                       <thead>
-                        <tr>
-                          <th className="min-w-[220px]">Variacao do mesmo produto</th>
-                          {LABEL_SIZES.map((size) => <th key={size} className="text-center">{size}</th>)}
-                        </tr>
+                        {shouldUseSizeMatrix ? (
+                          <tr>
+                            <th className="min-w-[220px]">Cor / Variacao</th>
+                            {visibleSizes.map((size) => <th key={size} className="text-center">{size}</th>)}
+                          </tr>
+                        ) : (
+                          <tr>
+                            <th>Produto</th>
+                            <th>Codigo</th>
+                            <th>Tipo</th>
+                            <th className="text-right">Estoque</th>
+                            <th className="text-right">Qtd.</th>
+                          </tr>
+                        )}
                       </thead>
                       <tbody>
-                        {matrixRows.length ? matrixRows.map((row) => (
+                        {shouldUseSizeMatrix ? matrixRows.map((row) => (
                           <tr key={row.color}>
                             <td>
                               <strong className="text-xs text-[#172033]">{row.color}</strong>
                             </td>
-                            {LABEL_SIZES.map((size) => {
+                            {visibleSizes.map((size) => {
                               const product = row.cells[size];
                               return (
                                 <td key={size} className="text-center">
@@ -328,41 +383,10 @@ export default function ReimpressaoEtiquetasPage() {
                               );
                             })}
                           </tr>
-                        )) : EMPTY_ROWS.map((row) => (
-                          <tr key={row}>
-                            <td><span className="block h-10 rounded-xl bg-[#f1f4f9]" /></td>
-                            {LABEL_SIZES.map((size) => <td key={size}><span className="mx-auto block h-10 w-16 rounded-xl bg-[#f1f4f9]" /></td>)}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-[#e3e8f0] bg-white">
-                  <div className="flex items-center justify-between gap-3 border-b border-[#e3e8f0] px-4 py-3">
-                    <div>
-                      <h3 className="text-sm font-black text-[#172033]">Produtos encontrados</h3>
-                      <p className="text-xs text-[#657085]">Use esta lista para variacoes sem tamanho padrao ou cadastros soltos.</p>
-                    </div>
-                    <StatusBadge tone="blue">{groupedProducts.length} itens</StatusBadge>
-                  </div>
-                  <div className="table-wrap">
-                    <table className="data-table">
-                      <thead>
-                        <tr>
-                          <th>Produto</th>
-                          <th>Codigo</th>
-                          <th>Variacao</th>
-                          <th className="text-right">Estoque</th>
-                          <th className="text-right">Qtd.</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {groupedProducts.map((product) => {
-                          const meta = getLabelProductMeta(product);
-                          return (
-                            <tr key={product.id}>
+                        )) : groupedProducts.map((product) => {
+                            const meta = getLabelProductMeta(product);
+                            return (
+                              <tr key={product.id}>
                               <td>
                                 <div className="flex items-center gap-3">
                                   <span className="grid h-10 w-10 place-items-center rounded-xl bg-blue-50 text-blue-600">
@@ -376,7 +400,7 @@ export default function ReimpressaoEtiquetasPage() {
                               </td>
                               <td className="font-mono text-xs">{getProductPrintCode(product)}</td>
                               <td>
-                                <StatusBadge tone="gray">{[meta.color, meta.size].filter(Boolean).join(" / ") || "Produto"}</StatusBadge>
+                                <StatusBadge tone="gray">{[meta.color !== "Variacao" ? meta.color : null, meta.size].filter(Boolean).join(" / ") || product.unit_measure || "Produto"}</StatusBadge>
                               </td>
                               <td className="text-right font-bold text-[#172033]">{product.current_stock}</td>
                               <td className="text-right">
@@ -390,9 +414,9 @@ export default function ReimpressaoEtiquetasPage() {
                                   onChange={(event) => setProductQuantity(product.id, event.target.value)}
                                 />
                               </td>
-                            </tr>
-                          );
-                        })}
+                              </tr>
+                            );
+                          })}
                       </tbody>
                     </table>
                   </div>
@@ -425,6 +449,17 @@ export default function ReimpressaoEtiquetasPage() {
               <button className="btn mt-4 w-full bg-white text-[#101827] hover:bg-blue-50" type="button" onClick={printLabels} disabled={!totalLabels}>
                 <Printer className="h-4 w-4" /> Imprimir etiquetas
               </button>
+              <button className="btn mt-2 w-full border border-white/15 bg-white/[.08] text-white hover:bg-white/[.14]" type="button" onClick={checkPrinter}>
+                <AlertTriangle className="h-4 w-4" /> Validar PT260
+              </button>
+              {printerInfo && (
+                <div className={cn(
+                  "mt-3 rounded-xl border p-3 text-xs leading-5",
+                  printerInfo.status === "ok" ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-50" : "border-amber-300/30 bg-amber-300/10 text-amber-50",
+                )}>
+                  {printerInfo.message}
+                </div>
+              )}
             </div>
 
             <div className="rounded-2xl border border-[#e3e8f0] bg-white p-4">

@@ -19,6 +19,11 @@ CREATE TABLE IF NOT EXISTS public.suppliers (
 -- 2. PRODUTOS (Products - Cadastro Mestre)
 CREATE TABLE IF NOT EXISTS public.products (
   id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  parent_product_id uuid REFERENCES public.products(id) ON DELETE CASCADE,
+  variant_color text,
+  variant_size text,
+  variant_label text,
+  primary_barcode text,
   internal_code text UNIQUE,
   barcode text UNIQUE, -- EAN
   sku text UNIQUE,
@@ -132,6 +137,8 @@ CREATE TRIGGER update_receivings_updated_at BEFORE UPDATE ON public.receivings F
 -- ÍNDICES DE PERFORMANCE
 CREATE INDEX IF NOT EXISTS idx_products_barcode ON public.products(barcode);
 CREATE INDEX IF NOT EXISTS idx_products_sku ON public.products(sku);
+CREATE INDEX IF NOT EXISTS idx_products_parent_product_id ON public.products(parent_product_id);
+CREATE INDEX IF NOT EXISTS idx_products_primary_barcode ON public.products(primary_barcode);
 CREATE INDEX IF NOT EXISTS idx_receivings_status ON public.receivings(status);
 CREATE INDEX IF NOT EXISTS idx_inventory_product ON public.inventory_transactions(product_id);
 CREATE INDEX IF NOT EXISTS idx_sales_created_at ON public.sales(created_at DESC);

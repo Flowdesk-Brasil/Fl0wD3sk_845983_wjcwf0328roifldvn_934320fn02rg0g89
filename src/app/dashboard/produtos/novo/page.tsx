@@ -1,16 +1,38 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowLeft, Save, Tag, Barcode, DollarSign, Package, FileText, MapPin } from "lucide-react";
+import { ArrowLeft, Save, Tag, Barcode, DollarSign, Package, FileText, MapPin, Layers3 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createProduct } from "@/lib/api";
 import { ErrorBanner, FieldLabel } from "@/components/ui";
 
+const VARIANT_SIZES = ["P", "M", "G", "GG", "G1", "G2", "G3"];
+
+function splitVariants(value: string) {
+  return value.split(/[,;\n]/).map((item) => item.trim()).filter(Boolean);
+}
+
+function variantCode(base: string, index: number, color?: string, size?: string) {
+  const suffix = [color, size]
+    .filter(Boolean)
+    .join("-")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toUpperCase()
+    .slice(0, 18);
+  return `${base}-${String(index + 1).padStart(2, "0")}${suffix ? `-${suffix}` : ""}`.slice(0, 64);
+}
+
 export default function NovoProdutoPage() {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [variantsEnabled, setVariantsEnabled] = useState(false);
+  const [variantColors, setVariantColors] = useState("");
+  const [variantSizes, setVariantSizes] = useState<string[]>([]);
 
   const [form, setForm] = useState({
     name: "",
@@ -52,6 +74,15 @@ export default function NovoProdutoPage() {
     reader.readAsDataURL(file);
   };
 
+  const variantCombinations = (() => {
+    if (!variantsEnabled) return [];
+    const colors = splitVariants(variantColors);
+    if (!colors.length && !variantSizes.length) return [];
+    if (!colors.length) return variantSizes.map((size) => ({ color: "", size }));
+    if (!variantSizes.length) return colors.map((color) => ({ color, size: "" }));
+    return colors.flatMap((color) => variantSizes.map((size) => ({ color, size })));
+  })();
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name || !form.selling_price) {
@@ -64,6 +95,11 @@ export default function NovoProdutoPage() {
 
     try {
       const product = await createProduct({
+        parent_product_id: null,
+        variant_color: null,
+        variant_size: null,
+        variant_label: null,
+        primary_barcode: form.barcode.trim() || form.sku.trim() || form.internal_code.trim() || null,
         name: form.name.trim(),
         barcode: form.barcode.trim() || null,
         sku: form.sku.trim() || null,
@@ -86,6 +122,41 @@ export default function NovoProdutoPage() {
         cest: form.cest.trim() || null,
         active: form.active,
       });
+
+      if (variantCombinations.length) {
+        const baseCode = form.barcode.trim() || form.sku.trim() || form.internal_code.trim() || product.id.slice(0, 8);
+        await Promise.all(variantCombinations.map((variant, index) => {
+          const barcode = variantCode(baseCode, index, variant.color, variant.size);
+          return createProduct({
+            parent_product_id: product.id,
+            variant_color: variant.color || null,
+            variant_size: variant.size || null,
+            variant_label: [variant.color, variant.size].filter(Boolean).join(" / ") || null,
+            primary_barcode: baseCode,
+            name: [form.name.trim(), variant.color, variant.size].filter(Boolean).join(" "),
+            barcode,
+            sku: form.sku.trim() ? variantCode(form.sku.trim(), index, variant.color, variant.size) : null,
+            internal_code: form.internal_code.trim() ? variantCode(form.internal_code.trim(), index, variant.color, variant.size) : null,
+            category: form.category.trim() || null,
+            subcategory: variant.color || form.subcategory.trim() || null,
+            brand: form.brand.trim() || null,
+            unit_measure: form.unit_measure,
+            weight: form.weight ? Number(form.weight) : null,
+            volume: form.volume ? Number(form.volume) : null,
+            current_cost: form.current_cost ? Number(form.current_cost) : 0,
+            average_cost: form.current_cost ? Number(form.current_cost) : 0,
+            selling_price: Number(form.selling_price),
+            minimum_stock: Number(form.minimum_stock) || 0,
+            maximum_stock: Number(form.maximum_stock) || 0,
+            current_stock: 0,
+            physical_location: form.physical_location.trim() || null,
+            ncm: form.ncm.trim() || null,
+            cfop: form.cfop.trim() || null,
+            cest: form.cest.trim() || null,
+            active: form.active,
+          });
+        }));
+      }
 
       if (form.photo_base64) {
         try {
@@ -190,6 +261,50 @@ export default function NovoProdutoPage() {
                 <input type="text" name="internal_code" value={form.internal_code} onChange={handleChange} className="field font-mono text-sm" placeholder="Ex: 00125" />
               </div>
             </div>
+          </section>
+
+          <section className="card p-6">
+            <div className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+              <div>
+                <h2 className="text-lg font-bold flex items-center gap-2 text-slate-800"><Layers3 className="w-5 h-5 text-blue-500" /> Variantes do mesmo produto</h2>
+                <p className="mt-1 text-xs leading-5 text-slate-500">Crie cores, tamanhos ou sabores vinculados ao produto principal. O codigo principal vira a base das variantes.</p>
+              </div>
+              <label className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-800">
+                <input type="checkbox" checked={variantsEnabled} onChange={(event) => setVariantsEnabled(event.target.checked)} className="h-4 w-4" />
+                Tem variantes
+              </label>
+            </div>
+
+            {variantsEnabled && (
+              <div className="grid gap-4">
+                <div>
+                  <FieldLabel>Cores, sabores ou tipos</FieldLabel>
+                  <input className="field" value={variantColors} onChange={(event) => setVariantColors(event.target.value)} placeholder="Ex: Branca, Preta, Verde ou Morango, Chocolate" />
+                  <p className="mt-1 text-[11px] text-slate-400">Separe por virgula. Para produto com apenas tamanho, deixe este campo vazio.</p>
+                </div>
+                <div>
+                  <FieldLabel>Tamanhos / numeracao</FieldLabel>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {VARIANT_SIZES.map((size) => (
+                      <button
+                        key={size}
+                        type="button"
+                        onClick={() => setVariantSizes((current) => current.includes(size) ? current.filter((item) => item !== size) : [...current, size])}
+                        className={`rounded-xl border px-4 py-2 text-xs font-black transition ${variantSizes.includes(size) ? "border-blue-500 bg-blue-50 text-blue-700" : "border-slate-200 bg-white text-slate-500 hover:border-blue-200"}`}
+                      >
+                        {size}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">
+                  <strong>{variantCombinations.length} variante(s) serao criadas</strong>
+                  <p className="mt-1 text-xs leading-5 text-blue-700">
+                    Exemplo de codigo: {(form.barcode || form.sku || form.internal_code || "CODIGO")}-01. Elas aparecem juntas na reimpressao de etiquetas.
+                  </p>
+                </div>
+              </div>
+            )}
           </section>
 
           <section className="card p-6">

@@ -137,6 +137,19 @@ create table if not exists push_subscriptions (
   created_at timestamptz not null default now()
 );
 
+do $$
+begin
+  if to_regclass('public.products') is not null then
+    alter table products add column if not exists parent_product_id uuid references products(id) on delete cascade;
+    alter table products add column if not exists variant_color text;
+    alter table products add column if not exists variant_size text;
+    alter table products add column if not exists variant_label text;
+    alter table products add column if not exists primary_barcode text;
+    create index if not exists idx_products_parent_product_id on products(parent_product_id);
+    create index if not exists idx_products_primary_barcode on products(primary_barcode);
+  end if;
+end $$;
+
 create table if not exists audit_logs (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references profiles(id) on delete set null,

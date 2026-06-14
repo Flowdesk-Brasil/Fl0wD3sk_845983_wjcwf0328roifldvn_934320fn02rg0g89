@@ -272,6 +272,11 @@ export interface Supplier {
 
 export interface Product {
   id: string;
+  parent_product_id?: string | null;
+  variant_color?: string | null;
+  variant_size?: string | null;
+  variant_label?: string | null;
+  primary_barcode?: string | null;
   internal_code?: string | null;
   barcode?: string | null;
   sku?: string | null;

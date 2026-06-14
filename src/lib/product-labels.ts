@@ -75,6 +75,7 @@ function productText(product: Product) {
 }
 
 export function inferLabelSize(product: Product): string | null {
+  if (product.variant_size?.trim()) return product.variant_size.trim().toUpperCase();
   const tokens = new Set(productText(product).split(/\s+/).filter(Boolean));
   for (const size of SIZE_WORDS) {
     if (tokens.has(size)) return size;
@@ -83,6 +84,8 @@ export function inferLabelSize(product: Product): string | null {
 }
 
 export function inferLabelColor(product: Product): string {
+  if (product.variant_color?.trim()) return product.variant_color.trim();
+  if (product.variant_label?.trim()) return product.variant_label.trim();
   const text = productText(product);
   const tokens = new Set(text.split(/\s+/).filter(Boolean));
   for (const [label, aliases] of Object.entries(COLOR_WORDS)) {
@@ -92,6 +95,7 @@ export function inferLabelColor(product: Product): string {
 }
 
 export function inferBaseProductName(product: Product): string {
+  if (product.parent_product_id) return product.parent_product_id;
   let base = normalizeProductText(product.name);
   for (const size of SIZE_WORDS) {
     base = base.replace(new RegExp(`\\b${size}\\b`, "g"), " ");
@@ -113,7 +117,7 @@ export function getLabelProductMeta(product: Product): LabelProductMeta {
 }
 
 export function getProductPrintCode(product: Product) {
-  return product.barcode || product.sku || product.internal_code || product.id.slice(0, 12);
+  return product.barcode || product.primary_barcode || product.sku || product.internal_code || product.id.slice(0, 12);
 }
 
 function htmlEscape(value: string | number | null | undefined) {
