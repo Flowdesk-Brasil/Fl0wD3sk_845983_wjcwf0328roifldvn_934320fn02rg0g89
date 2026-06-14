@@ -3,7 +3,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   Activity, BarChart3, Bell, BookOpen, CalendarDays, ChevronDown, CreditCard, Database, LayoutDashboard,
-  LogOut, Menu, Package, QrCode, ScrollText, Search, Settings, Shield, Users, X, ShoppingCart, Boxes, Tag, Truck, ScanLine
+  LogOut, Menu, Package, QrCode, ScrollText, Search, Settings, Shield, Users, X, ShoppingCart, Boxes, Tag, Truck, ScanLine, Printer
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -59,6 +59,7 @@ const NAV: { title: string; items: NavItem[] }[] = [
       { href: "/dashboard/fornecedores", label: "Fornecedores", icon: Truck, roles: ["admin"] },
       { href: "/dashboard/recebimentos", label: "Recebimento", icon: Truck, roles: ["admin"] },
       { href: "/dashboard/triagem", label: "Triagem", icon: ScanLine, roles: ["admin", "receptionist"] },
+      { href: "/dashboard/logistica/reimpressao", label: "Reimpressao", icon: Printer, roles: ["admin", "receptionist"] },
     ],
   },
   {
@@ -87,6 +88,7 @@ const PAGE_NAMES: Record<string, string> = {
   produtos: "Produtos",
   estoque: "Controle de Estoque",
   recebimentos: "Recebimentos de Mercadorias",
+  reimpressao: "Reimpressao de Etiquetas",
   triagem: "Triagem e Conferência",
   relatorios: "Relatórios",
   notificacoes: "Comunicados",

@@ -1,6 +1,20 @@
 import { NextResponse } from "next/server";
 import { getAdminClient, requireRole } from "@/lib/server/supabase-admin";
 
+async function resolveSubscriptionUserId(admin: ReturnType<typeof getAdminClient>, profileId: unknown, studentId: unknown) {
+  if (typeof profileId === "string" && profileId.trim()) return profileId.trim();
+  if (typeof studentId !== "string" || !studentId.trim()) return null;
+
+  const { data, error } = await admin
+    .from("students")
+    .select("profile_id")
+    .eq("id", studentId.trim())
+    .maybeSingle();
+
+  if (error) console.warn("Error resolving push subscription student:", error.message);
+  return typeof data?.profile_id === "string" && data.profile_id.trim() ? data.profile_id : studentId.trim();
+}
+
 function subscriptionRow(req: Request, userId: string, subscription: any, permission: unknown) {
   return {
     user_id: userId,
@@ -23,7 +37,7 @@ export async function POST(req: Request) {
 
     const bearerToken = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim();
     let admin = getAdminClient();
-    let userId = typeof profile_id === "string" ? profile_id : typeof student_id === "string" ? student_id : null;
+    let userId = await resolveSubscriptionUserId(admin, profile_id, student_id);
 
     if (bearerToken) {
       const auth = await requireRole(req, ["student"]);

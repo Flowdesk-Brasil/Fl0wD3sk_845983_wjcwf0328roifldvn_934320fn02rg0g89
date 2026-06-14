@@ -46,6 +46,26 @@ update push_subscriptions
 set last_seen_at = coalesce(last_seen_at, created_at, now()),
     created_at = coalesce(created_at, now());
 
+do $$
+declare
+  constraint_to_drop record;
+begin
+  for constraint_to_drop in
+    select con.conname
+    from pg_constraint con
+    join pg_class rel on rel.oid = con.conrelid
+    join pg_namespace nsp on nsp.oid = rel.relnamespace
+    join unnest(con.conkey) with ordinality cols(attnum, ord) on true
+    join pg_attribute attr on attr.attrelid = rel.oid and attr.attnum = cols.attnum
+    where nsp.nspname = 'public'
+      and rel.relname = 'push_subscriptions'
+      and con.contype = 'f'
+      and attr.attname = 'user_id'
+  loop
+    execute format('alter table public.push_subscriptions drop constraint if exists %I', constraint_to_drop.conname);
+  end loop;
+end $$;
+
 delete from push_subscriptions
 where endpoint is null
    or p256dh is null
