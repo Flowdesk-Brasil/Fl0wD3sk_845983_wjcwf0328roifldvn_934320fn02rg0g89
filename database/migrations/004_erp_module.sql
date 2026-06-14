@@ -130,8 +130,13 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
+DROP TRIGGER IF EXISTS update_suppliers_updated_at ON public.suppliers;
 CREATE TRIGGER update_suppliers_updated_at BEFORE UPDATE ON public.suppliers FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_products_updated_at ON public.products;
 CREATE TRIGGER update_products_updated_at BEFORE UPDATE ON public.products FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_receivings_updated_at ON public.receivings;
 CREATE TRIGGER update_receivings_updated_at BEFORE UPDATE ON public.receivings FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
 
 -- ÍNDICES DE PERFORMANCE
@@ -152,10 +157,23 @@ ALTER TABLE public.inventory_transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sales ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sale_items ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Enable all for authenticated users" ON public.suppliers;
 CREATE POLICY "Enable all for authenticated users" ON public.suppliers FOR ALL USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Enable all for authenticated users" ON public.products;
 CREATE POLICY "Enable all for authenticated users" ON public.products FOR ALL USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Enable all for authenticated users" ON public.receivings;
 CREATE POLICY "Enable all for authenticated users" ON public.receivings FOR ALL USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Enable all for authenticated users" ON public.receiving_items;
 CREATE POLICY "Enable all for authenticated users" ON public.receiving_items FOR ALL USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Enable all for authenticated users" ON public.inventory_transactions;
 CREATE POLICY "Enable all for authenticated users" ON public.inventory_transactions FOR ALL USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Enable all for authenticated users" ON public.sales;
 CREATE POLICY "Enable all for authenticated users" ON public.sales FOR ALL USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Enable all for authenticated users" ON public.sale_items;
 CREATE POLICY "Enable all for authenticated users" ON public.sale_items FOR ALL USING (auth.role() = 'authenticated');

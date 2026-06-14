@@ -7,16 +7,8 @@
 
 -- 1. ADICIONAR COLUNAS FALTANTES (Safeguard)
 -- Garante que a coluna photo_url exista, caso queiramos armazenar a URL explícita futuramente.
-DO $$ 
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'students' AND column_name = 'photo_url') THEN
-        ALTER TABLE public.students ADD COLUMN photo_url TEXT;
-    END IF;
-    
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'students' AND column_name = 'observations') THEN
-        ALTER TABLE public.students ADD COLUMN observations TEXT;
-    END IF;
-END $$;
+ALTER TABLE public.students ADD COLUMN IF NOT EXISTS photo_url TEXT;
+ALTER TABLE public.students ADD COLUMN IF NOT EXISTS observations TEXT;
 
 -- 2. BUCKETS DE STORAGE
 -- Criação do Bucket de Fotos de Alunos para Reconhecimento Facial
@@ -35,13 +27,16 @@ ON CONFLICT (id) DO UPDATE SET
 
 -- 3. POLÍTICAS DE SEGURANÇA (RLS) PARA STORAGE
 -- Permitir leitura pública das fotos (necessário para mostrar na dashboard)
+DROP POLICY IF EXISTS "Public Access" ON storage.objects;
 CREATE POLICY "Public Access" ON storage.objects
   FOR SELECT USING (bucket_id = 'student-photos');
 
 -- Permitir inserção/atualização apenas para usuários autenticados ou anônimos (simplificado para o MVP do Studio)
+DROP POLICY IF EXISTS "Public Uploads" ON storage.objects;
 CREATE POLICY "Public Uploads" ON storage.objects
   FOR INSERT WITH CHECK (bucket_id = 'student-photos');
 
+DROP POLICY IF EXISTS "Public Updates" ON storage.objects;
 CREATE POLICY "Public Updates" ON storage.objects
   FOR UPDATE USING (bucket_id = 'student-photos');
 
