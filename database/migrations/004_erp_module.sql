@@ -140,6 +140,18 @@ DROP TRIGGER IF EXISTS update_receivings_updated_at ON public.receivings;
 CREATE TRIGGER update_receivings_updated_at BEFORE UPDATE ON public.receivings FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
 
 -- ÍNDICES DE PERFORMANCE
+-- COMPATIBILIDADE COM BANCOS QUE JA TINHAM A TABELA PRODUCTS
+-- CREATE TABLE IF NOT EXISTS nao adiciona colunas novas em tabela existente.
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS parent_product_id uuid REFERENCES public.products(id) ON DELETE CASCADE;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS variant_color text;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS variant_size text;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS variant_label text;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS primary_barcode text;
+
+UPDATE public.products
+SET primary_barcode = COALESCE(primary_barcode, barcode, sku, internal_code)
+WHERE primary_barcode IS NULL;
+
 CREATE INDEX IF NOT EXISTS idx_products_barcode ON public.products(barcode);
 CREATE INDEX IF NOT EXISTS idx_products_sku ON public.products(sku);
 CREATE INDEX IF NOT EXISTS idx_products_parent_product_id ON public.products(parent_product_id);
