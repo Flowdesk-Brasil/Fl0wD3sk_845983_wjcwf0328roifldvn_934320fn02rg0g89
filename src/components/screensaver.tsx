@@ -9,10 +9,10 @@ type ScreensaverProps = {
   isOverlayActive?: boolean;
 };
 
-const SAMPLE_WIDTH = 144;
+const SAMPLE_WIDTH = 128;
 const SAMPLE_HEIGHT = 96;
-const MOTION_DELTA = 42;
-const MOTION_PIXELS = 95;
+const MOTION_DELTA = 68;
+const MOTION_PIXELS = 130;
 
 export function Screensaver({
   videoRef,
@@ -26,6 +26,7 @@ export function Screensaver({
   const previousFrameRef = useRef<Uint8ClampedArray | null>(null);
   const lastMotionAtRef = useRef(Date.now());
   const activeRef = useRef(active);
+  const consecutiveMotionRef = useRef(0);
 
   useEffect(() => {
     activeRef.current = active;
@@ -34,6 +35,7 @@ export function Screensaver({
   const wake = useCallback(() => {
     lastMotionAtRef.current = Date.now();
     previousFrameRef.current = null;
+    consecutiveMotionRef.current = 0;
     if (!activeRef.current) return;
 
     setVisible(false);
@@ -51,7 +53,11 @@ export function Screensaver({
 
     canvas.width = SAMPLE_WIDTH;
     canvas.height = SAMPLE_HEIGHT;
-    context.drawImage(video, 0, 0, SAMPLE_WIDTH, SAMPLE_HEIGHT);
+    const cropWidth = video.videoWidth * 0.56;
+    const cropHeight = video.videoHeight * 0.72;
+    const cropX = (video.videoWidth - cropWidth) / 2;
+    const cropY = (video.videoHeight - cropHeight) / 2;
+    context.drawImage(video, cropX, cropY, cropWidth, cropHeight, 0, 0, SAMPLE_WIDTH, SAMPLE_HEIGHT);
 
     const current = context.getImageData(0, 0, SAMPLE_WIDTH, SAMPLE_HEIGHT).data;
     const previous = previousFrameRef.current;
@@ -65,9 +71,13 @@ export function Screensaver({
         Math.abs(current[index + 1] - previous[index + 1]) +
         Math.abs(current[index + 2] - previous[index + 2]);
       if (diff > MOTION_DELTA) changed++;
-      if (changed > MOTION_PIXELS) return true;
+      if (changed > MOTION_PIXELS) {
+        consecutiveMotionRef.current += 1;
+        return consecutiveMotionRef.current >= 2;
+      }
     }
 
+    consecutiveMotionRef.current = 0;
     return false;
   }, [videoRef]);
 

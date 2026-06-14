@@ -15,9 +15,48 @@ export async function POST(request: Request) {
   try {
     const { admin, profile: operator } = await requireRole(request, ["admin", "receptionist", "professor"]);
     const ip = getClientIp(request);
-    const body = await request.json() as { code?: unknown; unit?: unknown };
+    const body = await request.json() as { code?: unknown; unit?: unknown; manualName?: unknown };
     const code = typeof body.code === "string" ? body.code.trim() : "";
+    const manualName = typeof body.manualName === "string" ? body.manualName.trim().slice(0, 120) : "";
     const unit = typeof body.unit === "string" && body.unit.trim() ? body.unit.trim().slice(0, 100) : "Matriz";
+    if (manualName) {
+      if (!["admin", "receptionist"].includes(String(operator.role))) {
+        throw new ApiError("Apenas administradores e recepcionistas podem liberar manualmente.", 403);
+      }
+
+      const reason = `Liberacao manual para ${manualName} pela recepcao.`;
+      const { data: checkin, error } = await admin.from("checkins").insert({
+        student_id: null,
+        enrollment_id: null,
+        status: "allowed",
+        reason,
+        unit,
+      }).select("*").single();
+      if (error || !checkin) throw new ApiError("Nao foi possivel registrar a liberacao manual.", 500);
+
+      await logAudit(admin, {
+        userId: operator.id,
+        action: "INSERT",
+        entity: "checkins",
+        entityId: checkin.id,
+        details: {
+          manual_name: manualName,
+          status: checkin.status,
+          reason,
+        },
+        ip,
+      });
+
+      return Response.json({
+        ...checkin,
+        student: { id: "manual", full_name: manualName },
+        enrollment: null,
+        payment: null,
+        duplicate: false,
+        manual: true,
+      }, { status: 201 });
+    }
+
     if (!code) throw new ApiError("Informe o codigo do aluno.");
 
     let studentQuery = await admin.from("students").select("*").eq("qr_code", code).maybeSingle();

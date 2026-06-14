@@ -47,6 +47,7 @@ export function QrScanner({
   const cooldownRef = useRef(0);
   const labeledDescriptorsRef = useRef<faceapi.LabeledFaceDescriptors[]>([]);
   const modelsLoadedRef = useRef(false);
+  const fullscreenRequestedRef = useRef(false);
 
   const stop = useCallback(() => {
     if (frameRef.current) cancelAnimationFrame(frameRef.current);
@@ -59,6 +60,10 @@ export function QrScanner({
 
   const close = useCallback(() => {
     stop();
+    if (fullscreenRequestedRef.current && document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => {});
+    }
+    fullscreenRequestedRef.current = false;
     setOpen(false);
     setStarting(false);
     setDetectedFace(null);
@@ -67,6 +72,22 @@ export function QrScanner({
   const openRef = useRef(open);
   useEffect(() => { openRef.current = open; }, [open]);
   const interruptedRef = useRef(false);
+
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("checkin:camera-state", { detail: { open } }));
+    if (open && !document.fullscreenElement) {
+      void document.documentElement.requestFullscreen?.()
+        .then(() => { fullscreenRequestedRef.current = true; })
+        .catch(() => { fullscreenRequestedRef.current = false; });
+    }
+    return () => {
+      window.dispatchEvent(new CustomEvent("checkin:camera-state", { detail: { open: false } }));
+      if (open && fullscreenRequestedRef.current && document.fullscreenElement) {
+        void document.exitFullscreen().catch(() => {});
+        fullscreenRequestedRef.current = false;
+      }
+    };
+  }, [open]);
 
   // Auto-abrir após reload se solicitado
   useEffect(() => {
@@ -109,6 +130,32 @@ export function QrScanner({
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [close]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const channel = supabase.channel("checkins-camera-display")
+      .on("broadcast", { event: "CHECKIN_CREATED" }, ({ payload }) => {
+        if (payload?.sourceDeviceId === getDeviceId()) return;
+        if (payload?.status !== "allowed") return;
+
+        const studentName = typeof payload?.student?.full_name === "string"
+          ? payload.student.full_name
+          : "Liberado";
+        const firstName = studentName.split(" ")[0] || "Liberado";
+
+        setValidationResult({
+          status: "allowed",
+          name: firstName,
+          message: payload?.manual ? "Liberacao manual registrada" : payload?.reason || "Acesso liberado",
+        });
+
+        setTimeout(() => setValidationResult(null), 2600);
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [open]);
 
   // Load Face Models & Students
   useEffect(() => {
@@ -502,24 +549,48 @@ export function QrScanner({
 
       {/* Rosto Detectado Modal */}
       {detectedFace && !validationResult && (
-        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/80 backdrop-blur-md animate-in fade-in zoom-in duration-300">
-          <div className="bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl flex flex-col items-center">
-             <div className="w-40 h-40 rounded-full border-8 border-green-500 overflow-hidden mb-6 shadow-[0_0_30px_rgba(74,222,128,0.5)] bg-slate-100 flex items-center justify-center">
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-[radial-gradient(circle_at_center,rgba(16,185,129,.22),rgba(0,0,0,.88)_52%,#000)] p-5 backdrop-blur-xl animate-in fade-in zoom-in duration-300">
+          <div className="relative w-full max-w-[430px] overflow-hidden rounded-[32px] border border-white/20 bg-white/[.96] p-6 text-center shadow-[0_30px_90px_rgba(0,0,0,.45)]">
+            <div className="absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-emerald-400/70 to-transparent" />
+            <div className="absolute -top-24 left-1/2 h-56 w-56 -translate-x-1/2 rounded-full bg-emerald-400/20 blur-3xl" />
+
+            <div className="relative mx-auto mb-5 grid h-48 w-48 place-items-center">
+              <div className="absolute inset-0 rounded-full border border-emerald-400/30 shadow-[0_0_60px_rgba(16,185,129,.35)]" />
+              <div className="absolute inset-3 rounded-full border-4 border-emerald-500/90" />
+              <div className="absolute inset-0 rounded-full border-t-4 border-t-white/90 border-r-4 border-r-emerald-300/80 border-b-4 border-b-transparent border-l-4 border-l-transparent animate-spin" />
+              <div className="relative h-40 w-40 overflow-hidden rounded-full bg-slate-100 shadow-inner">
                 {detectedFace.photo_url && detectedFace.photo_url !== 'null' ? (
-                  <img src={detectedFace.photo_url} alt="Foto Aluno" className="w-full h-full object-cover" />
+                  <img src={detectedFace.photo_url} alt="Foto Aluno" className="h-full w-full object-cover" />
                 ) : (
-                  <UserCheck className="w-16 h-16 text-green-500" />
+                  <div className="grid h-full w-full place-items-center bg-emerald-50">
+                    <UserCheck className="h-16 w-16 text-emerald-500" />
+                  </div>
                 )}
-             </div>
-             <h2 className="text-3xl font-black text-slate-900 mb-2">Identificado</h2>
-             <p className="text-xl text-slate-600 font-bold mb-8 uppercase tracking-wide">{detectedFace.name}</p>
-             
-             <div className="flex gap-4 w-full">
-                <button onClick={cancelFace} disabled={isConfirming} className="flex-1 py-4 rounded-2xl font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition disabled:opacity-50">Não sou eu</button>
-                <button onClick={confirmFace} disabled={isConfirming} className="flex-1 py-4 rounded-2xl font-black text-white bg-green-600 hover:bg-green-700 transition shadow-lg text-lg uppercase tracking-wider flex items-center justify-center gap-2">
-                  {isConfirming ? <><Loader2 className="h-5 w-5 animate-spin" /> Validando</> : 'Confirmar'}
-                </button>
-             </div>
+              </div>
+            </div>
+
+            <div className="relative">
+              <div className="mx-auto mb-3 inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-black uppercase tracking-[.16em] text-emerald-700">
+                <ScanFace className="h-3.5 w-3.5" /> Rosto identificado
+              </div>
+              <h2 className="text-3xl font-black tracking-[-.04em] text-slate-950">{detectedFace.name}</h2>
+              <p className="mx-auto mt-2 max-w-xs text-sm leading-5 text-slate-500">
+                Confirme a identidade para registrar o check-in e liberar a catraca.
+              </p>
+            </div>
+
+            {isConfirming && (
+              <div className="mt-5 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-bold text-blue-700">
+                Validando matricula, pagamento e presenca...
+              </div>
+            )}
+
+            <div className="mt-6 grid grid-cols-2 gap-3">
+              <button onClick={cancelFace} disabled={isConfirming} className="min-h-14 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-600 shadow-sm transition hover:bg-slate-50 disabled:opacity-50">Nao sou eu</button>
+              <button onClick={confirmFace} disabled={isConfirming} className="flex min-h-14 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 text-sm font-black uppercase tracking-[.08em] text-white shadow-[0_14px_34px_rgba(16,185,129,.34)] transition hover:bg-emerald-700 disabled:opacity-80">
+                {isConfirming ? <><Loader2 className="h-5 w-5 animate-spin" /> Confirmando</> : <><CheckCircle2 className="h-5 w-5" /> Confirmar</>}
+              </button>
+            </div>
           </div>
         </div>
       )}

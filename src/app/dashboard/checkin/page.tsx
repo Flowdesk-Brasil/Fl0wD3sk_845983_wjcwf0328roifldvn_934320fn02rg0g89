@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { IconInput } from "@/components/form-controls";
 import { QrScanner } from "@/components/qr-scanner";
 import { LoadingState, PageHeader, StatusBadge, Modal, FieldLabel } from "@/components/ui";
-import { getCheckins, processCheckin } from "@/lib/api";
+import { createManualCheckin, getCheckins, processCheckin } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import type { Checkin, Student } from "@/lib/types";
 import { formatDateTime } from "@/lib/utils";
@@ -26,27 +26,8 @@ export default function CheckinPage() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { 
-    void load(); 
-    
-    // Escuta por check-ins manuais do desktop
-    const channel = supabase.channel("manual-checkin")
-      .on("broadcast", { event: "MANUAL_CHECKIN_APPROVED" }, ({ payload }) => {
-        setResult({
-          id: "manual-" + Date.now(),
-          student_id: "manual",
-          status: "allowed",
-          reason: "Acesso liberado manualmente pela recepção.",
-          checked_at: new Date().toISOString(),
-          unit: "Matriz",
-          student: { full_name: payload.name } as any
-        });
-        // Atualiza a lista após 2 segundos pra dar tempo de registrar
-        setTimeout(() => load(), 2000);
-      })
-      .subscribe();
-      
-    return () => { supabase.removeChannel(channel); };
+  useEffect(() => {
+    void load();
   }, [load]);
 
   const validateCode = useCallback(async (value: string) => {
@@ -71,36 +52,10 @@ export default function CheckinPage() {
   async function handleManualRelease(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!manualName.trim()) return;
-    
-    // Mostra na tela atual
-    setResult({
-      id: "manual-" + Date.now(),
-      student_id: "manual",
-      status: "allowed",
-      reason: "Acesso liberado manualmente pela recepção.",
-      checked_at: new Date().toISOString(),
-      unit: "Matriz",
-      student: { full_name: manualName } as any
-    });
 
-    // Transmite para outros dispositivos (celular admin no modo câmera)
-    window.dispatchEvent(new CustomEvent("checkin:created", {
-      detail: {
-        id: "manual-" + Date.now(),
-        student_id: "manual",
-        status: "allowed",
-        reason: "Acesso liberado manualmente pela recepcao.",
-        checked_at: new Date().toISOString(),
-        unit: "Matriz",
-        student: { full_name: manualName },
-      },
-    }));
-
-    supabase.channel("manual-checkin").send({
-      type: "broadcast",
-      event: "MANUAL_CHECKIN_APPROVED",
-      payload: { name: manualName }
-    });
+    const checkin = await createManualCheckin(manualName);
+    setResult(checkin as Result);
+    await load();
 
     setManualOpen(false);
     setManualName("");

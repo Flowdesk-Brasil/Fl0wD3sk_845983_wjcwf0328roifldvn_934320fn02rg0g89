@@ -3,6 +3,7 @@
 import { localDB } from "@/lib/localDB";
 import { shouldUseLocalData, supabase } from "@/lib/supabase";
 import { todayInBrasilia, currentMonthInBrasilia } from "@/lib/brazil-date";
+import { getDeviceId } from "@/lib/device-id";
 import type {
   AuditLog, Checkin, ClassBooking, ClassSession, ClassType, Contract, DashboardStats, Enrollment, LocalTables, NewRow,
   Notification, Payment, Plan, Profile, RevenuePoint, Student, StudioSettings, TableName, Product, Supplier,
@@ -559,12 +560,22 @@ export async function getCheckins(): Promise<Checkin[]> {
       .order("checked_at", { ascending: false })
       .limit(100);
     if (error) throw new Error(error.message);
-    return (data ?? []) as Checkin[];
+    return (data ?? []).map(withManualStudentName) as Checkin[];
   }
   const students = localDB.get("students");
   return [...localDB.get("checkins")]
     .sort((a, b) => b.checked_at.localeCompare(a.checked_at))
-    .map((row) => ({ ...row, student: relation(students, row.student_id) }));
+    .map((row) => withManualStudentName({ ...row, student: relation(students, row.student_id) }));
+}
+
+function withManualStudentName<T extends Checkin & { student?: any }>(checkin: T): T {
+  if (checkin.student || checkin.student_id) return checkin;
+  const manualName = checkin.reason?.match(/^Liberacao manual para (.+?) pela recepcao\./)?.[1];
+  if (!manualName) return checkin;
+  return {
+    ...checkin,
+    student: { id: "manual", full_name: manualName },
+  };
 }
 
 export async function processCheckin(code: string): Promise<Checkin & { student?: Student | null; duplicate?: boolean; enrollment?: Enrollment | null; payment?: Payment | null }> {
@@ -660,15 +671,49 @@ export async function processCheckin(code: string): Promise<Checkin & { student?
   return checkin;
 }
 
-function notifyCheckinCreated(checkin: Checkin & { student?: Student | null; duplicate?: boolean; enrollment?: Enrollment | null; payment?: Payment | null }) {
+export async function createManualCheckin(name: string): Promise<Checkin & { student?: { id: string; full_name: string } | null; manual?: boolean }> {
+  const cleanName = name.trim();
+  if (!cleanName) throw new Error("Informe o nome para liberar manualmente.");
+
+  if (!shouldUseLocalData()) {
+    const { data: session } = await supabase.auth.getSession();
+    const response = await fetch("/api/checkins", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.session?.access_token ?? ""}`,
+      },
+      body: JSON.stringify({ manualName: cleanName, unit: "Matriz" }),
+    });
+    const payload = await response.json() as Checkin & { student?: { id: string; full_name: string } | null; manual?: boolean; error?: string };
+    if (!response.ok) throw new Error(payload.error ?? "Nao foi possivel registrar a liberacao manual.");
+    notifyCheckinCreated(payload);
+    return payload;
+  }
+
+  const row = await insert("checkins", {
+    student_id: null,
+    enrollment_id: null,
+    status: "allowed",
+    reason: `Liberacao manual para ${cleanName} pela recepcao.`,
+    unit: "Matriz",
+    checked_at: new Date().toISOString(),
+  });
+  const checkin = { ...row, student: { id: "manual", full_name: cleanName }, manual: true };
+  notifyCheckinCreated(checkin);
+  return checkin;
+}
+
+function notifyCheckinCreated(checkin: Checkin & { student?: Student | { id: string; full_name: string } | null; duplicate?: boolean; enrollment?: Enrollment | null; payment?: Payment | null; manual?: boolean }) {
   if (typeof window === "undefined") return;
-  window.dispatchEvent(new CustomEvent("checkin:created", { detail: checkin }));
+  const detail = { ...checkin, sourceDeviceId: getDeviceId() };
+  window.dispatchEvent(new CustomEvent("checkin:created", { detail }));
   
   // REALTIME: Notifica outros dispositivos para abrir o modal
   supabase.channel("checkins-sync", { config: { broadcast: { self: false } } }).send({
     type: "broadcast",
     event: "CHECKIN_CREATED",
-    payload: checkin
+    payload: detail
   });
 }
 

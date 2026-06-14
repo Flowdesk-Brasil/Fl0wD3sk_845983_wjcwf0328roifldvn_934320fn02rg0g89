@@ -144,7 +144,7 @@ textarea.field { min-height: 100px; resize: vertical; }
 .kiosk-screensaver {
   position: fixed;
   inset: 0;
-  z-index: 70;
+  z-index: 35;
   display: grid;
   place-items: center;
   overflow: hidden;

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AlertCircle, CheckCircle2, Clock3, User, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { getDeviceId } from "@/lib/device-id";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils";
 
 type StudentInfo = {
@@ -20,9 +21,12 @@ type CheckinEvent = {
   reason?: string | null;
   unit?: string | null;
   checked_at: string;
+  sourceDeviceId?: string | null;
+  manual?: boolean;
   student?: StudentInfo | null;
   enrollment?: {
     id?: string;
+    matricula_number?: string | null;
     status?: string | null;
     start_date?: string | null;
     end_date?: string | null;
@@ -60,6 +64,7 @@ function paymentTone(status?: string | null) {
 export function CheckinSidebar() {
   const [recentCheckin, setRecentCheckin] = useState<SidebarCheckin | null>(null);
   const [open, setOpen] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const autoCloseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearAutoClose = useCallback(() => {
@@ -100,6 +105,14 @@ export function CheckinSidebar() {
       payment = data;
     }
 
+    if (!student && checkin.student?.full_name) {
+      student = checkin.student;
+    }
+    if (!student && !checkin.student_id) {
+      const manualName = checkin.reason?.match(/^Liberacao manual para (.+?) pela recepcao\./)?.[1];
+      if (manualName) student = { id: "manual", full_name: manualName };
+    }
+
     return {
       ...checkin,
       payment,
@@ -109,16 +122,17 @@ export function CheckinSidebar() {
   }, []);
 
   const showCheckin = useCallback(async (checkin: CheckinEvent, shouldAutoClose = true) => {
+    if (cameraOpen) return;
     const next = await normalizeCheckin(checkin);
     setRecentCheckin(next);
     setOpen(true);
     if (shouldAutoClose) scheduleAutoClose();
-  }, [normalizeCheckin, scheduleAutoClose]);
+  }, [cameraOpen, normalizeCheckin, scheduleAutoClose]);
 
   const loadCheckinById = useCallback(async (id: string) => {
     const { data } = await supabase
       .from("checkins")
-      .select("*, student:students(id, full_name, photo_url), enrollment:enrollments(id, status, start_date, end_date, plan:plans(name))")
+      .select("*, student:students(id, full_name, photo_url), enrollment:enrollments(id, matricula_number, status, start_date, end_date, plan:plans(name))")
       .eq("id", id)
       .maybeSingle();
 
@@ -128,7 +142,7 @@ export function CheckinSidebar() {
   const loadLatest = useCallback(async () => {
     const { data } = await supabase
       .from("checkins")
-      .select("*, student:students(id, full_name, photo_url), enrollment:enrollments(id, status, start_date, end_date, plan:plans(name))")
+      .select("*, student:students(id, full_name, photo_url), enrollment:enrollments(id, matricula_number, status, start_date, end_date, plan:plans(name))")
       .order("checked_at", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -148,22 +162,8 @@ export function CheckinSidebar() {
         else void showCheckin(checkin);
       })
       .on("broadcast", { event: "CHECKIN_CREATED" }, ({ payload }) => {
+        if (payload?.sourceDeviceId === getDeviceId() && cameraOpen) return;
         void showCheckin(payload as CheckinEvent);
-      })
-      .subscribe();
-
-    const manualChannel = supabase.channel("manual-checkin-sidebar")
-      .on("broadcast", { event: "MANUAL_CHECKIN_APPROVED" }, ({ payload }) => {
-        const name = typeof payload?.name === "string" ? payload.name : "Liberacao manual";
-        void showCheckin({
-          id: `manual-${Date.now()}`,
-          student_id: "manual",
-          status: "allowed",
-          reason: "Acesso liberado manualmente pela recepcao.",
-          unit: "Matriz",
-          checked_at: new Date().toISOString(),
-          student: { full_name: name },
-        });
       })
       .subscribe();
 
@@ -172,15 +172,22 @@ export function CheckinSidebar() {
       if (detail?.id) void showCheckin(detail);
     }
 
+    function handleCameraState(event: Event) {
+      const detail = (event as CustomEvent<{ open?: boolean }>).detail;
+      setCameraOpen(Boolean(detail?.open));
+      if (detail?.open) setOpen(false);
+    }
+
     window.addEventListener("checkin:created", handleLocalCheckin);
+    window.addEventListener("checkin:camera-state", handleCameraState);
 
     return () => {
       clearAutoClose();
       window.removeEventListener("checkin:created", handleLocalCheckin);
+      window.removeEventListener("checkin:camera-state", handleCameraState);
       supabase.removeChannel(checkinChannel);
-      supabase.removeChannel(manualChannel);
     };
-  }, [clearAutoClose, loadCheckinById, loadLatest, showCheckin]);
+  }, [cameraOpen, clearAutoClose, loadCheckinById, loadLatest, showCheckin]);
 
   const allowed = recentCheckin?.status === "allowed";
 
@@ -246,32 +253,50 @@ export function CheckinSidebar() {
               )}
 
               <div className="mt-4 grid w-full gap-2 text-left">
-                {recentCheckin.payment && (
-                  <div className={`rounded-lg border p-3 text-xs ${paymentTone(recentCheckin.payment.status)}`}>
-                    <strong className="block text-[11px] uppercase tracking-[.08em]">
-                      {paymentLabels[recentCheckin.payment.status ?? ""] ?? "Pagamento nao confirmado"}
-                    </strong>
-                    <span className="mt-1 block">
-                      {recentCheckin.payment.due_date ? `Vencimento: ${formatDate(recentCheckin.payment.due_date)}` : "Sem vencimento informado"}
-                    </span>
-                    {recentCheckin.payment.total_amount != null && (
-                      <span className="mt-1 block font-semibold">
-                        Valor: {formatCurrency(Number(recentCheckin.payment.total_amount))}
-                      </span>
-                    )}
+                {!recentCheckin.enrollment && !recentCheckin.payment && (
+                  <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-700">
+                    <strong className="block text-[11px] uppercase tracking-[.08em]">Liberacao manual</strong>
+                    <span className="mt-1 block">Registro feito pela recepcao sem vinculo automatico com matricula.</span>
                   </div>
                 )}
 
                 {recentCheckin.enrollment && (
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
                     <strong className="block text-[11px] uppercase tracking-[.08em] text-slate-700">Matricula</strong>
-                    <span className="mt-1 block">
-                      {recentCheckin.enrollment.plan?.name ? `${recentCheckin.enrollment.plan.name} - ` : ""}
-                      {recentCheckin.enrollment.status ?? "sem status"}
-                    </span>
-                    {recentCheckin.enrollment.end_date && (
-                      <span className="mt-1 block">Expira em: {formatDate(recentCheckin.enrollment.end_date)}</span>
-                    )}
+                    <div className="mt-2 grid gap-1">
+                      {recentCheckin.enrollment.matricula_number && (
+                        <span className="font-bold text-slate-800">{recentCheckin.enrollment.matricula_number}</span>
+                      )}
+                      <span>
+                        Plano: <b>{recentCheckin.enrollment.plan?.name ?? "Nao informado"}</b>
+                      </span>
+                      <span>
+                        Status: <b>{recentCheckin.enrollment.status ?? "sem status"}</b>
+                      </span>
+                      {recentCheckin.enrollment.end_date && (
+                        <span>
+                          Validade: <b>{formatDate(recentCheckin.enrollment.end_date)}</b>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {recentCheckin.payment && (
+                  <div className={`rounded-lg border p-3 text-xs ${paymentTone(recentCheckin.payment.status)}`}>
+                    <strong className="block text-[11px] uppercase tracking-[.08em]">
+                      {paymentLabels[recentCheckin.payment.status ?? ""] ?? "Pagamento nao confirmado"}
+                    </strong>
+                    <div className="mt-2 grid gap-1">
+                      <span>
+                        Vencimento: <b>{recentCheckin.payment.due_date ? formatDate(recentCheckin.payment.due_date) : "Nao informado"}</b>
+                      </span>
+                      {recentCheckin.payment.total_amount != null && (
+                        <span>
+                          Valor: <b>{formatCurrency(Number(recentCheckin.payment.total_amount))}</b>
+                        </span>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
