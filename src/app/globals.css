@@ -141,6 +141,89 @@ textarea.field { min-height: 100px; resize: vertical; }
 .scanner-guide::before { top: 18%; }
 .scanner-guide::after { display: none; }
 
+.kiosk-screensaver {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 47%, rgba(255,255,255,.055), transparent 34%),
+    radial-gradient(circle at 50% 50%, rgba(26,115,232,.08), transparent 42%),
+    #000;
+  opacity: 0;
+  transition: opacity .28s ease;
+  cursor: none;
+}
+.kiosk-screensaver.is-visible { opacity: 1; }
+.kiosk-screensaver__grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.018) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(circle at center, black 0%, transparent 68%);
+  opacity: .36;
+}
+.kiosk-screensaver__glow {
+  position: absolute;
+  border-radius: 999px;
+  pointer-events: none;
+}
+.kiosk-screensaver__glow--main {
+  width: min(62vw, 720px);
+  aspect-ratio: 1;
+  background: radial-gradient(circle, rgba(255,255,255,.12), rgba(26,115,232,.08) 34%, transparent 68%);
+  filter: blur(72px);
+  animation: kiosk-glow 5.6s ease-in-out infinite;
+}
+.kiosk-screensaver__glow--edge {
+  width: min(88vw, 980px);
+  aspect-ratio: 1;
+  border: 1px solid rgba(255,255,255,.065);
+  box-shadow: 0 0 90px rgba(255,255,255,.05), inset 0 0 80px rgba(26,115,232,.035);
+  animation: kiosk-ring 10s linear infinite;
+}
+.kiosk-screensaver__brand {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  justify-items: center;
+  gap: 26px;
+  padding: 32px;
+  animation: kiosk-breathe 4.8s ease-in-out infinite;
+}
+.kiosk-screensaver__logo {
+  width: min(70vw, 560px);
+  max-height: 24vh;
+  object-fit: contain;
+  filter: drop-shadow(0 0 28px rgba(255,255,255,.14)) drop-shadow(0 0 80px rgba(26,115,232,.12));
+  user-select: none;
+}
+.kiosk-screensaver__pulse {
+  width: 88px;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.55), transparent);
+  box-shadow: 0 0 22px rgba(255,255,255,.24);
+  opacity: .7;
+}
+
+@keyframes kiosk-breathe {
+  0%, 100% { transform: scale(1); opacity: .88; }
+  50% { transform: scale(1.018); opacity: 1; }
+}
+@keyframes kiosk-glow {
+  0%, 100% { transform: scale(.96); opacity: .68; }
+  50% { transform: scale(1.06); opacity: 1; }
+}
+@keyframes kiosk-ring {
+  from { transform: rotate(0deg) scale(.98); }
+  to { transform: rotate(360deg) scale(.98); }
+}
+
 .modal-backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(20,29,45,.48); backdrop-filter: blur(6px); animation: fade .18s ease-out; }
 .modal-box { width: 100%; max-height: calc(100vh - 40px); overflow-y: auto; border: 1px solid rgba(255,255,255,.5); border-radius: 20px; padding: 22px; background: var(--surface); box-shadow: 0 28px 80px rgba(25,40,65,.22); animation: enter .2s ease-out; }
 .modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }

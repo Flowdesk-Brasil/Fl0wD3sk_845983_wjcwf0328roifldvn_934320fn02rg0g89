@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "@/lib/supabase";
 import * as faceapi from '@vladmandic/face-api';
 import { getDeviceId } from "@/lib/device-id";
+import { Screensaver } from "@/components/screensaver";
 
 function getGreeting() {
   const hour = new Date().getHours();
@@ -541,6 +542,13 @@ export function QrScanner({
           </div>
         </div>
       )}
+
+      <Screensaver
+        videoRef={videoRef}
+        idleTimeout={10}
+        isReady={isReady && !starting && !error}
+        isOverlayActive={Boolean(validationResult || detectedFace)}
+      />
     </div>
   );
 
