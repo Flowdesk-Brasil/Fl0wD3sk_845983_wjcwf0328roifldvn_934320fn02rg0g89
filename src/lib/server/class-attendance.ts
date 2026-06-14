@@ -112,7 +112,7 @@ export async function ensureStudentAttendancesForDate(admin: SupabaseClient, stu
   const dayOfWeek = dayOfWeekFromDate(date);
   const { data: links, error: linkError } = await admin
     .from("student_classes")
-    .select("student_id, class_schedule_id, class_schedule:class_schedules(id, time, day_of_week, capacity, active, class_type:class_types(id, name, color), instructor:profiles(id, full_name))")
+    .select("student_id, class_schedule_id, class_schedule:class_schedules(id, time, day_of_week, capacity, active, class_type:class_types(id, name, color, duration_minutes), instructor:profiles(id, full_name))")
     .eq("student_id", studentId);
   if (linkError) throw new Error(linkError.message);
 
@@ -148,7 +148,7 @@ export async function ensureStudentAttendancesForDate(admin: SupabaseClient, stu
 
   const { data: rows, error } = await admin
     .from("class_attendances")
-    .select("*, class_schedule:class_schedules(id, time, day_of_week, capacity, active, class_type:class_types(id, name, color), instructor:profiles(id, full_name))")
+    .select("*, class_schedule:class_schedules(id, time, day_of_week, capacity, active, class_type:class_types(id, name, color, duration_minutes), instructor:profiles(id, full_name))")
     .eq("student_id", studentId)
     .eq("date", date)
     .in("class_schedule_id", scheduleIds);

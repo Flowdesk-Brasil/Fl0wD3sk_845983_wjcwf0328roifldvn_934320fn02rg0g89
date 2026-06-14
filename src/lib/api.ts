@@ -531,14 +531,18 @@ export async function getPayments(): Promise<Payment[]> {
 }
 
 export async function markPaymentPaid(id: string, method: NonNullable<Payment["method"]>) {
-  return update("payments", id, { status: "paid", method, paid_at: new Date().toISOString() });
+  const payment = await update("payments", id, { status: "paid", method, paid_at: new Date().toISOString() });
+  notifyPaymentUpdated(payment);
+  return payment;
 }
 
 export async function updatePaymentStatus(id: string, status: Payment["status"]) {
-  return update("payments", id, {
+  const payment = await update("payments", id, {
     status,
     ...(status === "pending" ? { method: null, paid_at: null } : {}),
   });
+  notifyPaymentUpdated(payment);
+  return payment;
 }
 
 export async function createPixPayment(id: string): Promise<Payment> {
@@ -591,7 +595,7 @@ export async function processCheckin(code: string): Promise<Checkin & { student?
     });
     if (response.ok) {
       const checkin = await response.json() as Checkin & { student?: Student | null; duplicate?: boolean; enrollment?: Enrollment | null; payment?: Payment | null };
-      notifyCheckinCreated(checkin);
+      await notifyCheckinCreated(checkin);
       return checkin;
     }
   }
@@ -667,7 +671,7 @@ export async function processCheckin(code: string): Promise<Checkin & { student?
     checked_at: new Date().toISOString(),
   });
   const checkin = { ...row, student, enrollment, payment: effectivePayment };
-  notifyCheckinCreated(checkin);
+  await notifyCheckinCreated(checkin);
   return checkin;
 }
 
@@ -687,7 +691,7 @@ export async function createManualCheckin(name: string): Promise<Checkin & { stu
     });
     const payload = await response.json() as Checkin & { student?: { id: string; full_name: string } | null; manual?: boolean; error?: string };
     if (!response.ok) throw new Error(payload.error ?? "Nao foi possivel registrar a liberacao manual.");
-    notifyCheckinCreated(payload);
+    await notifyCheckinCreated(payload);
     return payload;
   }
 
@@ -700,23 +704,43 @@ export async function createManualCheckin(name: string): Promise<Checkin & { stu
     checked_at: new Date().toISOString(),
   });
   const checkin = { ...row, student: { id: "manual", full_name: cleanName }, manual: true };
-  notifyCheckinCreated(checkin);
+  await notifyCheckinCreated(checkin);
   return checkin;
 }
 
-function notifyCheckinCreated(checkin: Checkin & { student?: Student | { id: string; full_name: string } | null; duplicate?: boolean; enrollment?: Enrollment | null; payment?: Payment | null; manual?: boolean }) {
+function notifyPaymentUpdated(payment: Payment) {
+  if (typeof window === "undefined") return;
+  const detail = { ...payment, sourceDeviceId: getDeviceId() };
+  window.dispatchEvent(new CustomEvent("payment:updated", { detail }));
+  for (const channelName of ["payments-realtime", "pos-terminal-channel"]) {
+    const channel = supabase.channel(channelName, { config: { broadcast: { self: false } } });
+    channel.subscribe((status) => {
+      if (status !== "SUBSCRIBED") return;
+      void channel.send({ type: "broadcast", event: "PAYMENT_UPDATED", payload: detail })
+        .finally(() => window.setTimeout(() => supabase.removeChannel(channel), 800));
+    });
+  }
+}
+
+async function notifyCheckinCreated(checkin: Checkin & { student?: Student | { id: string; full_name: string } | null; duplicate?: boolean; enrollment?: Enrollment | null; payment?: Payment | null; manual?: boolean }) {
   if (typeof window === "undefined") return;
   const detail = { ...checkin, sourceDeviceId: getDeviceId() };
   window.dispatchEvent(new CustomEvent("checkin:created", { detail }));
-  
-  // REALTIME: Notifica outros dispositivos para abrir o modal
-  supabase.channel("checkins-sync", { config: { broadcast: { self: false } } }).send({
-    type: "broadcast",
-    event: "CHECKIN_CREATED",
-    payload: detail
-  });
-}
 
+  const channel = supabase.channel("checkins-realtime", { config: { broadcast: { self: false } } });
+  await new Promise<void>((resolve) => {
+    const timeout = window.setTimeout(resolve, 1500);
+    channel.subscribe((status) => {
+      if (status !== "SUBSCRIBED") return;
+      void channel.send({ type: "broadcast", event: "CHECKIN_CREATED", payload: detail })
+        .finally(() => {
+          window.clearTimeout(timeout);
+          resolve();
+        });
+    });
+  });
+  window.setTimeout(() => supabase.removeChannel(channel), 800);
+}
 export async function getContracts(): Promise<Contract[]> {
   if (!shouldUseLocalData()) {
     const { data, error } = await supabase

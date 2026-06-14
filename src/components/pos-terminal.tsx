@@ -134,6 +134,21 @@ export function PosTerminalListener({ email }: { email: string }) {
         }
       )
       .on(
+        "broadcast",
+        { event: "PAYMENT_UPDATED" },
+        async ({ payload }) => {
+          if (!payload?.id) return;
+          if (activeIdRef.current && payload.id === activeIdRef.current && payload.status === "paid") {
+            setApprovedStatus(true);
+            setTimeout(() => {
+              setActivePayment(null);
+              setApprovedStatus(false);
+              activeIdRef.current = null;
+            }, 5000);
+          }
+        }
+      )
+      .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "sales" },
         async (payload) => {

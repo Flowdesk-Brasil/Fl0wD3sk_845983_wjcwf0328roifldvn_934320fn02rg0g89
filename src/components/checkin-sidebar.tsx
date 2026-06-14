@@ -38,6 +38,10 @@ type CheckinEvent = {
     due_date?: string | null;
     total_amount?: number | string | null;
   } | null;
+  stats?: {
+    todayCheckins?: number;
+    confirmedClasses?: number;
+  } | null;
 };
 
 type SidebarCheckin = CheckinEvent & {
@@ -105,6 +109,30 @@ export function CheckinSidebar() {
       payment = data;
     }
 
+    let stats = checkin.stats ?? null;
+    if (!stats && checkin.student_id && checkin.student_id !== "manual") {
+      const today = new Date().toISOString().slice(0, 10);
+      const [{ count: todayCheckins }, { count: confirmedClasses }] = await Promise.all([
+        supabase
+          .from("checkins")
+          .select("*", { count: "exact", head: true })
+          .eq("student_id", checkin.student_id)
+          .eq("status", "allowed")
+          .gte("checked_at", `${today}T00:00:00.000Z`)
+          .lte("checked_at", `${today}T23:59:59.999Z`),
+        supabase
+          .from("class_attendances")
+          .select("*", { count: "exact", head: true })
+          .eq("student_id", checkin.student_id)
+          .eq("date", today)
+          .in("status", ["confirmed", "attended"]),
+      ]);
+      stats = {
+        todayCheckins: todayCheckins ?? 0,
+        confirmedClasses: confirmedClasses ?? 0,
+      };
+    }
+
     if (!student && checkin.student?.full_name) {
       student = checkin.student;
     }
@@ -115,6 +143,7 @@ export function CheckinSidebar() {
 
     return {
       ...checkin,
+      stats,
       payment,
       studentName: student?.full_name || "Aluno nao identificado",
       photoUrl: student?.photo_url ?? null,
@@ -155,7 +184,7 @@ export function CheckinSidebar() {
   useEffect(() => {
     void loadLatest();
 
-    const checkinChannel = supabase.channel("checkins-sidebar")
+    const checkinChannel = supabase.channel("checkins-realtime")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "checkins" }, (payload) => {
         const checkin = payload.new as CheckinEvent;
         if (checkin?.id) void loadCheckinById(checkin.id);
@@ -278,6 +307,19 @@ export function CheckinSidebar() {
                           Validade: <b>{formatDate(recentCheckin.enrollment.end_date)}</b>
                         </span>
                       )}
+                    </div>
+                  </div>
+                )}
+
+                {recentCheckin.stats && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-700">
+                      <strong className="block text-[11px] uppercase tracking-[.08em]">Check-ins hoje</strong>
+                      <span className="mt-1 block text-xl font-black">{recentCheckin.stats.todayCheckins ?? 0}</span>
+                    </div>
+                    <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-xs text-green-700">
+                      <strong className="block text-[11px] uppercase tracking-[.08em]">Aulas confirmadas</strong>
+                      <span className="mt-1 block text-xl font-black">{recentCheckin.stats.confirmedClasses ?? 0}</span>
                     </div>
                   </div>
                 )}

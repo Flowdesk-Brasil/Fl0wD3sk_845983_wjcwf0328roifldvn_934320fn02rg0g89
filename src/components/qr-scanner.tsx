@@ -134,23 +134,46 @@ export function QrScanner({
   useEffect(() => {
     if (!open) return;
 
-    const channel = supabase.channel("checkins-camera-display")
+    function displayCheckin(payload: any) {
+      if (!payload?.status) return;
+      const manualName = typeof payload?.reason === "string"
+        ? payload.reason.match(/^Liberacao manual para (.+?) pela recepcao\./)?.[1]
+        : null;
+      const studentName = typeof payload?.student?.full_name === "string"
+        ? payload.student.full_name
+        : manualName
+          ? manualName
+          : "Aluno";
+      const firstName = studentName.split(" ")[0] || (payload.status === "allowed" ? "Liberado" : "Bloqueado");
+
+      setValidationResult({
+        status: payload.status === "allowed" ? "allowed" : "denied",
+        name: firstName,
+        message: payload?.manual || manualName
+          ? "Liberado manualmente"
+          : payload?.reason || (payload.status === "allowed" ? "Acesso liberado" : "Acesso bloqueado"),
+      });
+
+      window.setTimeout(() => setValidationResult(null), 3200);
+    }
+
+    async function displayCheckinById(id: string) {
+      const { data } = await supabase
+        .from("checkins")
+        .select("*, student:students(id, full_name, photo_url), enrollment:enrollments(id, matricula_number, status, start_date, end_date, plan:plans(name))")
+        .eq("id", id)
+        .maybeSingle();
+      if (data) displayCheckin(data);
+    }
+
+    const channel = supabase.channel("checkins-realtime")
       .on("broadcast", { event: "CHECKIN_CREATED" }, ({ payload }) => {
         if (payload?.sourceDeviceId === getDeviceId()) return;
-        if (payload?.status !== "allowed") return;
-
-        const studentName = typeof payload?.student?.full_name === "string"
-          ? payload.student.full_name
-          : "Liberado";
-        const firstName = studentName.split(" ")[0] || "Liberado";
-
-        setValidationResult({
-          status: "allowed",
-          name: firstName,
-          message: payload?.manual ? "Liberacao manual registrada" : payload?.reason || "Acesso liberado",
-        });
-
-        setTimeout(() => setValidationResult(null), 2600);
+        displayCheckin(payload);
+      })
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "checkins" }, (payload) => {
+        const id = (payload.new as any)?.id;
+        if (id) void displayCheckinById(id);
       })
       .subscribe();
 

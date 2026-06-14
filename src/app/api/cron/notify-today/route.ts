@@ -1,215 +1,141 @@
-import { NextResponse } from 'next/server';
-import webpush from 'web-push';
-import { getAdminClient } from '@/lib/server/supabase-admin';
-import { todayInBrasilia, dayOfWeekInBrasilia } from '@/lib/brazil-date';
+import { NextResponse } from "next/server";
+import webpush from "web-push";
+import { getAdminClient } from "@/lib/server/supabase-admin";
+import { todayInBrasilia, dayOfWeekInBrasilia } from "@/lib/brazil-date";
+import { ensureAttendancesForDate } from "@/lib/server/class-attendance";
+import type { ClassAttendance } from "@/lib/types";
 
-// Setup VAPID once
 webpush.setVapidDetails(
-  'mailto:contato@studio.com.br',
-  process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || 'BE8FMu1NZtQh2QVULUShurqQlruZMOECnnw2HuHmx2X63Iv0jxuDLquhVva4lERZmuMsUE5OjzKRbWi1As0ZQlY',
-  process.env.VAPID_PRIVATE_KEY || '3dO0XqBl8t69E1VevHLFlubTtixtEJeexYoXu4-7MLQ'
+  "mailto:contato@studio.com.br",
+  process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || "BE8FMu1NZtQh2QVULUShurqQlruZMOECnnw2HuHmx2X63Iv0jxuDLquhVva4lERZmuMsUE5OjzKRbWi1As0ZQlY",
+  process.env.VAPID_PRIVATE_KEY || "3dO0XqBl8t69E1VevHLFlubTtixtEJeexYoXu4-7MLQ",
 );
 
-const DIAS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+const DIAS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"];
 
-/**
- * Sends push notification directly via web-push (no internal HTTP fetch).
- * Returns number of successful sends.
- */
-async function sendPushDirect(
-  admin: ReturnType<typeof getAdminClient>,
-  studentIds: string[],
-  title: string,
-  body: string,
-  url: string = '/portal'
-): Promise<number> {
-  if (!studentIds.length) return 0;
+type PushTarget = {
+  attendance: ClassAttendance;
+  profileId?: string | null;
+};
 
-  // Fetch push subscriptions from DB
+async function sendPushDirect(targetIds: string[], title: string, body: string, url = "/portal?tab=classes") {
+  const uniqueIds = [...new Set(targetIds.filter(Boolean))];
+  if (!uniqueIds.length) return { sent: 0, subscriptions: 0, expired: 0 };
+
+  const admin = getAdminClient();
   const { data: subs, error } = await admin
-    .from('push_subscriptions')
-    .select('id, endpoint, p256dh, auth')
-    .in('user_id', studentIds);
+    .from("push_subscriptions")
+    .select("id, endpoint, p256dh, auth")
+    .in("user_id", uniqueIds);
 
-  if (error || !subs || subs.length === 0) return 0;
+  if (error) throw new Error(`Erro ao buscar inscricoes push: ${error.message}`);
+  if (!subs?.length) return { sent: 0, subscriptions: 0, expired: 0 };
 
   const payload = JSON.stringify({
     title,
     body,
     url,
-    icon: '/icon-192x192.png',
+    icon: "/icon-192x192.png",
+    badge: "/icon-192x192.png",
+    tag: "class-attendance-today",
+    requireInteraction: true,
+    actions: [{ action: "open", title: "Confirmar aula" }],
   });
 
   let sent = 0;
   const deleteIds: string[] = [];
 
-  await Promise.all(
-    subs.map(async (sub) => {
-      try {
-        await webpush.sendNotification(
-          { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-          payload
-        );
-        sent++;
-      } catch (err: any) {
-        if (err.statusCode === 404 || err.statusCode === 410) {
-          // Expired subscription — mark for deletion
-          deleteIds.push(sub.id);
-        } else {
-          console.error('Push send error:', err?.message || err);
-        }
-      }
-    })
-  );
+  await Promise.all(subs.map(async (sub) => {
+    try {
+      await webpush.sendNotification(
+        { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+        payload,
+      );
+      sent++;
+    } catch (err: any) {
+      if (err.statusCode === 404 || err.statusCode === 410) deleteIds.push(sub.id);
+      else console.error("Push send error:", err?.message || err);
+    }
+  }));
 
-  // Cleanup expired subscriptions
-  if (deleteIds.length > 0) {
-    await admin.from('push_subscriptions').delete().in('id', deleteIds);
-  }
-
-  return sent;
+  if (deleteIds.length) await admin.from("push_subscriptions").delete().in("id", deleteIds);
+  return { sent, subscriptions: subs.length, expired: deleteIds.length };
 }
 
-/**
- * GET /api/cron/notify-today
- * Called by: CRON scheduler every morning OR manually via "Alertar alunos" button.
- * 1. Finds all active class schedules for today (Brazil timezone).
- * 2. Finds all students enrolled in those schedules.
- * 3. Upserts "pending" attendance records for today (skips already confirmed/cancelled).
- * 4. Sends push notifications directly via web-push — no internal HTTP fetch.
- */
 export async function GET() {
   try {
     const admin = getAdminClient();
-    const dayOfWeek = dayOfWeekInBrasilia();
     const dateStr = todayInBrasilia();
-    const diaLabel = DIAS[dayOfWeek];
+    const dayOfWeek = dayOfWeekInBrasilia();
+    const attendances = await ensureAttendancesForDate(admin, dateStr);
+    const pending = attendances.filter((attendance) => attendance.status === "pending");
 
-    // 1. Get all active schedules for today's weekday
-    const { data: schedules, error: scheduleError } = await admin
-      .from('class_schedules')
-      .select('id, time, class_type:class_types(name)')
-      .eq('day_of_week', dayOfWeek)
-      .eq('active', true);
-
-    if (scheduleError) {
-      return NextResponse.json({ error: 'Erro ao buscar turmas: ' + scheduleError.message }, { status: 500 });
-    }
-
-    if (!schedules || schedules.length === 0) {
+    if (!attendances.length) {
       return NextResponse.json({
-        message: `Nenhuma turma programada para ${diaLabel} (dia ${dayOfWeek}).`,
+        success: true,
         date: dateStr,
         dayOfWeek,
+        pushSent: 0,
+        pendingStudents: 0,
+        message: `Nenhum aluno vinculado as turmas de hoje (${DIAS[dayOfWeek]}).`,
       });
     }
 
-    const scheduleIds = schedules.map((s) => s.id);
-
-    // 2. Get all students enrolled in these schedules
-    const { data: studentClasses, error: scError } = await admin
-      .from('student_classes')
-      .select('student_id, class_schedule_id')
-      .in('class_schedule_id', scheduleIds);
-
-    if (scError) {
-      return NextResponse.json({ error: 'Erro ao buscar alunos: ' + scError.message }, { status: 500 });
-    }
-
-    if (!studentClasses || studentClasses.length === 0) {
+    if (!pending.length) {
       return NextResponse.json({
-        message: 'Nenhum aluno vinculado às turmas de hoje.',
+        success: true,
         date: dateStr,
         dayOfWeek,
+        pushSent: 0,
+        pendingStudents: 0,
+        totalAttendances: attendances.length,
+        message: "Todas as presencas de hoje ja foram respondidas. Nenhum aluno pendente para notificar.",
       });
     }
 
-    // 3. Filter out students who already have an attendance record for today
-    const { data: existingAttendances } = await admin
-      .from('class_attendances')
-      .select('student_id, class_schedule_id')
-      .eq('date', dateStr)
-      .in('class_schedule_id', scheduleIds);
+    const studentIds = [...new Set(pending.map((attendance) => attendance.student_id))];
+    const { data: students } = await admin
+      .from("students")
+      .select("id, profile_id")
+      .in("id", studentIds);
 
-    const existingSet = new Set(existingAttendances?.map(a => `${a.student_id}-${a.class_schedule_id}`) || []);
-    
-    const newStudentClasses = studentClasses.filter(sc => !existingSet.has(`${sc.student_id}-${sc.class_schedule_id}`));
-
-    if (newStudentClasses.length === 0) {
-      return NextResponse.json({
-        message: 'Nenhum aluno novo pendente de notificação para as turmas de hoje.',
-        date: dateStr,
-        dayOfWeek,
-      });
-    }
-
-    // 4. Upsert ONLY new "pending" attendance records
-    const attendanceInserts = newStudentClasses.map((sc) => ({
-      class_schedule_id: sc.class_schedule_id,
-      student_id: sc.student_id,
-      date: dateStr,
-      status: 'pending' as const,
+    const profileByStudent = new Map((students ?? []).map((student: any) => [student.id, student.profile_id]));
+    const targets: PushTarget[] = pending.map((attendance) => ({
+      attendance,
+      profileId: profileByStudent.get(attendance.student_id),
     }));
 
-    const { error: upsertError } = await admin.from('class_attendances').upsert(attendanceInserts, {
-      onConflict: 'class_schedule_id,student_id,date',
-      ignoreDuplicates: true,
-    });
+    let sent = 0;
+    let subscriptions = 0;
+    let expired = 0;
 
-    if (upsertError) {
-      console.error('Attendance upsert error:', upsertError.message);
-    }
-
-    // 5. Send push notifications directly ONLY to newly inserted students
-    const allStudentIds = [...new Set(newStudentClasses.map((sc) => sc.student_id))];
-
-    // Fetch profile IDs to match push_subscriptions (which are tied to profile_id)
-    const { data: studentsInfo } = await admin
-      .from('students')
-      .select('id, profile_id')
-      .in('id', allStudentIds);
-
-    let totalPushSent = 0;
-
-    for (const schedule of schedules) {
-      const studentIdsForSchedule = newStudentClasses
-        .filter((sc) => sc.class_schedule_id === schedule.id)
-        .map((sc) => sc.student_id);
-
-      if (studentIdsForSchedule.length === 0) continue;
-
-      const profileIdsForSchedule = studentIdsForSchedule
-        .map(id => studentsInfo?.find(s => s.id === id)?.profile_id)
-        .filter(Boolean) as string[];
-
-      if (profileIdsForSchedule.length === 0) continue;
-
-      const classTypeObj = (schedule as any).class_type;
-      const className = Array.isArray(classTypeObj)
-        ? classTypeObj[0]?.name
-        : classTypeObj?.name || 'Aula';
-
-      const sent = await sendPushDirect(
-        admin,
-        profileIdsForSchedule, // Map to auth user IDs
-        `Sua aula de ${className} é hoje! 💪`,
-        `Horário: ${schedule.time}. Toque para confirmar sua presença!`,
-        '/portal'
+    for (const target of targets) {
+      const className = target.attendance.class_schedule?.class_type?.name || "aula";
+      const time = target.attendance.class_schedule?.time || "hoje";
+      const ids = [target.profileId, target.attendance.student_id].filter(Boolean) as string[];
+      const result = await sendPushDirect(
+        ids,
+        "Voce tem aula hoje",
+        `Verificamos que voce tem ${className} as ${time}. Clique aqui para confirmar.`,
       );
-      totalPushSent += sent;
+      sent += result.sent;
+      subscriptions += result.subscriptions;
+      expired += result.expired;
     }
 
     return NextResponse.json({
       success: true,
       date: dateStr,
-      dayLabel: diaLabel,
-      schedulesFound: schedules.length,
-      studentsWithClass: allStudentIds.length,
-      pushSent: totalPushSent,
-      message: `✅ ${diaLabel}: ${schedules.length} aula(s), ${allStudentIds.length} aluno(s) com presença registrada, ${totalPushSent} push(es) enviado(s).`,
+      dayLabel: DIAS[dayOfWeek],
+      totalAttendances: attendances.length,
+      pendingStudents: pending.length,
+      subscriptionsFound: subscriptions,
+      pushSent: sent,
+      expiredSubscriptions: expired,
+      message: `${pending.length} aluno(s) pendente(s) verificados, ${sent} notificacao(oes) enviada(s).`,
     });
   } catch (error: any) {
-    console.error('Cron Error:', error);
-    return NextResponse.json({ error: error?.message || 'Internal Server Error' }, { status: 500 });
+    console.error("Notify today error:", error);
+    return NextResponse.json({ error: error?.message || "Internal Server Error" }, { status: 500 });
   }
 }

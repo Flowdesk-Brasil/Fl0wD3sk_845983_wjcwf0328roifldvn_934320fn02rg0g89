@@ -18,14 +18,20 @@ export async function GET(request: Request) {
     const dateStr = todayInBrasilia();
     const [
       attendances,
+      { data: weeklyClasses },
       { data: payments },
       { data: contracts },
     ] = await Promise.all([
       ensureStudentAttendancesForDate(admin, student.id, dateStr),
       admin
+        .from("student_classes")
+        .select("id, class_schedule_id, class_schedule:class_schedules(id, time, day_of_week, capacity, active, class_type:class_types(id, name, color, duration_minutes), instructor:profiles(id, full_name))")
+        .eq("student_id", student.id),
+      admin
         .from("payments")
         .select("id, reference, total_amount, status, due_date, paid_at, pix_code, pix_qr_base64")
         .eq("student_id", student.id)
+        .neq("status", "cancelled")
         .order("due_date", { ascending: false })
         .limit(12),
       admin
@@ -49,6 +55,7 @@ export async function GET(request: Request) {
     return Response.json({
       student,
       attendances,
+      weeklyClasses: (weeklyClasses || []).filter((item: any) => item.class_schedule?.active !== false),
       payments: payments || [],
       contracts: contracts || [],
       requiredContract,
