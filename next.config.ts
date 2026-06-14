@@ -6,6 +6,13 @@ const nextConfig: NextConfig = {
   },
   webpack: (config) => {
     config.module.exprContextCritical = false;
+    config.ignoreWarnings = [
+      ...(config.ignoreWarnings ?? []),
+      {
+        module: /@vladmandic\/face-api/,
+        message: /Critical dependency: require function is used in a way in which dependencies cannot be statically extracted/,
+      },
+    ];
     return config;
   },
   allowedDevOrigins: ["192.168.18.136", "localhost"],
