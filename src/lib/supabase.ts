@@ -3,8 +3,9 @@ import { createClient } from "@supabase/supabase-js";
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 const hasSupabaseEnvironment = Boolean(supabaseUrl && supabaseAnonKey);
+const explicitLocalData = process.env.NEXT_PUBLIC_USE_LOCAL_DATA === "true";
 
-export const useLocalData = !hasSupabaseEnvironment;
+export const useLocalData = explicitLocalData || (!hasSupabaseEnvironment && process.env.NODE_ENV !== "production");
 
 export function shouldUseLocalData() {
   return useLocalData;

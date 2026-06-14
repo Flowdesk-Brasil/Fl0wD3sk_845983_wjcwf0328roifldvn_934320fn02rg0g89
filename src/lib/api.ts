@@ -421,47 +421,107 @@ export async function editEnrollment(id: string, values: {
 
 export async function deleteEnrollment(id: string) {
   if (!shouldUseLocalData()) {
-    const { data: paidPayments } = await supabase.from("payments").select("id").eq("enrollment_id", id).eq("status", "paid").limit(1);
-    const hasPaid = paidPayments && paidPayments.length > 0;
-
-    if (hasPaid) {
-      const { data: payments } = await supabase.from("payments").select("*").eq("enrollment_id", id).eq("status", "pending");
-      if (payments) {
-        for (const pay of payments) {
-          await update("payments", pay.id, { status: "cancelled" });
-        }
+    const { data: payments } = await supabase.from("payments").select("id, status").eq("enrollment_id", id);
+    if (payments) {
+      for (const pay of payments.filter((payment) => payment.status === "pending")) {
+        await update("payments", pay.id, { status: "cancelled", method: null, paid_at: null });
       }
-      return update("enrollments", id, { status: "cancelled" });
-    } else {
-      await supabase.from("payments").delete().eq("enrollment_id", id);
-      return remove("enrollments", id);
     }
+    return update("enrollments", id, { status: "cancelled" });
   } else {
     const payments = localDB.get("payments").filter(p => p.enrollment_id === id);
-    const hasPaid = payments.some(p => p.status === "paid");
-    if (hasPaid) {
-      for (const pay of payments.filter(p => p.status === "pending")) {
-        await update("payments", pay.id, { status: "cancelled" });
-      }
-      return update("enrollments", id, { status: "cancelled" });
-    } else {
-      for (const pay of payments) {
-        await remove("payments", pay.id);
-      }
-      return remove("enrollments", id);
+    for (const pay of payments.filter(p => p.status === "pending")) {
+      await update("payments", pay.id, { status: "cancelled", method: null, paid_at: null });
     }
+    return update("enrollments", id, { status: "cancelled" });
   }
+}
+
+async function ensurePaymentsForActiveEnrollments() {
+  if (!shouldUseLocalData()) {
+    const [{ data: enrollments, error: enrollmentError }, { data: payments, error: paymentError }] = await Promise.all([
+      supabase
+        .from("enrollments")
+        .select("id, student_id, plan_id, start_date, status, plan:plans(price)")
+        .eq("status", "active"),
+      supabase.from("payments").select("enrollment_id, status"),
+    ]);
+    if (enrollmentError || paymentError) return false;
+
+    const coveredEnrollmentIds = new Set(
+      (payments ?? [])
+        .filter((payment: any) => ["pending", "paid", "expired"].includes(payment.status))
+        .map((payment) => payment.enrollment_id),
+    );
+    const missing = (enrollments ?? []).filter((enrollment: any) => !coveredEnrollmentIds.has(enrollment.id));
+    if (!missing.length) return false;
+
+    const rows = missing.map((enrollment: any, index: number) => {
+      const plan = Array.isArray(enrollment.plan) ? enrollment.plan[0] : enrollment.plan;
+      const amount = Number(plan?.price ?? 0);
+      return {
+        reference: `MEN-${Date.now().toString().slice(-8)}-${index + 1}`,
+        student_id: enrollment.student_id,
+        enrollment_id: enrollment.id,
+        amount,
+        discount: 0,
+        fine: 0,
+        total_amount: amount,
+        status: "pending",
+        method: null,
+        due_date: enrollment.start_date,
+        paid_at: null,
+      };
+    });
+
+    const { error } = await supabase.from("payments").insert(rows);
+    if (!error) notifyDbChange();
+    return !error;
+  }
+
+  const payments = localDB.get("payments");
+  const paymentEnrollmentIds = new Set(
+    payments
+      .filter((payment) => ["pending", "paid", "expired"].includes(payment.status))
+      .map((payment) => payment.enrollment_id),
+  );
+  const plans = localDB.get("plans");
+  const missing = localDB
+    .get("enrollments")
+    .filter((enrollment) => enrollment.status === "active" && !paymentEnrollmentIds.has(enrollment.id));
+  for (const enrollment of missing) {
+    const plan = relation(plans, enrollment.plan_id);
+    const amount = Number(plan?.price ?? 0);
+    localDB.insert("payments", {
+      reference: `MEN-${Date.now().toString().slice(-8)}-${enrollment.id.slice(0, 4)}`,
+      student_id: enrollment.student_id,
+      enrollment_id: enrollment.id,
+      amount,
+      discount: 0,
+      fine: 0,
+      total_amount: amount,
+      status: "pending",
+      method: null,
+      due_date: enrollment.start_date,
+      paid_at: null,
+    });
+  }
+  if (missing.length) notifyDbChange();
+  return missing.length > 0;
 }
 
 export async function getPayments(): Promise<Payment[]> {
   if (!shouldUseLocalData()) {
+    const repaired = await ensurePaymentsForActiveEnrollments();
     const { data, error } = await supabase
       .from("payments")
       .select("*, student:students(id, full_name)")
       .order("due_date", { ascending: false });
     if (error) throw new Error(error.message);
+    if (repaired && data?.length === 0) return getPayments();
     return (data ?? []) as Payment[];
   }
+  await ensurePaymentsForActiveEnrollments();
   const students = localDB.get("students");
   return sortDesc(localDB.get("payments")).map((row) => ({
     ...row,
