@@ -52,7 +52,10 @@ export default function MobileAppPage() {
         student_id: user?.id,
       }),
     });
-    if (!response.ok) throw new Error('Nao foi possivel registrar este dispositivo.');
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error || 'Nao foi possivel registrar este dispositivo.');
+    }
   }
 
   useEffect(() => {

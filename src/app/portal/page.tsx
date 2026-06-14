@@ -64,6 +64,24 @@ function samePushApplicationKey(subscription: PushSubscription) {
   return currentKey.every((value, index) => value === configuredKey[index]);
 }
 
+function pushErrorMessage(reason: unknown) {
+  const message = reason instanceof Error ? reason.message : String(reason || "");
+  const normalized = message.toLowerCase();
+  if (normalized.includes("permission") || normalized.includes("notallowed") || normalized.includes("denied")) {
+    return "As notificacoes estao bloqueadas para este app. Libere nas configuracoes do navegador/celular e toque em Ativar novamente.";
+  }
+  if (normalized.includes("invalidaccess") || normalized.includes("applicationserverkey") || normalized.includes("vapid")) {
+    return "A chave de notificacao do app mudou. Atualize o app, abra novamente e toque em Ativar para recriar o dispositivo.";
+  }
+  if (normalized.includes("service worker") || normalized.includes("registration") || normalized.includes("abort")) {
+    return "O app atualizou o servico de notificacoes. Feche e abra o app uma vez; se continuar, toque em Ativar novamente.";
+  }
+  if (normalized.includes("banco") || normalized.includes("database") || normalized.includes("relation") || normalized.includes("constraint")) {
+    return `${message} A migration de push precisa estar aplicada no Supabase.`;
+  }
+  return message || "Nao foi possivel ativar notificacoes agora. Abra o portal instalado, confira a internet e toque em Ativar novamente.";
+}
+
 function classMet(name?: string | null) {
   const text = (name || "").toLowerCase();
   if (text.includes("jump")) return 7.5;
@@ -94,6 +112,7 @@ export default function StudentPortalPage() {
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushSupported, setPushSupported] = useState(true);
   const [pushChecking, setPushChecking] = useState(true);
+  const [pushIssue, setPushIssue] = useState<string | null>(null);
   const [appAlert, setAppAlert] = useState<{ title: string; message: string } | null>(null);
   const appAlertTimeoutRef = useRef<number | null>(null);
 
@@ -131,13 +150,16 @@ export default function StudentPortalPage() {
       navigator.serviceWorker.register("/sw.js").then(async (reg) => {
         try {
           await reg.update().catch(() => {});
+          const readyRegistration = await navigator.serviceWorker.ready;
           if (Notification.permission === "granted") {
-            await ensurePushSubscription(reg);
+            await ensurePushSubscription(readyRegistration);
             setPushEnabled(true);
+            setPushIssue(null);
           } else {
             setPushEnabled(false);
           }
-        } catch {
+        } catch (reason) {
+          setPushIssue(pushErrorMessage(reason));
           setPushEnabled(false);
         } finally {
           setPushChecking(false);
@@ -186,13 +208,35 @@ export default function StudentPortalPage() {
       subscription = null;
     }
     if (!subscription) {
-      subscription = await registration.pushManager.subscribe({
+      subscription = await createPushSubscription(registration, forceRenew);
+    }
+    await savePushSubscription(subscription);
+    return subscription;
+  }
+
+  async function createPushSubscription(registration: ServiceWorkerRegistration, allowRecovery: boolean) {
+    try {
+      return await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicVapidKey),
+      });
+    } catch (reason) {
+      if (!allowRecovery) throw reason;
+
+      const rootScope = `${window.location.origin}/`;
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations
+        .filter((item) => item.scope === rootScope)
+        .map((item) => item.unregister().catch(() => false)));
+
+      const freshRegistration = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+      await freshRegistration.update().catch(() => {});
+      const readyRegistration = await navigator.serviceWorker.ready;
+      return readyRegistration.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(publicVapidKey),
       });
     }
-    await savePushSubscription(subscription);
-    return subscription;
   }
 
   async function showLocalNotification(title: string, message: string) {
@@ -250,22 +294,31 @@ export default function StudentPortalPage() {
 
   async function subscribePush() {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-      alert("Notificacoes nao suportadas neste navegador.");
+      setPushSupported(false);
+      setPushIssue("Este navegador nao suporta push nativo. No iPhone, instale o portal na tela inicial e abra pelo icone do app.");
       return;
     }
+    setPushIssue(null);
+    setPushChecking(true);
     try {
       const permission = await Notification.requestPermission();
       if (permission !== "granted") {
-        alert("Voce bloqueou as notificacoes.");
+        setPushIssue("Voce bloqueou as notificacoes. Libere nas configuracoes do navegador/celular e toque em Ativar novamente.");
+        setPushEnabled(false);
         return;
       }
       const registration = await navigator.serviceWorker.register("/sw.js");
       await registration.update().catch(() => {});
-      await ensurePushSubscription(registration, true);
+      const readyRegistration = await navigator.serviceWorker.ready;
+      await ensurePushSubscription(readyRegistration, true);
       setPushEnabled(true);
+      setPushIssue(null);
       await reloadData();
-    } catch {
-      alert("Erro ao ativar notificacoes. Reinstale/abra o app e tente novamente.");
+    } catch (reason) {
+      setPushEnabled(false);
+      setPushIssue(pushErrorMessage(reason));
+    } finally {
+      setPushChecking(false);
     }
   }
 
@@ -388,6 +441,11 @@ export default function StudentPortalPage() {
                 <p className="mt-1 text-xs leading-5 text-white/50">Receba aviso de aula na tela do celular. Se o aparelho bloquear, o aviso ainda aparece dentro do app.</p>
               </div>
             </div>
+            {pushIssue && (
+              <div className="mt-4 rounded-2xl border border-red-300/20 bg-red-500/10 p-3 text-xs font-bold leading-5 text-red-100">
+                {pushIssue}
+              </div>
+            )}
             <button onClick={subscribePush} className="mt-5 min-h-12 w-full rounded-full bg-white font-black text-black">Permitir notificacoes</button>
           </GlassCard>
         ) : !pushSupported ? (
@@ -399,6 +457,7 @@ export default function StudentPortalPage() {
                 <p className="mt-1 text-xs leading-5 text-white/50">Este navegador nao liberou push nativo, mas o portal mostra avisos em tempo real quando estiver aberto.</p>
               </div>
             </div>
+            {pushIssue && <p className="mt-4 text-xs font-bold leading-5 text-white/60">{pushIssue}</p>}
           </GlassCard>
         ) : null}
 

@@ -1,6 +1,18 @@
 import { NextResponse } from "next/server";
 import { getAdminClient, requireRole } from "@/lib/server/supabase-admin";
 
+function subscriptionRow(req: Request, userId: string, subscription: any, permission: unknown) {
+  return {
+    user_id: userId,
+    endpoint: subscription.endpoint,
+    p256dh: subscription.keys.p256dh,
+    auth: subscription.keys.auth,
+    user_agent: req.headers.get("user-agent"),
+    permission: typeof permission === "string" ? permission : null,
+    last_seen_at: new Date().toISOString(),
+  };
+}
+
 export async function POST(req: Request) {
   try {
     const { subscription, student_id, profile_id, permission } = await req.json();
@@ -23,19 +35,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing authenticated user" }, { status: 401 });
     }
 
-    const { error } = await admin.from("push_subscriptions").upsert({
-      user_id: userId,
-      endpoint: subscription.endpoint,
-      p256dh: subscription.keys.p256dh,
-      auth: subscription.keys.auth,
-      user_agent: req.headers.get("user-agent"),
-      permission: typeof permission === "string" ? permission : null,
-      last_seen_at: new Date().toISOString(),
-    }, { onConflict: "endpoint" });
+    const row = subscriptionRow(req, userId, subscription, permission);
+    const { error } = await admin.from("push_subscriptions").upsert(row, { onConflict: "endpoint" });
 
     if (error) {
-      console.error("Error saving subscription:", error);
-      return NextResponse.json({ error: `Database error: ${error.message}` }, { status: 500 });
+      console.error("Error upserting subscription:", error);
+      const { error: deleteError } = await admin.from("push_subscriptions").delete().eq("endpoint", subscription.endpoint);
+      const { error: insertError } = deleteError
+        ? { error: deleteError }
+        : await admin.from("push_subscriptions").insert(row);
+
+      if (insertError) {
+        console.error("Error saving subscription:", insertError);
+        return NextResponse.json({ error: `Erro no banco ao salvar dispositivo: ${insertError.message}` }, { status: 500 });
+      }
     }
 
     return NextResponse.json({ success: true });
