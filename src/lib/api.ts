@@ -109,12 +109,14 @@ export async function updateStudent(id: string, values: Partial<Student>) {
 }
 
 export async function releaseStudentPortal(id: string) {
+  if (shouldUseLocalData()) return onboardLocalStudent(id);
+
   const { data } = await supabase.auth.getSession();
   const response = await fetch(`/api/admin/students/${id}/portal`, {
     method: "POST",
     headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` },
   });
-  const payload = await response.json() as { email?: string; profileId?: string; contractSent?: boolean; contractCreated?: boolean; error?: string };
+  const payload = await response.json() as { email?: string; profileId?: string; contractSent?: boolean; contractPending?: boolean; contractCreated?: boolean; error?: string };
   if (!response.ok) throw new Error(payload.error ?? "Não foi possível liberar o portal.");
   return payload;
 }
@@ -130,16 +132,71 @@ export async function resetStudentPassword(id: string) {
   return payload;
 }
 
-/** Unified onboard: creates portal + sends password email + contract signing link in ONE email */
+/** Unified onboard: creates portal, sends password email, and prepares the pending contract. */
 export async function onboardStudent(id: string) {
+  if (shouldUseLocalData()) return onboardLocalStudent(id);
+
   const { data } = await supabase.auth.getSession();
   const response = await fetch(`/api/admin/students/${id}/onboard`, {
     method: "POST",
     headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` },
   });
-  const payload = await response.json() as { email?: string; profileId?: string; contractSent?: boolean; contractCreated?: boolean; error?: string };
+  const payload = await response.json() as { email?: string; profileId?: string; contractSent?: boolean; contractPending?: boolean; contractCreated?: boolean; error?: string };
   if (!response.ok) throw new Error(payload.error ?? "Não foi possível realizar o onboarding.");
   return payload;
+}
+
+async function onboardLocalStudent(id: string) {
+  const student = localDB.find("students", id);
+  if (!student) throw new Error("Aluno nao encontrado.");
+  if (!student.email) throw new Error("Cadastre o e-mail do aluno antes de liberar o portal.");
+
+  const profileId = student.profile_id || `profile-${id}`;
+  const existingProfile = localDB.find("profiles", profileId);
+  if (!existingProfile) {
+    await insert("profiles", {
+      id: profileId,
+      full_name: student.full_name,
+      email: student.email,
+      role: "student",
+      active: true,
+      password: "123456",
+    } as NewRow<"profiles">);
+  }
+  await update("students", id, { profile_id: profileId, updated_at: new Date().toISOString() });
+
+  const activeEnrollment = localDB
+    .get("enrollments")
+    .filter((item) => item.student_id === id && item.status === "active")
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+  let contractCreated = false;
+  if (activeEnrollment) {
+    const hasPendingContract = localDB
+      .get("contracts")
+      .some((contract) => contract.student_id === id && contract.status === "pending");
+    if (!hasPendingContract) {
+      const plan = localDB.find("plans", activeEnrollment.plan_id);
+      await insert("contracts", {
+        student_id: id,
+        plan_id: activeEnrollment.plan_id,
+        enrollment_id: activeEnrollment.id,
+        document_text: `Termo de adesao ao plano ${plan?.name || "Plano contratado"}.`,
+        status: "pending",
+        signed_at: null,
+        sent_at: new Date().toISOString(),
+      });
+      contractCreated = true;
+    }
+  }
+
+  return {
+    ok: true,
+    email: student.email,
+    profileId,
+    contractSent: false,
+    contractPending: Boolean(activeEnrollment),
+    contractCreated,
+  };
 }
 
 /** Cascade-delete a student and ALL related records (enrollments, payments, contracts, checkins, etc.) */

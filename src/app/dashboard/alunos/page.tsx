@@ -62,7 +62,7 @@ export default function AlunosPage() {
     setMessage(null);
     try {
       const result = await onboardStudent(selected.id);
-      const contractMsg = result.contractSent ? " O link para assinatura do contrato foi incluído no mesmo e-mail." : "";
+      const contractMsg = result.contractPending ? " Contrato pendente gerado no dashboard e sera exigido no primeiro acesso ao portal." : result.contractSent ? " O link para assinatura do contrato foi incluido no mesmo e-mail." : "";
       setMessage(`Acesso enviado para ${result.email}.${contractMsg}`);
       await load();
       setSelected((current) => current ? { ...current, profile_id: result.profileId || current.profile_id } : current);

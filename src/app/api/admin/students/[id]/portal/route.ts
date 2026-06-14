@@ -1,7 +1,6 @@
 import { sendStudioEmail } from "@/lib/server/mail";
 import { apiErrorResponse, ApiError, requireRole, getClientIp, logAudit } from "@/lib/server/supabase-admin";
 import {
-  createContractSigningLink,
   createPasswordSetupLink,
   ensurePendingContractForStudent,
   ensureStudentPortalAccount,
@@ -20,26 +19,23 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const { profileId, created: portalCreated } = await ensureStudentPortalAccount(admin, student);
     const origin = resolveAppOrigin(request);
     const pendingContract = await ensurePendingContractForStudent(admin, student.id);
-    const contractSigningUrl = pendingContract
-      ? await createContractSigningLink(admin, pendingContract.id, origin)
-      : null;
-    const passwordLink = await createPasswordSetupLink(admin, student.email, origin, contractSigningUrl);
+    const passwordLink = await createPasswordSetupLink(admin, student.email, origin, `${origin}/portal`);
 
     await sendStudioEmail({
       to: student.email,
-      subject: contractSigningUrl
+      subject: pendingContract
         ? "Corpo & Evolucao | Acesso ao portal e contrato pendente"
         : "Corpo & Evolucao | Acesso ao portal do aluno",
-      title: contractSigningUrl
+      title: pendingContract
         ? "Crie sua senha e assine seu contrato"
         : "Seu portal do aluno foi liberado",
-      intro: contractSigningUrl
-        ? `Ola, ${student.full_name}. Crie sua senha de acesso e assine o contrato pendente para liberar o portal do aluno.`
+      intro: pendingContract
+        ? `Ola, ${student.full_name}. Crie sua senha de acesso. No primeiro acesso ao portal do aluno, o contrato pendente sera exibido para assinatura antes da liberacao completa.`
         : `Ola, ${student.full_name}. Seu portal acaba de ser criado. Cadastre sua senha para acessar QR Code, agenda, financeiro e contratos.`,
-      action: { label: contractSigningUrl ? "Criar senha e assinar contrato" : "Criar minha senha", href: passwordLink },
+      action: { label: pendingContract ? "Criar senha e abrir portal" : "Criar minha senha", href: passwordLink },
       sections: [
         { label: "Login", value: student.email },
-        { label: "Contrato", value: contractSigningUrl ? "Pendente de assinatura" : "Sem pendencia" },
+        { label: "Contrato", value: pendingContract ? "Pendente de assinatura no portal" : "Sem pendencia" },
       ],
       footer: "O link e pessoal. Depois de criar a senha, use seu e-mail para entrar no portal.",
     });
@@ -58,7 +54,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         email: student.email,
         portal_created: portalCreated,
         contract_created: pendingContract?.created || false,
-        contract_sent: Boolean(contractSigningUrl),
+        contract_pending: Boolean(pendingContract),
       },
       ip,
     });
@@ -67,7 +63,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       ok: true,
       email: student.email,
       profileId,
-      contractSent: Boolean(contractSigningUrl),
+      contractSent: false,
+      contractPending: Boolean(pendingContract),
       contractCreated: pendingContract?.created || false,
     });
   } catch (reason) {

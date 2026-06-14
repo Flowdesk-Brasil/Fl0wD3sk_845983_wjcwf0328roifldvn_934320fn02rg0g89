@@ -69,14 +69,19 @@ export async function createPasswordSetupLink(admin: SupabaseClient, email: stri
     email,
     options: { redirectTo: `${origin}/reset-password` },
   });
-  if (linkError || !linkData.properties?.action_link) {
+  if (linkError || !linkData.properties) {
     throw new ApiError("Nao foi possivel gerar o link de criacao de senha.", 500);
   }
 
-  const actionUrl = new URL(linkData.properties.action_link);
-  const token = actionUrl.searchParams.get("token") || actionUrl.searchParams.get("token_hash");
+  const actionUrl = linkData.properties.action_link ? new URL(linkData.properties.action_link) : null;
+  const token =
+    linkData.properties.hashed_token ||
+    actionUrl?.searchParams.get("token") ||
+    actionUrl?.searchParams.get("token_hash");
+  if (!token) throw new ApiError("Nao foi possivel gerar o token de criacao de senha.", 500);
+
   const resetUrl = new URL(`${origin}/reset-password`);
-  if (token) resetUrl.searchParams.set("token", token);
+  resetUrl.searchParams.set("token", token);
   if (nextUrl) resetUrl.searchParams.set("next", nextUrl);
   return resetUrl.toString();
 }

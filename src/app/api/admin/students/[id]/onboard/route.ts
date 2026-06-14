@@ -1,7 +1,6 @@
 import { sendStudioEmail } from "@/lib/server/mail";
 import { apiErrorResponse, ApiError, requireRole, getClientIp, logAudit } from "@/lib/server/supabase-admin";
 import {
-  createContractSigningLink,
   createPasswordSetupLink,
   ensurePendingContractForStudent,
   ensureStudentPortalAccount,
@@ -14,7 +13,10 @@ import {
  * Fluxo unico:
  * 1. cria/vincula conta do portal;
  * 2. garante contrato pendente para a matricula ativa;
- * 3. envia um unico link para criar senha e, em seguida, assinar o contrato.
+ * 3. envia um unico link para criar senha e abrir o portal.
+ *
+ * No primeiro acesso ao portal, o aluno fica bloqueado na assinatura do
+ * contrato pendente antes de ver QR Code, aulas ou financeiro.
  */
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
@@ -33,11 +35,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const { profileId, created: portalCreated } = await ensureStudentPortalAccount(admin, student);
     const origin = resolveAppOrigin(request);
     const pendingContract = await ensurePendingContractForStudent(admin, student.id);
-    const contractSigningUrl = pendingContract
-      ? await createContractSigningLink(admin, pendingContract.id, origin)
-      : null;
     const planName = pendingContract?.planName || "Plano contratado";
-    const passwordResetUrl = await createPasswordSetupLink(admin, student.email, origin, contractSigningUrl);
+    const passwordResetUrl = await createPasswordSetupLink(admin, student.email, origin, `${origin}/portal`);
 
     const sections = [
       { label: "Aluno", value: student.full_name },
@@ -45,20 +44,20 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     ];
     if (pendingContract) sections.push({ label: "Plano", value: planName });
 
-    const intro = contractSigningUrl
-      ? `Ola, ${student.full_name}! Seu acesso ao Corpo & Evolucao foi liberado. Clique no botao abaixo para criar sua senha. Depois de salvar a senha, voce sera levado automaticamente para assinar o contrato do plano ${planName}.`
+    const intro = pendingContract
+      ? `Ola, ${student.full_name}! Seu acesso ao Corpo & Evolucao foi liberado. Clique no botao abaixo para criar sua senha. Depois de salvar a senha, voce sera levado ao portal do aluno e o contrato do plano ${planName} ficara pendente de assinatura antes da liberacao completa.`
       : `Ola, ${student.full_name}! Seu portal do aluno foi liberado. Clique no botao abaixo para criar sua senha e acessar seu QR Code, agenda de aulas, financeiro e contratos.`;
 
     await sendStudioEmail({
       to: student.email,
-      subject: contractSigningUrl
+      subject: pendingContract
         ? "Corpo & Evolucao | Crie sua senha e assine seu contrato"
         : "Corpo & Evolucao | Acesso ao portal do aluno",
-      title: contractSigningUrl
+      title: pendingContract
         ? "Crie sua senha e assine seu contrato"
         : "Seu portal do aluno foi liberado",
       intro,
-      action: { label: contractSigningUrl ? "Criar senha e assinar contrato" : "Criar minha senha", href: passwordResetUrl },
+      action: { label: pendingContract ? "Criar senha e abrir portal" : "Criar minha senha", href: passwordResetUrl },
       sections,
       footer: "O link e pessoal e expira em 7 dias. Nao compartilhe com terceiros.",
     });
@@ -77,7 +76,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         email: student.email,
         portal_created: portalCreated,
         contract_created: pendingContract?.created || false,
-        contract_sent: Boolean(contractSigningUrl),
+        contract_pending: Boolean(pendingContract),
       },
       ip,
     });
@@ -86,7 +85,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       ok: true,
       email: student.email,
       profileId,
-      contractSent: Boolean(contractSigningUrl),
+      contractSent: false,
+      contractPending: Boolean(pendingContract),
       contractCreated: pendingContract?.created || false,
     });
   } catch (reason) {
