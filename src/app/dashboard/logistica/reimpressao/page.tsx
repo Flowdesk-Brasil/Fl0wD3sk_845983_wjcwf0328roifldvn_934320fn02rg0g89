@@ -219,10 +219,10 @@ export default function ReimpressaoEtiquetasPage() {
         <div className="card-body grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="grid gap-5">
             <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_auto]">
-              <label className="input-shell">
-                <Search className="input-leading-icon" />
+              <label className="relative block min-w-0">
+                <Search className="pointer-events-none absolute left-3.5 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-[#8d97aa]" />
                 <input
-                  className="field field-with-icon"
+                  className="field w-full pl-10"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder="Insira o code bar, SKU ou nome do produto"
