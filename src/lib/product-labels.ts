@@ -19,6 +19,7 @@ export type ProductLabelPrintItem = {
 
 export type LabelPrintOptions = {
   templateUrl?: string;
+  logoUrl?: string;
 };
 
 const CODE_128_PATTERNS = [
@@ -175,30 +176,27 @@ export function code128SvgMarkup(value: string, height = 44) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${x} ${height}" preserveAspectRatio="none" aria-hidden="true">${bars.join("")}</svg>`;
 }
 
-function labelMarkup(product: Product, meta?: Partial<LabelProductMeta>, templateUrl?: string) {
+export function productLabelMarkup(product: Product, meta?: Partial<LabelProductMeta>, options: LabelPrintOptions = {}) {
   const code = getProductPrintCode(product);
-  const variation = [meta?.color ?? inferLabelColor(product), meta?.size ?? inferLabelSize(product)]
-    .filter(Boolean)
-    .join(" / ");
+  const size = meta?.size ?? inferLabelSize(product);
+  const color = meta?.color ?? inferLabelColor(product);
+  const hasSize = Boolean(size);
   const secondary = [product.sku, product.internal_code].filter(Boolean).join(" | ");
+  const templateUrl = options.templateUrl ?? "/Etiq-model.svg";
+  const logoUrl = options.logoUrl ?? "/imagotipo.svg";
 
   return `
-    <section class="label${templateUrl ? " label-with-template" : ""}">
-      ${templateUrl ? `<img class="label-template" src="${htmlEscape(templateUrl)}" alt="" />` : ""}
-      <span class="label-cover label-cover-title"></span>
-      <span class="label-cover label-cover-info"></span>
-      <span class="label-cover label-cover-barcode"></span>
-      <span class="label-cover label-cover-price"></span>
-      <div class="label-top">
-        <strong>Corpo & Evolucao</strong>
-        <span>${htmlEscape(formatLabelCurrency(product.selling_price))}</span>
-      </div>
-      <div class="label-title">${htmlEscape(product.name)}</div>
-      <div class="label-barcode">${code128SvgMarkup(code, 42)}</div>
-      <div class="label-code">${htmlEscape(code)}</div>
-      <div class="label-footer">
-        <span>${htmlEscape(variation || "Produto")}</span>
-        <span>${htmlEscape(secondary || product.category || "")}</span>
+    <section class="etiqueta${hasSize ? "" : " etiqueta-sem-tamanho"}" aria-label="Etiqueta 40x30mm" style="--label-template: url('${htmlEscape(templateUrl)}')">
+      <div class="mascara-logo"></div>
+      <img class="logo" alt="Logo" src="${htmlEscape(logoUrl)}">
+      <strong class="label-preco">${htmlEscape(formatLabelCurrency(product.selling_price))}</strong>
+      <strong class="label-produto">${htmlEscape(product.name)}</strong>
+      ${hasSize ? `<span class="label-tamanho">${htmlEscape(size)}</span>` : ""}
+      <div class="label-barcode">${code128SvgMarkup(code, 44)}</div>
+      <div class="label-codigo">${htmlEscape(code)}</div>
+      <div class="label-rodape">
+        <span>${htmlEscape(color && color !== "Variacao" ? color : product.unit_measure || product.category || "Produto")}</span>
+        <span>${htmlEscape(secondary || product.brand || "")}</span>
       </div>
     </section>
   `;
@@ -206,101 +204,221 @@ function labelMarkup(product: Product, meta?: Partial<LabelProductMeta>, templat
 
 export function makeLabelPrintDocument(items: ProductLabelPrintItem[], options: LabelPrintOptions = {}) {
   const labels = items.flatMap((item) =>
-    Array.from({ length: Math.max(0, item.quantity) }, () => labelMarkup(item.product, item.meta, options.templateUrl)),
+    Array.from({ length: Math.max(0, item.quantity) }, () => productLabelMarkup(item.product, item.meta, options)),
   );
 
   return `<!doctype html>
-<html>
+<html lang="pt-BR">
 <head>
-  <meta charset="utf-8" />
-  <title>Etiquetas 40x30</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Etiqueta 40x30mm</title>
   <style>
-    @page { size: 40mm 30mm; margin: 0; }
+    @page {
+      size: 40mm 30mm;
+      margin: 0;
+    }
+
     * { box-sizing: border-box; }
-    html, body { margin: 0; padding: 0; background: #fff; color: #000; font-family: Arial, Helvetica, sans-serif; }
-    body { width: 40mm; }
-    .label {
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #fff;
+      color: #000;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+
+    body {
+      width: 40mm;
+    }
+
+    .etiqueta {
+      position: relative;
       width: 40mm;
       height: 30mm;
-      position: relative;
       overflow: hidden;
-      background: #fff;
+      background-color: #fff;
+      background-image: var(--label-template);
+      background-size: 100% 100%;
+      background-position: center;
+      background-repeat: no-repeat;
       break-after: page;
       page-break-after: always;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
     }
-    .label-template { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; object-fit: fill; }
-    .label-cover { position: absolute; z-index: 1; display: none; background: #fff; }
-    .label-with-template .label-cover { display: block; }
-    .label-cover-title { left: 1.8mm; right: 1.8mm; top: 7.65mm; height: 3.9mm; }
-    .label-cover-info { left: 1.8mm; right: 1.8mm; top: 11.9mm; height: 2.8mm; }
-    .label-cover-barcode { left: 11.6mm; right: 2.8mm; top: 16mm; height: 7.8mm; }
-    .label-cover-price { left: 13.4mm; right: 2.5mm; bottom: 1.1mm; height: 3.6mm; }
-    .label-top {
+
+    .mascara-logo {
       position: absolute;
-      z-index: 2;
-      left: 2.4mm;
-      right: 2.4mm;
-      top: 1.25mm;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 1.2mm;
-      font-size: 5.3pt;
+      left: 10.25mm;
+      top: 0.95mm;
+      width: 19.50mm;
+      height: 5.50mm;
+      background: #fff;
+    }
+
+    .logo {
+      position: absolute;
+      left: 10.625mm;
+      top: 1.2109mm;
+      width: 18.75mm;
+      height: 4.6875mm;
+      object-fit: fill;
+      display: block;
+      filter: brightness(0);
+    }
+
+    .label-preco,
+    .label-produto,
+    .label-tamanho,
+    .label-codigo,
+    .label-rodape {
+      position: absolute;
+      z-index: 3;
+      color: #000;
       line-height: 1;
       text-transform: uppercase;
     }
-    .label-with-template .label-top strong { visibility: hidden; }
-    .label-top strong { max-width: 22mm; overflow: hidden; white-space: nowrap; font-weight: 800; letter-spacing: .4pt; }
-    .label-top span { font-weight: 900; font-size: 6pt; white-space: nowrap; }
-    .label-title {
-      position: absolute;
-      z-index: 2;
-      left: 2.1mm;
-      right: 2.1mm;
-      top: 7.85mm;
-      height: 3.4mm;
-      overflow: hidden;
-      font-size: 6.4pt;
-      font-weight: 900;
-      line-height: 1.05;
+
+    .label-preco {
+      right: 2.55mm;
+      top: 2.78mm;
+      width: 9.2mm;
+      font-size: 5.1pt;
+      font-weight: 950;
       text-align: center;
-      text-transform: uppercase;
-    }
-    .label-barcode { position: absolute; z-index: 2; left: 12mm; right: 3.2mm; top: 16.2mm; height: 6.8mm; }
-    .label-barcode svg { display: block; width: 100%; height: 100%; fill: #000; }
-    .label-code {
-      position: absolute;
-      z-index: 2;
-      left: 12mm;
-      right: 3.2mm;
-      top: 23.25mm;
-      overflow: hidden;
-      text-align: center;
-      font-family: "Arial Narrow", Arial, sans-serif;
-      font-size: 5.2pt;
-      font-weight: 900;
-      letter-spacing: .45pt;
       white-space: nowrap;
     }
-    .label-footer {
+
+    .label-produto {
+      left: 3.3mm;
+      right: 3.3mm;
+      top: 8.92mm;
+      height: 4.4mm;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      font-size: 6.7pt;
+      font-weight: 900;
+      text-align: center;
+      letter-spacing: 0;
+    }
+
+    .label-tamanho {
+      left: 3.12mm;
+      top: 16.62mm;
+      width: 6.66mm;
+      height: 6.66mm;
+      display: grid;
+      place-items: center;
+      font-size: 8pt;
+      font-weight: 950;
+      text-align: center;
+      background: #fff;
+    }
+
+    .label-barcode {
       position: absolute;
-      z-index: 2;
-      left: 13.7mm;
-      right: 2.8mm;
-      bottom: 1.75mm;
+      z-index: 3;
+      left: 12mm;
+      right: 3.3mm;
+      top: 16.1mm;
+      height: 6.82mm;
+      background: #fff;
+    }
+
+    .label-barcode svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+      fill: #000;
+    }
+
+    .label-codigo {
+      left: 12mm;
+      right: 3.3mm;
+      top: 23.12mm;
+      overflow: hidden;
+      font-family: "Arial Narrow", Arial, sans-serif;
+      font-size: 4.1pt;
+      font-weight: 900;
+      letter-spacing: .15pt;
+      text-align: center;
+      white-space: nowrap;
+      background: #fff;
+    }
+
+    .label-rodape {
+      left: 12.9mm;
+      right: 2.9mm;
+      bottom: 1.55mm;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 1mm;
-      font-size: 4.9pt;
+      overflow: hidden;
+      font-size: 4.2pt;
       font-weight: 900;
-      line-height: 1;
-      text-transform: uppercase;
+      background: #fff;
     }
-    .label-footer span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+    .label-rodape span {
+      min-width: 0;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .etiqueta-sem-tamanho .label-barcode {
+      left: 5.2mm;
+      right: 5.2mm;
+      top: 15.55mm;
+      height: 7.35mm;
+    }
+
+    .etiqueta-sem-tamanho .label-codigo {
+      left: 5.2mm;
+      right: 5.2mm;
+      top: 23.25mm;
+    }
+
+    .etiqueta-sem-tamanho .label-rodape {
+      left: 5.2mm;
+      right: 5.2mm;
+    }
+
     @media screen {
-      body { padding: 8mm; width: auto; background: #e5e7eb; }
-      .label { margin: 0 auto 8mm; box-shadow: 0 8px 28px rgba(0,0,0,.18); }
+      body {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        gap: 8mm;
+        padding: 8mm;
+        background: #f2f2f2;
+      }
+
+      .etiqueta {
+        box-shadow: 0 4px 24px rgba(0,0,0,.25);
+      }
+    }
+
+    @media print {
+      html, body {
+        width: 40mm;
+        min-height: 0;
+        background: #fff;
+      }
+
+      body {
+        display: block;
+        padding: 0;
+      }
+
+      .etiqueta {
+        box-shadow: none;
+      }
     }
   </style>
 </head>
@@ -316,9 +434,13 @@ export function makeTsplLabelCommands(items: ProductLabelPrintItem[]) {
       color: item.meta?.color ?? inferLabelColor(product),
       size: item.meta?.size ?? inferLabelSize(product),
     };
+    const hasSize = Boolean(meta.size);
     const variation = [meta.color !== "Variacao" ? meta.color : null, meta.size].filter(Boolean).join(" / ") || product.unit_measure || "Produto";
     const secondary = product.sku || product.internal_code || product.category || "";
     const quantity = Math.max(1, Math.min(999, Number(item.quantity) || 1));
+    const barcodeX = hasSize ? 92 : 42;
+    const codeX = hasSize ? 106 : 62;
+    const codeWidth = hasSize ? 184 : 220;
 
     return [
       "SIZE 40 mm,30 mm",
@@ -331,13 +453,15 @@ export function makeTsplLabelCommands(items: ProductLabelPrintItem[]) {
       `TEXT 24,18,"2",0,1,1,"${tsplText("Corpo & Evolucao", 24)}"`,
       `TEXT 250,18,"2",0,1,1,"${tsplText(formatLabelCurrency(product.selling_price), 12)}"`,
       `TEXT 24,58,"3",0,1,1,"${tsplText(product.name, 32)}"`,
-      `TEXT 24,96,"1",0,1,1,"${tsplText(variation, 24)}"`,
-      `TEXT 184,96,"1",0,1,1,"${tsplText("CODIGO", 12)}"`,
+      ...(hasSize ? [
+        "BOX 25,132,78,190,2",
+        `TEXT 38,151,"3",0,1,1,"${tsplText(meta.size, 8)}"`,
+      ] : []),
       `TEXT 24,120,"1",0,1,1,"${tsplText("MANTER ESSA ETIQUETA EM CASO DE TROCA", 42)}"`,
-      `BARCODE 92,142,"128",58,1,0,2,2,"${code}"`,
-      `TEXT 106,206,"1",0,1,1,"${code}"`,
-      `TEXT 24,226,"1",0,1,1,"${tsplText(secondary, 20)}"`,
-      `TEXT 222,226,"1",0,1,1,"${tsplText(variation, 18)}"`,
+      `BARCODE ${barcodeX},142,"128",58,1,0,2,2,"${code}"`,
+      `TEXT ${codeX},206,"1",0,1,1,"${tsplText(code, codeWidth)}"`,
+      `TEXT ${hasSize ? 104 : 42},226,"1",0,1,1,"${tsplText(secondary || variation, hasSize ? 20 : 32)}"`,
+      ...(hasSize ? [`TEXT 222,226,"1",0,1,1,"${tsplText(variation, 18)}"`] : []),
       `PRINT 1,${quantity}`,
       "",
     ].join("\r\n");

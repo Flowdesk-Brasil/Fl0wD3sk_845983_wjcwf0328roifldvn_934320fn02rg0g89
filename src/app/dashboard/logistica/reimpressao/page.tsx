@@ -5,8 +5,6 @@ import { AlertTriangle, Barcode, CheckCircle2, ClipboardList, Eraser, Layers3, P
 import { getProducts } from "@/lib/api";
 import {
   LABEL_SIZES,
-  code128SvgMarkup,
-  formatLabelCurrency,
   getLabelProductMeta,
   getProductPrintCode,
   makeLabelPrintDocument,
@@ -281,7 +279,13 @@ export default function ReimpressaoEtiquetasPage() {
   const selectedStock = groupedProducts.reduce((total, product) => total + Number(product.current_stock || 0), 0);
   const previewProduct = selectedItems[0]?.product ?? selectedProduct ?? groupedProducts[0] ?? null;
   const previewMeta = previewProduct ? getLabelProductMeta(previewProduct) : null;
-  const previewCode = previewProduct ? getProductPrintCode(previewProduct) : "";
+  const previewDocument = useMemo(() => {
+    if (!previewProduct) return "";
+    return makeLabelPrintDocument(
+      [{ product: previewProduct, quantity: 1, meta: previewMeta ?? undefined }],
+      { templateUrl: "/Etiq-model.svg", logoUrl: "/imagotipo.svg" },
+    );
+  }, [previewProduct, previewMeta]);
 
   function setProductQuantity(productId: string, value: string) {
     const next = Math.max(0, Math.min(999, Number.parseInt(value || "0", 10) || 0));
@@ -318,7 +322,10 @@ export default function ReimpressaoEtiquetasPage() {
     }
 
     popup.document.open();
-    popup.document.write(makeLabelPrintDocument(selectedItems, { templateUrl: `${window.location.origin}/Etiq-model.svg` }));
+    popup.document.write(makeLabelPrintDocument(selectedItems, {
+      templateUrl: `${window.location.origin}/Etiq-model.svg`,
+      logoUrl: `${window.location.origin}/imagotipo.svg`,
+    }));
     popup.document.close();
     popup.focus();
     window.setTimeout(() => {
@@ -763,25 +770,15 @@ export default function ReimpressaoEtiquetasPage() {
               </div>
               {previewProduct ? (
                 <div className="mx-auto grid w-full max-w-[320px] gap-3">
-                  <div className="relative mx-auto aspect-[4/3] w-full overflow-hidden rounded-xl border border-[#111827] bg-white text-black shadow-inner">
-                    <img src="/Etiq-model.svg" alt="" className="absolute inset-0 h-full w-full object-fill" />
-                    <span className="absolute left-[5.2%] right-[5.2%] top-[25.5%] h-[13%] bg-white" />
-                    <span className="absolute left-[29%] right-[8%] top-[53.2%] h-[25.8%] bg-white" />
-                    <span className="absolute bottom-[3.7%] left-[33.5%] right-[6.2%] h-[12%] bg-white" />
-                    <div className="absolute left-[6%] right-[6%] top-[4.5%] flex items-start justify-between gap-2 text-[10px] font-black uppercase">
-                      <span className="truncate opacity-0">Corpo & Evolucao</span>
-                      <span>{formatLabelCurrency(previewProduct.selling_price)}</span>
-                    </div>
-                    <strong className="absolute left-[5.5%] right-[5.5%] top-[26.2%] max-h-[11%] overflow-hidden text-center text-sm font-black uppercase leading-tight">{previewProduct.name}</strong>
-                    <div className="absolute left-[30%] right-[8%] top-[54%] h-[22.5%] [&_svg]:h-full [&_svg]:w-full [&_svg]:fill-black" dangerouslySetInnerHTML={{ __html: code128SvgMarkup(previewCode, 42) }} />
-                    <div className="absolute left-[30%] right-[8%] top-[77.5%] overflow-hidden text-center font-mono text-[10px] font-black tracking-widest">{previewCode}</div>
-                    <div className="absolute bottom-[5.7%] left-[34%] right-[7%] flex justify-between gap-2 text-[9px] font-black uppercase">
-                      <span className="truncate">{[previewMeta?.color, previewMeta?.size].filter(Boolean).join(" / ") || "Produto"}</span>
-                      <span className="truncate">{previewProduct.sku || previewProduct.internal_code || previewProduct.category || ""}</span>
-                    </div>
+                  <div className="mx-auto aspect-[4/3] w-full overflow-hidden rounded-xl border border-[#111827] bg-[#f2f2f2] shadow-inner">
+                    <iframe
+                      className="h-full w-full border-0"
+                      title="Preview da etiqueta 40x30"
+                      srcDoc={previewDocument}
+                    />
                   </div>
                   <p className="text-center text-xs leading-5 text-[#657085]">
-                    O modo direto usa a API local quando o painel roda no Windows ou a ponte PT260 quando o painel esta na Vercel. Use o fallback do navegador somente se o driver grafico exigir impressao visual.
+                    Preview renderizado pelo mesmo HTML enviado para impressao. Produtos sem tamanho ocultam o campo TAMANHO e centralizam o codigo de barras.
                   </p>
                 </div>
               ) : (

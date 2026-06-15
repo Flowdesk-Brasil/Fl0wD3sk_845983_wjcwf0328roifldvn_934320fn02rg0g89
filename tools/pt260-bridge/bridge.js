@@ -152,9 +152,12 @@ function makeTsplLabelCommands(items) {
     const code = stripText(printCode(product), 48) || "SEM-CODIGO";
     const color = item.meta && item.meta.color ? item.meta.color : product.variant_color || product.variant_label || "";
     const size = item.meta && item.meta.size ? item.meta.size : product.variant_size || "";
+    const hasSize = Boolean(size);
     const variation = [color && color !== "Variacao" ? color : null, size].filter(Boolean).join(" / ") || product.unit_measure || "Produto";
     const secondary = product.sku || product.internal_code || product.category || "";
     const quantity = Math.max(1, Math.min(999, Number(item.quantity) || 1));
+    const barcodeX = hasSize ? 92 : 42;
+    const codeX = hasSize ? 106 : 62;
 
     return [
       "SIZE 40 mm,30 mm",
@@ -167,13 +170,15 @@ function makeTsplLabelCommands(items) {
       `TEXT 24,18,"2",0,1,1,"${stripText("Corpo & Evolucao", 24)}"`,
       `TEXT 250,18,"2",0,1,1,"${stripText(money(product.selling_price), 12)}"`,
       `TEXT 24,58,"3",0,1,1,"${stripText(product.name, 32)}"`,
-      `TEXT 24,96,"1",0,1,1,"${stripText(variation, 24)}"`,
-      `TEXT 184,96,"1",0,1,1,"${stripText("CODIGO", 12)}"`,
+      ...(hasSize ? [
+        "BOX 25,132,78,190,2",
+        `TEXT 38,151,"3",0,1,1,"${stripText(size, 8)}"`,
+      ] : []),
       `TEXT 24,120,"1",0,1,1,"${stripText("MANTER ESSA ETIQUETA EM CASO DE TROCA", 42)}"`,
-      `BARCODE 92,142,"128",58,1,0,2,2,"${code}"`,
-      `TEXT 106,206,"1",0,1,1,"${code}"`,
-      `TEXT 24,226,"1",0,1,1,"${stripText(secondary, 20)}"`,
-      `TEXT 222,226,"1",0,1,1,"${stripText(variation, 18)}"`,
+      `BARCODE ${barcodeX},142,"128",58,1,0,2,2,"${code}"`,
+      `TEXT ${codeX},206,"1",0,1,1,"${code}"`,
+      `TEXT ${hasSize ? 104 : 42},226,"1",0,1,1,"${stripText(secondary || variation, hasSize ? 20 : 32)}"`,
+      ...(hasSize ? [`TEXT 222,226,"1",0,1,1,"${stripText(variation, 18)}"`] : []),
       `PRINT 1,${quantity}`,
       "",
     ].join("\r\n");
