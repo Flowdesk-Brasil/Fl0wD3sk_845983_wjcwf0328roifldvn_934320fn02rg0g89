@@ -183,19 +183,7 @@ export async function POST(request: Request) {
         reason = "Limite diario atingido. Permitido no maximo 2 check-ins por dia.";
       }
       
-      // 2. Validate confirmed class presence via App
-      if (allowed) {
-        const { count: confirmedClasses } = await admin.from("class_attendances")
-          .select("*", { count: "exact", head: true })
-          .eq("student_id", student.id)
-          .eq("date", todayDateStr)
-          .in("status", ["confirmed", "attended"]);
-          
-        if (confirmedClasses === null || confirmedClasses === 0) {
-          allowed = false;
-          reason = "Acesso bloqueado. Voce precisa confirmar a presenca na aula pelo Portal do Aluno (Notificacao) antes de acessar a catraca!";
-        }
-      }
+      // Aula confirmada no portal nao bloqueia a catraca. A regra de acesso fica em matricula e pagamento.
     }
 
     if (allowed && student) {
