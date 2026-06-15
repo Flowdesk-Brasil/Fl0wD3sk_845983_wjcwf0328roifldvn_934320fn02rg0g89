@@ -628,11 +628,11 @@ export default function ReimpressaoEtiquetasPage() {
                 </div>
                 <div className="rounded-xl bg-white/[.07] p-3">
                   <span className="block text-white/45">Modo</span>
-                  <strong className="mt-1 block text-lg">RAW</strong>
+                  <strong className="mt-1 block text-lg">TSPL</strong>
                 </div>
               </div>
               <button className="btn mt-4 w-full bg-white text-[#101827] hover:bg-blue-50" type="button" onClick={printDirectLabels} disabled={!totalLabels || directPrinting}>
-                <Usb className="h-4 w-4 shrink-0" /> {directPrinting ? "Enviando RAW..." : "Enviar RAW para PT260"}
+                <Usb className="h-4 w-4 shrink-0" /> {directPrinting ? "Enviando TSPL..." : "Enviar TSPL para PT260"}
               </button>
               <button className="btn mt-2 w-full border border-white/15 bg-white/[.08] text-white hover:bg-white/[.14]" type="button" onClick={printLabels} disabled={!totalLabels}>
                 <Printer className="h-4 w-4 shrink-0" /> Fallback navegador
@@ -642,7 +642,7 @@ export default function ReimpressaoEtiquetasPage() {
               </button>
               <div className="mt-3 rounded-xl border border-white/10 bg-white/[.06] p-3 text-xs leading-5 text-white/65">
                 <strong className="block text-white">Ponte local PT260</strong>
-                Em Vercel, rode <code className="rounded bg-white/10 px-1 py-0.5 text-white">npm run pt260:bridge</code> no Windows da etiquetadora. O painel envia para <code className="rounded bg-white/10 px-1 py-0.5 text-white">127.0.0.1:4217</code> e a ponte manda RAW para a PT260.
+                Protocolo confirmado: TSPL calibrado com densidade 8 e velocidade 2. Em Vercel, rode <code className="rounded bg-white/10 px-1 py-0.5 text-white">npm run pt260:bridge</code> no Windows da etiquetadora.
                 <div className="mt-3 grid grid-cols-4 gap-1.5">
                   {[1, 2, 3, 4].map((mode) => (
                     <button
@@ -652,7 +652,7 @@ export default function ReimpressaoEtiquetasPage() {
                       onClick={() => sendPrinterProtocolTest(mode)}
                       disabled={testingMode !== null}
                     >
-                      {testingMode === mode ? "..." : `Teste ${mode}`}
+                      {testingMode === mode ? "..." : mode <= 2 ? `TSPL ${mode}` : `Diag ${mode}`}
                     </button>
                   ))}
                 </div>

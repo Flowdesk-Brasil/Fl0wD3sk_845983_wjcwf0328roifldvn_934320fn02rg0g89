@@ -323,6 +323,8 @@ export function makeTsplLabelCommands(items: ProductLabelPrintItem[]) {
     return [
       "SIZE 40 mm,30 mm",
       "GAP 2 mm,0 mm",
+      "DENSITY 8",
+      "SPEED 2",
       "DIRECTION 1",
       "REFERENCE 0,0",
       "CLS",
