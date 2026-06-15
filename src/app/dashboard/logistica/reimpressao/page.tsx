@@ -19,7 +19,7 @@ type QuantityMap = Record<string, number>;
 
 const DEFAULT_PT260_BRIDGE_URL = "http://127.0.0.1:4217";
 const PT260_BRIDGE_STORAGE_KEY = "corpoevolucao.pt260BridgeUrl";
-const MIN_PT260_BRIDGE_VERSION = "1.3.0";
+const MIN_PT260_BRIDGE_VERSION = "1.3.1";
 
 type PrintApiPayload = {
   success?: boolean;
@@ -350,7 +350,7 @@ export default function ReimpressaoEtiquetasPage() {
       setMessage(bridgePayload.message ?? `Ponte local PT260 renderizou e enviou ${totalLabels} etiqueta(s).`);
       setPrinterInfo({
         status: "ok",
-        message: "Impressao feita pela ponte local: HTML 40x30 convertido em imagem e enviado como bitmap unico para a PT260.",
+        message: "Impressao feita pela ponte local: HTML 40x30 convertido em imagem e enviado como bitmap binario unico para a PT260.",
       });
     } catch (err) {
       if (err instanceof Error && /antiga|OpenPrinter falhou:\s*1801|PT260.*reconhecido/i.test(err.message)) {
@@ -373,7 +373,7 @@ export default function ReimpressaoEtiquetasPage() {
       const bridgePayload = await getLocalPt260Diagnostics();
       setPrinterInfo({
         status: bridgePayload.status ?? "ok",
-        message: bridgePayload.message ?? "Ponte local PT260 respondeu com sucesso para impressao HTML em imagem.",
+        message: bridgePayload.message ?? "Ponte local PT260 respondeu com sucesso para impressao HTML em bitmap binario.",
       });
       return;
     } catch {
@@ -713,7 +713,7 @@ export default function ReimpressaoEtiquetasPage() {
               </button>
               <div className="mt-3 rounded-xl border border-white/10 bg-white/[.06] p-3 text-xs leading-5 text-white/65">
                 <strong className="block text-white">Ponte local PT260</strong>
-                Modo direto: o bridge local converte o HTML exato da etiqueta em imagem 40x30 e envia como bitmap unico para a PT260. No Windows da etiquetadora, rode <code className="rounded bg-white/10 px-1 py-0.5 text-white">npm run pt260:restart</code>.
+                Modo direto: o bridge local converte o HTML exato da etiqueta em imagem 40x30 e envia como bitmap binario unico para a PT260. No Windows da etiquetadora, rode <code className="rounded bg-white/10 px-1 py-0.5 text-white">npm run pt260:restart</code>.
                 <label className="mt-3 block">
                   <span className="mb-1 block text-[10px] font-black uppercase tracking-[.12em] text-white/40">URL da ponte</span>
                   <input
@@ -727,8 +727,8 @@ export default function ReimpressaoEtiquetasPage() {
                 <p className="mt-2 text-[11px] leading-4 text-white/45">
                   Se este painel estiver aberto no mesmo Windows da PT260, use 127.0.0.1. Se estiver em outro computador, use o IP do Windows da impressora.
                 </p>
-                <div className="mt-3 grid grid-cols-4 gap-1.5">
-                  {[1, 2, 3, 4].map((mode) => (
+                <div className="mt-3 grid grid-cols-3 gap-1.5">
+                  {[1, 2, 3, 4, 5, 6].map((mode) => (
                     <button
                       key={mode}
                       className="rounded-lg border border-white/10 bg-white/[.08] px-2 py-1.5 text-[11px] font-black text-white hover:bg-white/[.16] disabled:opacity-55"

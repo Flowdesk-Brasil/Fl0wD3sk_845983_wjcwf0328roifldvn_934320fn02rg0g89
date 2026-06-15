@@ -23,7 +23,7 @@ const { pathToFileURL } = require("node:url");
 const PORT = Number(process.env.PT260_BRIDGE_PORT || 4217);
 const HOST = process.env.PT260_BRIDGE_HOST || "0.0.0.0";
 const PRINTER_PATTERN = /pt\s*260|pt260|diabel/i;
-const VERSION = "1.3.0";
+const VERSION = "1.3.1";
 const LABEL_WIDTH_PX = 480;
 const LABEL_HEIGHT_PX = 360;
 const PUBLIC_DIR = path.resolve(process.cwd(), "public");
@@ -586,14 +586,15 @@ try {
   return runPowerShellFile(script, ["-PrinterName", printerName, "-ImagePath", imagePath], 30000);
 }
 
-async function makeTsplBitmapFileFromPng(imagePath) {
+async function makeTsplBitmapFileFromPng(imagePath, options = {}) {
   const rawFile = path.join(os.tmpdir(), `corpo-evolucao-label-bitmap-${randomUUID()}.prn`);
   const script = `
-param([string]$ImagePath, [string]$OutputPath)
+param([string]$ImagePath, [string]$OutputPath, [string]$InvertBitmap)
 Add-Type -AssemblyName System.Drawing
 $width = 320
 $height = 240
 $bytesPerRow = [Math]::Ceiling($width / 8)
+$invert = $InvertBitmap -eq "1"
 $source = [System.Drawing.Image]::FromFile($ImagePath)
 $bitmap = New-Object System.Drawing.Bitmap($width, $height, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
@@ -604,7 +605,8 @@ try {
   $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
   $graphics.DrawImage($source, 0, 0, $width, $height)
 
-  $hex = New-Object System.Text.StringBuilder
+  $bitmapBytes = New-Object byte[] ($bytesPerRow * $height)
+  $offset = 0
   for ($y = 0; $y -lt $height; $y++) {
     for ($byteX = 0; $byteX -lt $bytesPerRow; $byteX++) {
       $value = 0
@@ -618,11 +620,15 @@ try {
           }
         }
       }
-      [void]$hex.Append($value.ToString("X2"))
+      if ($invert) {
+        $value = 255 - $value
+      }
+      $bitmapBytes[$offset] = [byte]$value
+      $offset++
     }
   }
 
-  $commands = @(
+  $header = @(
     "SIZE 40 mm,30 mm",
     "GAP 2 mm,0 mm",
     "DENSITY 10",
@@ -630,12 +636,23 @@ try {
     "DIRECTION 1",
     "REFERENCE 0,0",
     "CLS",
-    "BITMAP 0,0,$bytesPerRow,$height,0,$($hex.ToString())",
-    "PRINT 1,1",
     ""
   ) -join "\`r\`n"
-  [System.IO.File]::WriteAllText($OutputPath, $commands, [System.Text.Encoding]::ASCII)
-  Write-Output "BITMAP_OK"
+  $bitmapCommand = "BITMAP 0,0,$bytesPerRow,$height,0,"
+  $footer = "\`r\`nPRINT 1,1\`r\`n"
+
+  $stream = [System.IO.File]::Open($OutputPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+  try {
+    $headerBytes = [System.Text.Encoding]::ASCII.GetBytes($header + $bitmapCommand)
+    $footerBytes = [System.Text.Encoding]::ASCII.GetBytes($footer)
+    $stream.Write($headerBytes, 0, $headerBytes.Length)
+    $stream.Write($bitmapBytes, 0, $bitmapBytes.Length)
+    $stream.Write($footerBytes, 0, $footerBytes.Length)
+  } finally {
+    $stream.Dispose()
+  }
+
+  Write-Output "BITMAP_BINARY_OK"
 } finally {
   $graphics.Dispose()
   $bitmap.Dispose()
@@ -644,7 +661,11 @@ try {
   `;
 
   try {
-    await runPowerShellFile(script, ["-ImagePath", imagePath, "-OutputPath", rawFile], 45000);
+    await runPowerShellFile(
+      script,
+      ["-ImagePath", imagePath, "-OutputPath", rawFile, "-InvertBitmap", options.invert ? "1" : "0"],
+      45000,
+    );
     return rawFile;
   } catch (error) {
     rm(rawFile, { force: true }).catch(() => {});
@@ -941,7 +962,7 @@ async function handleTestPrint(req, res) {
 
   try {
     const body = await readJsonBody(req);
-    const mode = Math.max(1, Math.min(4, Number(body.mode) || 1));
+    const mode = Math.max(1, Math.min(6, Number(body.mode) || 1));
     const printers = await loadPrinters();
     const selectedPrinter = pickPrinter(printers, body.printerName);
 
@@ -951,6 +972,43 @@ async function handleTestPrint(req, res) {
         error: "Nao encontrei a PT260/DIABEL instalada neste Windows.",
         printers,
       });
+      return;
+    }
+
+    if (mode >= 5) {
+      const rendered = await renderHtmlLabelToPng({
+        quantity: 1,
+        product: {
+          id: `teste-html-${mode}`,
+          name: mode === 5 ? "TESTE HTML" : "TESTE INV",
+          selling_price: 10,
+          barcode: mode === 5 ? "260000000005" : "260000000006",
+          unit_measure: "UN",
+        },
+        meta: { color: "Produto", size: mode === 5 ? "M" : null },
+      });
+      let rawBitmapFile = null;
+      try {
+        rawBitmapFile = await makeTsplBitmapFileFromPng(rendered.pngFile, { invert: mode === 6 });
+        const result = await sendRawFileToPrinter(rawBitmapFile, selectedPrinter.name);
+        json(res, 200, {
+          success: true,
+          mode,
+          protocol: mode === 6 ? "HTML_BITMAP_BINARY_INVERTED" : "HTML_BITMAP_BINARY",
+          printer: selectedPrinter,
+          message: `Teste ${mode} HTML bitmap binario enviado para ${selectedPrinter.name}.`,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        });
+      } finally {
+        rm(rendered.pngFile, { force: true }).catch(() => {});
+        for (const cleanupPath of rendered.cleanup) {
+          rm(cleanupPath, { recursive: true, force: true }).catch(() => {});
+        }
+        if (rawBitmapFile) {
+          rm(rawBitmapFile, { force: true }).catch(() => {});
+        }
+      }
       return;
     }
 
@@ -980,7 +1038,7 @@ async function runCliProtocolTest() {
 
   const testArgIndex = process.argv.indexOf("--test");
   const rawMode = testArgIndex >= 0 ? process.argv[testArgIndex + 1] : "1";
-  const modes = rawMode === "all" ? [1, 2, 3, 4] : [Math.max(1, Math.min(4, Number(rawMode) || 1))];
+  const modes = rawMode === "all" ? [1, 2, 3, 4, 5, 6] : [Math.max(1, Math.min(6, Number(rawMode) || 1))];
   const printers = await loadPrinters();
   const printerArgIndex = process.argv.indexOf("--printer");
   const printerName = printerArgIndex >= 0 ? process.argv[printerArgIndex + 1] : undefined;
@@ -996,7 +1054,35 @@ async function runCliProtocolTest() {
   console.log(`[pt260-bridge] usando impressora: ${selectedPrinter.name} (${selectedPrinter.portName})`);
   for (const mode of modes) {
     console.log(`[pt260-bridge] enviando teste ${mode}...`);
-    const result = await printRawCommands(makeProtocolTestCommands(mode), selectedPrinter.name, `corpo-evolucao-pt260-teste-${mode}`);
+    let result;
+    if (mode >= 5) {
+      const rendered = await renderHtmlLabelToPng({
+        quantity: 1,
+        product: {
+          id: `teste-html-${mode}`,
+          name: mode === 5 ? "TESTE HTML" : "TESTE INV",
+          selling_price: 10,
+          barcode: mode === 5 ? "260000000005" : "260000000006",
+          unit_measure: "UN",
+        },
+        meta: { color: "Produto", size: mode === 5 ? "M" : null },
+      });
+      let rawBitmapFile = null;
+      try {
+        rawBitmapFile = await makeTsplBitmapFileFromPng(rendered.pngFile, { invert: mode === 6 });
+        result = await sendRawFileToPrinter(rawBitmapFile, selectedPrinter.name);
+      } finally {
+        rm(rendered.pngFile, { force: true }).catch(() => {});
+        for (const cleanupPath of rendered.cleanup) {
+          rm(cleanupPath, { recursive: true, force: true }).catch(() => {});
+        }
+        if (rawBitmapFile) {
+          rm(rawBitmapFile, { force: true }).catch(() => {});
+        }
+      }
+    } else {
+      result = await printRawCommands(makeProtocolTestCommands(mode), selectedPrinter.name, `corpo-evolucao-pt260-teste-${mode}`);
+    }
     console.log(`[pt260-bridge] teste ${mode} enviado. ${String(result.stdout || "").trim()}`);
   }
 }
