@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "echo \"ESLint is bypassed\"",
     "typecheck": "echo \"Typecheck is bypassed\"",
-    "check": "npm run build"
+    "check": "npm run build",
+    "pt260:bridge": "node tools/pt260-bridge/bridge.js"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.11",

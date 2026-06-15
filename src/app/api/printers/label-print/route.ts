@@ -122,7 +122,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       success: false,
       code: "unsupported_platform",
-      error: "Impressao direta USB/Bluetooth precisa rodar no Windows onde a PT260 esta instalada. Em Vercel/Linux o servidor nao tem acesso a sua impressora local.",
+      error: "Servidor cloud detectado. A API da Vercel nao acessa USB/Bluetooth local; use a ponte PT260 em http://127.0.0.1:4217 no Windows da etiquetadora.",
     }, { status: 400 });
   }
 

@@ -19,6 +19,21 @@ import { EmptyState, ErrorBanner, LoadingState, PageHeader, StatusBadge } from "
 
 type QuantityMap = Record<string, number>;
 
+const LOCAL_PT260_BRIDGE_URL = "http://127.0.0.1:4217";
+
+type PrintApiPayload = {
+  success?: boolean;
+  message?: string;
+  error?: string;
+  code?: string;
+};
+
+type PrinterDiagnosticPayload = {
+  status?: "ok" | "warning" | "unknown";
+  message?: string;
+  printer?: { name?: string; portName?: string };
+};
+
 type MatrixRow = {
   color: string;
   cells: Record<string, Product | undefined>;
@@ -75,6 +90,40 @@ function toMatrixRows(products: Product[], sizes: string[]): MatrixRow[] {
 
 function inputQuantity(value: number | undefined) {
   return Number.isFinite(value) ? String(value) : "0";
+}
+
+async function readJsonPayload<T>(response: Response): Promise<T> {
+  try {
+    return await response.json() as T;
+  } catch {
+    return {} as T;
+  }
+}
+
+async function sendToLocalPt260Bridge(items: ProductLabelPrintItem[]) {
+  const response = await fetch(`${LOCAL_PT260_BRIDGE_URL}/print`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items }),
+  });
+  const payload = await readJsonPayload<PrintApiPayload>(response);
+
+  if (!response.ok || !payload.success) {
+    throw new Error(payload.error ?? "A ponte local PT260 nao conseguiu imprimir.");
+  }
+
+  return payload;
+}
+
+async function getLocalPt260Diagnostics() {
+  const response = await fetch(`${LOCAL_PT260_BRIDGE_URL}/printers`, { cache: "no-store" });
+  const payload = await readJsonPayload<PrinterDiagnosticPayload>(response);
+
+  if (!response.ok) {
+    throw new Error(payload.message ?? "A ponte local PT260 nao respondeu ao diagnostico.");
+  }
+
+  return payload;
 }
 
 export default function ReimpressaoEtiquetasPage() {
@@ -231,36 +280,58 @@ export default function ReimpressaoEtiquetasPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ items: selectedItems }),
       });
-      const payload = await response.json() as { success?: boolean; message?: string; error?: string; code?: string };
+      const payload = await readJsonPayload<PrintApiPayload>(response);
 
       if (!response.ok || !payload.success) {
-        const hint = payload.code === "unsupported_platform"
-          ? " Abra o sistema no computador Windows onde a PT260 esta instalada, ou use o botao de navegador como fallback."
-          : "";
-        throw new Error(`${payload.error ?? "Nao foi possivel imprimir direto na PT260."}${hint}`);
+        if (payload.code === "unsupported_platform") {
+          const bridgePayload = await sendToLocalPt260Bridge(selectedItems);
+          setMessage(bridgePayload.message ?? `Ponte local PT260 enviou ${totalLabels} etiqueta(s).`);
+          setPrinterInfo({
+            status: "ok",
+            message: "Impressao feita pela ponte local do Windows em 127.0.0.1:4217.",
+          });
+          return;
+        }
+        throw new Error(payload.error ?? "Nao foi possivel imprimir direto na PT260.");
       }
 
       setMessage(payload.message ?? `${totalLabels} etiqueta(s) enviadas direto para a PT260.`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha ao imprimir direto na PT260.");
+      if (err instanceof Error && !/ponte local|127\.0\.0\.1|Failed to fetch|fetch/i.test(err.message)) {
+        setError(err.message);
+      } else {
+        setError(
+          "Ponte local PT260 nao encontrada ou bloqueada. No Windows da etiquetadora rode `npm run pt260:bridge`, deixe este painel aberto no navegador e tente imprimir novamente.",
+        );
+      }
     } finally {
       setDirectPrinting(false);
     }
   }
 
   async function checkPrinter() {
-    setPrinterInfo({ status: "unknown", message: "Verificando impressoras instaladas no Windows..." });
+    setPrinterInfo({ status: "unknown", message: "Verificando API local e ponte PT260..." });
     try {
       const response = await fetch("/api/printers/diagnostics", { cache: "no-store" });
-      const payload = await response.json() as { status?: "ok" | "warning" | "unknown"; message?: string };
+      const payload = await readJsonPayload<PrinterDiagnosticPayload>(response);
+      if (payload.status === "unknown") {
+        const bridgePayload = await getLocalPt260Diagnostics();
+        setPrinterInfo({
+          status: bridgePayload.status ?? "ok",
+          message: bridgePayload.message ?? "Ponte local PT260 respondeu com sucesso.",
+        });
+        return;
+      }
       setPrinterInfo({
         status: payload.status ?? (response.ok ? "ok" : "warning"),
         message: payload.message ?? "Diagnostico concluido.",
       });
-    } catch {
+    } catch (err) {
       setPrinterInfo({
         status: "warning",
-        message: "Nao foi possivel validar a impressora por API. No Windows, confirme se a PT260 usa driver grafico da fabricante, nao Generic / Text Only.",
+        message: err instanceof Error
+          ? `${err.message} Rode npm run pt260:bridge no Windows da PT260 para liberar diagnostico e impressao direta pela Vercel.`
+          : "Nao foi possivel validar a impressora. Rode npm run pt260:bridge no Windows da PT260.",
       });
     }
   }
@@ -538,6 +609,10 @@ export default function ReimpressaoEtiquetasPage() {
               <button className="btn mt-2 w-full border border-white/15 bg-white/[.08] text-white hover:bg-white/[.14]" type="button" onClick={checkPrinter}>
                 <AlertTriangle className="h-4 w-4 shrink-0" /> Validar PT260
               </button>
+              <div className="mt-3 rounded-xl border border-white/10 bg-white/[.06] p-3 text-xs leading-5 text-white/65">
+                <strong className="block text-white">Ponte local PT260</strong>
+                Em Vercel, rode <code className="rounded bg-white/10 px-1 py-0.5 text-white">npm run pt260:bridge</code> no Windows da etiquetadora. O painel envia para <code className="rounded bg-white/10 px-1 py-0.5 text-white">127.0.0.1:4217</code> e a ponte manda RAW para a PT260.
+              </div>
               {printerInfo && (
                 <div className={cn(
                   "mt-3 rounded-xl border p-3 text-xs leading-5",
@@ -573,7 +648,7 @@ export default function ReimpressaoEtiquetasPage() {
                     </div>
                   </div>
                   <p className="text-center text-xs leading-5 text-[#657085]">
-                    O modo direto envia comandos TSPL pelo backend local. Use o fallback do navegador somente se o driver grafico da PT260 estiver instalado.
+                    O modo direto usa a API local quando o painel roda no Windows ou a ponte PT260 quando o painel esta na Vercel. Use o fallback do navegador somente se o driver grafico exigir impressao visual.
                   </p>
                 </div>
               ) : (

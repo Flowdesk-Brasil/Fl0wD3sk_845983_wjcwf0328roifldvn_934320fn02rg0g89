@@ -46,7 +46,7 @@ export async function GET() {
   if (process.platform !== "win32") {
     return NextResponse.json({
       status: "unknown",
-      message: "Este servidor nao esta rodando no Windows da PT260, entao nao consegue enxergar USB/Bluetooth local. Para impressao direta, abra este sistema no computador Windows onde a etiquetadora esta instalada ou rode um bridge local.",
+      message: "Servidor cloud detectado. O painel vai tentar a ponte local PT260 em 127.0.0.1:4217; rode npm run pt260:bridge no Windows onde a etiquetadora esta instalada.",
       printers: [],
     });
   }

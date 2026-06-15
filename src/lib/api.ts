@@ -1277,6 +1277,25 @@ export async function getRevenueSeries(): Promise<RevenuePoint[]> {
 // MÃ“DULO ERP (ESTOQUE E PDV)
 // ==========================================
 
+const productVariantSchemaFields = new Set([
+  "parent_product_id",
+  "variant_color",
+  "variant_size",
+  "variant_label",
+  "primary_barcode",
+]);
+
+function isMissingProductVariantSchema(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return /schema cache|PGRST204|parent_product_id|variant_color|variant_size|variant_label|primary_barcode/i.test(message);
+}
+
+function stripProductVariantColumns<T extends Record<string, unknown>>(values: T) {
+  return Object.fromEntries(
+    Object.entries(values).filter(([key]) => !productVariantSchemaFields.has(key)),
+  ) as T;
+}
+
 export async function getSuppliers() {
   return sortDesc(await list("suppliers"));
 }
@@ -1306,14 +1325,26 @@ export async function getProductById(id: string): Promise<Product | null> {
 }
 
 export async function createProduct(values: Omit<NewRow<"products">, "updated_at">): Promise<Product> {
-  return insert("products", {
+  const payload = {
     ...values,
     updated_at: new Date().toISOString(),
-  });
+  };
+  try {
+    return await insert("products", payload);
+  } catch (error) {
+    if (!isMissingProductVariantSchema(error)) throw error;
+    return insert("products", stripProductVariantColumns(payload));
+  }
 }
 
 export async function updateProduct(id: string, values: Partial<Product>) {
-  return update("products", id, { ...values, updated_at: new Date().toISOString() });
+  const payload = { ...values, updated_at: new Date().toISOString() };
+  try {
+    return await update("products", id, payload);
+  } catch (error) {
+    if (!isMissingProductVariantSchema(error)) throw error;
+    return update("products", id, stripProductVariantColumns(payload));
+  }
 }
 
 export async function deleteProduct(id: string) {
