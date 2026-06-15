@@ -10,6 +10,8 @@
     "typecheck": "echo \"Typecheck is bypassed\"",
     "check": "npm run build",
     "pt260:bridge": "node tools/pt260-bridge/bridge.js",
+    "pt260:stop": "node tools/pt260-bridge/stop.js",
+    "pt260:restart": "npm run pt260:stop && npm run pt260:bridge",
     "pt260:test": "node tools/pt260-bridge/bridge.js --test all"
   },
   "dependencies": {

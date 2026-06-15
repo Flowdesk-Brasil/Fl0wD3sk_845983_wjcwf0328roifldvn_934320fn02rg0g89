@@ -19,7 +19,9 @@ import { EmptyState, ErrorBanner, LoadingState, PageHeader, StatusBadge } from "
 
 type QuantityMap = Record<string, number>;
 
-const LOCAL_PT260_BRIDGE_URL = "http://127.0.0.1:4217";
+const DEFAULT_PT260_BRIDGE_URL = "http://127.0.0.1:4217";
+const PT260_BRIDGE_STORAGE_KEY = "corpoevolucao.pt260BridgeUrl";
+const MIN_PT260_BRIDGE_VERSION = "1.2.0";
 
 type PrintApiPayload = {
   success?: boolean;
@@ -32,6 +34,7 @@ type PrinterDiagnosticPayload = {
   status?: "ok" | "warning" | "unknown";
   message?: string;
   printer?: { name?: string; portName?: string };
+  version?: string;
 };
 
 type MatrixRow = {
@@ -100,8 +103,57 @@ async function readJsonPayload<T>(response: Response): Promise<T> {
   }
 }
 
+function compareSemver(left: string, right: string) {
+  const leftParts = left.split(".").map((part) => Number(part) || 0);
+  const rightParts = right.split(".").map((part) => Number(part) || 0);
+  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index++) {
+    const diff = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+function isOldPowerShellArgumentError(message: string) {
+  return /-Command|OpenPrinter falhou:\s*1801|PT260.*nao.*reconhecido|PT260.*não.*reconhecido/i.test(message);
+}
+
+function normalizeBridgeUrl(value: string) {
+  return (value || DEFAULT_PT260_BRIDGE_URL).trim().replace(/\/+$/, "");
+}
+
+function getConfiguredBridgeUrl() {
+  if (typeof window === "undefined") return DEFAULT_PT260_BRIDGE_URL;
+  const queryUrl = new URLSearchParams(window.location.search).get("pt260Bridge");
+  if (queryUrl) {
+    const normalized = normalizeBridgeUrl(queryUrl);
+    window.localStorage.setItem(PT260_BRIDGE_STORAGE_KEY, normalized);
+    return normalized;
+  }
+  return normalizeBridgeUrl(window.localStorage.getItem(PT260_BRIDGE_STORAGE_KEY) || DEFAULT_PT260_BRIDGE_URL);
+}
+
+async function assertLocalPt260BridgeReady() {
+  const bridgeUrl = getConfiguredBridgeUrl();
+  const response = await fetch(`${bridgeUrl}/health`, { cache: "no-store" });
+  const payload = await readJsonPayload<{ ok?: boolean; version?: string }>(response);
+
+  if (!response.ok || !payload.ok) {
+    throw new Error("A ponte local PT260 respondeu sem status valido.");
+  }
+
+  if (!payload.version || compareSemver(payload.version, MIN_PT260_BRIDGE_VERSION) < 0) {
+    throw new Error(
+      `Ponte local PT260 antiga (${payload.version ?? "sem versao"}). Feche o terminal antigo e rode npm run pt260:restart novamente para carregar a versao ${MIN_PT260_BRIDGE_VERSION}.`,
+    );
+  }
+
+  return payload;
+}
+
 async function sendToLocalPt260Bridge(items: ProductLabelPrintItem[]) {
-  const response = await fetch(`${LOCAL_PT260_BRIDGE_URL}/print`, {
+  await assertLocalPt260BridgeReady();
+  const bridgeUrl = getConfiguredBridgeUrl();
+  const response = await fetch(`${bridgeUrl}/print`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ items }),
@@ -109,14 +161,20 @@ async function sendToLocalPt260Bridge(items: ProductLabelPrintItem[]) {
   const payload = await readJsonPayload<PrintApiPayload>(response);
 
   if (!response.ok || !payload.success) {
-    throw new Error(payload.error ?? "A ponte local PT260 nao conseguiu imprimir.");
+    const errorMessage = payload.error ?? "A ponte local PT260 nao conseguiu imprimir.";
+    if (isOldPowerShellArgumentError(errorMessage)) {
+      throw new Error(`A ponte local PT260 que esta rodando ainda e antiga. Feche o terminal da ponte e rode npm run pt260:restart de novo. Erro original: ${errorMessage}`);
+    }
+    throw new Error(errorMessage);
   }
 
   return payload;
 }
 
 async function getLocalPt260Diagnostics() {
-  const response = await fetch(`${LOCAL_PT260_BRIDGE_URL}/printers`, { cache: "no-store" });
+  await assertLocalPt260BridgeReady();
+  const bridgeUrl = getConfiguredBridgeUrl();
+  const response = await fetch(`${bridgeUrl}/printers`, { cache: "no-store" });
   const payload = await readJsonPayload<PrinterDiagnosticPayload>(response);
 
   if (!response.ok) {
@@ -137,12 +195,17 @@ export default function ReimpressaoEtiquetasPage() {
   const [printerInfo, setPrinterInfo] = useState<{ status: "ok" | "warning" | "unknown"; message: string } | null>(null);
   const [directPrinting, setDirectPrinting] = useState(false);
   const [testingMode, setTestingMode] = useState<number | null>(null);
+  const [bridgeUrl, setBridgeUrl] = useState(DEFAULT_PT260_BRIDGE_URL);
 
   useEffect(() => {
     getProducts()
       .then((data) => setProducts(data))
       .catch((err) => setError(err instanceof Error ? err.message : "Nao foi possivel carregar os produtos."))
       .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    setBridgeUrl(getConfiguredBridgeUrl());
   }, []);
 
   const activeProducts = useMemo(() => products.filter((product) => product.active !== false), [products]);
@@ -298,11 +361,13 @@ export default function ReimpressaoEtiquetasPage() {
 
       setMessage(payload.message ?? `${totalLabels} etiqueta(s) enviadas direto para a PT260.`);
     } catch (err) {
-      if (err instanceof Error && !/ponte local|127\.0\.0\.1|Failed to fetch|fetch/i.test(err.message)) {
+      if (err instanceof Error && /antiga|OpenPrinter falhou:\s*1801|PT260.*reconhecido/i.test(err.message)) {
+        setError(err.message);
+      } else if (err instanceof Error && !/ponte local|127\.0\.0\.1|Failed to fetch|fetch/i.test(err.message)) {
         setError(err.message);
       } else {
         setError(
-          "Ponte local PT260 nao encontrada ou bloqueada. No Windows da etiquetadora rode `npm run pt260:bridge`, deixe este painel aberto no navegador e tente imprimir novamente.",
+          "Ponte local PT260 nao encontrada ou bloqueada. No Windows da etiquetadora rode `npm run pt260:restart`, deixe este painel aberto no navegador e tente imprimir novamente.",
         );
       }
     } finally {
@@ -331,8 +396,8 @@ export default function ReimpressaoEtiquetasPage() {
       setPrinterInfo({
         status: "warning",
         message: err instanceof Error
-          ? `${err.message} Rode npm run pt260:bridge no Windows da PT260 para liberar diagnostico e impressao direta pela Vercel.`
-          : "Nao foi possivel validar a impressora. Rode npm run pt260:bridge no Windows da PT260.",
+          ? `${err.message} Rode npm run pt260:restart no Windows da PT260 para liberar diagnostico e impressao direta pela Vercel.`
+          : "Nao foi possivel validar a impressora. Rode npm run pt260:restart no Windows da PT260.",
       });
     }
   }
@@ -342,7 +407,8 @@ export default function ReimpressaoEtiquetasPage() {
     setMessage(null);
     setTestingMode(mode);
     try {
-      const response = await fetch(`${LOCAL_PT260_BRIDGE_URL}/test-print`, {
+      await assertLocalPt260BridgeReady();
+      const response = await fetch(`${getConfiguredBridgeUrl()}/test-print`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode }),
@@ -360,11 +426,21 @@ export default function ReimpressaoEtiquetasPage() {
       });
     } catch (err) {
       setError(err instanceof Error
-        ? `${err.message} Rode npm run pt260:bridge no Windows da etiquetadora e tente novamente.`
+        ? `${err.message} Rode npm run pt260:restart no Windows da etiquetadora e tente novamente.`
         : "Nao foi possivel testar a PT260 pela ponte local.");
     } finally {
       setTestingMode(null);
     }
+  }
+
+  function saveBridgeUrl(value: string) {
+    const normalized = normalizeBridgeUrl(value);
+    setBridgeUrl(normalized);
+    window.localStorage.setItem(PT260_BRIDGE_STORAGE_KEY, normalized);
+    setPrinterInfo({
+      status: "unknown",
+      message: `URL da ponte PT260 definida para ${normalized}. Clique em Validar PT260 antes de imprimir.`,
+    });
   }
 
   if (loading) return <LoadingState label="Carregando produtos da loja..." />;
@@ -642,7 +718,20 @@ export default function ReimpressaoEtiquetasPage() {
               </button>
               <div className="mt-3 rounded-xl border border-white/10 bg-white/[.06] p-3 text-xs leading-5 text-white/65">
                 <strong className="block text-white">Ponte local PT260</strong>
-                Protocolo confirmado: TSPL calibrado com densidade 8 e velocidade 2. Em Vercel, rode <code className="rounded bg-white/10 px-1 py-0.5 text-white">npm run pt260:bridge</code> no Windows da etiquetadora.
+                Protocolo confirmado: TSPL calibrado com densidade 8 e velocidade 2. No Windows da etiquetadora, rode <code className="rounded bg-white/10 px-1 py-0.5 text-white">npm run pt260:restart</code>.
+                <label className="mt-3 block">
+                  <span className="mb-1 block text-[10px] font-black uppercase tracking-[.12em] text-white/40">URL da ponte</span>
+                  <input
+                    className="h-10 w-full rounded-xl border border-white/10 bg-black/20 px-3 text-xs font-bold text-white outline-none transition focus:border-blue-300"
+                    value={bridgeUrl}
+                    onChange={(event) => setBridgeUrl(event.target.value)}
+                    onBlur={(event) => saveBridgeUrl(event.target.value)}
+                    placeholder={DEFAULT_PT260_BRIDGE_URL}
+                  />
+                </label>
+                <p className="mt-2 text-[11px] leading-4 text-white/45">
+                  Se este painel estiver aberto no mesmo Windows da PT260, use 127.0.0.1. Se estiver em outro computador, use o IP do Windows da impressora.
+                </p>
                 <div className="mt-3 grid grid-cols-4 gap-1.5">
                   {[1, 2, 3, 4].map((mode) => (
                     <button

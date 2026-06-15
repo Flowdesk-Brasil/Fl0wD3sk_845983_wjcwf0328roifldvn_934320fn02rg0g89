@@ -20,9 +20,9 @@ const os = require("node:os");
 const path = require("node:path");
 
 const PORT = Number(process.env.PT260_BRIDGE_PORT || 4217);
-const HOST = process.env.PT260_BRIDGE_HOST || "127.0.0.1";
+const HOST = process.env.PT260_BRIDGE_HOST || "0.0.0.0";
 const PRINTER_PATTERN = /pt\s*260|pt260|diabel/i;
-const VERSION = "1.0.0";
+const VERSION = "1.2.0";
 
 function json(res, status, payload) {
   const body = JSON.stringify(payload);
@@ -35,6 +35,19 @@ function json(res, status, payload) {
     "Cache-Control": "no-store",
   });
   res.end(body);
+}
+
+function bridgeUrls() {
+  const urls = [`http://127.0.0.1:${PORT}`];
+  const interfaces = os.networkInterfaces();
+  for (const entries of Object.values(interfaces)) {
+    for (const entry of entries || []) {
+      if (entry.family === "IPv4" && !entry.internal) {
+        urls.push(`http://${entry.address}:${PORT}`);
+      }
+    }
+  }
+  return [...new Set(urls)];
 }
 
 function runPowerShell(script, args = [], timeout = 12000) {
@@ -517,6 +530,7 @@ const server = http.createServer(async (req, res) => {
         platform: process.platform,
         host: HOST,
         port: PORT,
+        urls: bridgeUrls(),
       });
       return;
     }
@@ -558,6 +572,7 @@ if (process.argv.includes("--test")) {
 } else {
   server.listen(PORT, HOST, () => {
     console.log(`[pt260-bridge] online em http://${HOST}:${PORT}`);
+    console.log(`[pt260-bridge] URLs: ${bridgeUrls().join(" | ")}`);
     console.log("[pt260-bridge] endpoints: GET /health, GET /printers, POST /print, POST /test-print");
     console.log("[pt260-bridge] teste local: node tools/pt260-bridge/bridge.js --test all");
   });
