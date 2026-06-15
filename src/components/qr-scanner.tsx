@@ -44,6 +44,7 @@ export function QrScanner({
   const [isConfirming, setIsConfirming] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState<string>("Iniciando Reconhecimento Facial...");
   const [isReady, setIsReady] = useState(false);
+  const [qrSupported, setQrSupported] = useState(true);
   const cooldownRef = useRef(0);
   const labeledDescriptorsRef = useRef<faceapi.LabeledFaceDescriptors[]>([]);
   const modelsLoadedRef = useRef(false);
@@ -66,7 +67,11 @@ export function QrScanner({
     fullscreenRequestedRef.current = false;
     setOpen(false);
     setStarting(false);
+    setError(null);
+    setIsReady(false);
+    setValidationResult(null);
     setDetectedFace(null);
+    setIsConfirming(false);
   }, [stop]);
 
   const openRef = useRef(open);
@@ -187,13 +192,24 @@ export function QrScanner({
     
     async function loadFaces() {
       try {
+        if (modelsLoadedRef.current && labeledDescriptorsRef.current.length > 0) {
+          setIsReady(true);
+          setLoadingMsg("Sistema de Catraca Ativo!");
+          return;
+        }
+
         setLoadingMsg("Carregando IA de Reconhecimento Facial...");
-        await faceapi.nets.tinyFaceDetector.loadFromUri('/models');
-        await faceapi.nets.faceLandmark68Net.loadFromUri('/models');
-        await faceapi.nets.faceRecognitionNet.loadFromUri('/models');
+        await Promise.all([
+          faceapi.nets.tinyFaceDetector.loadFromUri('/models'),
+          faceapi.nets.faceLandmark68Net.loadFromUri('/models'),
+          faceapi.nets.faceRecognitionNet.loadFromUri('/models'),
+        ]);
         
         modelsLoadedRef.current = true;
-        setLoadingMsg("Sincronizando banco de rostos (Aguarde)...");
+        if (mounted) {
+          setIsReady(true);
+          setLoadingMsg("Camera ativa. Sincronizando rostos...");
+        }
         const { data: students } = await supabase.from('students').select('id, full_name, photo_url').not('photo_url', 'is', null);
         if (students && students.length > 0 && mounted) {
           const labeledDescriptors = [];
@@ -210,7 +226,7 @@ export function QrScanner({
                  img.onerror = reject;
               });
 
-              const detection = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 })).withFaceLandmarks().withFaceDescriptor();
+              const detection = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })).withFaceLandmarks().withFaceDescriptor();
               if (detection) {
                 labeledDescriptors.push(new faceapi.LabeledFaceDescriptors(s.id + "|||" + s.full_name + "|||" + s.photo_url, [detection.descriptor]));
               }
@@ -228,13 +244,13 @@ export function QrScanner({
         }
         if (mounted) {
           setLoadingMsg("Sistema de Catraca Ativo!");
-          setTimeout(() => setIsReady(true), 1000);
+          setIsReady(true);
         }
       } catch (err) {
         console.error("Face API Error:", err);
         if (mounted) {
-          setLoadingMsg("Erro ao carregar IA. Operando via QR Code.");
-          setTimeout(() => setIsReady(true), 3000);
+          setLoadingMsg("Camera ativa. Reabra se o reconhecimento facial nao carregar.");
+          setIsReady(true);
         }
       }
     }
@@ -261,7 +277,7 @@ export function QrScanner({
             img.onerror = reject;
           });
           
-          const detection = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 })).withFaceLandmarks().withFaceDescriptor();
+          const detection = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })).withFaceLandmarks().withFaceDescriptor();
           
           if (detection) {
             const label = id + "|||" + full_name + "|||" + photo_url;
@@ -297,25 +313,33 @@ export function QrScanner({
     async function start() {
       setStarting(true);
       setError(null);
+      setIsReady(false);
+      setLoadingMsg("Abrindo camera...");
       try {
         if (!navigator.mediaDevices?.getUserMedia) {
           throw new Error("Este navegador não oferece acesso à câmera.");
         }
 
         const Detector = (window as Window & { BarcodeDetector?: BarcodeDetectorConstructor }).BarcodeDetector;
-        if (!Detector) {
-          throw new Error("A leitura automática de QR Code não é suportada neste navegador. Use Chrome ou Edge atualizado.");
+        let detector: BarcodeDetectorLike | null = null;
+        if (Detector) {
+          try {
+            detector = new Detector({ formats: ["qr_code"] });
+            setQrSupported(true);
+          } catch {
+            setQrSupported(false);
+          }
+        } else {
+          setQrSupported(false);
         }
 
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
           video: { 
             facingMode: "user",
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            frameRate: { ideal: 60, min: 30 },
-            // @ts-ignore
-            advanced: [{ focusMode: "continuous" }]
+            width: { ideal: 960 },
+            height: { ideal: 540 },
+            frameRate: { ideal: 30, min: 20 },
           },
         });
         if (!active) {
@@ -328,7 +352,8 @@ export function QrScanner({
         if (!video) return;
         video.srcObject = stream;
         await video.play();
-        const detector = new Detector({ formats: ["qr_code"] });
+        setIsReady(true);
+        setLoadingMsg(detector ? "Camera ativa. Aproxime o rosto ou QR Code." : "Camera ativa. QR indisponivel neste navegador.");
         
         let lastFaceCheck = Date.now();
         let lastBox: any = null;
@@ -358,7 +383,7 @@ export function QrScanner({
           
           try {
             // 1. QR Code ALWAYS RUNS FIRST (Non-blocking)
-            const results = await detector.detect(videoRef.current);
+            const results = detector ? await detector.detect(videoRef.current) : [];
             const value = results[0]?.rawValue?.trim();
             if (value) {
               readingRef.current = true;
@@ -388,9 +413,9 @@ export function QrScanner({
             if (Date.now() < cooldownRef.current) {
               lastBox = null;
               lastMatch = null;
-            } else if (Date.now() - lastFaceCheck > 250) {
+            } else if (modelsLoadedRef.current && Date.now() - lastFaceCheck > 450) {
               lastFaceCheck = Date.now();
-              const faceDetection = await faceapi.detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 })).withFaceLandmarks().withFaceDescriptor();
+              const faceDetection = await faceapi.detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })).withFaceLandmarks().withFaceDescriptor();
               if (faceDetection) {
                 lastBox = faceDetection.detection.box;
                 if (faceMatcherRef.current) {
@@ -509,7 +534,12 @@ export function QrScanner({
 
   if (!open) {
     return (
-      <button className="btn btn-secondary w-full" type="button" disabled={disabled} onClick={() => setOpen(true)}>
+      <button className="btn btn-secondary w-full" type="button" disabled={disabled} onClick={() => {
+        setError(null);
+        setValidationResult(null);
+        setDetectedFace(null);
+        setOpen(true);
+      }}>
         <Camera className="h-4 w-4" /> Abrir câmera
       </button>
     );
@@ -550,6 +580,15 @@ export function QrScanner({
           <X className="h-8 w-8" />
         </button>
       </div>
+
+      {isReady && !error && !validationResult && !detectedFace && (
+        <div className="absolute left-5 top-6 z-10 max-w-[calc(100%-110px)] rounded-full border border-white/10 bg-black/55 px-4 py-2 text-xs font-bold text-white/80 shadow-2xl backdrop-blur-xl">
+          <span>{loadingMsg}</span>
+          <span className="ml-3 rounded-full bg-white/12 px-2 py-1 text-[10px] uppercase tracking-[.12em] text-white/55">
+            {qrSupported ? "QR ativo" : "Facial ativo"}
+          </span>
+        </div>
+      )}
       
       {starting && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/90 z-20">

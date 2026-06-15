@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Barcode, CheckCircle2, Eraser, PackageSearch, Printer, RotateCcw, ScanBarcode, Search, Tag } from "lucide-react";
+import { AlertTriangle, Barcode, CheckCircle2, Eraser, PackageSearch, Printer, RadioTower, RotateCcw, ScanBarcode, Search, Tag } from "lucide-react";
 import { getProducts } from "@/lib/api";
 import {
   LABEL_SIZES,
@@ -86,6 +86,7 @@ export default function ReimpressaoEtiquetasPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [printerInfo, setPrinterInfo] = useState<{ status: "ok" | "warning" | "unknown"; message: string } | null>(null);
+  const [directPrinting, setDirectPrinting] = useState(false);
 
   useEffect(() => {
     getProducts()
@@ -212,6 +213,40 @@ export default function ReimpressaoEtiquetasPage() {
     }, 350);
   }
 
+  async function printDirectLabels() {
+    setError(null);
+    setMessage(null);
+    setPrinterInfo(null);
+
+    if (!selectedItems.length) {
+      setError("Informe pelo menos uma quantidade antes de imprimir.");
+      return;
+    }
+
+    setDirectPrinting(true);
+    try {
+      const response = await fetch("/api/printers/label-print", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: selectedItems }),
+      });
+      const payload = await response.json() as { success?: boolean; message?: string; error?: string; code?: string };
+
+      if (!response.ok || !payload.success) {
+        const hint = payload.code === "unsupported_platform"
+          ? " Abra o sistema no computador Windows onde a PT260 esta instalada, ou use o botao de navegador como fallback."
+          : "";
+        throw new Error(`${payload.error ?? "Nao foi possivel imprimir direto na PT260."}${hint}`);
+      }
+
+      setMessage(payload.message ?? `${totalLabels} etiqueta(s) enviadas direto para a PT260.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha ao imprimir direto na PT260.");
+    } finally {
+      setDirectPrinting(false);
+    }
+  }
+
   async function checkPrinter() {
     setPrinterInfo({ status: "unknown", message: "Verificando impressoras instaladas no Windows..." });
     try {
@@ -238,8 +273,8 @@ export default function ReimpressaoEtiquetasPage() {
         title="Reimpressao de Etiquetas"
         description="Busque por codigo de barras, SKU, codigo interno ou nome e imprima etiquetas 40x30 em lote para produtos e variacoes."
         action={
-          <button className="btn btn-primary" type="button" onClick={printLabels} disabled={!totalLabels}>
-            <Printer className="h-4 w-4" /> Imprimir
+          <button className="btn btn-primary" type="button" onClick={printDirectLabels} disabled={!totalLabels || directPrinting}>
+            <RadioTower className="h-4 w-4 shrink-0" /> {directPrinting ? "Enviando..." : "Imprimir direto"}
           </button>
         }
       />
@@ -266,10 +301,10 @@ export default function ReimpressaoEtiquetasPage() {
                 />
               </label>
               <button className="btn btn-secondary" type="button" onClick={clearQuantities} disabled={!Object.keys(quantities).length}>
-                <Eraser className="h-4 w-4" /> Zerar
+                <Eraser className="h-4 w-4 shrink-0" /> Zerar
               </button>
               <button className="btn btn-secondary" type="button" onClick={resetSearch}>
-                <RotateCcw className="h-4 w-4" /> Limpar
+                <RotateCcw className="h-4 w-4 shrink-0" /> Limpar
               </button>
             </div>
 
@@ -446,11 +481,14 @@ export default function ReimpressaoEtiquetasPage() {
                   <strong className="mt-1 block text-lg">40x30</strong>
                 </div>
               </div>
-              <button className="btn mt-4 w-full bg-white text-[#101827] hover:bg-blue-50" type="button" onClick={printLabels} disabled={!totalLabels}>
-                <Printer className="h-4 w-4" /> Imprimir etiquetas
+              <button className="btn mt-4 w-full bg-white text-[#101827] hover:bg-blue-50" type="button" onClick={printDirectLabels} disabled={!totalLabels || directPrinting}>
+                <RadioTower className="h-4 w-4 shrink-0" /> {directPrinting ? "Enviando..." : "Imprimir direto PT260"}
+              </button>
+              <button className="btn mt-2 w-full border border-white/15 bg-white/[.08] text-white hover:bg-white/[.14]" type="button" onClick={printLabels} disabled={!totalLabels}>
+                <Printer className="h-4 w-4 shrink-0" /> Fallback navegador
               </button>
               <button className="btn mt-2 w-full border border-white/15 bg-white/[.08] text-white hover:bg-white/[.14]" type="button" onClick={checkPrinter}>
-                <AlertTriangle className="h-4 w-4" /> Validar PT260
+                <AlertTriangle className="h-4 w-4 shrink-0" /> Validar PT260
               </button>
               {printerInfo && (
                 <div className={cn(
@@ -487,7 +525,7 @@ export default function ReimpressaoEtiquetasPage() {
                     </div>
                   </div>
                   <p className="text-center text-xs leading-5 text-[#657085]">
-                    O navegador abre a fila de impressao. Selecione a DIABEL/PT260 no driver do Windows e deixe escala em 100%.
+                    O modo direto envia comandos TSPL pelo backend local. Use o fallback do navegador somente se o driver grafico da PT260 estiver instalado.
                   </p>
                 </div>
               ) : (

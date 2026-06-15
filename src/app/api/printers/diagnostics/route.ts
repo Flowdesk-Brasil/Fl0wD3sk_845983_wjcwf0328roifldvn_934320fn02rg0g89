@@ -46,7 +46,7 @@ export async function GET() {
   if (process.platform !== "win32") {
     return NextResponse.json({
       status: "unknown",
-      message: "Diagnostico local de impressora so esta disponivel no Windows onde a etiquetadora esta instalada.",
+      message: "Este servidor nao esta rodando no Windows da PT260, entao nao consegue enxergar USB/Bluetooth local. Para impressao direta, abra este sistema no computador Windows onde a etiquetadora esta instalada ou rode um bridge local.",
       printers: [],
     });
   }

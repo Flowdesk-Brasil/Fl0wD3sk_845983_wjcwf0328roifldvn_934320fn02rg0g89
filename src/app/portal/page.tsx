@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, Bell, CalendarDays, Check, CheckCircle2, ChevronRight, Copy, CreditCard, Expand, FileCheck2, FileSignature, Flame, Home, LogOut, QrCode, Timer, UserRound, XCircle } from "lucide-react";
+import { Activity, Bell, CalendarDays, Check, CheckCircle2, ChevronRight, Copy, CreditCard, Expand, FileCheck2, FileSignature, Flame, Home, Loader2, LogOut, QrCode, Timer, UserRound, XCircle } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -40,6 +40,17 @@ type PortalData = {
 
 const weekLabels = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"];
 const orderedWeek = [1, 2, 3, 4, 5, 6, 0];
+const paymentIntentStorageKey = "corpoevolucao:portal-payment-intent";
+const paidNoticeStorageKey = "corpoevolucao:portal-paid-notice";
+
+type PaymentIntent = {
+  studentId: string;
+  paymentId: string;
+  reference: string;
+  totalAmount: number;
+  expiresAt: number;
+};
+type PaidNotice = PaymentIntent;
 
 function urlBase64ToUint8Array(base64String: string) {
   const padding = "=".repeat((4 - base64String.length % 4) % 4);
@@ -100,6 +111,22 @@ function initials(name?: string | null) {
   return (name || "Aluno").split(" ").slice(0, 2).map((part) => part[0]).join("").toUpperCase();
 }
 
+function readPortalStorage<T>(key: string) {
+  if (typeof window === "undefined") return null;
+  try {
+    const value = window.localStorage.getItem(key);
+    return value ? JSON.parse(value) as T : null;
+  } catch {
+    window.localStorage.removeItem(key);
+    return null;
+  }
+}
+
+function writePortalStorage(key: string, value: unknown) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(key, JSON.stringify(value));
+}
+
 export default function StudentPortalPage() {
   const { user, isLoading, logout } = useAuth();
   const [data, setData] = useState<PortalData | null>(null);
@@ -112,13 +139,26 @@ export default function StudentPortalPage() {
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushSupported, setPushSupported] = useState(true);
   const [pushChecking, setPushChecking] = useState(true);
+  const [pushSuccess, setPushSuccess] = useState(false);
   const [pushIssue, setPushIssue] = useState<string | null>(null);
+  const [paidNotice, setPaidNotice] = useState<PaidNotice | null>(null);
   const [appAlert, setAppAlert] = useState<{ title: string; message: string } | null>(null);
   const appAlertTimeoutRef = useRef<number | null>(null);
+  const pushRequestRef = useRef(false);
 
   useEffect(() => () => {
     if (appAlertTimeoutRef.current) window.clearTimeout(appAlertTimeoutRef.current);
   }, []);
+
+  useEffect(() => {
+    if (!paidNotice) return;
+    const remaining = Math.max(0, paidNotice.expiresAt - Date.now());
+    const timeout = window.setTimeout(() => {
+      window.localStorage.removeItem(paidNoticeStorageKey);
+      setPaidNotice(null);
+    }, remaining);
+    return () => window.clearTimeout(timeout);
+  }, [paidNotice]);
 
   async function reloadData(token?: string) {
     const { data: session } = await supabase.auth.getSession();
@@ -128,11 +168,40 @@ export default function StudentPortalPage() {
     });
     const payload = await response.json() as PortalData & { error?: string };
     if (!response.ok) throw new Error(payload.error || "Nao foi possivel carregar seu portal.");
+    syncPaidNotice(payload);
     setData(payload);
+  }
+
+  function syncPaidNotice(payload: PortalData) {
+    const now = Date.now();
+    const storedNotice = readPortalStorage<PaidNotice>(paidNoticeStorageKey);
+    if (storedNotice?.expiresAt && storedNotice.expiresAt > now && storedNotice.studentId === payload.student.id) {
+      setPaidNotice(storedNotice);
+    } else if (storedNotice) {
+      window.localStorage.removeItem(paidNoticeStorageKey);
+      setPaidNotice(null);
+    }
+
+    const intent = readPortalStorage<PaymentIntent>(paymentIntentStorageKey);
+    if (!intent || intent.studentId !== payload.student.id || intent.expiresAt <= now) {
+      if (intent) window.localStorage.removeItem(paymentIntentStorageKey);
+      return;
+    }
+
+    const stillPending = payload.payments.some((payment) =>
+      payment.id === intent.paymentId && (payment.status === "pending" || payment.status === "expired")
+    );
+    if (stillPending) return;
+
+    const notice = { ...intent, expiresAt: now + 60_000 };
+    writePortalStorage(paidNoticeStorageKey, notice);
+    window.localStorage.removeItem(paymentIntentStorageKey);
+    setPaidNotice(notice);
   }
 
   useEffect(() => {
     if (!user || user.app_role !== "student") return;
+    let notificationPermissionStatus: PermissionStatus | null = null;
     const tab = new URLSearchParams(window.location.search).get("tab");
     if (tab === "qr" || tab === "payments" || tab === "classes" || tab === "settings" || tab === "home") setActiveTab(tab);
     reloadData().catch((reason: Error) => setError(reason.message));
@@ -154,9 +223,11 @@ export default function StudentPortalPage() {
           if (Notification.permission === "granted") {
             await ensurePushSubscription(readyRegistration);
             setPushEnabled(true);
+            setPushSuccess(false);
             setPushIssue(null);
           } else {
             setPushEnabled(false);
+            setPushSuccess(false);
           }
         } catch (reason) {
           setPushIssue(pushErrorMessage(reason));
@@ -174,7 +245,24 @@ export default function StudentPortalPage() {
       setPushChecking(false);
     }
 
+    if ("permissions" in navigator && "Notification" in window) {
+      navigator.permissions.query({ name: "notifications" as PermissionName }).then((status) => {
+        notificationPermissionStatus = status;
+        status.onchange = () => {
+          setPushSuccess(false);
+          if (Notification.permission !== "granted") {
+            setPushEnabled(false);
+            setPushChecking(false);
+            setPushIssue(Notification.permission === "denied"
+              ? "As notificacoes foram bloqueadas no aparelho. Libere nas configuracoes do navegador/celular para ativar de novo."
+              : null);
+          }
+        };
+      }).catch(() => {});
+    }
+
     return () => {
+      if (notificationPermissionStatus) notificationPermissionStatus.onchange = null;
       window.removeEventListener("pointerdown", requestPortalFullscreen);
       window.removeEventListener("touchstart", requestPortalFullscreen);
     };
@@ -293,12 +381,15 @@ export default function StudentPortalPage() {
   }, [data?.student.id]);
 
   async function subscribePush() {
+    if (pushRequestRef.current) return;
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
       setPushSupported(false);
       setPushIssue("Este navegador nao suporta push nativo. No iPhone, instale o portal na tela inicial e abra pelo icone do app.");
       return;
     }
+    pushRequestRef.current = true;
     setPushIssue(null);
+    setPushSuccess(false);
     setPushChecking(true);
     try {
       const permission = await Notification.requestPermission();
@@ -311,14 +402,20 @@ export default function StudentPortalPage() {
       await registration.update().catch(() => {});
       const readyRegistration = await navigator.serviceWorker.ready;
       await ensurePushSubscription(readyRegistration, true);
-      setPushEnabled(true);
       setPushIssue(null);
+      setPushSuccess(true);
       await reloadData();
+      window.setTimeout(() => {
+        setPushEnabled(true);
+        setPushSuccess(false);
+      }, 850);
     } catch (reason) {
       setPushEnabled(false);
+      setPushSuccess(false);
       setPushIssue(pushErrorMessage(reason));
     } finally {
       setPushChecking(false);
+      pushRequestRef.current = false;
     }
   }
 
@@ -341,8 +438,30 @@ export default function StudentPortalPage() {
     setWorking(paymentId);
     setError(null);
     try {
+      const payment = data?.payments.find((item) => item.id === paymentId);
+      if (data?.student.id && payment) {
+        writePortalStorage(paymentIntentStorageKey, {
+          studentId: data.student.id,
+          paymentId,
+          reference: payment.reference,
+          totalAmount: Number(payment.total_amount),
+          expiresAt: Date.now() + 20 * 60_000,
+        } satisfies PaymentIntent);
+      }
       const generated = await createPixPayment(paymentId);
       setPix(generated);
+      if (data?.student.id && generated?.status === "paid") {
+        const notice: PaidNotice = {
+          studentId: data.student.id,
+          paymentId,
+          reference: payment?.reference || "Fatura",
+          totalAmount: Number(payment?.total_amount || generated.total_amount || 0),
+          expiresAt: Date.now() + 60_000,
+        };
+        writePortalStorage(paidNoticeStorageKey, notice);
+        window.localStorage.removeItem(paymentIntentStorageKey);
+        setPaidNotice(notice);
+      }
       await reloadData();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Nao foi possivel gerar o PIX.");
@@ -430,8 +549,14 @@ export default function StudentPortalPage() {
 
         <ErrorBanner message={error} />
 
-        {pushChecking ? (
-          <GlassCard className="mt-5 text-center"><div className="mx-auto h-9 w-9 animate-spin rounded-full border-b-2 border-white" /><p className="mt-3 text-sm text-white/60">Verificando notificacoes...</p></GlassCard>
+        {(pushChecking || pushSuccess) ? (
+          <GlassCard className="mt-5 text-center">
+            <div className={`mx-auto grid h-12 w-12 place-items-center rounded-full border transition-all duration-300 ${pushSuccess ? "border-emerald-300 bg-emerald-400 text-black" : "border-white/15 bg-white/8 text-white"}`}>
+              {pushSuccess ? <Check className="h-6 w-6 animate-in zoom-in duration-300" /> : <Loader2 className="h-6 w-6 animate-spin" />}
+            </div>
+            <p className="mt-3 text-sm font-bold text-white/70">{pushSuccess ? "Notificacoes ativadas" : "Validando notificacoes..."}</p>
+            <p className="mt-1 text-xs text-white/40">{pushSuccess ? "Dispositivo salvo com seguranca." : "Aguarde, estamos preparando este aparelho."}</p>
+          </GlassCard>
         ) : pushSupported && !pushEnabled ? (
           <GlassCard className="mt-5">
             <div className="flex items-center gap-4">
@@ -446,7 +571,7 @@ export default function StudentPortalPage() {
                 {pushIssue}
               </div>
             )}
-            <button onClick={subscribePush} className="mt-5 min-h-12 w-full rounded-full bg-white font-black text-black">Permitir notificacoes</button>
+            <button onClick={subscribePush} disabled={pushRequestRef.current} className="mt-5 min-h-12 w-full rounded-full bg-white font-black text-black disabled:opacity-60">Permitir notificacoes</button>
           </GlassCard>
         ) : !pushSupported ? (
           <GlassCard className="mt-5">
@@ -538,6 +663,7 @@ export default function StudentPortalPage() {
 
         {activeTab === "payments" && (
           <SectionShell title="Faturas" subtitle="Somente cobrancas pendentes aparecem aqui.">
+            {paidNotice && <PaidNoticeCard notice={paidNotice} />}
             {pendingPayments.length ? pendingPayments.map((payment) => (
               <article key={payment.id} className="rounded-[28px] border border-white/10 bg-white/10 p-4 backdrop-blur-xl">
                 <div className="flex items-start justify-between gap-3">
@@ -550,7 +676,7 @@ export default function StudentPortalPage() {
                 </div>
                 <button className="mt-4 min-h-12 w-full rounded-full bg-white font-black text-black" disabled={working === payment.id} onClick={() => void generatePix(payment.id)}>Pagar com PIX</button>
               </article>
-            )) : <EmptyDark text="Nenhuma fatura pendente." />}
+            )) : paidNotice ? null : <EmptyDark text="Nenhuma fatura pendente." />}
           </SectionShell>
         )}
 
@@ -632,6 +758,19 @@ function SectionShell({ title, subtitle, children }: { title: string; subtitle: 
 
 function EmptyDark({ text }: { text: string }) {
   return <div className="rounded-[28px] border border-white/10 bg-white/8 p-6 text-center text-sm font-bold text-white/45">{text}</div>;
+}
+
+function PaidNoticeCard({ notice }: { notice: PaidNotice }) {
+  return (
+    <article className="rounded-[30px] border border-emerald-300/25 bg-emerald-400/12 p-5 text-center shadow-[0_22px_70px_rgba(16,185,129,.14)] backdrop-blur-xl">
+      <div className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-emerald-400 text-black shadow-[0_0_38px_rgba(52,211,153,.36)]">
+        <CheckCircle2 className="h-9 w-9" />
+      </div>
+      <h3 className="mt-4 text-2xl font-black tracking-[-.04em]">Sua fatura foi paga</h3>
+      <p className="mt-2 text-sm font-bold text-white/60">{notice.reference} - {formatCurrency(Number(notice.totalAmount))}</p>
+      <p className="mt-3 text-xs leading-5 text-white/45">Confirmacao salva. Em instantes esta area volta para o resumo sem faturas pendentes.</p>
+    </article>
+  );
 }
 
 function ClassCard({ attendance, loadingAction, onAnswer, featured = false }: {

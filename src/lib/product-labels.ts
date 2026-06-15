@@ -133,6 +133,15 @@ export function formatLabelCurrency(value: number) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value || 0);
 }
 
+function tsplText(value: string | number | null | undefined, maxLength = 36) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\x20-\x7E]/g, "")
+    .replace(/"/g, "'")
+    .slice(0, maxLength);
+}
+
 function code128Values(value: string) {
   const safe = value.replace(/[^\x20-\x7E]/g, "").slice(0, 48) || "SEM-CODIGO";
   const values = [...safe].map((char) => char.charCodeAt(0) - 32);
@@ -297,4 +306,38 @@ export function makeLabelPrintDocument(items: ProductLabelPrintItem[], options: 
 </head>
 <body>${labels.join("")}</body>
 </html>`;
+}
+
+export function makeTsplLabelCommands(items: ProductLabelPrintItem[]) {
+  return items.map((item) => {
+    const product = item.product;
+    const code = tsplText(getProductPrintCode(product), 48) || "SEM-CODIGO";
+    const meta = {
+      color: item.meta?.color ?? inferLabelColor(product),
+      size: item.meta?.size ?? inferLabelSize(product),
+    };
+    const variation = [meta.color !== "Variacao" ? meta.color : null, meta.size].filter(Boolean).join(" / ") || product.unit_measure || "Produto";
+    const secondary = product.sku || product.internal_code || product.category || "";
+    const quantity = Math.max(1, Math.min(999, Number(item.quantity) || 1));
+
+    return [
+      "SIZE 40 mm,30 mm",
+      "GAP 2 mm,0 mm",
+      "DIRECTION 1",
+      "REFERENCE 0,0",
+      "CLS",
+      `TEXT 24,18,"2",0,1,1,"${tsplText("Corpo & Evolucao", 24)}"`,
+      `TEXT 250,18,"2",0,1,1,"${tsplText(formatLabelCurrency(product.selling_price), 12)}"`,
+      `TEXT 24,58,"3",0,1,1,"${tsplText(product.name, 32)}"`,
+      `TEXT 24,96,"1",0,1,1,"${tsplText(variation, 24)}"`,
+      `TEXT 184,96,"1",0,1,1,"${tsplText("CODIGO", 12)}"`,
+      `TEXT 24,120,"1",0,1,1,"${tsplText("MANTER ESSA ETIQUETA EM CASO DE TROCA", 42)}"`,
+      `BARCODE 92,142,"128",58,1,0,2,2,"${code}"`,
+      `TEXT 106,206,"1",0,1,1,"${code}"`,
+      `TEXT 24,226,"1",0,1,1,"${tsplText(secondary, 20)}"`,
+      `TEXT 222,226,"1",0,1,1,"${tsplText(variation, 18)}"`,
+      `PRINT 1,${quantity}`,
+      "",
+    ].join("\r\n");
+  }).join("\r\n");
 }
