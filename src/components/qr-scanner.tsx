@@ -49,6 +49,8 @@ export function QrScanner({
   const labeledDescriptorsRef = useRef<faceapi.LabeledFaceDescriptors[]>([]);
   const modelsLoadedRef = useRef(false);
   const fullscreenRequestedRef = useRef(false);
+  const openStartedAtRef = useRef(0);
+  const displayedCheckinsRef = useRef<Set<string>>(new Set());
 
   const stop = useCallback(() => {
     if (frameRef.current) cancelAnimationFrame(frameRef.current);
@@ -143,9 +145,11 @@ export function QrScanner({
 
   useEffect(() => {
     if (!open) return;
+    openStartedAtRef.current = Date.now();
 
     function displayCheckin(payload: any) {
       if (!payload?.status) return;
+      if (payload.id) displayedCheckinsRef.current.add(String(payload.id));
       const manualName = typeof payload?.reason === "string"
         ? payload.reason.match(/^Liberacao manual para (.+?) pela recepcao\./)?.[1]
         : null;
@@ -168,12 +172,25 @@ export function QrScanner({
     }
 
     async function displayCheckinById(id: string) {
+      if (displayedCheckinsRef.current.has(id)) return;
       const { data } = await supabase
         .from("checkins")
         .select("*, student:students(id, full_name, photo_url), enrollment:enrollments(id, matricula_number, status, start_date, end_date, plan:plans(name))")
         .eq("id", id)
         .maybeSingle();
       if (data) displayCheckin(data);
+    }
+
+    async function displayLatestRecentCheckin() {
+      const { data } = await supabase
+        .from("checkins")
+        .select("*, student:students(id, full_name, photo_url), enrollment:enrollments(id, matricula_number, status, start_date, end_date, plan:plans(name))")
+        .order("checked_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!data?.id || displayedCheckinsRef.current.has(data.id)) return;
+      const checkedAt = new Date(data.checked_at).getTime();
+      if (Number.isFinite(checkedAt) && checkedAt >= openStartedAtRef.current - 5000) displayCheckin(data);
     }
 
     const channel = supabase.channel("checkins-camera-realtime")
@@ -186,8 +203,14 @@ export function QrScanner({
         if (id) void displayCheckinById(id);
       })
       .subscribe();
+    const fallbackInterval = window.setInterval(() => {
+      void displayLatestRecentCheckin();
+    }, 3000);
 
-    return () => { supabase.removeChannel(channel); };
+    return () => {
+      window.clearInterval(fallbackInterval);
+      supabase.removeChannel(channel);
+    };
   }, [open]);
 
   // Load Face Models & Students
@@ -394,6 +417,7 @@ export function QrScanner({
               readingRef.current = true;
               const res = await onRead(value);
               if (res) {
+                if (res.id) displayedCheckinsRef.current.add(String(res.id));
                 const isAllowed = res.status === "allowed";
                 setValidationResult({
                   status: isAllowed ? 'allowed' : 'denied',
@@ -513,6 +537,7 @@ export function QrScanner({
       const res = await onRead(detectedFace.id);
       setDetectedFace(null);
       if (res) {
+        if (res.id) displayedCheckinsRef.current.add(String(res.id));
         const isAllowed = res.status === "allowed";
         setValidationResult({
           status: isAllowed ? 'allowed' : 'denied',
@@ -577,22 +602,24 @@ export function QrScanner({
         </div>
       )}
       
-      <div className="absolute top-6 right-6 z-10">
+      <div className="absolute right-6 top-6 z-10">
         <button 
-          className="rounded-full bg-black/60 p-3 text-white backdrop-blur-md transition-colors hover:bg-red-500" 
+          className="grid h-14 w-14 place-items-center rounded-full bg-black/60 text-white backdrop-blur-md transition-colors hover:bg-red-500"
           onClick={close}
           title="Fechar Câmera"
         >
-          <X className="h-8 w-8" />
+          <X className="h-7 w-7" />
         </button>
       </div>
 
       {isReady && !error && !validationResult && !detectedFace && (
-        <div className="absolute left-5 top-6 z-10 max-w-[calc(100%-110px)] rounded-full border border-white/10 bg-black/55 px-4 py-2 text-xs font-bold text-white/80 shadow-2xl backdrop-blur-xl">
-          <span>{loadingMsg}</span>
-          <span className="ml-3 rounded-full bg-white/12 px-2 py-1 text-[10px] uppercase tracking-[.12em] text-white/55">
-            {qrSupported ? "QR ativo" : "Facial ativo"}
-          </span>
+        <div className="absolute left-6 right-[92px] top-6 z-10 flex h-14 items-center">
+          <div className="inline-flex min-h-11 max-w-full items-center gap-3 rounded-full border border-white/10 bg-black/55 px-4 py-2 text-xs font-bold text-white/80 shadow-2xl backdrop-blur-xl">
+            <span className="truncate">{loadingMsg}</span>
+            <span className="shrink-0 rounded-full bg-white/12 px-2 py-1 text-[10px] uppercase tracking-[.12em] text-white/55">
+              {qrSupported ? "QR ativo" : "Facial ativo"}
+            </span>
+          </div>
         </div>
       )}
       

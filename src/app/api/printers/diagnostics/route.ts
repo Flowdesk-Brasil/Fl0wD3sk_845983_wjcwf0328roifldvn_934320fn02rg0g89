@@ -70,8 +70,8 @@ export async function GET() {
 
     if (isGenericText) {
       return NextResponse.json({
-        status: "warning",
-        message: `A ${labelPrinter.name} esta instalada na porta ${labelPrinter.portName}, mas usa o driver "${labelPrinter.driverName}". Esse driver e somente texto e nao imprime etiqueta grafica com SVG/codigo de barras. Troque para o driver grafico da DIABEL/PT260 no Windows.`,
+        status: "ok",
+        message: `A ${labelPrinter.name} esta em modo RAW/texto na porta ${labelPrinter.portName}. O sistema vai enviar TSPL direto pelo spooler do Windows. Se entrar na fila e nao sair etiqueta, a PT260/firmware nao aceitou TSPL e deve usar o fallback grafico pelo driver da fabricante.`,
         printer: labelPrinter,
         printers,
       });
@@ -87,8 +87,8 @@ export async function GET() {
     }
 
     return NextResponse.json({
-      status: "ok",
-      message: `A ${labelPrinter.name} esta instalada em ${labelPrinter.portName} com driver "${labelPrinter.driverName}". Se ainda nao imprimir, limpe a fila e confirme o tamanho 40x30 nas preferencias do driver.`,
+      status: "warning",
+      message: `A ${labelPrinter.name} esta instalada em ${labelPrinter.portName} com driver grafico "${labelPrinter.driverName}". Impressao RAW/TSPL pode nao ser aceita por esse driver. Para direto via API, use driver RAW/Generic Text; para driver grafico, use o fallback navegador com tamanho 40x30 em 100%.`,
       printer: labelPrinter,
       printers,
     });

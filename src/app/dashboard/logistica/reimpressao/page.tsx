@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Barcode, CheckCircle2, Eraser, PackageSearch, Printer, RadioTower, RotateCcw, ScanBarcode, Search, Tag } from "lucide-react";
+import { AlertTriangle, Barcode, CheckCircle2, ClipboardList, Eraser, Layers3, PackageCheck, PackageSearch, Printer, RadioTower, RotateCcw, ScanBarcode, Search, Settings2, Tag, Usb, Zap } from "lucide-react";
 import { getProducts } from "@/lib/api";
 import {
   LABEL_SIZES,
@@ -165,6 +165,7 @@ export default function ReimpressaoEtiquetasPage() {
   }, [groupedProducts, quantities]);
 
   const totalLabels = selectedItems.reduce((total, item) => total + item.quantity, 0);
+  const selectedStock = groupedProducts.reduce((total, product) => total + Number(product.current_stock || 0), 0);
   const previewProduct = selectedItems[0]?.product ?? selectedProduct ?? groupedProducts[0] ?? null;
   const previewMeta = previewProduct ? getLabelProductMeta(previewProduct) : null;
   const previewCode = previewProduct ? getProductPrintCode(previewProduct) : "";
@@ -273,27 +274,69 @@ export default function ReimpressaoEtiquetasPage() {
         title="Reimpressao de Etiquetas"
         description="Busque por codigo de barras, SKU, codigo interno ou nome e imprima etiquetas 40x30 em lote para produtos e variacoes."
         action={
-          <button className="btn btn-primary" type="button" onClick={printDirectLabels} disabled={!totalLabels || directPrinting}>
-            <RadioTower className="h-4 w-4 shrink-0" /> {directPrinting ? "Enviando..." : "Imprimir direto"}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button className="btn btn-secondary" type="button" onClick={checkPrinter}>
+              <Settings2 className="h-4 w-4 shrink-0" /> Validar impressora
+            </button>
+            <button className="btn btn-primary" type="button" onClick={printDirectLabels} disabled={!totalLabels || directPrinting}>
+              <RadioTower className="h-4 w-4 shrink-0" /> {directPrinting ? "Enviando..." : "Imprimir direto"}
+            </button>
+          </div>
         }
       />
 
-      <section className="card overflow-hidden">
+      <section className="overflow-hidden rounded-[28px] border border-[#dbe4f0] bg-[linear-gradient(135deg,#101827,#17233a_58%,#0f63ff)] p-5 text-white shadow-[0_24px_80px_rgba(16,24,39,.18)]">
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-black uppercase tracking-[.14em] text-white/70">
+              <Zap className="h-3.5 w-3.5" /> Operacao de etiquetas
+            </div>
+            <h2 className="mt-4 max-w-3xl text-3xl font-black tracking-[-.05em]">Reimpressao com leitura rapida, variantes inteligentes e fila 40x30.</h2>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-white/62">Bipe o produto, ajuste quantidades por variacao e envie a fila para a PT260. A tabela mostra somente o que existe no cadastro do produto.</p>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
+              <ClipboardList className="h-4 w-4 text-blue-100" />
+              <span className="mt-4 block text-[10px] font-bold uppercase tracking-[.12em] text-white/45">Fila</span>
+              <strong className="mt-1 block text-2xl">{totalLabels}</strong>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
+              <Layers3 className="h-4 w-4 text-blue-100" />
+              <span className="mt-4 block text-[10px] font-bold uppercase tracking-[.12em] text-white/45">Itens</span>
+              <strong className="mt-1 block text-2xl">{groupedProducts.length}</strong>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
+              <PackageCheck className="h-4 w-4 text-blue-100" />
+              <span className="mt-4 block text-[10px] font-bold uppercase tracking-[.12em] text-white/45">Estoque</span>
+              <strong className="mt-1 block text-2xl">{selectedStock}</strong>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="overflow-hidden rounded-[28px] border border-[#dbe4f0] bg-white shadow-[0_18px_60px_rgba(16,24,39,.08)]">
         <div className="card-header">
           <div>
-            <h2>Busca rapida por produto</h2>
-            <p>Use o leitor de codigo de barras ou digite manualmente. O primeiro resultado exato ja fica selecionado.</p>
+            <h2>Central de reimpressao</h2>
+            <p>Busca operacional, selecao de variantes, preview e impressao direta em uma unica tela.</p>
           </div>
           <StatusBadge tone={totalLabels ? "blue" : "gray"}>{totalLabels} etiquetas</StatusBadge>
         </div>
-        <div className="card-body grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid gap-5 bg-[#f6f8fb] p-4 xl:grid-cols-[minmax(0,1fr)_380px] xl:p-5">
           <div className="grid gap-5">
-            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_auto]">
+            <div className="rounded-3xl border border-[#dbe4f0] bg-white p-4 shadow-sm">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[.14em] text-blue-600">Entrada de produto</p>
+                  <h3 className="mt-1 text-base font-black tracking-[-.03em] text-[#172033]">Leitor de barras ou busca manual</h3>
+                </div>
+                <ScanBarcode className="h-5 w-5 text-[#8d97aa]" />
+              </div>
+              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_auto]">
               <label className="relative block min-w-0">
                 <Search className="pointer-events-none absolute left-3.5 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-[#8d97aa]" />
                 <input
-                  className="field w-full pl-10"
+                  className="field h-[52px] w-full rounded-2xl border-[#cfd7e4] bg-[#f8fafc] pl-10 text-base font-semibold"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder="Insira o code bar, SKU ou nome do produto"
@@ -306,6 +349,7 @@ export default function ReimpressaoEtiquetasPage() {
               <button className="btn btn-secondary" type="button" onClick={resetSearch}>
                 <RotateCcw className="h-4 w-4 shrink-0" /> Limpar
               </button>
+              </div>
             </div>
 
             <ErrorBanner message={error} />
@@ -317,7 +361,7 @@ export default function ReimpressaoEtiquetasPage() {
             )}
 
             {!query.trim() ? (
-              <div className="rounded-2xl border border-dashed border-[#cfd7e4] bg-[#f8fafc] p-8 text-center">
+              <div className="rounded-3xl border border-dashed border-[#cfd7e4] bg-white p-10 text-center shadow-sm">
                 <ScanBarcode className="mx-auto h-10 w-10 text-[#8d97aa]" />
                 <h3 className="mt-4 text-sm font-black text-[#172033]">Pronto para bipar o produto</h3>
                 <p className="mx-auto mt-2 max-w-lg text-xs leading-6 text-[#657085]">
@@ -332,7 +376,7 @@ export default function ReimpressaoEtiquetasPage() {
               />
             ) : (
               <>
-                <div className="rounded-2xl border border-[#e3e8f0] bg-[#fbfcfe] p-4">
+                <div className="rounded-3xl border border-[#dbe4f0] bg-white p-4 shadow-sm">
                   <div className="mb-4 flex flex-col justify-between gap-3 md:flex-row md:items-center">
                     <div>
                       <p className="text-[10px] font-bold uppercase tracking-[.12em] text-blue-600">Produto selecionado</p>
@@ -373,7 +417,7 @@ export default function ReimpressaoEtiquetasPage() {
                     <StatusBadge tone="blue">{groupedProducts.length} item(ns)</StatusBadge>
                   </div>
 
-                  <div className="table-wrap rounded-xl border border-[#e3e8f0] bg-white">
+                  <div className="table-wrap rounded-2xl border border-[#dbe4f0] bg-white">
                     <table className="data-table">
                       <thead>
                         {shouldUseSizeMatrix ? (
@@ -461,7 +505,7 @@ export default function ReimpressaoEtiquetasPage() {
           </div>
 
           <aside className="grid content-start gap-4">
-            <div className="rounded-2xl border border-[#e3e8f0] bg-[#101827] p-4 text-white shadow-lg shadow-[#101827]/10">
+            <div className="rounded-[28px] border border-[#101827] bg-[#101827] p-5 text-white shadow-[0_22px_70px_rgba(16,24,39,.22)]">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-[.12em] text-white/45">Fila de impressao</p>
@@ -471,7 +515,7 @@ export default function ReimpressaoEtiquetasPage() {
                   <Printer className="h-5 w-5" />
                 </span>
               </div>
-              <div className="mt-5 grid grid-cols-2 gap-2 text-xs">
+              <div className="mt-5 grid grid-cols-3 gap-2 text-xs">
                 <div className="rounded-xl bg-white/[.07] p-3">
                   <span className="block text-white/45">Produtos</span>
                   <strong className="mt-1 block text-lg">{selectedItems.length}</strong>
@@ -480,9 +524,13 @@ export default function ReimpressaoEtiquetasPage() {
                   <span className="block text-white/45">Modelo</span>
                   <strong className="mt-1 block text-lg">40x30</strong>
                 </div>
+                <div className="rounded-xl bg-white/[.07] p-3">
+                  <span className="block text-white/45">Modo</span>
+                  <strong className="mt-1 block text-lg">RAW</strong>
+                </div>
               </div>
               <button className="btn mt-4 w-full bg-white text-[#101827] hover:bg-blue-50" type="button" onClick={printDirectLabels} disabled={!totalLabels || directPrinting}>
-                <RadioTower className="h-4 w-4 shrink-0" /> {directPrinting ? "Enviando..." : "Imprimir direto PT260"}
+                <Usb className="h-4 w-4 shrink-0" /> {directPrinting ? "Enviando RAW..." : "Enviar RAW para PT260"}
               </button>
               <button className="btn mt-2 w-full border border-white/15 bg-white/[.08] text-white hover:bg-white/[.14]" type="button" onClick={printLabels} disabled={!totalLabels}>
                 <Printer className="h-4 w-4 shrink-0" /> Fallback navegador
@@ -500,7 +548,7 @@ export default function ReimpressaoEtiquetasPage() {
               )}
             </div>
 
-            <div className="rounded-2xl border border-[#e3e8f0] bg-white p-4">
+            <div className="rounded-[28px] border border-[#dbe4f0] bg-white p-5 shadow-sm">
               <div className="mb-4 flex items-center gap-2">
                 <Barcode className="h-4 w-4 text-blue-600" />
                 <h3 className="text-sm font-black text-[#172033]">Preview 40x30</h3>

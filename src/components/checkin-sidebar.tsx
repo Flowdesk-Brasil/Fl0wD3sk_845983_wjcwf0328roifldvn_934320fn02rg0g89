@@ -70,6 +70,7 @@ export function CheckinSidebar() {
   const [open, setOpen] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
   const autoCloseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestSeenIdRef = useRef<string | null>(null);
 
   const clearAutoClose = useCallback(() => {
     if (autoCloseRef.current) {
@@ -152,6 +153,7 @@ export function CheckinSidebar() {
 
   const showCheckin = useCallback(async (checkin: CheckinEvent, shouldAutoClose = true) => {
     if (cameraOpen) return;
+    latestSeenIdRef.current = checkin.id;
     const next = await normalizeCheckin(checkin);
     setRecentCheckin(next);
     setOpen(true);
@@ -168,7 +170,7 @@ export function CheckinSidebar() {
     if (data) void showCheckin(data as CheckinEvent);
   }, [showCheckin]);
 
-  const loadLatest = useCallback(async () => {
+  const loadLatest = useCallback(async (openIfRecent = false) => {
     const { data } = await supabase
       .from("checkins")
       .select("*, student:students(id, full_name, photo_url), enrollment:enrollments(id, matricula_number, status, start_date, end_date, plan:plans(name))")
@@ -178,8 +180,18 @@ export function CheckinSidebar() {
 
     if (!data) return;
 
-    setRecentCheckin(await normalizeCheckin(data as CheckinEvent));
-  }, [normalizeCheckin]);
+    const checkin = data as CheckinEvent;
+    if (openIfRecent && checkin.id !== latestSeenIdRef.current) {
+      const happenedAt = new Date(checkin.checked_at).getTime();
+      if (Number.isFinite(happenedAt) && Date.now() - happenedAt < 15_000) {
+        await showCheckin(checkin);
+        return;
+      }
+    }
+
+    latestSeenIdRef.current = checkin.id;
+    setRecentCheckin(await normalizeCheckin(checkin));
+  }, [normalizeCheckin, showCheckin]);
 
   useEffect(() => {
     void loadLatest();
@@ -209,9 +221,13 @@ export function CheckinSidebar() {
 
     window.addEventListener("checkin:created", handleLocalCheckin);
     window.addEventListener("checkin:camera-state", handleCameraState);
+    const fallbackInterval = window.setInterval(() => {
+      void loadLatest(true);
+    }, 3500);
 
     return () => {
       clearAutoClose();
+      window.clearInterval(fallbackInterval);
       window.removeEventListener("checkin:created", handleLocalCheckin);
       window.removeEventListener("checkin:camera-state", handleCameraState);
       supabase.removeChannel(checkinChannel);

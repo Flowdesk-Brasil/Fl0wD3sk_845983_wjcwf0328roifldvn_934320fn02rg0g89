@@ -43,24 +43,78 @@ async function loadWindowsPrinters() {
   return (Array.isArray(parsed) ? parsed : [parsed]).map(normalizePrinter);
 }
 
-async function sendRawFileToPrinter(filePath: string, printerName: string, portName?: string) {
-  const printExe = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "print.exe");
-  const attempts = [
-    { target: printerName, args: [`/D:${printerName}`, filePath] },
-    ...(portName ? [{ target: portName, args: [`/D:${portName}`, filePath] }] : []),
-  ];
+async function sendRawFileToPrinter(filePath: string, printerName: string) {
+  const script = `
+param([string]$PrinterName, [string]$FilePath)
+$source = @"
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
 
-  const errors: string[] = [];
-  for (const attempt of attempts) {
-    try {
-      const { stdout, stderr } = await execFileAsync(printExe, attempt.args, { windowsHide: true, timeout: 15000 });
-      return { target: attempt.target, stdout, stderr };
-    } catch (error: any) {
-      errors.push(`${attempt.target}: ${error?.stderr || error?.stdout || error?.message || "falha desconhecida"}`);
-    }
+public class RawPrinterHelper {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+  public class DOCINFOA {
+    [MarshalAs(UnmanagedType.LPStr)] public string pDocName;
+    [MarshalAs(UnmanagedType.LPStr)] public string pOutputFile;
+    [MarshalAs(UnmanagedType.LPStr)] public string pDataType;
   }
 
-  throw new Error(errors.join(" | "));
+  [DllImport("winspool.Drv", EntryPoint="OpenPrinterA", SetLastError=true, CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+  public static extern bool OpenPrinter(string szPrinter, out IntPtr hPrinter, IntPtr pd);
+  [DllImport("winspool.Drv", EntryPoint="ClosePrinter", SetLastError=true, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+  public static extern bool ClosePrinter(IntPtr hPrinter);
+  [DllImport("winspool.Drv", EntryPoint="StartDocPrinterA", SetLastError=true, CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+  public static extern bool StartDocPrinter(IntPtr hPrinter, Int32 level, [In, MarshalAs(UnmanagedType.LPStruct)] DOCINFOA di);
+  [DllImport("winspool.Drv", EntryPoint="EndDocPrinter", SetLastError=true, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+  public static extern bool EndDocPrinter(IntPtr hPrinter);
+  [DllImport("winspool.Drv", EntryPoint="StartPagePrinter", SetLastError=true, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+  public static extern bool StartPagePrinter(IntPtr hPrinter);
+  [DllImport("winspool.Drv", EntryPoint="EndPagePrinter", SetLastError=true, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+  public static extern bool EndPagePrinter(IntPtr hPrinter);
+  [DllImport("winspool.Drv", EntryPoint="WritePrinter", SetLastError=true, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+  public static extern bool WritePrinter(IntPtr hPrinter, IntPtr pBytes, Int32 dwCount, out Int32 dwWritten);
+
+  public static void SendFile(string printerName, string fileName) {
+    IntPtr hPrinter;
+    if (!OpenPrinter(printerName.Normalize(), out hPrinter, IntPtr.Zero)) {
+      throw new Exception("OpenPrinter falhou: " + Marshal.GetLastWin32Error());
+    }
+
+    try {
+      byte[] bytes = File.ReadAllBytes(fileName);
+      IntPtr unmanagedBytes = Marshal.AllocCoTaskMem(bytes.Length);
+      Marshal.Copy(bytes, 0, unmanagedBytes, bytes.Length);
+      try {
+        DOCINFOA di = new DOCINFOA();
+        di.pDocName = "Corpo e Evolucao Etiqueta 40x30";
+        di.pDataType = "RAW";
+        if (!StartDocPrinter(hPrinter, 1, di)) throw new Exception("StartDocPrinter falhou: " + Marshal.GetLastWin32Error());
+        if (!StartPagePrinter(hPrinter)) throw new Exception("StartPagePrinter falhou: " + Marshal.GetLastWin32Error());
+        int written;
+        if (!WritePrinter(hPrinter, unmanagedBytes, bytes.Length, out written)) throw new Exception("WritePrinter falhou: " + Marshal.GetLastWin32Error());
+        if (written != bytes.Length) throw new Exception("RAW incompleto: " + written + " de " + bytes.Length + " bytes.");
+        EndPagePrinter(hPrinter);
+        EndDocPrinter(hPrinter);
+      } finally {
+        Marshal.FreeCoTaskMem(unmanagedBytes);
+      }
+    } finally {
+      ClosePrinter(hPrinter);
+    }
+  }
+}
+"@
+Add-Type -TypeDefinition $source -Language CSharp
+[RawPrinterHelper]::SendFile($PrinterName, $FilePath)
+Write-Output "RAW_OK"
+  `;
+
+  const { stdout, stderr } = await execFileAsync(
+    "powershell.exe",
+    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script, printerName, filePath],
+    { windowsHide: true, timeout: 20000 },
+  );
+  return { target: printerName, stdout, stderr };
 }
 
 export async function POST(req: Request) {
@@ -119,7 +173,7 @@ export async function POST(req: Request) {
     tempFile = path.join(tmpdir(), `corpo-evolucao-label-${randomUUID()}.prn`);
     await writeFile(tempFile, tspl, "ascii");
 
-    const result = await sendRawFileToPrinter(tempFile, selectedPrinter.name, selectedPrinter.portName);
+    const result = await sendRawFileToPrinter(tempFile, selectedPrinter.name);
 
     return NextResponse.json({
       success: true,
@@ -127,7 +181,7 @@ export async function POST(req: Request) {
       printer: selectedPrinter,
       target: result.target,
       labels: items.reduce((total, item) => total + item.quantity, 0),
-      message: `Comando TSPL enviado para ${selectedPrinter.name}.`,
+      message: `RAW TSPL enviado para ${selectedPrinter.name}. Se a fila receber e nao imprimir, a PT260/driver nao aceitou TSPL direto e deve usar o fallback grafico.`,
       stdout: result.stdout,
       stderr: result.stderr,
     });
