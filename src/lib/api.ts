@@ -109,6 +109,38 @@ export async function updateStudent(id: string, values: Partial<Student>) {
   return update("students", id, { ...values, updated_at: new Date().toISOString() });
 }
 
+async function retirePreviousActiveEnrollments(studentId: string) {
+  if (!studentId) return;
+
+  if (!shouldUseLocalData()) {
+    const { data: activeEnrollments } = await supabase
+      .from("enrollments")
+      .select("id")
+      .eq("student_id", studentId)
+      .eq("status", "active");
+    const ids = (activeEnrollments ?? []).map((item) => item.id);
+    if (!ids.length) return;
+
+    await supabase.from("enrollments").update({ status: "cancelled" }).in("id", ids);
+    await supabase
+      .from("payments")
+      .update({ status: "cancelled", method: null, paid_at: null })
+      .in("enrollment_id", ids)
+      .in("status", ["pending", "expired"]);
+    notifyDbChange();
+    return;
+  }
+
+  const previous = localDB.get("enrollments").filter((item) => item.student_id === studentId && item.status === "active");
+  for (const enrollment of previous) {
+    localDB.update("enrollments", enrollment.id, { status: "cancelled" });
+    for (const payment of localDB.get("payments").filter((item) => item.enrollment_id === enrollment.id && ["pending", "expired"].includes(item.status))) {
+      localDB.update("payments", payment.id, { status: "cancelled", method: null, paid_at: null });
+    }
+  }
+  notifyDbChange();
+}
+
 export async function releaseStudentPortal(id: string) {
   if (shouldUseLocalData()) return onboardLocalStudent(id);
 
@@ -295,6 +327,7 @@ export async function createEnrollment(values: {
   }
 
   if (!plan) throw new Error("Plano nÃ£o encontrado.");
+  await retirePreviousActiveEnrollments(values.student_id);
   const end = new Date(`${values.start_date}T12:00:00`);
   end.setDate(end.getDate() + plan.duration_days);
   const plain = await insert("enrollments", {
@@ -331,6 +364,12 @@ export async function createEnrollment(values: {
 }
 
 export async function updateEnrollmentStatus(id: string, status: LocalTables["enrollments"]["status"]) {
+  const current = shouldUseLocalData()
+    ? localDB.find("enrollments", id)
+    : ((await supabase.from("enrollments").select("student_id").eq("id", id).maybeSingle()).data as { student_id?: string } | null);
+  if (status === "active" && current?.student_id) {
+    await retirePreviousActiveEnrollments(current.student_id);
+  }
   return update("enrollments", id, { status });
 }
 
@@ -582,6 +621,47 @@ function withManualStudentName<T extends Checkin & { student?: any }>(checkin: T
   };
 }
 
+function resolveLocalCurrentEnrollment(studentId: string) {
+  const today = todayInBrasilia();
+  const active = localDB
+    .get("enrollments")
+    .filter((item) => item.student_id === studentId && item.status === "active");
+
+  for (const enrollment of active.filter((item) => item.end_date && item.end_date < today)) {
+    localDB.update("enrollments", enrollment.id, { status: "expired" });
+  }
+
+  const current = active
+    .filter((item) => !item.end_date || item.end_date >= today)
+    .sort((a, b) => {
+      const dateCompare = b.start_date.localeCompare(a.start_date);
+      return dateCompare || b.created_at.localeCompare(a.created_at);
+    })[0] ?? null;
+
+  for (const enrollment of active.filter((item) => item.id !== current?.id)) {
+    localDB.update("enrollments", enrollment.id, { status: "cancelled" });
+    for (const payment of localDB.get("payments").filter((item) => item.enrollment_id === enrollment.id && ["pending", "expired"].includes(item.status))) {
+      localDB.update("payments", payment.id, { status: "cancelled", method: null, paid_at: null });
+    }
+  }
+
+  return current;
+}
+
+function resolveLocalCurrentPayment(enrollmentId: string) {
+  const score = (status: string) => status === "paid" ? 3 : status === "pending" ? 2 : status === "expired" ? 1 : 0;
+  const rows = localDB
+    .get("payments")
+    .filter((item) => item.enrollment_id === enrollmentId)
+    .sort((a, b) => {
+      const aDate = `${a.due_date || ""}|${a.paid_at || ""}|${a.created_at || ""}`;
+      const bDate = `${b.due_date || ""}|${b.paid_at || ""}|${b.created_at || ""}`;
+      return bDate.localeCompare(aDate) || score(b.status) - score(a.status);
+    });
+
+  return rows.filter((item) => ["paid", "pending", "expired"].includes(item.status))[0] ?? rows[0] ?? null;
+}
+
 export async function processCheckin(code: string): Promise<Checkin & { student?: Student | null; duplicate?: boolean; enrollment?: Enrollment | null; payment?: Payment | null }> {
   if (!shouldUseLocalData()) {
     const { data: session } = await supabase.auth.getSession();
@@ -601,15 +681,8 @@ export async function processCheckin(code: string): Promise<Checkin & { student?
   }
   const students = await getStudents();
   const student = students.find((item) => item.qr_code === code.trim() || item.id === code.trim());
-  const enrollment = student
-    ? (await getEnrollments()).find((item) => item.student_id === student.id && item.status === "active")
-    : null;
-  const payments = student && enrollment ? await getPayments() : [];
-  const payment = enrollment
-    ? payments
-      .filter((item) => item.enrollment_id === enrollment.id)
-      .sort((a, b) => b.due_date.localeCompare(a.due_date))[0] ?? null
-    : null;
+  const enrollment = student ? resolveLocalCurrentEnrollment(student.id) : null;
+  const payment = enrollment ? resolveLocalCurrentPayment(enrollment.id) : null;
   const today = todayInBrasilia(); // Data no fuso de BrasÃ­lia
   const enrollmentExpired = Boolean(enrollment?.end_date && enrollment.end_date < today);
   const effectivePayment = payment && payment.status === "pending" && payment.due_date < today

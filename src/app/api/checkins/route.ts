@@ -11,6 +11,73 @@ function todayDate() {
   return todayInBrasilia(); // Data no fuso de Brasília (UTC-3)
 }
 
+function paymentPriority(status?: string | null) {
+  if (status === "paid") return 3;
+  if (status === "pending") return 2;
+  if (status === "expired") return 1;
+  return 0;
+}
+
+function newestTimestamp(row: { due_date?: string | null; created_at?: string | null; paid_at?: string | null }) {
+  return `${row.due_date || ""}|${row.paid_at || ""}|${row.created_at || ""}`;
+}
+
+async function resolveCurrentEnrollment(admin: any, studentId: string) {
+  const today = todayDate();
+  const { data: enrollments } = await admin
+    .from("enrollments")
+    .select("*, plan:plans(id, name, weekly_limit, duration_days, price)")
+    .eq("student_id", studentId)
+    .in("status", ["active", "suspended"])
+    .order("created_at", { ascending: false });
+
+  const rows = enrollments ?? [];
+  const expired = rows.filter((item: any) => item.status === "active" && item.end_date && item.end_date < today);
+  if (expired.length) {
+    await admin.from("enrollments").update({ status: "expired" }).in("id", expired.map((item: any) => item.id));
+  }
+
+  const current = rows
+    .filter((item: any) => item.status === "active" && (!item.end_date || item.end_date >= today))
+    .sort((a: any, b: any) => {
+      const dateCompare = String(b.start_date || "").localeCompare(String(a.start_date || ""));
+      return dateCompare || String(b.created_at || "").localeCompare(String(a.created_at || ""));
+    })[0] ?? null;
+
+  const staleActiveIds = rows
+    .filter((item: any) => item.status === "active" && item.id !== current?.id)
+    .map((item: any) => item.id);
+  if (staleActiveIds.length) {
+    await admin.from("enrollments").update({ status: "cancelled" }).in("id", staleActiveIds);
+    await admin
+      .from("payments")
+      .update({ status: "cancelled", method: null, paid_at: null })
+      .in("enrollment_id", staleActiveIds)
+      .in("status", ["pending", "expired"]);
+  }
+
+  return current;
+}
+
+async function resolveCurrentPayment(admin: any, enrollmentId: string) {
+  const { data: payments } = await admin
+    .from("payments")
+    .select("*")
+    .eq("enrollment_id", enrollmentId)
+    .order("due_date", { ascending: false })
+    .order("created_at", { ascending: false });
+
+  const rows = payments ?? [];
+  const operational = rows
+    .filter((item: any) => ["paid", "pending", "expired"].includes(String(item.status)))
+    .sort((a: any, b: any) => {
+      const dateCompare = newestTimestamp(b).localeCompare(newestTimestamp(a));
+      return dateCompare || paymentPriority(b.status) - paymentPriority(a.status);
+    });
+
+  return operational[0] ?? rows[0] ?? null;
+}
+
 export async function POST(request: Request) {
   try {
     const { admin, profile: operator } = await requireRole(request, ["admin", "receptionist", "professor"]);
@@ -63,20 +130,8 @@ export async function POST(request: Request) {
     if (!studentQuery.data && isUuid(code)) studentQuery = await admin.from("students").select("*").eq("id", code).maybeSingle();
     const student = studentQuery.data;
 
-    const { data: enrollment } = student ? await admin.from("enrollments")
-      .select("*, plan:plans(id, name, weekly_limit, duration_days, price)")
-      .eq("student_id", student.id)
-      .eq("status", "active")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle() : { data: null };
-
-    const { data: payment } = enrollment ? await admin.from("payments")
-      .select("*")
-      .eq("enrollment_id", enrollment.id)
-      .order("due_date", { ascending: false })
-      .limit(1)
-      .maybeSingle() : { data: null };
+    const enrollment = student ? await resolveCurrentEnrollment(admin, student.id) : null;
+    const payment = enrollment ? await resolveCurrentPayment(admin, enrollment.id) : null;
 
     const today = todayDate();
     const enrollmentExpired = Boolean(enrollment?.end_date && enrollment.end_date < today);
