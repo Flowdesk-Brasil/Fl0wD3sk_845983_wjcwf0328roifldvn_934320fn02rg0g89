@@ -136,6 +136,7 @@ export default function ReimpressaoEtiquetasPage() {
   const [error, setError] = useState<string | null>(null);
   const [printerInfo, setPrinterInfo] = useState<{ status: "ok" | "warning" | "unknown"; message: string } | null>(null);
   const [directPrinting, setDirectPrinting] = useState(false);
+  const [testingMode, setTestingMode] = useState<number | null>(null);
 
   useEffect(() => {
     getProducts()
@@ -333,6 +334,36 @@ export default function ReimpressaoEtiquetasPage() {
           ? `${err.message} Rode npm run pt260:bridge no Windows da PT260 para liberar diagnostico e impressao direta pela Vercel.`
           : "Nao foi possivel validar a impressora. Rode npm run pt260:bridge no Windows da PT260.",
       });
+    }
+  }
+
+  async function sendPrinterProtocolTest(mode: number) {
+    setError(null);
+    setMessage(null);
+    setTestingMode(mode);
+    try {
+      const response = await fetch(`${LOCAL_PT260_BRIDGE_URL}/test-print`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
+      });
+      const payload = await readJsonPayload<PrintApiPayload>(response);
+
+      if (!response.ok || !payload.success) {
+        throw new Error(payload.error ?? `Nao foi possivel enviar o teste ${mode} para a PT260.`);
+      }
+
+      setMessage(payload.message ?? `Teste ${mode} enviado para a PT260.`);
+      setPrinterInfo({
+        status: "ok",
+        message: `Teste ${mode} entregue para a ponte local. Veja qual etiqueta saiu correta para fixarmos o protocolo definitivo.`,
+      });
+    } catch (err) {
+      setError(err instanceof Error
+        ? `${err.message} Rode npm run pt260:bridge no Windows da etiquetadora e tente novamente.`
+        : "Nao foi possivel testar a PT260 pela ponte local.");
+    } finally {
+      setTestingMode(null);
     }
   }
 
@@ -612,6 +643,19 @@ export default function ReimpressaoEtiquetasPage() {
               <div className="mt-3 rounded-xl border border-white/10 bg-white/[.06] p-3 text-xs leading-5 text-white/65">
                 <strong className="block text-white">Ponte local PT260</strong>
                 Em Vercel, rode <code className="rounded bg-white/10 px-1 py-0.5 text-white">npm run pt260:bridge</code> no Windows da etiquetadora. O painel envia para <code className="rounded bg-white/10 px-1 py-0.5 text-white">127.0.0.1:4217</code> e a ponte manda RAW para a PT260.
+                <div className="mt-3 grid grid-cols-4 gap-1.5">
+                  {[1, 2, 3, 4].map((mode) => (
+                    <button
+                      key={mode}
+                      className="rounded-lg border border-white/10 bg-white/[.08] px-2 py-1.5 text-[11px] font-black text-white hover:bg-white/[.16] disabled:opacity-55"
+                      type="button"
+                      onClick={() => sendPrinterProtocolTest(mode)}
+                      disabled={testingMode !== null}
+                    >
+                      {testingMode === mode ? "..." : `Teste ${mode}`}
+                    </button>
+                  ))}
+                </div>
               </div>
               {printerInfo && (
                 <div className={cn(

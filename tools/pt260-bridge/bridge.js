@@ -56,6 +56,32 @@ function runPowerShell(script, args = [], timeout = 12000) {
   });
 }
 
+async function runPowerShellFile(script, args = [], timeout = 25000) {
+  const scriptFile = path.join(os.tmpdir(), `corpo-evolucao-pt260-${randomUUID()}.ps1`);
+  await writeFile(scriptFile, script, "utf8");
+
+  try {
+    return await new Promise((resolve, reject) => {
+      execFile(
+        "powershell.exe",
+        ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptFile, ...args],
+        { windowsHide: true, timeout },
+        (error, stdout, stderr) => {
+          if (error) {
+            error.stdout = stdout;
+            error.stderr = stderr;
+            reject(error);
+            return;
+          }
+          resolve({ stdout, stderr });
+        },
+      );
+    });
+  } finally {
+    unlink(scriptFile).catch(() => {});
+  }
+}
+
 function normalizePrinter(printer) {
   return {
     name: printer.name || printer.Name || "",
@@ -204,7 +230,78 @@ Add-Type -TypeDefinition $source -Language CSharp
 [RawPrinterHelper]::SendFile($PrinterName, $FilePath)
 Write-Output "RAW_OK"
   `;
-  return runPowerShell(script, [printerName, filePath], 25000);
+  return runPowerShellFile(script, ["-PrinterName", printerName, "-FilePath", filePath], 25000);
+}
+
+function makeProtocolTestCommands(mode) {
+  if (mode === 2) {
+    return [
+      "SIZE 40 mm,30 mm",
+      "GAP 2 mm,0 mm",
+      "DENSITY 8",
+      "SPEED 2",
+      "DIRECTION 1",
+      "CLS",
+      'TEXT 24,32,"3",0,1,1,"TESTE 2 TSPL LITE"',
+      'TEXT 24,78,"2",0,1,1,"PT260 CORPO EVOLUCAO"',
+      'BARCODE 52,126,"128",68,1,0,2,2,"260000000002"',
+      "PRINT 1,1",
+      "",
+    ].join("\r\n");
+  }
+
+  if (mode === 3) {
+    return [
+      "^XA",
+      "^PW320",
+      "^LL240",
+      "^CI28",
+      "^CF0,28",
+      "^FO20,24^FDTESTE 3 ZPL^FS",
+      "^CF0,20",
+      "^FO20,62^FDPT260 CORPO EVOLUCAO^FS",
+      "^BY2,2,70",
+      "^FO24,102^BCN,76,Y,N,N^FD260000000003^FS",
+      "^XZ",
+      "",
+    ].join("\r\n");
+  }
+
+  if (mode === 4) {
+    return [
+      "N",
+      "q320",
+      "Q240,24",
+      'A20,24,0,4,1,1,N,"TESTE 4 EPL"',
+      'A20,64,0,3,1,1,N,"PT260 CORPO EVOLUCAO"',
+      'B24,104,0,1,2,4,76,B,"260000000004"',
+      "P1",
+      "",
+    ].join("\r\n");
+  }
+
+  return [
+    "SIZE 40 mm,30 mm",
+    "GAP 2 mm,0 mm",
+    "DIRECTION 1",
+    "REFERENCE 0,0",
+    "CLS",
+    'TEXT 24,32,"3",0,1,1,"TESTE 1 TSPL"',
+    'TEXT 24,78,"2",0,1,1,"PT260 CORPO EVOLUCAO"',
+    'BARCODE 52,126,"128",68,1,0,2,2,"260000000001"',
+    "PRINT 1,1",
+    "",
+  ].join("\r\n");
+}
+
+async function printRawCommands(commands, printerName, prefix = "corpo-evolucao-pt260") {
+  const tempFile = path.join(os.tmpdir(), `${prefix}-${randomUUID()}.prn`);
+  await writeFile(tempFile, commands, "ascii");
+  try {
+    return await sendRawFileToPrinter(tempFile, printerName);
+  } finally {
+    unlink(tempFile).catch(() => {});
+  }
 }
 
 async function readJsonBody(req) {
@@ -329,6 +426,78 @@ async function handlePrint(req, res) {
   }
 }
 
+async function handleTestPrint(req, res) {
+  if (process.platform !== "win32") {
+    json(res, 400, {
+      success: false,
+      code: "unsupported_platform",
+      error: "A ponte PT260 precisa rodar no Windows onde a etiquetadora esta instalada.",
+    });
+    return;
+  }
+
+  try {
+    const body = await readJsonBody(req);
+    const mode = Math.max(1, Math.min(4, Number(body.mode) || 1));
+    const printers = await loadPrinters();
+    const selectedPrinter = pickPrinter(printers, body.printerName);
+
+    if (!selectedPrinter) {
+      json(res, 404, {
+        success: false,
+        error: "Nao encontrei a PT260/DIABEL instalada neste Windows.",
+        printers,
+      });
+      return;
+    }
+
+    const result = await printRawCommands(makeProtocolTestCommands(mode), selectedPrinter.name, `corpo-evolucao-pt260-teste-${mode}`);
+    json(res, 200, {
+      success: true,
+      mode,
+      printer: selectedPrinter,
+      message: `Teste ${mode} enviado para ${selectedPrinter.name}.`,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    });
+  } catch (error) {
+    json(res, 500, {
+      success: false,
+      error: error && error.message ? error.message : "Falha ao enviar teste para a PT260.",
+      stdout: error && error.stdout ? error.stdout : undefined,
+      stderr: error && error.stderr ? error.stderr : undefined,
+    });
+  }
+}
+
+async function runCliProtocolTest() {
+  if (process.platform !== "win32") {
+    throw new Error("Os testes da PT260 precisam rodar no Windows onde a etiquetadora esta instalada.");
+  }
+
+  const testArgIndex = process.argv.indexOf("--test");
+  const rawMode = testArgIndex >= 0 ? process.argv[testArgIndex + 1] : "1";
+  const modes = rawMode === "all" ? [1, 2, 3, 4] : [Math.max(1, Math.min(4, Number(rawMode) || 1))];
+  const printers = await loadPrinters();
+  const printerArgIndex = process.argv.indexOf("--printer");
+  const printerName = printerArgIndex >= 0 ? process.argv[printerArgIndex + 1] : undefined;
+  const selectedPrinter = pickPrinter(printers, printerName);
+
+  if (!selectedPrinter) {
+    console.error("[pt260-bridge] Nenhuma PT260/DIABEL encontrada.");
+    console.error(JSON.stringify(printers, null, 2));
+    process.exitCode = 1;
+    return;
+  }
+
+  console.log(`[pt260-bridge] usando impressora: ${selectedPrinter.name} (${selectedPrinter.portName})`);
+  for (const mode of modes) {
+    console.log(`[pt260-bridge] enviando teste ${mode}...`);
+    const result = await printRawCommands(makeProtocolTestCommands(mode), selectedPrinter.name, `corpo-evolucao-pt260-teste-${mode}`);
+    console.log(`[pt260-bridge] teste ${mode} enviado. ${String(result.stdout || "").trim()}`);
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     if (req.method === "OPTIONS") {
@@ -360,9 +529,14 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && url.pathname === "/test-print") {
+      await handleTestPrint(req, res);
+      return;
+    }
+
     json(res, 404, {
       ok: false,
-      error: "Endpoint inexistente. Use GET /health, GET /printers ou POST /print.",
+      error: "Endpoint inexistente. Use GET /health, GET /printers, POST /print ou POST /test-print.",
     });
   } catch (error) {
     json(res, 500, {
@@ -372,7 +546,17 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, HOST, () => {
-  console.log(`[pt260-bridge] online em http://${HOST}:${PORT}`);
-  console.log("[pt260-bridge] endpoints: GET /health, GET /printers, POST /print");
-});
+if (process.argv.includes("--test")) {
+  runCliProtocolTest().catch((error) => {
+    console.error(error && error.message ? error.message : error);
+    if (error && error.stdout) console.error(error.stdout);
+    if (error && error.stderr) console.error(error.stderr);
+    process.exitCode = 1;
+  });
+} else {
+  server.listen(PORT, HOST, () => {
+    console.log(`[pt260-bridge] online em http://${HOST}:${PORT}`);
+    console.log("[pt260-bridge] endpoints: GET /health, GET /printers, POST /print, POST /test-print");
+    console.log("[pt260-bridge] teste local: node tools/pt260-bridge/bridge.js --test all");
+  });
+}

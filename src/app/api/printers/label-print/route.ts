@@ -43,6 +43,22 @@ async function loadWindowsPrinters() {
   return (Array.isArray(parsed) ? parsed : [parsed]).map(normalizePrinter);
 }
 
+async function runPowerShellFile(script: string, args: string[], timeout = 20000) {
+  const scriptFile = path.join(tmpdir(), `corpo-evolucao-printer-${randomUUID()}.ps1`);
+  await writeFile(scriptFile, script, "utf8");
+
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      "powershell.exe",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptFile, ...args],
+      { windowsHide: true, timeout },
+    );
+    return { stdout, stderr };
+  } finally {
+    await unlink(scriptFile).catch(() => {});
+  }
+}
+
 async function sendRawFileToPrinter(filePath: string, printerName: string) {
   const script = `
 param([string]$PrinterName, [string]$FilePath)
@@ -109,11 +125,7 @@ Add-Type -TypeDefinition $source -Language CSharp
 Write-Output "RAW_OK"
   `;
 
-  const { stdout, stderr } = await execFileAsync(
-    "powershell.exe",
-    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script, printerName, filePath],
-    { windowsHide: true, timeout: 20000 },
-  );
+  const { stdout, stderr } = await runPowerShellFile(script, ["-PrinterName", printerName, "-FilePath", filePath], 20000);
   return { target: printerName, stdout, stderr };
 }
 
