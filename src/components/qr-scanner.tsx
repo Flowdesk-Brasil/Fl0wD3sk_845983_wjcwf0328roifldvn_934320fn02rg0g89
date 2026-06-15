@@ -78,12 +78,17 @@ export function QrScanner({
   useEffect(() => { openRef.current = open; }, [open]);
   const interruptedRef = useRef(false);
 
+  const requestKioskFullscreen = useCallback(() => {
+    if (typeof document === "undefined" || document.fullscreenElement) return;
+    void document.documentElement.requestFullscreen?.()
+      .then(() => { fullscreenRequestedRef.current = true; })
+      .catch(() => { fullscreenRequestedRef.current = false; });
+  }, []);
+
   useEffect(() => {
     window.dispatchEvent(new CustomEvent("checkin:camera-state", { detail: { open } }));
     if (open && !document.fullscreenElement) {
-      void document.documentElement.requestFullscreen?.()
-        .then(() => { fullscreenRequestedRef.current = true; })
-        .catch(() => { fullscreenRequestedRef.current = false; });
+      requestKioskFullscreen();
     }
     return () => {
       window.dispatchEvent(new CustomEvent("checkin:camera-state", { detail: { open: false } }));
@@ -92,7 +97,7 @@ export function QrScanner({
         fullscreenRequestedRef.current = false;
       }
     };
-  }, [open]);
+  }, [open, requestKioskFullscreen]);
 
   // Auto-abrir após reload se solicitado
   useEffect(() => {
@@ -171,7 +176,7 @@ export function QrScanner({
       if (data) displayCheckin(data);
     }
 
-    const channel = supabase.channel("checkins-realtime")
+    const channel = supabase.channel("checkins-camera-realtime")
       .on("broadcast", { event: "CHECKIN_CREATED" }, ({ payload }) => {
         if (payload?.sourceDeviceId === getDeviceId()) return;
         displayCheckin(payload);
@@ -538,6 +543,7 @@ export function QrScanner({
         setError(null);
         setValidationResult(null);
         setDetectedFace(null);
+        requestKioskFullscreen();
         setOpen(true);
       }}>
         <Camera className="h-4 w-4" /> Abrir câmera

@@ -184,7 +184,7 @@ export function CheckinSidebar() {
   useEffect(() => {
     void loadLatest();
 
-    const checkinChannel = supabase.channel("checkins-realtime")
+    const checkinChannel = supabase.channel("checkins-panel-realtime")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "checkins" }, (payload) => {
         const checkin = payload.new as CheckinEvent;
         if (checkin?.id) void loadCheckinById(checkin.id);

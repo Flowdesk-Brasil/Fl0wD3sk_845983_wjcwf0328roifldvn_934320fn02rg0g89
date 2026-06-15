@@ -727,19 +727,24 @@ async function notifyCheckinCreated(checkin: Checkin & { student?: Student | { i
   const detail = { ...checkin, sourceDeviceId: getDeviceId() };
   window.dispatchEvent(new CustomEvent("checkin:created", { detail }));
 
-  const channel = supabase.channel("checkins-realtime", { config: { broadcast: { self: false } } });
-  await new Promise<void>((resolve) => {
-    const timeout = window.setTimeout(resolve, 1500);
+  await Promise.all(["checkins-panel-realtime", "checkins-camera-realtime", "checkins-realtime"].map((channelName) => new Promise<void>((resolve) => {
+    const channel = supabase.channel(channelName, { config: { broadcast: { self: false } } });
+    const timeout = window.setTimeout(() => {
+      void supabase.removeChannel(channel);
+      resolve();
+    }, 1500);
+
     channel.subscribe((status) => {
       if (status !== "SUBSCRIBED") return;
       void channel.send({ type: "broadcast", event: "CHECKIN_CREATED", payload: detail })
+        .catch(() => {})
         .finally(() => {
           window.clearTimeout(timeout);
+          window.setTimeout(() => supabase.removeChannel(channel), 800);
           resolve();
         });
     });
-  });
-  window.setTimeout(() => supabase.removeChannel(channel), 800);
+  })));
 }
 export async function getContracts(): Promise<Contract[]> {
   if (!shouldUseLocalData()) {
