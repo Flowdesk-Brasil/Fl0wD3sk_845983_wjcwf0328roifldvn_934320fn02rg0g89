@@ -15,14 +15,34 @@
 const http = require("node:http");
 const { execFile } = require("node:child_process");
 const { randomUUID } = require("node:crypto");
-const { writeFile, unlink } = require("node:fs/promises");
+const { access, readFile, writeFile, unlink, rm } = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 
 const PORT = Number(process.env.PT260_BRIDGE_PORT || 4217);
 const HOST = process.env.PT260_BRIDGE_HOST || "0.0.0.0";
 const PRINTER_PATTERN = /pt\s*260|pt260|diabel/i;
-const VERSION = "1.2.0";
+const VERSION = "1.3.0";
+const LABEL_WIDTH_PX = 480;
+const LABEL_HEIGHT_PX = 360;
+const PUBLIC_DIR = path.resolve(process.cwd(), "public");
+const LABEL_TEMPLATE_PATH = path.join(PUBLIC_DIR, "Etiq-model.svg");
+const LABEL_LOGO_PATH = path.join(PUBLIC_DIR, "imagotipo.svg");
+
+const CODE_128_PATTERNS = [
+  "212222", "222122", "222221", "121223", "121322", "131222", "122213", "122312", "132212", "221213",
+  "221312", "231212", "112232", "122132", "122231", "113222", "123122", "123221", "223211", "221132",
+  "221231", "213212", "223112", "312131", "311222", "321122", "321221", "312212", "322112", "322211",
+  "212123", "212321", "232121", "111323", "131123", "131321", "112313", "132113", "132311", "211313",
+  "231113", "231311", "112133", "112331", "132131", "113123", "113321", "133121", "313121", "211331",
+  "231131", "213113", "213311", "213131", "311123", "311321", "331121", "312113", "312311", "332111",
+  "314111", "221411", "431111", "111224", "111422", "121124", "121421", "141122", "141221", "112214",
+  "112412", "122114", "122411", "142112", "142211", "241211", "221114", "413111", "241112", "134111",
+  "111242", "121142", "121241", "114212", "124112", "124211", "411212", "421112", "421211", "212141",
+  "214121", "412121", "111143", "111341", "131141", "114113", "114311", "411113", "411311", "113141",
+  "114131", "311141", "411131", "211412", "211214", "211232", "2331112",
+];
 
 function json(res, status, payload) {
   const body = JSON.stringify(payload);
@@ -95,6 +115,20 @@ async function runPowerShellFile(script, args = [], timeout = 25000) {
   }
 }
 
+function runExecutable(file, args = [], timeout = 30000) {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, { windowsHide: true, timeout }, (error, stdout, stderr) => {
+      if (error) {
+        error.stdout = stdout;
+        error.stderr = stderr;
+        reject(error);
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
 function normalizePrinter(printer) {
   return {
     name: printer.name || printer.Name || "",
@@ -146,6 +180,261 @@ function printCode(product) {
   return product.barcode || product.primary_barcode || product.sku || product.internal_code || String(product.id || "").slice(0, 12) || "SEM-CODIGO";
 }
 
+function htmlEscape(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function code128Values(value) {
+  const safe = String(value || "SEM-CODIGO").replace(/[^\x20-\x7E]/g, "").slice(0, 48) || "SEM-CODIGO";
+  const values = [...safe].map((char) => char.charCodeAt(0) - 32);
+  const startCodeB = 104;
+  let checksum = startCodeB;
+  values.forEach((code, index) => {
+    checksum += code * (index + 1);
+  });
+  return {
+    text: safe,
+    sequence: [startCodeB, ...values, checksum % 103, 106],
+  };
+}
+
+function code128SvgMarkup(value, height = 92) {
+  const { sequence } = code128Values(value);
+  let x = 0;
+  const bars = [];
+
+  for (const code of sequence) {
+    const pattern = CODE_128_PATTERNS[code];
+    for (let index = 0; index < pattern.length; index++) {
+      const width = Number(pattern[index]);
+      if (index % 2 === 0) {
+        bars.push(`<rect x="${x}" y="0" width="${width}" height="${height}" />`);
+      }
+      x += width;
+    }
+  }
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${x} ${height}" preserveAspectRatio="none" aria-hidden="true">${bars.join("")}</svg>`;
+}
+
+async function fileDataUri(filePath, mimeType) {
+  const buffer = await readFile(filePath);
+  return `data:${mimeType};base64,${buffer.toString("base64")}`;
+}
+
+async function makeHtmlLabelDocument(item) {
+  const product = item.product || {};
+  const code = printCode(product);
+  const size = item.meta && item.meta.size ? item.meta.size : product.variant_size || "";
+  const color = item.meta && item.meta.color ? item.meta.color : product.variant_color || product.variant_label || "";
+  const hasSize = Boolean(String(size).trim());
+  const secondary = [product.sku, product.internal_code].filter(Boolean).join(" | ");
+  const footerLeft = color && color !== "Variacao" ? color : product.unit_measure || product.category || "Produto";
+  const footerRight = secondary || product.brand || "";
+  const templateDataUri = await fileDataUri(LABEL_TEMPLATE_PATH, "image/svg+xml");
+  const logoDataUri = await fileDataUri(LABEL_LOGO_PATH, "image/svg+xml");
+
+  return `<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=${LABEL_WIDTH_PX}, initial-scale=1">
+<title>Etiqueta 40x30mm</title>
+<style>
+  * { box-sizing: border-box; }
+
+  html,
+  body {
+    width: ${LABEL_WIDTH_PX}px;
+    height: ${LABEL_HEIGHT_PX}px;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: #fff;
+    color: #000;
+    font-family: Arial, Helvetica, sans-serif;
+  }
+
+  .etiqueta {
+    position: relative;
+    width: ${LABEL_WIDTH_PX}px;
+    height: ${LABEL_HEIGHT_PX}px;
+    overflow: hidden;
+    background-color: #fff;
+    background-image: url("${templateDataUri}");
+    background-size: 100% 100%;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+
+  .mascara-logo {
+    position: absolute;
+    left: 123px;
+    top: 11px;
+    width: 234px;
+    height: 66px;
+    background: #fff;
+  }
+
+  .logo {
+    position: absolute;
+    left: 127px;
+    top: 15px;
+    width: 225px;
+    height: 56px;
+    object-fit: fill;
+    display: block;
+    filter: brightness(0);
+  }
+
+  .label-preco,
+  .label-produto,
+  .label-tamanho,
+  .label-codigo,
+  .label-rodape {
+    position: absolute;
+    z-index: 3;
+    color: #000;
+    line-height: 1;
+    text-transform: uppercase;
+  }
+
+  .label-preco {
+    right: 31px;
+    top: 33px;
+    width: 110px;
+    font-size: 20px;
+    font-weight: 950;
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  .label-produto {
+    left: 40px;
+    right: 40px;
+    top: 107px;
+    height: 53px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    font-size: 24px;
+    font-weight: 950;
+    text-align: center;
+    letter-spacing: 0;
+  }
+
+  .label-tamanho {
+    left: 37px;
+    top: 199px;
+    width: 80px;
+    height: 80px;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    background: #fff;
+    font-size: 33px;
+    font-weight: 950;
+    text-align: center;
+  }
+
+  .label-barcode {
+    position: absolute;
+    z-index: 3;
+    left: 144px;
+    right: 40px;
+    top: 193px;
+    height: 82px;
+    background: #fff;
+  }
+
+  .label-barcode svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    fill: #000;
+  }
+
+  .label-codigo {
+    left: 144px;
+    right: 40px;
+    top: 277px;
+    overflow: hidden;
+    background: #fff;
+    font-family: "Arial Narrow", Arial, Helvetica, sans-serif;
+    font-size: 15px;
+    font-weight: 900;
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  .label-rodape {
+    left: 155px;
+    right: 35px;
+    bottom: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    overflow: hidden;
+    background: #fff;
+    font-size: 14px;
+    font-weight: 900;
+  }
+
+  .label-rodape span {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .etiqueta-sem-tamanho .label-tamanho {
+    display: none;
+  }
+
+  .etiqueta-sem-tamanho .label-barcode {
+    left: 62px;
+    right: 62px;
+    top: 187px;
+    height: 88px;
+  }
+
+  .etiqueta-sem-tamanho .label-codigo {
+    left: 62px;
+    right: 62px;
+    top: 279px;
+  }
+
+  .etiqueta-sem-tamanho .label-rodape {
+    left: 62px;
+    right: 62px;
+  }
+</style>
+</head>
+<body>
+  <div class="etiqueta${hasSize ? "" : " etiqueta-sem-tamanho"}" aria-label="Etiqueta 40x30mm">
+    <div class="mascara-logo"></div>
+    <img class="logo" alt="Logo" src="${logoDataUri}">
+    <strong class="label-preco">${htmlEscape(money(product.selling_price))}</strong>
+    <strong class="label-produto">${htmlEscape(product.name || "PRODUTO")}</strong>
+    ${hasSize ? `<span class="label-tamanho">${htmlEscape(size)}</span>` : ""}
+    <div class="label-barcode">${code128SvgMarkup(code, 92)}</div>
+    <div class="label-codigo">${htmlEscape(code)}</div>
+    <div class="label-rodape">
+      <span>${htmlEscape(footerLeft)}</span>
+      <span>${htmlEscape(footerRight)}</span>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
 function makeTsplLabelCommands(items) {
   return items.map((item) => {
     const product = item.product || {};
@@ -183,6 +472,209 @@ function makeTsplLabelCommands(items) {
       "",
     ].join("\r\n");
   }).join("\r\n");
+}
+
+function expandPrintItems(items) {
+  const labels = [];
+  for (const item of items) {
+    const quantity = Math.max(1, Math.min(999, Number(item.quantity) || 1));
+    for (let index = 0; index < quantity; index++) {
+      labels.push({ ...item, quantity: 1 });
+    }
+  }
+  return labels;
+}
+
+async function firstExistingPath(paths) {
+  for (const candidate of paths.filter(Boolean)) {
+    try {
+      await access(candidate);
+      return candidate;
+    } catch {
+      // continue
+    }
+  }
+  return null;
+}
+
+async function findChromiumExecutable() {
+  const localAppData = process.env.LOCALAPPDATA;
+  const programFiles = process.env.ProgramFiles || "C:\\Program Files";
+  const programFilesX86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+
+  return firstExistingPath([
+    path.join(programFilesX86, "Microsoft", "Edge", "Application", "msedge.exe"),
+    path.join(programFiles, "Microsoft", "Edge", "Application", "msedge.exe"),
+    localAppData && path.join(localAppData, "Microsoft", "Edge", "Application", "msedge.exe"),
+    path.join(programFiles, "Google", "Chrome", "Application", "chrome.exe"),
+    path.join(programFilesX86, "Google", "Chrome", "Application", "chrome.exe"),
+    localAppData && path.join(localAppData, "Google", "Chrome", "Application", "chrome.exe"),
+  ]);
+}
+
+async function renderHtmlLabelToPng(item) {
+  const browserPath = await findChromiumExecutable();
+  if (!browserPath) {
+    throw new Error("Nao encontrei Microsoft Edge ou Chrome para converter o HTML da etiqueta em imagem. Instale/atualize o Edge no Windows da PT260.");
+  }
+
+  const token = randomUUID();
+  const htmlFile = path.join(os.tmpdir(), `corpo-evolucao-label-${token}.html`);
+  const pngFile = path.join(os.tmpdir(), `corpo-evolucao-label-${token}.png`);
+  const userDataDir = path.join(os.tmpdir(), `corpo-evolucao-edge-${token}`);
+
+  await writeFile(htmlFile, await makeHtmlLabelDocument(item), "utf8");
+
+  try {
+    await runExecutable(browserPath, [
+      "--headless=new",
+      "--disable-gpu",
+      "--disable-background-networking",
+      "--disable-sync",
+      "--hide-scrollbars",
+      "--no-first-run",
+      `--user-data-dir=${userDataDir}`,
+      `--screenshot=${pngFile}`,
+      `--window-size=${LABEL_WIDTH_PX},${LABEL_HEIGHT_PX}`,
+      pathToFileURL(htmlFile).href,
+    ], 30000);
+
+    return { pngFile, cleanup: [htmlFile, userDataDir] };
+  } catch (error) {
+    rm(htmlFile, { force: true }).catch(() => {});
+    rm(pngFile, { force: true }).catch(() => {});
+    rm(userDataDir, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+async function printImageToPrinter(imagePath, printerName) {
+  const script = `
+param([string]$PrinterName, [string]$ImagePath)
+Add-Type -AssemblyName System.Drawing
+$image = [System.Drawing.Image]::FromFile($ImagePath)
+try {
+  $printDoc = New-Object System.Drawing.Printing.PrintDocument
+  $printDoc.DocumentName = "Corpo e Evolucao Etiqueta HTML 40x30"
+  $printDoc.PrinterSettings.PrinterName = $PrinterName
+  if (-not $printDoc.PrinterSettings.IsValid) {
+    throw "Impressora invalida ou indisponivel: $PrinterName"
+  }
+  $printDoc.DefaultPageSettings.PaperSize = New-Object System.Drawing.Printing.PaperSize("40x30mm", 157, 118)
+  $printDoc.DefaultPageSettings.Landscape = $false
+  $printDoc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(0, 0, 0, 0)
+  $printDoc.OriginAtMargins = $false
+
+  $printDoc.add_PrintPage({
+    param($sender, $event)
+    $event.Graphics.PageUnit = [System.Drawing.GraphicsUnit]::Display
+    $event.Graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::NearestNeighbor
+    $event.Graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::None
+    $event.Graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::Half
+    $bounds = $event.PageBounds
+    $event.Graphics.DrawImage($image, $bounds.X, $bounds.Y, $bounds.Width, $bounds.Height)
+    $event.HasMorePages = $false
+  })
+
+  $printDoc.Print()
+  Write-Output "IMAGE_OK"
+} finally {
+  $image.Dispose()
+}
+  `;
+
+  return runPowerShellFile(script, ["-PrinterName", printerName, "-ImagePath", imagePath], 30000);
+}
+
+async function makeTsplBitmapFileFromPng(imagePath) {
+  const rawFile = path.join(os.tmpdir(), `corpo-evolucao-label-bitmap-${randomUUID()}.prn`);
+  const script = `
+param([string]$ImagePath, [string]$OutputPath)
+Add-Type -AssemblyName System.Drawing
+$width = 320
+$height = 240
+$bytesPerRow = [Math]::Ceiling($width / 8)
+$source = [System.Drawing.Image]::FromFile($ImagePath)
+$bitmap = New-Object System.Drawing.Bitmap($width, $height, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
+$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+try {
+  $graphics.Clear([System.Drawing.Color]::White)
+  $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+  $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+  $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+  $graphics.DrawImage($source, 0, 0, $width, $height)
+
+  $hex = New-Object System.Text.StringBuilder
+  for ($y = 0; $y -lt $height; $y++) {
+    for ($byteX = 0; $byteX -lt $bytesPerRow; $byteX++) {
+      $value = 0
+      for ($bit = 0; $bit -lt 8; $bit++) {
+        $x = ($byteX * 8) + $bit
+        if ($x -lt $width) {
+          $pixel = $bitmap.GetPixel($x, $y)
+          $luma = (0.299 * $pixel.R) + (0.587 * $pixel.G) + (0.114 * $pixel.B)
+          if ($luma -lt 168) {
+            $value = $value -bor (0x80 -shr $bit)
+          }
+        }
+      }
+      [void]$hex.Append($value.ToString("X2"))
+    }
+  }
+
+  $commands = @(
+    "SIZE 40 mm,30 mm",
+    "GAP 2 mm,0 mm",
+    "DENSITY 10",
+    "SPEED 2",
+    "DIRECTION 1",
+    "REFERENCE 0,0",
+    "CLS",
+    "BITMAP 0,0,$bytesPerRow,$height,0,$($hex.ToString())",
+    "PRINT 1,1",
+    ""
+  ) -join "\`r\`n"
+  [System.IO.File]::WriteAllText($OutputPath, $commands, [System.Text.Encoding]::ASCII)
+  Write-Output "BITMAP_OK"
+} finally {
+  $graphics.Dispose()
+  $bitmap.Dispose()
+  $source.Dispose()
+}
+  `;
+
+  try {
+    await runPowerShellFile(script, ["-ImagePath", imagePath, "-OutputPath", rawFile], 45000);
+    return rawFile;
+  } catch (error) {
+    rm(rawFile, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+async function printHtmlLabels(items, printerName) {
+  const labels = expandPrintItems(items);
+  const cleanupPaths = [];
+  let stdout = "";
+  let stderr = "";
+
+  try {
+    for (const item of labels) {
+      const rendered = await renderHtmlLabelToPng(item);
+      cleanupPaths.push(rendered.pngFile, ...rendered.cleanup);
+      const rawBitmapFile = await makeTsplBitmapFileFromPng(rendered.pngFile);
+      cleanupPaths.push(rawBitmapFile);
+      const result = await sendRawFileToPrinter(rawBitmapFile, printerName);
+      stdout += result.stdout || "";
+      stderr += result.stderr || "";
+    }
+  } finally {
+    for (const cleanupPath of cleanupPaths) {
+      rm(cleanupPath, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  return { labels: labels.length, stdout, stderr };
 }
 
 async function sendRawFileToPrinter(filePath, printerName) {
@@ -374,8 +866,6 @@ async function handlePrint(req, res) {
     return;
   }
 
-  let tempFile = null;
-
   try {
     const body = await readJsonBody(req);
     const items = Array.isArray(body.items) ? body.items.filter((item) => Number(item.quantity) > 0) : [];
@@ -406,31 +896,28 @@ async function handlePrint(req, res) {
       return;
     }
 
-    const tspl = makeTsplLabelCommands(items);
     const labels = items.reduce((total, item) => total + Math.max(0, Number(item.quantity) || 0), 0);
 
     if (body.dryRun) {
       json(res, 200, {
         success: true,
         dryRun: true,
-        protocol: "TSPL",
+        protocol: "HTML_BITMAP",
         labels,
         printer: selectedPrinter,
-        commandPreview: tspl.slice(0, 1200),
+        htmlPreview: (await makeHtmlLabelDocument({ ...items[0], quantity: 1 })).slice(0, 3000),
       });
       return;
     }
 
-    tempFile = path.join(os.tmpdir(), `corpo-evolucao-pt260-${randomUUID()}.prn`);
-    await writeFile(tempFile, tspl, "ascii");
-    const result = await sendRawFileToPrinter(tempFile, selectedPrinter.name);
+    const result = await printHtmlLabels(items, selectedPrinter.name);
 
     json(res, 200, {
       success: true,
-      protocol: "TSPL",
-      labels,
+      protocol: "HTML_BITMAP",
+      labels: result.labels,
       printer: selectedPrinter,
-      message: `Ponte local enviou ${labels} etiqueta(s) para ${selectedPrinter.name}.`,
+      message: `Ponte local renderizou o HTML em imagem, rasterizou em bitmap 40x30 e enviou ${result.labels} etiqueta(s) para ${selectedPrinter.name}.`,
       stdout: result.stdout,
       stderr: result.stderr,
     });
@@ -439,10 +926,6 @@ async function handlePrint(req, res) {
       success: false,
       error: error && error.message ? error.message : "Falha ao imprimir pela ponte PT260.",
     });
-  } finally {
-    if (tempFile) {
-      unlink(tempFile).catch(() => {});
-    }
   }
 }
 

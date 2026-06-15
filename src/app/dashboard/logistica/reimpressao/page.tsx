@@ -19,7 +19,7 @@ type QuantityMap = Record<string, number>;
 
 const DEFAULT_PT260_BRIDGE_URL = "http://127.0.0.1:4217";
 const PT260_BRIDGE_STORAGE_KEY = "corpoevolucao.pt260BridgeUrl";
-const MIN_PT260_BRIDGE_VERSION = "1.2.0";
+const MIN_PT260_BRIDGE_VERSION = "1.3.0";
 
 type PrintApiPayload = {
   success?: boolean;
@@ -154,7 +154,7 @@ async function sendToLocalPt260Bridge(items: ProductLabelPrintItem[]) {
   const response = await fetch(`${bridgeUrl}/print`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ items }),
+    body: JSON.stringify({ items, protocol: "html-image" }),
   });
   const payload = await readJsonPayload<PrintApiPayload>(response);
 
@@ -346,27 +346,12 @@ export default function ReimpressaoEtiquetasPage() {
 
     setDirectPrinting(true);
     try {
-      const response = await fetch("/api/printers/label-print", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: selectedItems }),
+      const bridgePayload = await sendToLocalPt260Bridge(selectedItems);
+      setMessage(bridgePayload.message ?? `Ponte local PT260 renderizou e enviou ${totalLabels} etiqueta(s).`);
+      setPrinterInfo({
+        status: "ok",
+        message: "Impressao feita pela ponte local: HTML 40x30 convertido em imagem e enviado como bitmap unico para a PT260.",
       });
-      const payload = await readJsonPayload<PrintApiPayload>(response);
-
-      if (!response.ok || !payload.success) {
-        if (payload.code === "unsupported_platform") {
-          const bridgePayload = await sendToLocalPt260Bridge(selectedItems);
-          setMessage(bridgePayload.message ?? `Ponte local PT260 enviou ${totalLabels} etiqueta(s).`);
-          setPrinterInfo({
-            status: "ok",
-            message: "Impressao feita pela ponte local do Windows em 127.0.0.1:4217.",
-          });
-          return;
-        }
-        throw new Error(payload.error ?? "Nao foi possivel imprimir direto na PT260.");
-      }
-
-      setMessage(payload.message ?? `${totalLabels} etiqueta(s) enviadas direto para a PT260.`);
     } catch (err) {
       if (err instanceof Error && /antiga|OpenPrinter falhou:\s*1801|PT260.*reconhecido/i.test(err.message)) {
         setError(err.message);
@@ -374,7 +359,7 @@ export default function ReimpressaoEtiquetasPage() {
         setError(err.message);
       } else {
         setError(
-          "Ponte local PT260 nao encontrada ou bloqueada. No Windows da etiquetadora rode `npm run pt260:restart`, deixe este painel aberto no navegador e tente imprimir novamente.",
+          "Ponte local PT260 nao encontrada ou bloqueada. No Windows da etiquetadora rode `npm run pt260:restart`, deixe este painel aberto no navegador e tente imprimir novamente. O botao Fallback navegador continua disponivel como alternativa manual.",
         );
       }
     } finally {
@@ -383,21 +368,24 @@ export default function ReimpressaoEtiquetasPage() {
   }
 
   async function checkPrinter() {
-    setPrinterInfo({ status: "unknown", message: "Verificando API local e ponte PT260..." });
+    setPrinterInfo({ status: "unknown", message: "Verificando ponte local PT260..." });
+    try {
+      const bridgePayload = await getLocalPt260Diagnostics();
+      setPrinterInfo({
+        status: bridgePayload.status ?? "ok",
+        message: bridgePayload.message ?? "Ponte local PT260 respondeu com sucesso para impressao HTML em imagem.",
+      });
+      return;
+    } catch {
+      // Se a ponte nao estiver ativa, tenta somente o diagnostico do ambiente do servidor.
+    }
+
     try {
       const response = await fetch("/api/printers/diagnostics", { cache: "no-store" });
       const payload = await readJsonPayload<PrinterDiagnosticPayload>(response);
-      if (payload.status === "unknown") {
-        const bridgePayload = await getLocalPt260Diagnostics();
-        setPrinterInfo({
-          status: bridgePayload.status ?? "ok",
-          message: bridgePayload.message ?? "Ponte local PT260 respondeu com sucesso.",
-        });
-        return;
-      }
       setPrinterInfo({
         status: payload.status ?? (response.ok ? "ok" : "warning"),
-        message: payload.message ?? "Diagnostico concluido.",
+        message: payload.message ?? "Diagnostico do servidor concluido. Para impressao direta HTML, mantenha a ponte local aberta no Windows da PT260.",
       });
     } catch (err) {
       setPrinterInfo({
@@ -711,11 +699,11 @@ export default function ReimpressaoEtiquetasPage() {
                 </div>
                 <div className="rounded-xl bg-white/[.07] p-3">
                   <span className="block text-white/45">Modo</span>
-                  <strong className="mt-1 block text-lg">TSPL</strong>
+                  <strong className="mt-1 block text-lg">HTML</strong>
                 </div>
               </div>
               <button className="btn mt-4 w-full bg-white text-[#101827] hover:bg-blue-50" type="button" onClick={printDirectLabels} disabled={!totalLabels || directPrinting}>
-                <Usb className="h-4 w-4 shrink-0" /> {directPrinting ? "Enviando TSPL..." : "Enviar TSPL para PT260"}
+                <Usb className="h-4 w-4 shrink-0" /> {directPrinting ? "Renderizando..." : "Imprimir HTML na PT260"}
               </button>
               <button className="btn mt-2 w-full border border-white/15 bg-white/[.08] text-white hover:bg-white/[.14]" type="button" onClick={printLabels} disabled={!totalLabels}>
                 <Printer className="h-4 w-4 shrink-0" /> Fallback navegador
@@ -725,7 +713,7 @@ export default function ReimpressaoEtiquetasPage() {
               </button>
               <div className="mt-3 rounded-xl border border-white/10 bg-white/[.06] p-3 text-xs leading-5 text-white/65">
                 <strong className="block text-white">Ponte local PT260</strong>
-                Protocolo confirmado: TSPL calibrado com densidade 8 e velocidade 2. No Windows da etiquetadora, rode <code className="rounded bg-white/10 px-1 py-0.5 text-white">npm run pt260:restart</code>.
+                Modo direto: o bridge local converte o HTML exato da etiqueta em imagem 40x30 e envia como bitmap unico para a PT260. No Windows da etiquetadora, rode <code className="rounded bg-white/10 px-1 py-0.5 text-white">npm run pt260:restart</code>.
                 <label className="mt-3 block">
                   <span className="mb-1 block text-[10px] font-black uppercase tracking-[.12em] text-white/40">URL da ponte</span>
                   <input
@@ -748,7 +736,7 @@ export default function ReimpressaoEtiquetasPage() {
                       onClick={() => sendPrinterProtocolTest(mode)}
                       disabled={testingMode !== null}
                     >
-                      {testingMode === mode ? "..." : mode <= 2 ? `TSPL ${mode}` : `Diag ${mode}`}
+                      {testingMode === mode ? "..." : `Teste ${mode}`}
                     </button>
                   ))}
                 </div>
