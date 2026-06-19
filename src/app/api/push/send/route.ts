@@ -57,7 +57,7 @@ export async function POST(req: Request) {
     const payload = JSON.stringify({
       title: title || "Corpo & Evolucao",
       body: body || "Nova mensagem",
-      url: url || "/portal",
+      url: url || "/portal?tab=notifications",
       icon: "/icon-192x192.png",
       badge: "/icon-192x192.png",
       requireInteraction: true,

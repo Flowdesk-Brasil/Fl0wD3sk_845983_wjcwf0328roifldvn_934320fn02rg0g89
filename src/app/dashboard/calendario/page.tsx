@@ -2,10 +2,11 @@
 
 import { addMonths, eachDayOfInterval, endOfMonth, endOfWeek, format, isSameDay, isSameMonth, startOfMonth, startOfWeek } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { CalendarDays, ChevronLeft, ChevronRight, Clock3, Plus, Trash2, Users, BellRing } from "lucide-react";
+import { BellRing, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, FileJson, Loader2, Plus, Trash2, Upload, UserRound, Users } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { EmptyState, ErrorBanner, FieldLabel, LoadingState, Modal, PageHeader } from "@/components/ui";
-import { createClassSchedule, deleteClassSchedule, getClassSchedules, getClassTypes, getProfiles } from "@/lib/api";
+import { createClassSchedule, deleteAllClassSchedules, deleteClassSchedule, getClassSchedules, getClassTypes, getProfiles, saveClassType, updateClassSchedule } from "@/lib/api";
+import { importColorForName, normalizeImportedName, parseClassScheduleImport } from "@/lib/class-schedule-import";
 import type { ClassSchedule, ClassType, Profile } from "@/lib/types";
 
 type NotifyResult = {
@@ -17,6 +18,14 @@ type NotifyResult = {
   inAppNotifications?: number;
 };
 
+type ImportResult = {
+  imported: number;
+  updated: number;
+  skipped: number;
+  createdTypes: number;
+  unmatchedProfessors: string[];
+};
+
 const WEEKDAYS = [
   { value: 1, label: "Segunda-feira" },
   { value: 2, label: "Terça-feira" },
@@ -26,6 +35,10 @@ const WEEKDAYS = [
   { value: 6, label: "Sábado" },
   { value: 0, label: "Domingo" },
 ];
+
+function displayScheduleTime(value?: string | null) {
+  return value ? value.slice(0, 5) : "--:--";
+}
 
 export default function CalendarioPage() {
   const [anchor, setAnchor] = useState(new Date());
@@ -40,6 +53,11 @@ export default function CalendarioPage() {
   const [loading, setLoading] = useState(true);
   const [triggering, setTriggering] = useState(false);
   const [notifyResult, setNotifyResult] = useState<NotifyResult | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [deletingAll, setDeletingAll] = useState(false);
 
   async function load() {
     const [nextSchedules, nextClassTypes, profiles] = await Promise.all([getClassSchedules(), getClassTypes(), getProfiles()]);
@@ -56,6 +74,12 @@ export default function CalendarioPage() {
   const endDate = endOfWeek(monthEnd, { weekStartsOn: 1 });
 
   const days = useMemo(() => eachDayOfInterval({ start: startDate, end: endDate }), [startDate, endDate]);
+  const weeklyScheduleGroups = useMemo(() => WEEKDAYS.map((weekday) => ({
+    ...weekday,
+    schedules: schedules
+      .filter((schedule) => schedule.day_of_week === weekday.value)
+      .sort((a, b) => a.time.localeCompare(b.time)),
+  })), [schedules]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -73,6 +97,181 @@ export default function CalendarioPage() {
       await load();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Não foi possível criar a turma.");
+    }
+  }
+
+  async function importSchedules() {
+    setError(null);
+    setImportResult(null);
+    setImporting(true);
+    try {
+      const rows = parseClassScheduleImport(importText);
+      const typeConfigs = new Map<string, { name: string; durationMinutes: number; capacity: number }>();
+
+      for (const row of rows) {
+        const key = normalizeImportedName(row.className);
+        const current = typeConfigs.get(key);
+        if (current && current.durationMinutes !== row.durationMinutes) {
+          throw new Error(`A modalidade "${row.className}" possui duracoes diferentes no mesmo arquivo.`);
+        }
+        typeConfigs.set(key, {
+          name: current?.name || row.className,
+          durationMinutes: row.durationMinutes,
+          capacity: Math.max(current?.capacity || 0, row.capacity),
+        });
+      }
+
+      const [allTypes, profiles, currentSchedules] = await Promise.all([
+        getClassTypes(),
+        getProfiles(),
+        getClassSchedules(),
+      ]);
+
+      const typesByName = new Map(allTypes.map((type) => [normalizeImportedName(type.name), type]));
+      let createdTypes = 0;
+
+      for (const [key, config] of typeConfigs) {
+        const existing = typesByName.get(key);
+        if (existing) {
+          if (!existing.active) {
+            const activated = await saveClassType({ id: existing.id, active: true }) as ClassType;
+            typesByName.set(key, activated);
+          }
+          continue;
+        }
+
+        const created = await saveClassType({
+          name: config.name,
+          description: "Modalidade criada automaticamente pela importacao da grade.",
+          duration_minutes: config.durationMinutes,
+          capacity: config.capacity,
+          color: importColorForName(config.name),
+          active: true,
+        }) as ClassType;
+        typesByName.set(key, created);
+        createdTypes += 1;
+      }
+
+      const availableInstructors = profiles.filter((profile) =>
+        profile.active && (profile.role === "professor" || profile.role === "admin")
+      );
+      const unmatchedProfessors = new Set<string>();
+
+      function resolveInstructor(name: string | null) {
+        if (!name) return null;
+        const query = normalizeImportedName(name);
+        const exact = availableInstructors.find((profile) => normalizeImportedName(profile.full_name) === query);
+        if (exact) return exact.id;
+
+        const candidates = availableInstructors.filter((profile) => {
+          const fullName = normalizeImportedName(profile.full_name);
+          const firstName = normalizeImportedName(profile.full_name.split(/\s+/)[0] || "");
+          return firstName === query || fullName.startsWith(query);
+        });
+        if (candidates.length === 1) return candidates[0].id;
+        unmatchedProfessors.add(name);
+        return null;
+      }
+
+      const schedulesByKey = new Map(currentSchedules.map((schedule) => [
+        `${schedule.class_type_id}|${schedule.day_of_week}|${schedule.time.slice(0, 5)}`,
+        schedule,
+      ]));
+      const pending: Array<{
+        class_type_id: string;
+        instructor_id: string | null;
+        day_of_week: number;
+        time: string;
+        capacity: number;
+      }> = [];
+      const updates: Array<{
+        id: string;
+        instructor_id?: string | null;
+        capacity?: number;
+        active?: boolean;
+      }> = [];
+      let skipped = 0;
+
+      for (const row of rows) {
+        const type = typesByName.get(normalizeImportedName(row.className));
+        if (!type) throw new Error(`Nao foi possivel preparar a modalidade "${row.className}".`);
+
+        const instructorId = resolveInstructor(row.instructorName);
+        const key = `${type.id}|${row.dayOfWeek}|${row.startTime}`;
+        const existingSchedule = schedulesByKey.get(key);
+        if (existingSchedule) {
+          const changes: { id: string; instructor_id?: string | null; capacity?: number; active?: boolean } = { id: existingSchedule.id };
+          if (instructorId && existingSchedule.instructor_id !== instructorId) changes.instructor_id = instructorId;
+          if (existingSchedule.capacity !== row.capacity) changes.capacity = row.capacity;
+          if (!existingSchedule.active) changes.active = true;
+
+          if (Object.keys(changes).length > 1) updates.push(changes);
+          else skipped += 1;
+          continue;
+        }
+
+        pending.push({
+          class_type_id: type.id,
+          instructor_id: instructorId,
+          day_of_week: row.dayOfWeek,
+          time: row.startTime,
+          capacity: row.capacity,
+        });
+      }
+
+      for (let index = 0; index < updates.length; index += 10) {
+        await Promise.all(updates.slice(index, index + 10).map(({ id, ...values }) => updateClassSchedule(id, values)));
+      }
+      for (let index = 0; index < pending.length; index += 10) {
+        await Promise.all(pending.slice(index, index + 10).map((schedule) => createClassSchedule(schedule)));
+      }
+
+      setImportResult({
+        imported: pending.length,
+        updated: updates.length,
+        skipped,
+        createdTypes,
+        unmatchedProfessors: [...unmatchedProfessors].sort(),
+      });
+      setImportText("");
+      setImportOpen(false);
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Nao foi possivel importar a grade.");
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function readImportFile(file?: File) {
+    if (!file) return;
+    setError(null);
+    try {
+      setImportText(await file.text());
+    } catch {
+      setError("Nao foi possivel ler o arquivo JSON.");
+    }
+  }
+
+  async function removeAllSchedules() {
+    if (!schedules.length || deletingAll) return;
+    const confirmation = window.prompt(
+      `Esta acao excluira os ${schedules.length} horarios da grade, os vinculos dos alunos e as presencas relacionadas. Digite EXCLUIR para confirmar.`,
+    );
+    if (confirmation?.trim().toUpperCase() !== "EXCLUIR") return;
+
+    setDeletingAll(true);
+    setError(null);
+    try {
+      const result = await deleteAllClassSchedules();
+      setSelectedSchedule(null);
+      setImportResult(null);
+      await load();
+      window.alert(`${result.deleted} horario(s) excluido(s) da grade.`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Nao foi possivel excluir toda a grade.");
+    } finally {
+      setDeletingAll(false);
     }
   }
 
@@ -111,17 +310,43 @@ export default function CalendarioPage() {
         title="Grade Fixa" 
         description="Crie a grade de aulas da semana. O sistema aplicará essa grade para todos os meses do ano automaticamente." 
         action={
-          <div className="flex gap-2">
-            <button className="btn bg-orange-100 text-orange-600 hover:bg-orange-200" disabled={triggering} onClick={triggerNotifications}>
+          <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap">
+            <button className="btn whitespace-nowrap bg-orange-100 text-orange-600 hover:bg-orange-200" disabled={triggering} onClick={triggerNotifications}>
               <BellRing className="h-4 w-4" /> {triggering ? "Verificando..." : "Alertar alunos"}
             </button>
-            <button className="btn btn-primary" onClick={() => setOpen(true)}>
+            <button className="btn btn-secondary whitespace-nowrap" onClick={() => { setError(null); setImportOpen(true); }}>
+              <Upload className="h-4 w-4" /> Importar
+            </button>
+            <button className="btn whitespace-nowrap bg-red-50 text-red-600 hover:bg-red-100" disabled={deletingAll || !schedules.length} onClick={() => void removeAllSchedules()}>
+              {deletingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              {deletingAll ? "Excluindo..." : "Excluir tudo"}
+            </button>
+            <button className="btn btn-primary whitespace-nowrap" onClick={() => setOpen(true)}>
               <Plus className="h-4 w-4" /> Novo Horário
             </button>
           </div>
         } 
       />
       <ErrorBanner message={error} />
+
+      {importResult && (
+        <section className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-950 shadow-sm">
+          <div className="flex items-start gap-3">
+            <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
+            <div>
+              <strong className="block text-sm">Grade importada</strong>
+              <p className="mt-1 text-xs leading-5">
+                {importResult.imported} horario(s) criado(s), {importResult.updated} atualizado(s), {importResult.skipped} duplicado(s) sem alteracao e {importResult.createdTypes} modalidade(s) criada(s).
+              </p>
+              {importResult.unmatchedProfessors.length > 0 && (
+                <p className="mt-1 text-xs leading-5">
+                  Sem perfil de professor correspondente: {importResult.unmatchedProfessors.join(", ")}. Cadastre esses nomes em Usuários e importe novamente para atualizar os horários.
+                </p>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
 
       {notifyResult && (
         <section className="rounded-2xl border border-orange-100 bg-orange-50 p-4 text-orange-950 shadow-sm">
@@ -140,48 +365,127 @@ export default function CalendarioPage() {
         </section>
       )}
       
-      <section className="card">
-        <div className="card-header border-b border-[#e3e8f0] pb-4">
-          <div><h2 className="capitalize">{format(monthStart, "MMMM 'de' yyyy", { locale: ptBR })}</h2><p>Grade mensal dinâmica</p></div>
-          <div className="flex gap-2">
-            <button className="btn btn-secondary" onClick={() => setAnchor(new Date())}>Mês Atual</button>
+      <section className="card overflow-hidden lg:hidden">
+        <div className="border-b border-[#e3e8f0] px-4 py-4 sm:px-5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-base font-black text-[#172033]">Agenda semanal</h2>
+              <p className="mt-1 text-xs text-[#657085]">{schedules.length} horário(s) recorrente(s)</p>
+            </div>
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-blue-50 text-blue-600">
+              <CalendarDays className="h-5 w-5" />
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-5 p-3 sm:p-4">
+          {weeklyScheduleGroups.map((group) => (
+            <section key={group.value} className="min-w-0">
+              <div className="mb-2 flex items-center justify-between gap-3 px-1">
+                <strong className="text-sm text-[#172033]">{group.label}</strong>
+                <span className="rounded-full bg-[#f3f6fb] px-2.5 py-1 text-[10px] font-black text-[#657085]">{group.schedules.length}</span>
+              </div>
+
+              {group.schedules.length ? (
+                <div className="grid gap-2">
+                  {group.schedules.map((schedule) => {
+                    const booked = (schedule.student_classes || []).length;
+                    return (
+                      <button
+                        key={schedule.id}
+                        onClick={() => setSelectedSchedule(schedule)}
+                        className="grid min-w-0 grid-cols-[54px_minmax(0,1fr)_auto] items-center gap-3 overflow-hidden rounded-2xl border border-[#e3e8f0] bg-white p-3 text-left shadow-[0_8px_28px_rgba(23,32,51,.05)] transition active:scale-[.99]"
+                      >
+                        <span
+                          className="grid h-12 w-[54px] place-items-center rounded-xl text-xs font-black tabular-nums"
+                          style={{ color: schedule.class_type?.color || "#1a73e8", backgroundColor: `${schedule.class_type?.color || "#1a73e8"}14` }}
+                        >
+                          {displayScheduleTime(schedule.time)}
+                        </span>
+                        <span className="min-w-0">
+                          <strong className="block truncate text-sm text-[#172033]">{schedule.class_type?.name || "Aula"}</strong>
+                          <span className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-[#657085]">
+                            <UserRound className="h-3.5 w-3.5 shrink-0" />
+                            <span className="truncate">{schedule.instructor?.full_name || "Professor indefinido"}</span>
+                          </span>
+                        </span>
+                        <span className="flex shrink-0 items-center gap-1 rounded-full bg-[#f3f6fb] px-2.5 py-1.5 text-[10px] font-black text-[#657085]">
+                          <Users className="h-3.5 w-3.5" /> {booked}/{schedule.capacity}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-[#dbe3ef] bg-[#f8fafc] px-4 py-5 text-center text-xs font-semibold text-[#8d97aa]">
+                  Nenhum horário
+                </div>
+              )}
+            </section>
+          ))}
+        </div>
+      </section>
+
+      <section className="card hidden min-w-0 overflow-hidden lg:block">
+        <div className="card-header min-w-0 border-b border-[#e3e8f0] pb-4">
+          <div className="min-w-0">
+            <h2 className="truncate capitalize">{format(monthStart, "MMMM 'de' yyyy", { locale: ptBR })}</h2>
+            <p>Grade mensal dinâmica</p>
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <button className="btn btn-secondary whitespace-nowrap" onClick={() => setAnchor(new Date())}>Mês atual</button>
             <button className="icon-btn" aria-label="Mês anterior" onClick={() => setAnchor(addMonths(anchor, -1))}><ChevronLeft className="h-4 w-4" /></button>
             <button className="icon-btn" aria-label="Próximo mês" onClick={() => setAnchor(addMonths(anchor, 1))}><ChevronRight className="h-4 w-4" /></button>
           </div>
         </div>
-        
-        {/* Cabeçalho dos dias da semana */}
-        <div className="grid grid-cols-7 bg-[#f7f9fc] text-center text-[11px] font-bold uppercase tracking-wider text-[#657085]">
-          {WEEKDAYS.map(w => <div key={w.value} className="py-3 border-b border-r border-[#e3e8f0] last:border-r-0">{w.label.split("-")[0]}</div>)}
+
+        <div className="grid min-w-0 grid-cols-7 bg-[#f7f9fc] text-center text-[10px] font-bold uppercase tracking-wider text-[#657085]">
+          {WEEKDAYS.map((weekday) => (
+            <div key={weekday.value} className="min-w-0 truncate border-b border-r border-[#e3e8f0] px-1 py-3 last:border-r-0">
+              {weekday.label.split("-")[0]}
+            </div>
+          ))}
         </div>
 
-        {/* Grid do mês */}
-        <div className="grid grid-cols-7 bg-[#e3e8f0] gap-px">
+        <div className="grid min-w-0 grid-cols-7 gap-px bg-[#e3e8f0]">
           {days.map((day) => {
             const isCurrentMonth = isSameMonth(day, monthStart);
             const isToday = isSameDay(day, new Date());
-            const dailySchedules = schedules.filter((s) => s.day_of_week === day.getDay());
+            const dailySchedules = schedules
+              .filter((schedule) => schedule.day_of_week === day.getDay())
+              .sort((a, b) => a.time.localeCompare(b.time));
 
             return (
-              <div key={day.toISOString()} className={`min-h-[120px] p-1 sm:p-2 transition-colors ${isCurrentMonth ? "bg-white" : "bg-slate-50"} ${isToday ? "ring-2 ring-inset ring-blue-500" : ""}`}>
-                <div className="flex justify-end mb-1">
+              <div
+                key={day.toISOString()}
+                className={`min-w-0 overflow-hidden p-1.5 transition-colors xl:p-2 ${isCurrentMonth ? "bg-white" : "bg-slate-50"} ${isToday ? "ring-2 ring-inset ring-blue-500" : ""}`}
+              >
+                <div className="mb-1.5 flex justify-end">
                   <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold ${isToday ? "bg-blue-600 text-white" : isCurrentMonth ? "text-slate-700" : "text-slate-400"}`}>
                     {format(day, "d")}
                   </span>
                 </div>
-                
-                <div className="grid gap-1">
+
+                <div className="grid min-w-0 gap-1.5">
                   {dailySchedules.map((schedule) => {
                     const booked = (schedule.student_classes || []).length;
+                    const color = schedule.class_type?.color || "#1a73e8";
                     return (
-                      <button 
-                        key={schedule.id} 
+                      <button
+                        key={schedule.id}
+                        title={`${displayScheduleTime(schedule.time)} - ${schedule.class_type?.name || "Aula"} - ${schedule.instructor?.full_name || "Professor indefinido"}`}
                         onClick={() => setSelectedSchedule(schedule)}
-                        className={`text-left rounded p-1.5 border-l-4 text-[10px] hover:bg-slate-50 transition-colors ${!isCurrentMonth && 'opacity-50'}`}
-                        style={{ borderLeftColor: schedule.class_type?.color || "#cbd5e1", backgroundColor: `${schedule.class_type?.color}15` }}
+                        className={`w-full min-w-0 overflow-hidden rounded-lg border border-transparent border-l-[3px] p-1.5 text-left transition hover:border-slate-200 hover:shadow-sm ${!isCurrentMonth ? "opacity-45" : ""}`}
+                        style={{ borderLeftColor: color, backgroundColor: `${color}12` }}
                       >
-                        <strong className="block truncate text-slate-900">{schedule.time} - {schedule.class_type?.name}</strong>
-                        <span className="text-slate-600 mt-0.5 flex items-center gap-1"><Users className="w-3 h-3" /> {booked}/{schedule.capacity}</span>
+                        <span className="flex min-w-0 items-baseline gap-1">
+                          <strong className="shrink-0 text-[10px] font-black tabular-nums text-slate-900">{displayScheduleTime(schedule.time)}</strong>
+                          <span className="min-w-0 truncate text-[10px] font-bold text-slate-700">{schedule.class_type?.name || "Aula"}</span>
+                        </span>
+                        <span className="mt-1 flex min-w-0 items-center justify-between gap-1 text-[9px] text-slate-500">
+                          <span className="min-w-0 truncate">{schedule.instructor?.full_name || "Sem professor"}</span>
+                          <span className="flex shrink-0 items-center gap-0.5 font-bold tabular-nums"><Users className="h-2.5 w-2.5" />{booked}/{schedule.capacity}</span>
+                        </span>
                       </button>
                     );
                   })}
@@ -193,6 +497,52 @@ export default function CalendarioPage() {
       </section>
 
       {!schedules.length && <EmptyState icon={CalendarDays} title="Grade vazia" description="Crie o primeiro horário da semana para começar a preencher o calendário." />}
+
+      <Modal
+        open={importOpen}
+        onClose={() => { if (!importing) setImportOpen(false); }}
+        title="Importar grade em JSON"
+        description="Selecione um arquivo ou cole a lista de horários no formato informado."
+        size="md"
+      >
+        <div className="grid gap-4">
+          <ErrorBanner message={error} />
+
+          <label className="flex min-h-24 cursor-pointer items-center justify-center gap-3 rounded-2xl border border-dashed border-[#cfd7e4] bg-[#f8fafc] px-4 text-center transition hover:border-blue-400 hover:bg-blue-50">
+            <FileJson className="h-6 w-6 text-blue-600" />
+            <span>
+              <strong className="block text-sm text-[#172033]">Selecionar arquivo JSON</strong>
+              <span className="mt-1 block text-xs text-[#657085]">O conteúdo será validado antes da importação.</span>
+            </span>
+            <input
+              className="sr-only"
+              type="file"
+              accept=".json,application/json,text/json"
+              disabled={importing}
+              onChange={(event) => void readImportFile(event.target.files?.[0])}
+            />
+          </label>
+
+          <label>
+            <FieldLabel required>Conteúdo JSON</FieldLabel>
+            <textarea
+              className="field min-h-64 resize-y font-mono text-xs leading-5"
+              value={importText}
+              disabled={importing}
+              onChange={(event) => setImportText(event.target.value)}
+              placeholder='[{"diaSemana":"Segunda","horarioInicio":"07:00","horarioFim":"07:45","modalidade":"Pilates","capacidade":15,"professor":"Taty"}]'
+            />
+          </label>
+
+          <div className="form-actions">
+            <button className="btn btn-secondary" type="button" disabled={importing} onClick={() => setImportOpen(false)}>Cancelar</button>
+            <button className="btn btn-primary" type="button" disabled={importing || !importText.trim()} onClick={() => void importSchedules()}>
+              {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              {importing ? "Importando..." : "Importar grade"}
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       {/* MODAL DE CRIAÇÃO */}
       <Modal open={open} onClose={() => setOpen(false)} title="Programar novo horário fixo" description="Este horário se repetirá toda semana neste mesmo dia." size="sm">
@@ -217,7 +567,7 @@ export default function CalendarioPage() {
 
       {/* MODAL DE DETALHES DO HORÁRIO E ALUNOS */}
       {selectedSchedule && (
-        <Modal open={!!selectedSchedule} onClose={() => setSelectedSchedule(null)} title={`Turma de ${selectedSchedule.class_type?.name}`} description={`${WEEKDAYS.find(w => w.value === selectedSchedule.day_of_week)?.label} às ${selectedSchedule.time}`} size="md">
+        <Modal open={!!selectedSchedule} onClose={() => setSelectedSchedule(null)} title={`Turma de ${selectedSchedule.class_type?.name}`} description={`${WEEKDAYS.find(w => w.value === selectedSchedule.day_of_week)?.label} às ${displayScheduleTime(selectedSchedule.time)}`} size="md">
           <div className="grid gap-6">
             <div className="flex justify-between items-center bg-[#f3f6fb] p-4 rounded-xl">
               <div>

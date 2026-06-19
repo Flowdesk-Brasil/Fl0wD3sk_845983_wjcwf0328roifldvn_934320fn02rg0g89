@@ -1107,6 +1107,40 @@ export async function deleteClassSchedule(id: string) {
   return remove("class_schedules", id);
 }
 
+export async function deleteAllClassSchedules() {
+  const schedules = await getClassSchedules();
+  const scheduleIds = schedules.map((schedule) => schedule.id);
+  if (!scheduleIds.length) return { deleted: 0 };
+
+  if (shouldUseLocalData()) {
+    const idSet = new Set(scheduleIds);
+    for (const attendance of localDB.get("class_attendances").filter((item) => idSet.has(item.class_schedule_id))) {
+      localDB.delete("class_attendances", attendance.id);
+    }
+    for (const studentClass of localDB.get("student_classes").filter((item) => idSet.has(item.class_schedule_id))) {
+      localDB.delete("student_classes", studentClass.id);
+    }
+    for (const scheduleId of scheduleIds) localDB.delete("class_schedules", scheduleId);
+    notifyDbChange();
+    return { deleted: scheduleIds.length };
+  }
+
+  for (let index = 0; index < scheduleIds.length; index += 100) {
+    const ids = scheduleIds.slice(index, index + 100);
+    const { error: attendanceError } = await supabase.from("class_attendances").delete().in("class_schedule_id", ids);
+    if (attendanceError) throw new Error(`Erro ao limpar presencas da grade: ${attendanceError.message}`);
+
+    const { error: linksError } = await supabase.from("student_classes").delete().in("class_schedule_id", ids);
+    if (linksError) throw new Error(`Erro ao limpar vinculos de alunos: ${linksError.message}`);
+
+    const { error: schedulesError } = await supabase.from("class_schedules").delete().in("id", ids);
+    if (schedulesError) throw new Error(`Erro ao excluir horarios: ${schedulesError.message}`);
+  }
+
+  notifyDbChange();
+  return { deleted: scheduleIds.length };
+}
+
 export async function getStudentClasses(studentId: string): Promise<StudentClass[]> {
   if (!shouldUseLocalData()) {
     const { data, error } = await supabase
