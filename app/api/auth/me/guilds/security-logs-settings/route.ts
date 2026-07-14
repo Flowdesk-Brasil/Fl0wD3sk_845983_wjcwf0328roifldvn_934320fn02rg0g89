@@ -9,7 +9,7 @@ import {
   getEffectiveDashboardPermissions, 
   type TeamRolePermission 
 } from "@/lib/teams/userTeams";
-import { getGuildLicenseStatus } from "@/lib/payments/licenseStatus";
+import { getGuildLicenseStatusForUser } from "@/lib/payments/licenseStatus";
 import { cleanupExpiredUnpaidServerSetups } from "@/lib/payments/setupCleanup";
 import {
   createServerSaveDiagnosticContext,
@@ -672,9 +672,9 @@ export async function POST(request: Request) {
       );
     }
 
-    let licenseStatus = await getGuildLicenseStatus(guildId);
+    let licenseStatus = await getGuildLicenseStatusForUser(guildId, authUserId);
     if (licenseStatus !== "paid") {
-      licenseStatus = await getGuildLicenseStatus(guildId, { forceFresh: true });
+      licenseStatus = await getGuildLicenseStatusForUser(guildId, authUserId, { forceFresh: true });
     }
 
     if (licenseStatus === "expired" || licenseStatus === "off") {

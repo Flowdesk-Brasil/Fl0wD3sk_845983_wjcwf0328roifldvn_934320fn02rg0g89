@@ -78,10 +78,16 @@ type HostingCheckoutPurchaseContext = {
   details?: string[];
   amount?: number;
   currency?: string;
+  paymentPlanCode?: PlanCode;
   hostingKind: string;
   hostingPlan: string;
   hostingRegion: string;
   repository?: string | null;
+  minecraftServerName?: string | null;
+  minecraftVersion?: string | null;
+  minecraftServerType?: string | null;
+  minecraftSubdomain?: string | null;
+  minecraftFirstWorldName?: string | null;
 };
 
 type DomainCheckoutPurchaseContext = {
@@ -151,6 +157,7 @@ type PixPaymentApiResponse = {
   message?: string;
   reused?: boolean;
   alreadyProcessing?: boolean;
+  recoverable?: boolean;
   requiresScheduledChange?: boolean;
   coveredByCreditsPreview?: boolean;
   retryAfterSeconds?: number;
@@ -330,6 +337,8 @@ type DiscountPreviewApiResponse = {
 };
 
 type CheckoutAmountPreview = NonNullable<DiscountPreviewApiResponse["preview"]>;
+
+type DiscountPreviewPurchaseType = "plan" | "hosting" | "domain";
 
 type PlanSummary = PlanPricingDefinition & {
   isAvailable: boolean;
@@ -825,7 +834,27 @@ function isCachedPixOrder(value: unknown): value is PixOrder {
 }
 
 function isCustomPaymentSurfacePathname(pathname: string) {
-  return pathname.startsWith("/payment/vps/") || pathname.startsWith("/payment/hosting/") || pathname.startsWith("/payment/domain/");
+  if (
+    pathname.startsWith("/payment/vps/") ||
+    pathname.startsWith("/payment/hosting/") ||
+    pathname.startsWith("/payment/domain/")
+  ) {
+    return true;
+  }
+
+  const segments = pathname
+    .split("/")
+    .map((segment) => segment.trim().toLowerCase())
+    .filter(Boolean);
+  if (segments[0] !== "payment") return false;
+  const productSlug = segments[1] || "";
+  return (
+    Boolean(productSlug) &&
+    productSlug !== "flow-basic" &&
+    productSlug !== "flow-pro" &&
+    productSlug !== "flow-ultra" &&
+    productSlug !== "flow-master"
+  );
 }
 
 function replaceCurrentPlanPath(
@@ -1118,10 +1147,11 @@ function buildFallbackDiscountPreview(input: {
   baseAmount: number;
   currency: string;
   flowPointsBalance?: number;
+  disableFlowPoints?: boolean;
 }): CheckoutAmountPreview {
   const normalizedBaseAmount = roundMoney(Math.max(0, input.baseAmount));
   const normalizedFlowPointsBalance = roundMoney(
-    Math.max(0, input.flowPointsBalance || 0),
+    input.disableFlowPoints ? 0 : Math.max(0, input.flowPointsBalance || 0),
   );
   const flowPointsAppliedAmount = roundMoney(
     Math.min(normalizedBaseAmount, normalizedFlowPointsBalance),
@@ -1419,6 +1449,28 @@ function resolveApprovedRedirectConfig(
     };
   }
 
+  if (returnTarget === "account") {
+    const rawReturnPath = params.get("returnPath");
+    const safeReturnPath =
+      rawReturnPath === "/account" || rawReturnPath === "/account/plans"
+        ? rawReturnPath
+        : "/account/plans";
+    const accountParams = new URLSearchParams({
+      renewed: "1",
+      paymentApproved: "1",
+    });
+    if (order?.orderNumber) {
+      accountParams.set("orderNumber", String(order.orderNumber));
+    }
+    const target = buildBrowserRoutingTargetFromInternalPath(
+      `${safeReturnPath}?${accountParams.toString()}`,
+    );
+    return {
+      targetUrl: target.href,
+      delayMs: 900,
+    };
+  }
+
   const target = buildBrowserRoutingTargetFromInternalPath(
     mustReturnToConfigStepOne
       ? stepOneConfigPath
@@ -1445,7 +1497,7 @@ function setCheckoutStatusQuery(input: {
   const isPaymentSurface = isPaymentCheckoutPathname(url.pathname);
   const isCustomPaymentSurface = isCustomPaymentSurfacePathname(url.pathname);
 
-  if (isPaymentSurface && !isCustomPaymentSurface) {
+  if (isPaymentSurface) {
     const pathDetails = readPaymentCheckoutPathDetails({
       pathname: url.pathname,
       fallbackPlanCode: DEFAULT_PLAN_CODE,
@@ -1461,6 +1513,7 @@ function setCheckoutStatusQuery(input: {
     );
 
     url.pathname = buildPaymentCheckoutPath({
+      productSlug: isCustomPaymentSurface ? pathDetails?.planSlug : undefined,
       planCode: resolvedPlanCode,
       billingPeriodCode: resolvedBillingPeriodCode,
       orderNumber: input.order.orderNumber,
@@ -1571,6 +1624,21 @@ function appendPurchaseContextSearchParams(
   if (purchaseContext.repository) {
     params.set("repository", purchaseContext.repository);
   }
+  if (purchaseContext.minecraftServerName) {
+    params.set("minecraftServerName", purchaseContext.minecraftServerName);
+  }
+  if (purchaseContext.minecraftVersion) {
+    params.set("minecraftVersion", purchaseContext.minecraftVersion);
+  }
+  if (purchaseContext.minecraftServerType) {
+    params.set("minecraftServerType", purchaseContext.minecraftServerType);
+  }
+  if (purchaseContext.minecraftSubdomain) {
+    params.set("minecraftSubdomain", purchaseContext.minecraftSubdomain);
+  }
+  if (purchaseContext.minecraftFirstWorldName) {
+    params.set("minecraftFirstWorldName", purchaseContext.minecraftFirstWorldName);
+  }
 }
 
 function clearCheckoutStatusQuery() {
@@ -1581,7 +1649,7 @@ function clearCheckoutStatusQuery() {
   );
   let removedOneTimeKey = false;
 
-  if (isPaymentCheckoutPathname(url.pathname) && !isCustomPaymentSurfacePathname(url.pathname)) {
+  if (isPaymentCheckoutPathname(url.pathname)) {
     url.pathname = buildPaymentBasePathFromCurrentPathname(url.pathname);
   }
 
@@ -1642,6 +1710,20 @@ function withSupportRequestId(
   const normalizedMessage = message.trim();
   if (!requestId) return normalizedMessage;
   return `${normalizedMessage} Protocolo: ${requestId}.`;
+}
+
+async function readJsonResponseSafe<TResponse extends { ok?: boolean; message?: string }>(
+  response: Response,
+  fallbackMessage: string,
+): Promise<TResponse> {
+  try {
+    return (await response.json()) as TResponse;
+  } catch {
+    return {
+      ok: false,
+      message: fallbackMessage,
+    } as TResponse;
+  }
 }
 
 function formatCooldownMessage(seconds: number | null | undefined) {
@@ -2580,6 +2662,37 @@ function PixRailWordmark() {
   );
 }
 
+function SummaryMoneySkeleton({
+  className = "h-[18px] w-[96px]",
+}: {
+  className?: string;
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`flowdesk-shimmer inline-block rounded-full bg-[#171717] align-middle ${className}`.trim()}
+    />
+  );
+}
+
+function SummaryMoneyValue({
+  loading,
+  children,
+  skeletonClassName,
+  className = "",
+}: {
+  loading: boolean;
+  children: ReactNode;
+  skeletonClassName?: string;
+  className?: string;
+}) {
+  if (loading) {
+    return <SummaryMoneySkeleton className={skeletonClassName} />;
+  }
+
+  return <span className={className}>{children}</span>;
+}
+
 function PaymentMethodRow({
   label,
   description,
@@ -3247,6 +3360,9 @@ export function ConfigStepFour({
   const paymentPollingInFlightRef = useRef(false);
   const paymentOrderLookupInFlightRef = useRef(false);
   const orderBootstrapInFlightRef = useRef(false);
+  const paymentOrderLookupAbortRef = useRef<AbortController | null>(null);
+  const orderBootstrapAbortRef = useRef<AbortController | null>(null);
+  const paymentPreparationAttemptRef = useRef(0);
   const trialActivationRedirectTimeoutRef = useRef<number | null>(null);
   const lastHandledCardRedirectKeyRef = useRef(0);
   const lastAutoResolvedPendingCardOrderRef = useRef<number | null>(null);
@@ -3419,7 +3535,18 @@ export function ConfigStepFour({
     if (purchaseContext.type === "domain") {
       return `domain:${purchaseContext.token}:${purchaseContext.operation}:${purchaseContext.fqdn}`;
     }
-    return `hosting:${purchaseContext.hostingKind}:${purchaseContext.hostingPlan}:${purchaseContext.hostingRegion}:${purchaseContext.repository || ""}`;
+    return [
+      "hosting",
+      purchaseContext.hostingKind,
+      purchaseContext.hostingPlan,
+      purchaseContext.hostingRegion,
+      purchaseContext.repository || "",
+      purchaseContext.minecraftServerName || "",
+      purchaseContext.minecraftVersion || "",
+      purchaseContext.minecraftServerType || "",
+      purchaseContext.minecraftSubdomain || "",
+      purchaseContext.minecraftFirstWorldName || "",
+    ].join(":");
   }, [purchaseContext]);
 
   useEffect(() => {
@@ -3515,6 +3642,16 @@ export function ConfigStepFour({
     () => (purchaseContext ? { purchaseContext } : {}),
     [purchaseContext],
   );
+  const discountPreviewPurchaseType: DiscountPreviewPurchaseType =
+    purchaseContext?.type || "plan";
+  const isRenewCheckout = useMemo(() => {
+    if (typeof window === "undefined") return false;
+    const normalized = new URLSearchParams(window.location.search)
+      .get("renew")
+      ?.trim()
+      .toLowerCase();
+    return normalized === "1" || normalized === "true";
+  }, []);
   const checkoutAmountValidationKey = useMemo(
     () =>
       buildCheckoutAmountValidationKey({
@@ -3587,6 +3724,9 @@ export function ConfigStepFour({
         if (guildId) {
           params.set("guildId", guildId);
         }
+        if (isRenewCheckout) {
+          params.set("renew", "1");
+        }
 
         const response = await fetch(
           `/api/auth/me/servers/plans?${params.toString()}`,
@@ -3617,14 +3757,17 @@ export function ConfigStepFour({
         };
 
         if (isCustomPurchaseCheckout) {
-          const customResolvedPlan = resolvePlanSummary(
-            selectedPlanCode,
-            selectedBillingPeriodCode,
-            nextAvailablePlans,
-          );
-          const customFlowPointsBalance = roundMoney(
-            Math.max(0, payload.plan.planChange.flowPointsBalance),
-          );
+          const customResolvedPlan = {
+            ...resolvePlanSummary(
+              selectedPlanCode,
+              selectedBillingPeriodCode,
+              nextAvailablePlans,
+            ),
+            isAvailable: true,
+            unavailableReason: null,
+            isTrial: false,
+          };
+          const customFlowPointsBalance = 0;
           setAvailablePlans(nextAvailablePlans);
           setAccountPlan(payload.plan.accountPlan || null);
           setResolvedPlan(customResolvedPlan);
@@ -3685,6 +3828,7 @@ export function ConfigStepFour({
     };
   }, [
     guildId,
+    isRenewCheckout,
     isCustomPurchaseCheckout,
     selectedBillingPeriodCode,
     selectedPlanCode,
@@ -3711,15 +3855,24 @@ export function ConfigStepFour({
     const localFallbackPreview = buildFallbackDiscountPreview({
       baseAmount: baseCheckoutAmount,
       currency: checkoutCurrency,
-      flowPointsBalance: knownFlowPointsBalance,
+      flowPointsBalance: isCustomPurchaseCheckout ? 0 : knownFlowPointsBalance,
+      disableFlowPoints: isCustomPurchaseCheckout,
     });
 
     setDiscountPreview((current) =>
       hasManualDiscountCode ? current || localFallbackPreview : localFallbackPreview,
     );
     setDiscountMessage(null);
-    setIsDiscountLoading(true);
-    setLastSuccessfulCheckoutAmountValidationKey(null);
+    setIsDiscountLoading(!isCustomPurchaseCheckout || hasManualDiscountCode);
+    setLastSuccessfulCheckoutAmountValidationKey(
+      isCustomPurchaseCheckout && !hasManualDiscountCode
+        ? checkoutAmountValidationKey
+        : null,
+    );
+
+    if (isCustomPurchaseCheckout && !hasManualDiscountCode) {
+      return;
+    }
 
     const controller = new AbortController();
     let abortedByTimeout = false;
@@ -3747,6 +3900,7 @@ export function ConfigStepFour({
               currency: checkoutCurrency,
               planCode: selectedPlanCode,
               billingPeriodCode: selectedBillingPeriodCode,
+              purchaseType: discountPreviewPurchaseType,
             }),
             signal: controller.signal,
           });
@@ -3760,7 +3914,9 @@ export function ConfigStepFour({
           setLastSuccessfulCheckoutAmountValidationKey(checkoutAmountValidationKey);
           setKnownFlowPointsBalance(
             roundMoney(
-              Math.max(0, payload.preview.flowPoints?.balanceBefore || 0),
+              isCustomPurchaseCheckout
+                ? 0
+                : Math.max(0, payload.preview.flowPoints?.balanceBefore || 0),
             ),
           );
           setDiscountMessage(
@@ -3787,7 +3943,9 @@ export function ConfigStepFour({
             );
           }
 
-          setLastSuccessfulCheckoutAmountValidationKey(null);
+          setLastSuccessfulCheckoutAmountValidationKey(
+            isCustomPurchaseCheckout ? checkoutAmountValidationKey : null,
+          );
           setDiscountPreview(localFallbackPreview);
         } finally {
           if (!isActive) {
@@ -3813,10 +3971,12 @@ export function ConfigStepFour({
   }, [
     baseCheckoutAmount,
     checkoutCurrency,
+    discountPreviewPurchaseType,
     knownFlowPointsBalance,
     guildId,
     discountRefreshTick,
     hasManualDiscountCode,
+    isCustomPurchaseCheckout,
     manualDiscountPayload,
     checkoutAmountValidationKey,
     selectedBillingPeriodCode,
@@ -4000,6 +4160,9 @@ export function ConfigStepFour({
 
     let isMounted = true;
     const controller = new AbortController();
+    const attemptId = paymentPreparationAttemptRef.current + 1;
+    paymentPreparationAttemptRef.current = attemptId;
+    paymentOrderLookupAbortRef.current = controller;
     let abortedByTimeout = false;
     const timeoutId = window.setTimeout(() => {
       abortedByTimeout = true;
@@ -4071,6 +4234,10 @@ export function ConfigStepFour({
                   params.set("guildId", activeGuildId);
                 }
 
+                if (isRenewCheckout) {
+                  params.set("renew", "1");
+                }
+
                 if (shouldForceNewOrder) {
                   params.set("forceNew", "1");
                 }
@@ -4084,7 +4251,7 @@ export function ConfigStepFour({
           signal: controller.signal,
         });
         const payload = (await response.json()) as PixPaymentApiResponse;
-        if (!isMounted) return;
+        if (!isMounted || paymentPreparationAttemptRef.current !== attemptId) return;
 
         if (
           shouldForceNewOrder &&
@@ -4259,7 +4426,7 @@ export function ConfigStepFour({
           setView(restoredView);
         }
       } catch (error) {
-        if (!isMounted) return;
+        if (!isMounted || paymentPreparationAttemptRef.current !== attemptId) return;
         if (isAbortLikeError(error) && !abortedByTimeout) {
           return;
         }
@@ -4330,14 +4497,17 @@ export function ConfigStepFour({
           } else {
             setView("methods");
             setMethodMessage(
-              "Nao foi possivel preparar o pedido agora. Tente novamente para gerar uma nova cobranca segura.",
+              "Escolha um metodo de pagamento para gerar uma nova cobranca segura.",
             );
           }
         }
       } finally {
-        if (!isMounted) return;
         window.clearTimeout(timeoutId);
+        if (!isMounted || paymentPreparationAttemptRef.current !== attemptId) return;
         paymentOrderLookupInFlightRef.current = false;
+        if (paymentOrderLookupAbortRef.current === controller) {
+          paymentOrderLookupAbortRef.current = null;
+        }
         setIsLoadingOrder(false);
       }
     }
@@ -4348,7 +4518,12 @@ export function ConfigStepFour({
       isMounted = false;
       window.clearTimeout(timeoutId);
       controller.abort();
-      paymentOrderLookupInFlightRef.current = false;
+      if (paymentPreparationAttemptRef.current === attemptId) {
+        paymentOrderLookupInFlightRef.current = false;
+      }
+      if (paymentOrderLookupAbortRef.current === controller) {
+        paymentOrderLookupAbortRef.current = null;
+      }
     };
   }, [
     cardPaymentsEnabled,
@@ -4356,6 +4531,7 @@ export function ConfigStepFour({
     hasExplicitInitialPlan,
     initialBillingPeriodCode,
     initialPlanCode,
+    isRenewCheckout,
     isPlanLoading,
     paymentBootstrapRequestKey,
     purchaseContext,
@@ -4448,6 +4624,9 @@ export function ConfigStepFour({
     setIsPreparingBaseOrder(true);
 
     const controller = new AbortController();
+    const attemptId = paymentPreparationAttemptRef.current + 1;
+    paymentPreparationAttemptRef.current = attemptId;
+    orderBootstrapAbortRef.current = controller;
     let abortedByTimeout = false;
     const timeoutId = window.setTimeout(() => {
       abortedByTimeout = true;
@@ -4464,6 +4643,9 @@ export function ConfigStepFour({
         if (guildId) {
           params.set("guildId", guildId);
         }
+        if (isRenewCheckout) {
+          params.set("renew", "1");
+        }
         if (shouldForceNewOrder) {
           params.set("forceNew", "1");
         }
@@ -4477,6 +4659,7 @@ export function ConfigStepFour({
           },
         );
         const payload = (await response.json()) as PixPaymentApiResponse;
+        if (paymentPreparationAttemptRef.current !== attemptId) return;
         if (!response.ok || !payload.ok || !payload.order) {
           throw new Error(
             payload.message ||
@@ -4492,6 +4675,7 @@ export function ConfigStepFour({
           forceNewCheckoutRef.current = false;
         }
       } catch (error) {
+        if (paymentPreparationAttemptRef.current !== attemptId) return;
         if (isAbortLikeError(error) && !abortedByTimeout) {
           return;
         }
@@ -4500,18 +4684,20 @@ export function ConfigStepFour({
           parseUnknownErrorMessage(error) ||
           "Nao foi possivel preparar o pedido inicial de pagamento.";
 
-        if (view === "pix_form") {
-          setPixFormHasInputError(false);
-          setPixFormError(message);
-          setPixFormErrorAnimationTick((current) => current + 1);
-        } else {
-          setMethodMessage(message);
-        }
+        setPixFormHasInputError(false);
+        setPixFormError(null);
+        setMethodMessage(
+          `${message} Voce ainda pode escolher um metodo para gerar a cobranca agora.`,
+        );
         setPaymentBootstrapFailed(true);
       } finally {
         window.clearTimeout(timeoutId);
+        if (paymentPreparationAttemptRef.current !== attemptId) return;
         orderBootstrapInFlightRef.current = false;
         paymentOrderLookupInFlightRef.current = false;
+        if (orderBootstrapAbortRef.current === controller) {
+          orderBootstrapAbortRef.current = null;
+        }
         setIsPreparingBaseOrder(false);
       }
     })();
@@ -4519,11 +4705,17 @@ export function ConfigStepFour({
     return () => {
       controller.abort();
       window.clearTimeout(timeoutId);
-      orderBootstrapInFlightRef.current = false;
-      paymentOrderLookupInFlightRef.current = false;
+      if (paymentPreparationAttemptRef.current === attemptId) {
+        orderBootstrapInFlightRef.current = false;
+        paymentOrderLookupInFlightRef.current = false;
+      }
+      if (orderBootstrapAbortRef.current === controller) {
+        orderBootstrapAbortRef.current = null;
+      }
     };
   }, [
     guildId,
+    isRenewCheckout,
     isCancellingPendingCard,
     isPlanLoading,
     isLoadingOrder,
@@ -4563,9 +4755,9 @@ export function ConfigStepFour({
       if (typeof document !== "undefined" && document.hidden) return 1500;
       if (!shouldUseFastApprovalPolling) return 2500;
       const elapsedMs = Date.now() - pollingStartedAt;
-      if (elapsedMs <= 30_000) return 350;
-      if (elapsedMs <= 120_000) return 800;
-      return 1500;
+      if (elapsedMs <= 45_000) return 220;
+      if (elapsedMs <= 180_000) return 500;
+      return 900;
     };
     let isMounted = true;
     let activeController: AbortController | null = null;
@@ -4577,7 +4769,7 @@ export function ConfigStepFour({
       activeController = new AbortController();
       const timeoutId = window.setTimeout(() => {
         activeController?.abort();
-      }, 8000);
+      }, 4500);
 
       try {
         const queryParams = new URLSearchParams({
@@ -4588,6 +4780,9 @@ export function ConfigStepFour({
         }
         if (pixOrder?.checkoutAccessToken) {
           queryParams.set("checkoutToken", pixOrder.checkoutAccessToken);
+        }
+        if (shouldUseFastApprovalPolling) {
+          queryParams.set("forceProviderRefresh", "1");
         }
         const lookupUrl =
           pixOrder?.method === "card"
@@ -4873,13 +5068,15 @@ export function ConfigStepFour({
   const requiresLiveCheckoutAmountValidation = useMemo(
     () =>
       Boolean(
-        resolvedPlan.isAvailable &&
+        !isCustomPurchaseCheckout &&
+          resolvedPlan.isAvailable &&
           !resolvedPlan.isTrial &&
           selectedPlanChange.execution === "pay_now" &&
           activeDiscountPreview.totalAmount > 0,
       ),
     [
       activeDiscountPreview.totalAmount,
+      isCustomPurchaseCheckout,
       resolvedPlan.isAvailable,
       resolvedPlan.isTrial,
       selectedPlanChange.execution,
@@ -5024,8 +5221,7 @@ export function ConfigStepFour({
 
   const canSubmitPix = useMemo(() => {
     return Boolean(
-      (pixOrder?.orderNumber || lastKnownOrderNumber) &&
-        isCheckoutAmountReady &&
+      isCheckoutAmountReady &&
         !isLoadingOrder &&
         !isPreparingBaseOrder &&
         pixDocumentStatus === "valid" &&
@@ -5037,16 +5233,13 @@ export function ConfigStepFour({
     isLoadingOrder,
     isPreparingBaseOrder,
     isSubmittingPix,
-    lastKnownOrderNumber,
     pixDocumentStatus,
     pixNameStatus,
-    pixOrder?.orderNumber,
   ]);
 
   const canSubmitCard = useMemo(() => {
     return Boolean(
       cardPaymentsEnabled &&
-        (pixOrder?.orderNumber || lastKnownOrderNumber) &&
         isCheckoutAmountReady &&
         !isLoadingOrder &&
         !isPreparingBaseOrder &&
@@ -5072,8 +5265,6 @@ export function ConfigStepFour({
     isLoadingOrder,
     isPreparingBaseOrder,
     isSubmittingCard,
-    lastKnownOrderNumber,
-    pixOrder?.orderNumber,
   ]);
 
   const paymentStatus = pixOrder?.status || "pending";
@@ -5108,7 +5299,6 @@ export function ConfigStepFour({
   const canChoosePaymentMethod = Boolean(
     isCheckoutAmountReady &&
       !isPaymentCheckoutBusy &&
-      hasPaymentOrderReady &&
       !isSubmittingCard &&
       !isCancellingPendingCard &&
       !isHostedCardApprovalAwaitingConfirmation,
@@ -5201,6 +5391,7 @@ export function ConfigStepFour({
     };
   }, [
     guildId,
+    isRenewCheckout,
     hasAccountLastPaymentGuild,
     hasApprovedPaymentBenefitDelivered,
     paymentStatus,
@@ -5257,6 +5448,19 @@ export function ConfigStepFour({
     }
 
     if (typeof window === "undefined") return;
+    try {
+      const currentUrl = new URL(window.location.href);
+      if (
+        currentUrl.searchParams.get("return") === "hosting" ||
+        currentUrl.searchParams.get("source") === "dashboard-hosting" ||
+        purchaseContext?.type === "hosting"
+      ) {
+        window.location.assign("/dashboard/hosting/step-5?hostingBack=1");
+        return;
+      }
+    } catch {
+      // seguir para fallback existente
+    }
 
     if (window.history.length > 1) {
       window.history.back();
@@ -5528,7 +5732,9 @@ export function ConfigStepFour({
         params?.get("renew")?.trim()?.toLowerCase() === "true";
       const rawReturnTarget = params?.get("return")?.trim().toLowerCase() || null;
       const returnTarget =
-        rawReturnTarget === "servers" || rawReturnTarget === "hosting"
+        rawReturnTarget === "servers" ||
+        rawReturnTarget === "hosting" ||
+        rawReturnTarget === "account"
           ? rawReturnTarget
           : null;
       const returnPath = params?.get("returnPath") || null;
@@ -5670,10 +5876,13 @@ export function ConfigStepFour({
   }, [cardPaymentsEnabled, cardRedirectRequestKey, startCardRedirectCheckout, view]);
 
   const handleRetryPreparePaymentOrder = useCallback(() => {
-    if (paymentOrderLookupInFlightRef.current || orderBootstrapInFlightRef.current) {
-      setMethodMessage("Ainda estamos preparando seu pedido. Aguarde alguns segundos.");
-      return;
-    }
+    paymentPreparationAttemptRef.current += 1;
+    paymentOrderLookupAbortRef.current?.abort();
+    orderBootstrapAbortRef.current?.abort();
+    paymentOrderLookupAbortRef.current = null;
+    orderBootstrapAbortRef.current = null;
+    paymentOrderLookupInFlightRef.current = false;
+    orderBootstrapInFlightRef.current = false;
 
     if (guildId) {
       clearPendingCardRedirectState(guildId);
@@ -5708,11 +5917,6 @@ export function ConfigStepFour({
 
     if (isPaymentOrderBusy) {
       setMethodMessage("Ainda estamos preparando o pedido. Aguarde alguns segundos.");
-      return;
-    }
-
-    if (!hasPaymentOrderReady) {
-      handleRetryPreparePaymentOrder();
       return;
     }
 
@@ -5758,8 +5962,6 @@ export function ConfigStepFour({
     cardPaymentsEnabled,
     checkoutAmountValidationMessage,
     guildId,
-    handleRetryPreparePaymentOrder,
-    hasPaymentOrderReady,
     isCheckoutAmountReady,
     isPaymentOrderBusy,
     selectedRail,
@@ -5779,11 +5981,6 @@ export function ConfigStepFour({
       return;
     }
 
-    if (!hasPaymentOrderReady) {
-      handleRetryPreparePaymentOrder();
-      return;
-    }
-
     setPhase("checkout");
     setSelectedRail("pix");
     setView("pix_form");
@@ -5792,8 +5989,6 @@ export function ConfigStepFour({
     setPixFormError(null);
   }, [
     checkoutAmountValidationMessage,
-    handleRetryPreparePaymentOrder,
-    hasPaymentOrderReady,
     isCheckoutAmountReady,
     isPaymentOrderBusy,
   ]);
@@ -5816,6 +6011,7 @@ export function ConfigStepFour({
         ...manualDiscountPayload,
         ...purchaseContextPayload,
         expectedTotalAmount: activeDiscountPreview.totalAmount,
+        renew: isRenewCheckout,
         forceNew: forceNewCheckoutRef.current,
       };
       if (guildId) {
@@ -5839,7 +6035,10 @@ export function ConfigStepFour({
         body: JSON.stringify(payloadBody),
       });
       const requestId = resolveResponseRequestId(response);
-      const payload = (await response.json()) as PixPaymentApiResponse;
+      const payload = await readJsonResponseSafe<PixPaymentApiResponse>(
+        response,
+        "Nao foi possivel ler a resposta do pagamento PIX. Tente novamente em instantes.",
+      );
 
       if (payload.blockedByActiveLicense) {
         handleActiveLicenseCheckoutBlock(guildId, payload.licenseExpiresAt);
@@ -5933,6 +6132,7 @@ export function ConfigStepFour({
     handleActiveLicenseCheckoutBlock,
     handleCheckoutAmountMismatchRecovery,
     activeDiscountPreview.totalAmount,
+    isRenewCheckout,
     manualDiscountPayload,
     purchaseContextPayload,
     payerDocument,
@@ -6143,7 +6343,10 @@ export function ConfigStepFour({
         }),
       });
       const requestId = resolveResponseRequestId(response);
-      const payload = (await response.json()) as PixPaymentApiResponse;
+      const payload = await readJsonResponseSafe<PixPaymentApiResponse>(
+        response,
+        "Nao foi possivel ler a resposta do pagamento PIX. Tente novamente em instantes.",
+      );
 
       if (response.status === 409 && payload.checkoutAmountChanged) {
         handleCheckoutAmountMismatchRecovery({
@@ -6287,17 +6490,6 @@ export function ConfigStepFour({
       return;
     }
 
-    if (
-      !(pixOrder?.orderNumber || lastKnownOrderNumber) ||
-      isLoadingOrder ||
-      isPreparingBaseOrder
-    ) {
-      setPixFormHasInputError(false);
-      setPixFormError("Aguardando o pedido ficar pronto para gerar o PIX.");
-      setPixFormErrorAnimationTick((current) => current + 1);
-      return;
-    }
-
     if (pixDocumentStatus !== "valid") {
       triggerPixFormValidationError("CPF/CNPJ invalido. Verifique os digitos e tente novamente.");
       return;
@@ -6328,12 +6520,16 @@ export function ConfigStepFour({
           payerDocument: documentDigits,
           payerName: normalizedName,
           expectedTotalAmount: activeDiscountPreview.totalAmount,
+          renew: isRenewCheckout,
           forceNew: forceNewCheckoutRef.current,
         }),
       });
       const requestId = resolveResponseRequestId(response);
 
-      const payload = (await response.json()) as PixPaymentApiResponse;
+      const payload = await readJsonResponseSafe<PixPaymentApiResponse>(
+        response,
+        "Nao foi possivel ler a resposta da cobranca PIX. Tente novamente em instantes.",
+      );
 
       if (payload.blockedByActiveLicense) {
         handleActiveLicenseCheckoutBlock(guildId, payload.licenseExpiresAt);
@@ -6442,6 +6638,7 @@ export function ConfigStepFour({
     isPreparingBaseOrder,
     isSubmittingPix,
     activeDiscountPreview.totalAmount,
+    isRenewCheckout,
     checkoutAmountValidationMessage,
     manualDiscountPayload,
     purchaseContextPayload,
@@ -7075,6 +7272,17 @@ export function ConfigStepFour({
       null) ||
     (shouldShowStatusResultPanel ? currentPaymentStatusLabel : null);
   const planDisplayName = purchaseContext?.title || resolvedPlan.name;
+  const isCustomPurchaseAmountHydrating = Boolean(
+    isCustomPurchaseCheckout &&
+      typeof purchaseContext?.amount === "number" &&
+      checkoutBaseAmountOverride === null,
+  );
+  const shouldShowOrderSummaryMoneySkeleton = Boolean(
+    isPlanLoading ||
+      isDiscountLoading ||
+      isCustomPurchaseAmountHydrating ||
+      (requiresLiveCheckoutAmountValidation && !isCheckoutAmountReady),
+  );
   const planBillingLabel = purchaseContext
     ? purchaseContext.type === "domain"
       ? purchaseContext.billingLabel || (purchaseContext.operation === "register" ? "/ano" : "")
@@ -7109,12 +7317,16 @@ export function ConfigStepFour({
   const payableBeforePromotionsAmount = roundMoney(
     Math.max(
       0,
-      selectedPlanChange.payableBeforeDiscountsAmount ||
+      isCustomPurchaseCheckout
+        ? activeDiscountPreview.baseAmount
+        : selectedPlanChange.payableBeforeDiscountsAmount ||
         activeDiscountPreview.baseAmount,
     ),
   );
   const targetCycleAmountLabel = formatMoney(
-    selectedPlanChange.targetTotalAmount || resolvedPlan.totalAmount,
+    isCustomPurchaseCheckout
+      ? activeDiscountPreview.baseAmount
+      : selectedPlanChange.targetTotalAmount || resolvedPlan.totalAmount,
     activeDiscountPreview.currency,
   );
   const payableBeforePromotionsLabel = formatMoney(
@@ -7131,7 +7343,9 @@ export function ConfigStepFour({
   );
   const planSavingsAmount = Math.max(
     0,
-    resolvedPlan.compareTotalAmount - activeDiscountPreview.totalAmount,
+    isCustomPurchaseCheckout
+      ? 0
+      : resolvedPlan.compareTotalAmount - activeDiscountPreview.totalAmount,
   );
   const planSavingsLabel = formatMoney(planSavingsAmount, activeDiscountPreview.currency);
   const showCompareAmount = planSavingsAmount > 0;
@@ -7249,12 +7463,16 @@ export function ConfigStepFour({
         ? "Preencha nome completo e CPF abaixo para gerar o PIX sem sair deste card."
         : "Escolha como deseja pagar sem sair da tela do carrinho.";
   const isContinueButtonAwaitingPayment = phase !== "cart";
+  const isContinueButtonLoading = Boolean(
+    phase === "cart" && (isPlanLoading || isLoadingOrder || isPreparingBaseOrder),
+  );
   const isScheduledTargetAlreadyPending =
     selectedPlanChange.execution === "schedule_for_renewal" &&
     selectedPlanChange.scheduledChangeMatchesTarget &&
     scheduledPlanChange?.status === "scheduled";
   const isContinueButtonDisabled = Boolean(
     isPlanSelectionLocked ||
+      isContinueButtonLoading ||
       isSubmittingTrial ||
       (requiresLiveCheckoutAmountValidation && !isCheckoutAmountReady) ||
       isContinueButtonAwaitingPayment ||
@@ -7263,8 +7481,11 @@ export function ConfigStepFour({
   );
   const isContinueButtonBusy =
     phase === "cart" &&
+    !isContinueButtonLoading &&
     (isSubmittingTrial || isCheckoutAmountValidationBusy);
-  const continueButtonLabel = !resolvedPlan.isAvailable
+  const continueButtonLabel = isContinueButtonLoading
+    ? "Carregando"
+    : !resolvedPlan.isAvailable
     ? "Indisponivel"
     : resolvedPlan.isTrial
       ? "Ativar gratuitamente"
@@ -7398,14 +7619,25 @@ export function ConfigStepFour({
                         <div className="flex flex-wrap items-start gap-[12px] xl:justify-end">
                           {planSavingsAmount > 0 ? (
                             <span className="mt-[4px] inline-flex min-h-[32px] items-center rounded-full bg-[rgba(0,98,255,0.18)] px-[14px] text-[14px] font-semibold text-[#81B8FF]">
-                              Economize {planSavingsLabel}
+                              Economize{" "}
+                              <SummaryMoneyValue
+                                loading={shouldShowOrderSummaryMoneySkeleton}
+                                skeletonClassName="ml-[4px] h-[14px] w-[76px]"
+                              >
+                                {planSavingsLabel}
+                              </SummaryMoneyValue>
                             </span>
                           ) : null}
 
                           <div>
                             <div className="flex items-end gap-[4px] xl:justify-end">
                               <span className="text-[24px] font-semibold tracking-[-0.04em] text-[#F5F5F5] sm:text-[26px]">
-                                {effectiveMonthlyLabel}
+                                <SummaryMoneyValue
+                                  loading={shouldShowOrderSummaryMoneySkeleton}
+                                  skeletonClassName="h-[26px] w-[118px]"
+                                >
+                                  {effectiveMonthlyLabel}
+                                </SummaryMoneyValue>
                               </span>
                               <span className="pb-[2px] text-[16px] text-[#C8C8C8]">
                                 {planBillingLabel}
@@ -7413,12 +7645,23 @@ export function ConfigStepFour({
                             </div>
                             {showCompareAmount ? (
                               <p className="mt-[4px] text-[14px] text-[#777777] line-through xl:text-right">
-                                {compareMonthlyAmountLabel}
+                                <SummaryMoneyValue
+                                  loading={shouldShowOrderSummaryMoneySkeleton}
+                                  skeletonClassName="h-[14px] w-[76px]"
+                                >
+                                  {compareMonthlyAmountLabel}
+                                </SummaryMoneyValue>
                                 {planBillingLabel}
                               </p>
                             ) : null}
                             <p className="mt-[5px] text-[13px] text-[#8E8E8E] xl:text-right">
-                              Valor cobrável antes das promoções: {payableBeforePromotionsLabel}
+                              Valor cobrável antes das promoções:{" "}
+                              <SummaryMoneyValue
+                                loading={shouldShowOrderSummaryMoneySkeleton}
+                                skeletonClassName="h-[13px] w-[82px]"
+                              >
+                                {payableBeforePromotionsLabel}
+                              </SummaryMoneyValue>
                             </p>
                           </div>
                         </div>
@@ -7462,14 +7705,32 @@ export function ConfigStepFour({
                           {planPeriodLabel}
                         </span>
                         <span className="inline-flex min-h-[30px] items-center rounded-full border border-[#202020] bg-[#111111] px-[12px] font-medium text-[#ECECEC]">
-                          Total do novo ciclo {targetCycleAmountLabel} {planTotalLabel}
+                          Total do novo ciclo{" "}
+                          <SummaryMoneyValue
+                            loading={shouldShowOrderSummaryMoneySkeleton}
+                            skeletonClassName="mx-[4px] h-[14px] w-[82px]"
+                          >
+                            {targetCycleAmountLabel}
+                          </SummaryMoneyValue>{" "}
+                          {planTotalLabel}
                         </span>
                         <span className="inline-flex min-h-[30px] items-center rounded-full border border-[#202020] bg-[#111111] px-[12px] font-medium text-[#ECECEC]">
-                          Valor cobrável antes das promoções {payableBeforePromotionsLabel}
+                          Valor cobrável antes das promoções{" "}
+                          <SummaryMoneyValue
+                            loading={shouldShowOrderSummaryMoneySkeleton}
+                            skeletonClassName="ml-[4px] h-[14px] w-[82px]"
+                          >
+                            {payableBeforePromotionsLabel}
+                          </SummaryMoneyValue>
                         </span>
                         {showCompareAmount ? (
                           <span className="inline-flex min-h-[30px] items-center rounded-full border border-[#202020] bg-[#111111] px-[12px] font-medium text-[#A0A0A0] line-through">
-                            {compareTotalAmountLabel}
+                            <SummaryMoneyValue
+                              loading={shouldShowOrderSummaryMoneySkeleton}
+                              skeletonClassName="h-[14px] w-[78px]"
+                            >
+                              {compareTotalAmountLabel}
+                            </SummaryMoneyValue>
                           </span>
                         ) : null}
                       </div>
@@ -7671,7 +7932,12 @@ export function ConfigStepFour({
                     </div>
                     <div className="text-right">
                       <p className="text-[19px] font-semibold text-[#F5F5F5]">
-                        {effectiveMonthlyLabel}
+                        <SummaryMoneyValue
+                          loading={shouldShowOrderSummaryMoneySkeleton}
+                          skeletonClassName="h-[20px] w-[104px]"
+                        >
+                          {effectiveMonthlyLabel}
+                        </SummaryMoneyValue>
                         <span className="ml-[4px] text-[13px] font-medium text-[#B9B9B9]">
                           {planBillingLabel}
                         </span>
@@ -7690,11 +7956,21 @@ export function ConfigStepFour({
                       <div className="flex items-center gap-[10px]">
                         {showCompareAmount ? (
                           <span className="text-[14px] text-[#7B7B7B] line-through">
-                            {compareTotalAmountLabel}
+                            <SummaryMoneyValue
+                              loading={shouldShowOrderSummaryMoneySkeleton}
+                              skeletonClassName="h-[14px] w-[78px]"
+                            >
+                              {compareTotalAmountLabel}
+                            </SummaryMoneyValue>
                           </span>
                         ) : null}
                         <span className="text-[18px] font-semibold text-[#F5F5F5]">
-                          {targetCycleAmountLabel}
+                          <SummaryMoneyValue
+                            loading={shouldShowOrderSummaryMoneySkeleton}
+                            skeletonClassName="h-[20px] w-[102px]"
+                          >
+                            {targetCycleAmountLabel}
+                          </SummaryMoneyValue>
                         </span>
                       </div>
                     </div>
@@ -7702,7 +7978,12 @@ export function ConfigStepFour({
                     <div className="flex items-center justify-between gap-[14px]">
                       <span className="text-[#DDDDDD]">Valor cobrável antes das promoções</span>
                       <span className="font-medium text-[#F5F5F5]">
-                        {payableBeforePromotionsLabel}
+                        <SummaryMoneyValue
+                          loading={shouldShowOrderSummaryMoneySkeleton}
+                          skeletonClassName="h-[18px] w-[96px]"
+                        >
+                          {payableBeforePromotionsLabel}
+                        </SummaryMoneyValue>
                       </span>
                     </div>
 
@@ -7713,11 +7994,21 @@ export function ConfigStepFour({
                       <div className="flex items-center gap-[10px]">
                         {showCompareAmount ? (
                           <span className="text-[14px] text-[#7B7B7B] line-through">
-                            {compareMonthlyAmountLabel}
+                            <SummaryMoneyValue
+                              loading={shouldShowOrderSummaryMoneySkeleton}
+                              skeletonClassName="h-[14px] w-[76px]"
+                            >
+                              {compareMonthlyAmountLabel}
+                            </SummaryMoneyValue>
                           </span>
                         ) : null}
                         <span className="font-medium text-[#F5F5F5]">
-                          {effectiveMonthlyLabel}
+                          <SummaryMoneyValue
+                            loading={shouldShowOrderSummaryMoneySkeleton}
+                            skeletonClassName="h-[18px] w-[92px]"
+                          >
+                            {effectiveMonthlyLabel}
+                          </SummaryMoneyValue>
                         </span>
                       </div>
                     </div>
@@ -7733,12 +8024,7 @@ export function ConfigStepFour({
                           </p>
                         </div>
 
-                        <div className="flex items-center justify-between gap-[14px]">
-                          <span className="text-[#DDDDDD]">Modo da troca</span>
-                          <span className="font-medium text-[#F5F5F5]">
-                            {shouldShowCoveredByCreditNotice ? "Troca coberta" : "Troca imediata"}
-                          </span>
-                        </div>
+
 
                         <div className="flex items-center justify-between gap-[14px]">
                           <span className="text-[#DDDDDD]">Dias usados</span>
@@ -7757,37 +8043,69 @@ export function ConfigStepFour({
 
                         <div className="flex items-center justify-between gap-[14px]">
                           <span className="text-[#DDDDDD]">Plano atual no ciclo</span>
-                          <span className="font-medium text-[#F5F5F5]">{currentCycleAmountLabel}</span>
+                          <span className="font-medium text-[#F5F5F5]">
+                            <SummaryMoneyValue
+                              loading={shouldShowOrderSummaryMoneySkeleton}
+                              skeletonClassName="h-[18px] w-[92px]"
+                            >
+                              {currentCycleAmountLabel}
+                            </SummaryMoneyValue>
+                          </span>
                         </div>
 
                         <div className="flex items-center justify-between gap-[14px]">
                           <span className="text-[#DDDDDD]">Ja consumido neste ciclo</span>
-                          <span className="font-medium text-[#F5F5F5]">{currentConsumedAmountLabel}</span>
+                          <span className="font-medium text-[#F5F5F5]">
+                            <SummaryMoneyValue
+                              loading={shouldShowOrderSummaryMoneySkeleton}
+                              skeletonClassName="h-[18px] w-[92px]"
+                            >
+                              {currentConsumedAmountLabel}
+                            </SummaryMoneyValue>
+                          </span>
                         </div>
 
                         <div className="flex items-center justify-between gap-[14px]">
                           <span className="text-[#DDDDDD]">Credito do plano atual</span>
                           <span className="font-medium text-[#0ECF9C]">
-                            - {currentCreditAmountLabel}
+                            {shouldShowOrderSummaryMoneySkeleton ? (
+                              <SummaryMoneySkeleton className="h-[18px] w-[92px]" />
+                            ) : (
+                              `- ${currentCreditAmountLabel}`
+                            )}
                           </span>
                         </div>
 
                         <div className="flex items-center justify-between gap-[14px]">
                           <span className="text-[#DDDDDD]">Cobertura do novo ciclo</span>
-                          <span className="font-medium text-[#0ECF9C]">{creditAppliedToTargetLabel}</span>
+                          <span className="font-medium text-[#0ECF9C]">
+                            <SummaryMoneyValue
+                              loading={shouldShowOrderSummaryMoneySkeleton}
+                              skeletonClassName="h-[18px] w-[92px]"
+                            >
+                              {creditAppliedToTargetLabel}
+                            </SummaryMoneyValue>
+                          </span>
                         </div>
 
                         {selectedPlanChange.surplusCreditAmount > 0 ? (
                           <div className="flex items-center justify-between gap-[14px]">
                             <span className="text-[#DDDDDD]">Sobra que vai para FlowPoints</span>
-                            <span className="font-medium text-[#81B8FF]">{surplusCreditLabel}</span>
+                            <span className="font-medium text-[#81B8FF]">
+                              <SummaryMoneyValue
+                                loading={shouldShowOrderSummaryMoneySkeleton}
+                                skeletonClassName="h-[18px] w-[92px]"
+                              >
+                                {surplusCreditLabel}
+                              </SummaryMoneyValue>
+                            </span>
                           </div>
                         ) : null}
 
                         <p className="text-[12px] leading-[1.55] text-[#8D8D8D]">
                           {shouldShowCoveredByCreditNotice
                             ? "Essa troca fica com total em R$ 0,00 porque o credito proporcional cobriu o novo ciclo inteiro. Se sobrar valor, ele vai para a carteira FlowPoints."
-                            : "Depois desse credito proporcional, promocoes, vales e FlowPoints da carteira ainda podem reduzir mais o total final."}
+                            : "Depois desse credito proporcional, promocoes e vales ainda podem reduzir mais o total final."}
                         </p>
                       </>
                     ) : null}
@@ -7795,49 +8113,98 @@ export function ConfigStepFour({
                     {activeDiscountPreview.coupon && activeDiscountPreview.coupon.amount > 0 ? (
                       <div className="flex items-center justify-between gap-[14px]">
                         <span className="text-[#DDDDDD]">Cupom</span>
-                        <span className="font-medium text-[#0ECF9C]">{couponDiscountLabel}</span>
+                        <span className="font-medium text-[#0ECF9C]">
+                          <SummaryMoneyValue
+                            loading={shouldShowOrderSummaryMoneySkeleton}
+                            skeletonClassName="h-[18px] w-[86px]"
+                          >
+                            {couponDiscountLabel}
+                          </SummaryMoneyValue>
+                        </span>
                       </div>
                     ) : null}
 
                     {activeDiscountPreview.giftCard && activeDiscountPreview.giftCard.amount > 0 ? (
                       <div className="flex items-center justify-between gap-[14px]">
                         <span className="text-[#DDDDDD]">Vale-presente</span>
-                        <span className="font-medium text-[#0ECF9C]">{giftCardDiscountLabel}</span>
+                        <span className="font-medium text-[#0ECF9C]">
+                          <SummaryMoneyValue
+                            loading={shouldShowOrderSummaryMoneySkeleton}
+                            skeletonClassName="h-[18px] w-[86px]"
+                          >
+                            {giftCardDiscountLabel}
+                          </SummaryMoneyValue>
+                        </span>
                       </div>
                     ) : null}
 
-                    <div className="flex items-center justify-between gap-[14px]">
-                      <span className="text-[#DDDDDD]">FlowPoints</span>
-                      <span className="font-medium text-[#F5F5F5]">{flowPointsDiscountLabel}</span>
-                    </div>
+                    {(activeDiscountPreview.flowPoints?.appliedAmount ?? 0) > 0 || flowPointsGrantAmount > 0 ? (
+                      <>
+                        <div className="flex items-center justify-between gap-[14px]">
+                          <span className="text-[#DDDDDD]">FlowPoints</span>
+                          <span className="font-medium text-[#F5F5F5]">
+                            <SummaryMoneyValue
+                              loading={shouldShowOrderSummaryMoneySkeleton}
+                              skeletonClassName="h-[18px] w-[86px]"
+                            >
+                              {flowPointsDiscountLabel}
+                            </SummaryMoneyValue>
+                          </span>
+                        </div>
 
-                    <div className="flex items-center justify-between gap-[14px]">
-                      <span className="text-[#DDDDDD]">Carteira FlowPoints</span>
-                      <span className="font-medium text-[#F5F5F5]">{flowPointsBalanceLabel}</span>
-                    </div>
+                        <div className="flex items-center justify-between gap-[14px]">
+                          <span className="text-[#DDDDDD]">Carteira FlowPoints</span>
+                          <span className="font-medium text-[#F5F5F5]">
+                            <SummaryMoneyValue
+                              loading={shouldShowOrderSummaryMoneySkeleton}
+                              skeletonClassName="h-[18px] w-[86px]"
+                            >
+                              {flowPointsBalanceLabel}
+                            </SummaryMoneyValue>
+                          </span>
+                        </div>
 
-                    <div className="flex items-center justify-between gap-[14px]">
-                      <span className="text-[#DDDDDD]">Saldo apos abatimento</span>
-                      <span className="font-medium text-[#F5F5F5]">{flowPointsAfterApplyLabel}</span>
-                    </div>
+                        <div className="flex items-center justify-between gap-[14px]">
+                          <span className="text-[#DDDDDD]">Saldo apos abatimento</span>
+                          <span className="font-medium text-[#F5F5F5]">
+                            <SummaryMoneyValue
+                              loading={shouldShowOrderSummaryMoneySkeleton}
+                              skeletonClassName="h-[18px] w-[86px]"
+                            >
+                              {flowPointsAfterApplyLabel}
+                            </SummaryMoneyValue>
+                          </span>
+                        </div>
 
-                    <div className="flex items-center justify-between gap-[14px]">
-                      <span className="text-[#DDDDDD]">FlowPoints que ganha</span>
-                      <span
-                        className={`font-medium ${
-                          flowPointsGrantAmount > 0 ? "text-[#81B8FF]" : "text-[#F5F5F5]"
-                        }`}
-                      >
-                        {flowPointsGrantLabel}
-                      </span>
-                    </div>
+                        <div className="flex items-center justify-between gap-[14px]">
+                          <span className="text-[#DDDDDD]">FlowPoints que ganha</span>
+                          <span
+                            className={`font-medium ${
+                              flowPointsGrantAmount > 0 ? "text-[#81B8FF]" : "text-[#F5F5F5]"
+                            }`}
+                          >
+                            <SummaryMoneyValue
+                              loading={shouldShowOrderSummaryMoneySkeleton}
+                              skeletonClassName="h-[18px] w-[86px]"
+                            >
+                              {flowPointsGrantLabel}
+                            </SummaryMoneyValue>
+                          </span>
+                        </div>
+                      </>
+                    ) : null}
                   </div>
 
                   <div className="mt-[20px] border-t border-[#1D1D1D] pt-[18px]">
                     <div className="flex items-center justify-between gap-[14px] text-[15px] text-[#DDDDDD]">
                       <span>Impostos</span>
                       <span className="font-medium text-[#F5F5F5]">
-                        {formatMoney(0, activeDiscountPreview.currency)}
+                        <SummaryMoneyValue
+                          loading={shouldShowOrderSummaryMoneySkeleton}
+                          skeletonClassName="h-[18px] w-[74px]"
+                        >
+                          {formatMoney(0, activeDiscountPreview.currency)}
+                        </SummaryMoneyValue>
                       </span>
                     </div>
                   </div>
@@ -7848,11 +8215,21 @@ export function ConfigStepFour({
                       <div className="text-right">
                         {showCompareAmount ? (
                           <p className="text-[14px] text-[#7B7B7B] line-through">
-                            {compareTotalAmountLabel}
+                            <SummaryMoneyValue
+                              loading={shouldShowOrderSummaryMoneySkeleton}
+                              skeletonClassName="h-[14px] w-[78px]"
+                            >
+                              {compareTotalAmountLabel}
+                            </SummaryMoneyValue>
                           </p>
                         ) : null}
                         <p className="mt-[4px] text-[22px] font-semibold tracking-[-0.04em] text-[#F5F5F5] sm:text-[24px]">
-                          {summaryTotalLabel}
+                          <SummaryMoneyValue
+                            loading={shouldShowOrderSummaryMoneySkeleton}
+                            skeletonClassName="h-[26px] w-[128px]"
+                          >
+                            {summaryTotalLabel}
+                          </SummaryMoneyValue>
                         </p>
                       </div>
                     </div>
@@ -7971,7 +8348,9 @@ export function ConfigStepFour({
                       }`}
                     />
                     <span className="relative z-10 inline-flex items-center justify-center gap-[10px] whitespace-nowrap leading-none">
-                      {isContinueButtonBusy ? (
+                      {isContinueButtonLoading ? (
+                        <SummaryMoneySkeleton className="h-[20px] w-[154px] bg-[rgba(255,255,255,0.18)]" />
+                      ) : isContinueButtonBusy ? (
                         <ButtonLoader size={18} colorClassName="text-[#E6E6E6]" />
                       ) : (
                         <span

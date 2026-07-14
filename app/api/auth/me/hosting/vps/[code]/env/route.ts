@@ -11,6 +11,7 @@ import {
 } from "@/lib/hosting/vpsRuntime";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { applyNoStoreHeaders } from "@/lib/security/http";
+import { flowSecureDto, parseFlowSecureDto } from "@/lib/security/flowSecure";
 
 type RouteProps = {
   params: Promise<{ code: string }>;
@@ -22,6 +23,21 @@ type NormalizedEnvVariableInput = {
   value: string;
   note: string | null;
   sensitive: boolean;
+};
+
+type EnvPostBody = {
+  variables?: Record<string, unknown>[];
+  environment?: "development" | "preview" | "production";
+  key?: string;
+  value?: string;
+  note?: string;
+  sensitive?: boolean;
+};
+
+type EnvDeleteBody = {
+  id?: number;
+  environment?: "development" | "preview" | "production";
+  key?: string;
 };
 
 function buildDotEnvContent(variables: NormalizedEnvVariableInput[]) {
@@ -106,7 +122,28 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
       NextResponse.json({ ok: false, message: "VPS nao encontrada." }, { status: 404 }),
     );
   }
-  const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+  let body: EnvPostBody;
+  try {
+    body = parseFlowSecureDto<EnvPostBody>(
+      await request.json().catch(() => ({})),
+      {
+        variables: flowSecureDto.optional(flowSecureDto.array(flowSecureDto.record(), { maxLength: 250 })),
+        environment: flowSecureDto.optional(flowSecureDto.enum(["development", "preview", "production"] as const)),
+        key: flowSecureDto.optional(flowSecureDto.string({ maxLength: 81, rejectThreatPatterns: false })),
+        value: flowSecureDto.optional(flowSecureDto.string({ maxLength: 131_072, trim: false, allowEmpty: true, rejectThreatPatterns: false })),
+        note: flowSecureDto.optional(flowSecureDto.string({ maxLength: 500, normalizeWhitespace: true, allowEmpty: true })),
+        sensitive: flowSecureDto.optional(flowSecureDto.boolean()),
+      },
+      { rejectUnknown: true },
+    );
+  } catch (error) {
+    return applyNoStoreHeaders(
+      NextResponse.json(
+        { ok: false, message: error instanceof Error ? error.message : "Payload invalido." },
+        { status: 400 },
+      ),
+    );
+  }
   const variables = Array.isArray(body.variables)
     ? body.variables.map((item) => normalizeEnvVariableInput(item, body.environment))
     : [normalizeEnvVariableInput(body, body.environment)];
@@ -254,7 +291,25 @@ export async function DELETE(request: NextRequest, { params }: RouteProps) {
     );
   }
 
-  const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+  let body: EnvDeleteBody;
+  try {
+    body = parseFlowSecureDto<EnvDeleteBody>(
+      await request.json().catch(() => ({})),
+      {
+        id: flowSecureDto.optional(flowSecureDto.number({ integer: true, min: 1 })),
+        environment: flowSecureDto.optional(flowSecureDto.enum(["development", "preview", "production"] as const)),
+        key: flowSecureDto.optional(flowSecureDto.string({ maxLength: 81, rejectThreatPatterns: false })),
+      },
+      { rejectUnknown: true },
+    );
+  } catch (error) {
+    return applyNoStoreHeaders(
+      NextResponse.json(
+        { ok: false, message: error instanceof Error ? error.message : "Payload invalido." },
+        { status: 400 },
+      ),
+    );
+  }
   const id = typeof body.id === "number" && Number.isFinite(body.id) ? body.id : null;
   const environment = normalizeEnvironment(body.environment);
   const key = readString(body.key);

@@ -5,7 +5,12 @@ import { sendVpsProvisionedEmailSafe } from "@/lib/mail/transactional";
 export async function POST(request: NextRequest) {
   const payload = await request.json().catch(() => ({}));
   
-  if (payload.token !== "flowdesk-super-secret-token-v1") {
+  const expectedToken =
+    process.env.FLOWDESK_VPS_WEBHOOK_TOKEN ||
+    process.env.HOSTING_AGENT_TOKEN ||
+    process.env.VPS_AGENT_TOKEN ||
+    process.env.FLOWDESK_VPS_AGENT_TOKEN;
+  if (!expectedToken || payload.token !== expectedToken) {
     return NextResponse.json({ ok: false }, { status: 401 });
   }
 

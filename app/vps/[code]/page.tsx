@@ -1,4 +1,3 @@
-import { Loader2, Rocket } from "lucide-react";
 import { notFound, redirect } from "next/navigation";
 import { AppMaintenanceScreen } from "@/components/common/AppMaintenanceScreen";
 import { VpsWorkspace, type VpsWorkspaceSnapshot } from "@/components/hosting/VpsWorkspace";
@@ -12,6 +11,10 @@ import {
 } from "@/lib/hosting/catalog";
 import { readHostingGitHubToken } from "@/lib/hosting/github";
 import { resolveHostingAccessState, resolveRuntimeStatus } from "@/lib/hosting/vpsRuntime";
+import {
+  resolveRuntimeHealth,
+  resolveVpsProjectSettings,
+} from "@/lib/hosting/vpsSettings";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 type VpsPanelPageProps = {
@@ -155,6 +158,30 @@ function resolvePurchaseContext(value: unknown) {
   return context;
 }
 
+function resolveMinecraftSnapshot(project: HostingProjectRow) {
+  if (project.hosting_kind !== "minecraft") return null;
+  const payloadMinecraft = readRecord(project.provisioning_payload, "minecraft");
+  const runtimePayload = isRecord(project.runtime_status_payload) ? project.runtime_status_payload : {};
+  const provision = readRecord(runtimePayload, "minecraftProvision");
+  const domains = readRecord(provision, "domains") || readRecord(payloadMinecraft, "domains");
+  const limits = readRecord(project.provisioning_payload, "limits") || readRecord(provision, "limits") || {};
+  const worlds = Array.isArray(provision?.worlds)
+    ? provision.worlds.filter((item): item is string => typeof item === "string")
+    : [];
+
+  return {
+    serverName: readString(payloadMinecraft?.serverName) || project.github_repo,
+    version: readString(payloadMinecraft?.version) || "1.21.1",
+    serverType: readString(payloadMinecraft?.serverType) || "paper",
+    primaryDomain:
+      readString(domains?.primary) ||
+      `${readString(payloadMinecraft?.subdomain) || project.github_repo}.mine.flwdesk.com`,
+    fixedDomain: readString(domains?.fixed),
+    worlds,
+    limits,
+  };
+}
+
 function buildDiscordAvatarUrl(
   discordUserId: string | null,
   avatarHash: string | null,
@@ -214,16 +241,20 @@ export default async function VpsPanelPage({ params }: VpsPanelPageProps) {
 
   if (!project) notFound();
 
-  const { data: paymentOrder } = project.payment_order_id
-    ? await supabase
-        .from("payment_orders")
-        .select(
-          "id, order_number, status, amount, currency, payment_method, provider_payment_id, provider_status, paid_at, created_at, provider_payload",
-        )
-        .eq("id", project.payment_order_id)
-        .eq("user_id", user.id)
-        .maybeSingle<PaymentOrderRow>()
-    : { data: null };
+  const [paymentOrderResult, githubToken] = await Promise.all([
+    project.payment_order_id
+      ? supabase
+          .from("payment_orders")
+          .select(
+            "id, order_number, status, amount, currency, payment_method, provider_payment_id, provider_status, paid_at, created_at, provider_payload",
+          )
+          .eq("id", project.payment_order_id)
+          .eq("user_id", user.id)
+          .maybeSingle<PaymentOrderRow>()
+      : Promise.resolve({ data: null }),
+    readHostingGitHubToken(user.id),
+  ]);
+  const paymentOrder = paymentOrderResult.data;
 
   const payloadPlan = readRecord(project.provisioning_payload, "plan");
   const payloadRegion = readRecord(project.provisioning_payload, "region");
@@ -301,7 +332,26 @@ export default async function VpsPanelPage({ params }: VpsPanelPageProps) {
   const fileTree = Array.isArray(runtimePayload.fileTree)
     ? runtimePayload.fileTree
     : [];
-  const githubConnected = Boolean(await readHostingGitHubToken(user.id));
+  const githubConnected = Boolean(githubToken);
+  const regionLabel = `${region.city}, ${region.country}`;
+  const projectSettings = resolveVpsProjectSettings(project.provisioning_payload, {
+    vpsCode: code,
+    repositoryName: repository.name,
+    repositoryFullName: repoName,
+    repositoryBranch: repository.branch,
+    repositoryHtmlUrl: repository.htmlUrl,
+    ownerEmail: user.email || user.username,
+  });
+  const runtimeHealth = resolveRuntimeHealth({
+    runtimePayload,
+    regionLabel,
+    lastSeenAt: project.runtime_last_seen_at,
+  });
+  const minecraftSnapshot = resolveMinecraftSnapshot(project);
+  const primarySettingsDomain = projectSettings.domains.find((domain) => domain.primary) || projectSettings.domains[0] || null;
+  if (minecraftSnapshot && primarySettingsDomain?.hostname) {
+    minecraftSnapshot.primaryDomain = primarySettingsDomain.hostname;
+  }
 
   const snapshot: VpsWorkspaceSnapshot = {
     account: {
@@ -316,20 +366,23 @@ export default async function VpsPanelPage({ params }: VpsPanelPageProps) {
       status: project.status,
       runtimeStatus: resolveRuntimeStatus(project.runtime_status),
       runtimeLastSeenAt: project.runtime_last_seen_at,
+      kind: project.hosting_kind,
       kindLabel: getHostingKindLabel(project.hosting_kind),
       planName: plan?.name || project.hosting_plan_id,
       planPrice: `${formatMoney(plan?.monthlyAmount, plan?.currency)}${plan?.billingLabel || "/mes"}`,
       planSpecs: plan?.specs || ["VPS Windows", "Deploy via GitHub", "Logs em tempo real"],
-      regionLabel: `${region.city}, ${region.country} - ${region.pingMs}ms`,
+      regionLabel,
+      runtimeHealth,
       runtime: project.windows_runtime || "windows-vps",
       repository: {
-        fullName: repoName,
+        fullName: projectSettings.repository.connected ? repoName : "Repository disconnected",
         name: repository.name,
         branch: repository.branch,
         language: repository.language,
         private: repository.private,
         description: repository.description,
         htmlUrl: repository.htmlUrl,
+        connected: projectSettings.repository.connected,
       },
       paymentLabel,
       paymentAmount,
@@ -337,6 +390,7 @@ export default async function VpsPanelPage({ params }: VpsPanelPageProps) {
         ? `Pago em ${formatDateTime(paymentOrder.paid_at)}`
         : `Criado em ${formatDateTime(paymentOrder?.created_at)}`,
       githubConnected,
+      minecraft: minecraftSnapshot,
     },
     metrics: [],
     logs: [],
@@ -344,6 +398,7 @@ export default async function VpsPanelPage({ params }: VpsPanelPageProps) {
     envVars: [],
     actions: [],
     fileTree,
+    settings: projectSettings,
   };
 
   const supabaseSnapshot = await Promise.all([
@@ -352,7 +407,7 @@ export default async function VpsPanelPage({ params }: VpsPanelPageProps) {
       .select("*")
       .eq("hosting_project_id", project.id)
       .order("sampled_at", { ascending: false })
-      .limit(48),
+      .limit(720),
     supabase
       .from("hosting_vps_logs")
       .select("*")

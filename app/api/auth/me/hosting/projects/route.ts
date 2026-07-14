@@ -20,6 +20,7 @@ export async function GET() {
       .from("hosting_projects")
       .select("id, vps_code, status, runtime_status, billing_status, github_repo, created_at")
       .eq("user_id", user.id)
+      .not("status", "in", "(cancelled)")
       .order("created_at", { ascending: false })
       .limit(12);
 

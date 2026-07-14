@@ -1,1 +1,12 @@
-{}
+{
+  "crons": [
+    {
+      "path": "/api/cron/status-check",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/vps-metrics",
+      "schedule": "0 * * * *"
+    }
+  ]
+}

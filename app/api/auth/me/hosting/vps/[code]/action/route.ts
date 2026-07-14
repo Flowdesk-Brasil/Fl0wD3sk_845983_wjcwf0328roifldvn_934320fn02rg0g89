@@ -11,11 +11,20 @@ import {
   type VpsAction,
 } from "@/lib/hosting/vpsRuntime";
 import { readHostingGitHubToken } from "@/lib/hosting/github";
+import { resolveHostingRegion } from "@/lib/hosting/catalog";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { applyNoStoreHeaders } from "@/lib/security/http";
+import { flowSecureDto, parseFlowSecureDto } from "@/lib/security/flowSecure";
 
 type RouteProps = {
   params: Promise<{ code: string }>;
+};
+
+const VPS_ACTIONS = ["start", "stop", "restart", "deploy", "rollback", "sync", "kill", "reset-world", "command"] as const;
+
+type VpsActionBody = {
+  action: VpsAction;
+  command?: string;
 };
 
 function normalizeAction(value: unknown): VpsAction | null {
@@ -24,16 +33,20 @@ function normalizeAction(value: unknown): VpsAction | null {
     value === "restart" ||
     value === "deploy" ||
     value === "rollback" ||
-    value === "sync"
+    value === "sync" ||
+    value === "kill" ||
+    value === "reset-world" ||
+    value === "command"
     ? value
     : null;
 }
 
 function nextRuntimeStatusForAction(action: VpsAction) {
-  if (action === "start") return "online" as const;
+  if (action === "start") return "starting" as const;
   if (action === "stop") return "offline" as const;
   if (action === "restart") return "restarting" as const;
   if (action === "deploy" || action === "rollback") return "deploying" as const;
+  if (action === "kill" || action === "reset-world") return "offline" as const;
   return "unknown" as const;
 }
 
@@ -94,8 +107,25 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
     );
   }
 
-  const body = await request.json().catch(() => ({}));
-  const action = normalizeAction((body as Record<string, unknown>).action);
+  let body: VpsActionBody;
+  try {
+    body = parseFlowSecureDto<VpsActionBody>(
+      await request.json().catch(() => ({})),
+      {
+        action: flowSecureDto.enum(VPS_ACTIONS),
+        command: flowSecureDto.optional(flowSecureDto.string({ maxLength: 512 })),
+      },
+      { rejectUnknown: true },
+    );
+  } catch (error) {
+    return applyNoStoreHeaders(
+      NextResponse.json(
+        { ok: false, message: error instanceof Error ? error.message : "Acao invalida." },
+        { status: 400 },
+      ),
+    );
+  }
+  const action = normalizeAction(body.action);
   if (!action) {
     return applyNoStoreHeaders(
       NextResponse.json({ ok: false, message: "Acao invalida." }, { status: 400 }),
@@ -138,6 +168,134 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
           : "A VPS esta bloqueada para acoes operacionais.",
       }, { status: 402 }),
     );
+  }
+
+  if (action === "sync") {
+    try {
+      const startedAt = Date.now();
+      const regionLabel =
+        resolveHostingRegion(project.hosting_region_id)?.name ||
+        "Boston, United States";
+      const payload = await requestVpsAgent<Record<string, unknown>>({
+        project,
+        method: "GET",
+        path: `/v1/vps/${project.vps_code}/metrics`,
+        timeoutMs: 8_000,
+      });
+      const runtimeStatus = resolveRuntimeStatus(payload.status);
+      const checkedAt = new Date().toISOString();
+      const runtimePayload = {
+        ...(project.runtime_status_payload && typeof project.runtime_status_payload === "object"
+          ? project.runtime_status_payload as Record<string, unknown>
+          : {}),
+        agentHealth: {
+          connected: true,
+          latencyMs: Date.now() - startedAt,
+          checkedAt,
+          regionLabel,
+          host: typeof payload.host === "string" ? payload.host : null,
+          publicIp: typeof payload.publicIp === "string" ? payload.publicIp : null,
+        },
+        lastSync: payload,
+      };
+      await supabase
+        .from("hosting_projects")
+        .update({
+          runtime_status: runtimeStatus === "unknown" ? project.runtime_status || "unknown" : runtimeStatus,
+          runtime_status_payload: runtimePayload,
+          runtime_last_seen_at: checkedAt,
+        })
+        .eq("id", project.id);
+      await appendVpsEvent({
+        projectId: project.id,
+        userId: session.user.id,
+        action,
+        status: "succeeded",
+        message: "Status da VPS verificado pelo agente.",
+        responsePayload: { ...payload, latencyMs: Date.now() - startedAt },
+      });
+      return applyNoStoreHeaders(
+        NextResponse.json({
+          ok: true,
+          status: runtimeStatus === "unknown" ? project.runtime_status || "unknown" : runtimeStatus,
+          payload,
+          runtimeHealth: runtimePayload.agentHealth,
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Falha ao verificar status.";
+      await appendVpsEvent({
+        projectId: project.id,
+        userId: session.user.id,
+        action,
+        status: "failed",
+        message,
+      });
+      return applyNoStoreHeaders(
+        NextResponse.json({ ok: false, message }, { status: 503 }),
+      );
+    }
+  }
+
+  if (
+    project.hosting_kind === "minecraft" &&
+    (action === "start" || action === "restart" || action === "stop" || action === "kill" || action === "reset-world" || action === "command")
+  ) {
+    await appendVpsEvent({
+      projectId: project.id,
+      userId: session.user.id,
+      action,
+      status: "running",
+      message: `Acao Minecraft ${action} iniciada.`,
+      requestPayload: body,
+    });
+
+    try {
+      const payload = await requestVpsAgent<Record<string, unknown>>({
+        project,
+        method: "POST",
+        path: `/v1/minecraft/servers/${project.vps_code}/actions/${action}`,
+        body: action === "command" ? { command: body.command } : {},
+        timeoutMs: 120_000,
+      });
+      const runtimeStatus = resolveRuntimeStatus(payload.status);
+      await supabase
+        .from("hosting_projects")
+        .update({
+          runtime_status:
+            runtimeStatus === "unknown" ? nextRuntimeStatusForAction(action) : runtimeStatus,
+          runtime_status_payload: {
+            ...(project.runtime_status_payload && typeof project.runtime_status_payload === "object"
+              ? project.runtime_status_payload as Record<string, unknown>
+              : {}),
+            minecraft: payload,
+            lastAction: action,
+          },
+          runtime_last_seen_at: new Date().toISOString(),
+        })
+        .eq("id", project.id);
+      await appendVpsEvent({
+        projectId: project.id,
+        userId: session.user.id,
+        action,
+        status: "succeeded",
+        message: `Acao Minecraft ${action} concluida.`,
+        responsePayload: payload,
+      });
+      return applyNoStoreHeaders(NextResponse.json({ ok: true, status: runtimeStatus, payload }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Falha ao executar acao Minecraft.";
+      await appendVpsEvent({
+        projectId: project.id,
+        userId: session.user.id,
+        action,
+        status: "failed",
+        message,
+      });
+      return applyNoStoreHeaders(
+        NextResponse.json({ ok: false, message }, { status: 503 }),
+      );
+    }
   }
 
   await appendVpsEvent({

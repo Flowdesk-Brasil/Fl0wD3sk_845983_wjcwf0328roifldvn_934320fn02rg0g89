@@ -37,7 +37,7 @@ import {
 } from "@/lib/routing/subdomains";
 
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
-const DEFAULT_PAYMENT_CHECKOUT_PATH = "/payment/flow-pro/mensal";
+const DEFAULT_PAYMENT_CHECKOUT_PATH = "/payment";
 
 function isSensitiveApiPath(pathname: string) {
   return (

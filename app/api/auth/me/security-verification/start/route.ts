@@ -19,6 +19,7 @@ const ACTION_VALUES = [
   "totp_enable",
   "totp_disable",
   "passkey_remove",
+  "vps_delete",
 ] as const satisfies readonly SensitiveAccountAction[];
 const ACTIONS = new Set<SensitiveAccountAction>(ACTION_VALUES);
 

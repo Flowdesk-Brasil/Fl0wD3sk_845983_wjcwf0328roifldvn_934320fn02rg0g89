@@ -9,13 +9,14 @@ import {
 export type VpsRuntimeStatus =
   | "online"
   | "offline"
+  | "starting"
   | "restarting"
   | "deploying"
   | "crashed"
   | "suspended"
   | "unknown";
 
-export type VpsAction = "start" | "stop" | "restart" | "deploy" | "rollback" | "sync";
+export type VpsAction = "start" | "stop" | "restart" | "deploy" | "rollback" | "sync" | "kill" | "reset-world" | "command";
 
 export type HostingProjectAccess = {
   id: number;
@@ -78,6 +79,7 @@ export function readNumber(value: unknown) {
 export function resolveRuntimeStatus(value: unknown): VpsRuntimeStatus {
   return value === "online" ||
     value === "offline" ||
+    value === "starting" ||
     value === "restarting" ||
     value === "deploying" ||
     value === "crashed" ||

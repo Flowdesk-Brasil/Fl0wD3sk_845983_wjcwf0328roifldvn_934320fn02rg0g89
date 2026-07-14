@@ -14,9 +14,18 @@ import {
 } from "@/lib/hosting/github";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { applyNoStoreHeaders } from "@/lib/security/http";
+import { flowSecureDto, parseFlowSecureDto } from "@/lib/security/flowSecure";
 
 type RouteProps = {
   params: Promise<{ code: string }>;
+};
+
+type DeployPostBody = {
+  branch?: string;
+  environment?: "development" | "preview" | "production";
+  commitSha?: string;
+  commitAuthor?: string;
+  commitMessage?: string;
 };
 
 async function load(code: string) {
@@ -172,7 +181,27 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
       NextResponse.json({ ok: false, message: "VPS nao encontrada." }, { status: 404 }),
     );
   }
-  const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+  let body: DeployPostBody;
+  try {
+    body = parseFlowSecureDto<DeployPostBody>(
+      await request.json().catch(() => ({})),
+      {
+        branch: flowSecureDto.optional(flowSecureDto.string({ maxLength: 160, rejectThreatPatterns: false })),
+        environment: flowSecureDto.optional(flowSecureDto.enum(["development", "preview", "production"] as const)),
+        commitSha: flowSecureDto.optional(flowSecureDto.string({ maxLength: 80, rejectThreatPatterns: false })),
+        commitAuthor: flowSecureDto.optional(flowSecureDto.string({ maxLength: 160, normalizeWhitespace: true })),
+        commitMessage: flowSecureDto.optional(flowSecureDto.string({ maxLength: 500, normalizeWhitespace: true, allowEmpty: true })),
+      },
+      { rejectUnknown: true },
+    );
+  } catch (error) {
+    return applyNoStoreHeaders(
+      NextResponse.json(
+        { ok: false, message: error instanceof Error ? error.message : "Payload invalido." },
+        { status: 400 },
+      ),
+    );
+  }
   const branch = readString(body.branch) || loaded.project.github_branch;
   const environment =
     body.environment === "development" || body.environment === "preview" || body.environment === "production"

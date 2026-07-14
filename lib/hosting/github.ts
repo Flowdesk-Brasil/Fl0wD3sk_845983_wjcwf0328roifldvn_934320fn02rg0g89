@@ -6,6 +6,11 @@ import {
   setSharedAuthCookie,
 } from "@/lib/auth/cookies";
 import {
+  areHostsWithinSameFirstPartySite,
+  getRequestHost,
+  getRequestOrigin,
+} from "@/lib/routing/subdomains";
+import {
   decryptFlowSecureValue,
   encryptFlowSecureValue,
 } from "@/lib/security/flowSecure";
@@ -21,6 +26,8 @@ const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const HANDOFF_TTL_MS = 10 * 60 * 1000;
 const GITHUB_TOKEN_REFRESH_SKEW_MS = 5 * 60 * 1000;
 const HOSTING_GITHUB_OAUTH_SCOPE = "read:user user:email read:org repo workflow admin:repo_hook";
+const GITHUB_API_TIMEOUT_MS = 6_000;
+const GITHUB_TOKEN_TIMEOUT_MS = 8_000;
 
 export type HostingGitHubTokenBundle = {
   accessToken: string;
@@ -155,6 +162,47 @@ type GitHubInstallationTokenResponse = {
   expires_at?: string;
 };
 
+type HostingGitHubStatePayload = {
+  nonce: string;
+  exp: number;
+  returnOrigin?: string | null;
+  mode?: string | null;
+};
+
+export class HostingGitHubNetworkError extends Error {
+  constructor(message = "Nao foi possivel comunicar com o GitHub agora.") {
+    super(message);
+    this.name = "HostingGitHubNetworkError";
+  }
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+async function fetchGitHubWithTimeout(
+  input: string,
+  init: RequestInit,
+  timeoutMs = GITHUB_API_TIMEOUT_MS,
+) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (isAbortError(error) || error instanceof TypeError) {
+      throw new HostingGitHubNetworkError();
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export function isHostingGitHubConfigured() {
   return Boolean(
     process.env.GITHUB_CLIENT_ID?.trim() &&
@@ -188,11 +236,20 @@ export function resolveHostingGitHubRedirectUri(request: NextRequest) {
   return new URL("/api/auth/github/hosting/callback", request.nextUrl.origin).toString();
 }
 
-export function createHostingGitHubState() {
+function normalizeHostingGitHubMode(value: unknown) {
+  return value === "reconnect" ? "reconnect" : "connect";
+}
+
+export function createHostingGitHubState(input?: {
+  request?: NextRequest;
+  mode?: unknown;
+}) {
   const state = encryptFlowSecureValue(
     JSON.stringify({
       nonce: crypto.randomBytes(24).toString("base64url"),
       exp: Date.now() + 10 * 60 * 1000,
+      returnOrigin: input?.request ? getRequestOrigin(input.request) : null,
+      mode: normalizeHostingGitHubMode(input?.mode),
     }),
     {
       purpose: "auth_session_oauth",
@@ -203,8 +260,8 @@ export function createHostingGitHubState() {
   return state || crypto.randomBytes(24).toString("base64url");
 }
 
-export function validateHostingGitHubState(value: unknown) {
-  if (typeof value !== "string" || !value.trim()) return false;
+export function readHostingGitHubStatePayload(value: unknown): HostingGitHubStatePayload | null {
+  if (typeof value !== "string" || !value.trim()) return null;
 
   const decrypted = decryptFlowSecureValue(value, {
     purpose: "auth_session_oauth",
@@ -212,21 +269,57 @@ export function validateHostingGitHubState(value: unknown) {
     allowPlaintextFallback: false,
   });
 
-  if (!decrypted) return false;
+  if (!decrypted) return null;
 
   try {
-    const parsed = JSON.parse(decrypted) as {
-      nonce?: unknown;
-      exp?: unknown;
-    };
-    return (
+    const parsed = JSON.parse(decrypted) as Partial<HostingGitHubStatePayload>;
+    const isValid =
       typeof parsed.nonce === "string" &&
       parsed.nonce.length >= 16 &&
       typeof parsed.exp === "number" &&
-      parsed.exp >= Date.now()
-    );
+      parsed.exp >= Date.now();
+    if (!isValid) return null;
+    const nonce = parsed.nonce as string;
+    const exp = parsed.exp as number;
+    return {
+      nonce,
+      exp,
+      returnOrigin:
+        typeof parsed.returnOrigin === "string" && parsed.returnOrigin.trim()
+          ? parsed.returnOrigin
+          : null,
+      mode: normalizeHostingGitHubMode(parsed.mode),
+    };
   } catch {
-    return false;
+    return null;
+  }
+}
+
+export function validateHostingGitHubState(value: unknown) {
+  return Boolean(readHostingGitHubStatePayload(value));
+}
+
+export function resolveHostingGitHubRelayOrigin(
+  request: NextRequest,
+  statePayload: HostingGitHubStatePayload | null,
+) {
+  const rawReturnOrigin = statePayload?.returnOrigin;
+  if (!rawReturnOrigin) return null;
+
+  try {
+    const returnUrl = new URL(rawReturnOrigin);
+    if (returnUrl.protocol !== "http:" && returnUrl.protocol !== "https:") {
+      return null;
+    }
+
+    return areHostsWithinSameFirstPartySite(
+      getRequestHost(request),
+      returnUrl.host,
+    )
+      ? returnUrl.origin
+      : null;
+  } catch {
+    return null;
   }
 }
 
@@ -350,7 +443,7 @@ async function refreshHostingGitHubStoredToken(input: {
   userId: number;
   refreshToken: string;
 }) {
-  const response = await fetch(GITHUB_TOKEN_URL, {
+  const response = await fetchGitHubWithTimeout(GITHUB_TOKEN_URL, {
     method: "POST",
     headers: {
       Accept: "application/json",
@@ -362,7 +455,7 @@ async function refreshHostingGitHubStoredToken(input: {
       grant_type: "refresh_token",
       refresh_token: input.refreshToken,
     }),
-  });
+  }, GITHUB_TOKEN_TIMEOUT_MS);
   const payload = await response.json() as {
     access_token?: string;
     expires_in?: number;
@@ -579,7 +672,7 @@ export async function exchangeHostingGitHubCode(input: {
   code: string;
   request: NextRequest;
 }) {
-  const response = await fetch(GITHUB_TOKEN_URL, {
+  const response = await fetchGitHubWithTimeout(GITHUB_TOKEN_URL, {
     method: "POST",
     headers: {
       Accept: "application/json",
@@ -591,7 +684,7 @@ export async function exchangeHostingGitHubCode(input: {
       code: input.code,
       redirect_uri: resolveHostingGitHubRedirectUri(input.request),
     }),
-  });
+  }, GITHUB_TOKEN_TIMEOUT_MS);
 
   const payload = await response.json() as {
     access_token?: string;
@@ -676,7 +769,7 @@ function createHostingGitHubAppJwt() {
 }
 
 async function githubFetch<TValue>(path: string, token: string) {
-  const response = await fetch(`${GITHUB_API_URL}${path}`, {
+  const response = await fetchGitHubWithTimeout(`${GITHUB_API_URL}${path}`, {
     headers: {
       Accept: "application/vnd.github+json",
       Authorization: `Bearer ${token}`,
@@ -688,7 +781,7 @@ async function githubFetch<TValue>(path: string, token: string) {
   if (!response.ok) {
     if (response.status === 401) {
       await new Promise((resolve) => setTimeout(resolve, 800));
-      const retryResponse = await fetch(`${GITHUB_API_URL}${path}`, {
+      const retryResponse = await fetchGitHubWithTimeout(`${GITHUB_API_URL}${path}`, {
         headers: {
           Accept: "application/vnd.github+json",
           Authorization: `Bearer ${token}`,
@@ -728,7 +821,7 @@ async function githubRequest<TValue>(input: {
   path: string;
   body?: unknown;
 }) {
-  const response = await fetch(`${GITHUB_API_URL}${input.path}`, {
+  const response = await fetchGitHubWithTimeout(`${GITHUB_API_URL}${input.path}`, {
     method: input.method,
     headers: {
       Accept: "application/vnd.github+json",
@@ -753,7 +846,7 @@ async function githubAppRequest<TValue>(input: {
   path: string;
   body?: unknown;
 }) {
-  const response = await fetch(`${GITHUB_API_URL}${input.path}`, {
+  const response = await fetchGitHubWithTimeout(`${GITHUB_API_URL}${input.path}`, {
     method: input.method,
     headers: {
       Accept: "application/vnd.github+json",

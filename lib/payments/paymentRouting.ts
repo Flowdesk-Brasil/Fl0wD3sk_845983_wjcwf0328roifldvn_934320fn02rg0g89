@@ -19,6 +19,7 @@ type PaymentCheckoutQueryValueInput =
 
 const PAYMENT_ORDER_SLUG_PREFIX = "flw_";
 const PAYMENT_CART_SLUG_PREFIX = "crt_";
+const MAX_PAYMENT_PRODUCT_SLUG_LENGTH = 90;
 
 function normalizePositiveInteger(value: unknown) {
   if (typeof value === "number") {
@@ -83,6 +84,21 @@ export function decodePaymentCartSlug(value: unknown) {
   return normalizePositiveInteger(normalized);
 }
 
+export function normalizePaymentProductSlug(value: unknown, fallback: PlanCode = DEFAULT_PLAN_CODE) {
+  const fallbackSlug = resolvePlanSlug(fallback);
+  if (typeof value !== "string") return fallbackSlug;
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, MAX_PAYMENT_PRODUCT_SLUG_LENGTH)
+    .replace(/-+$/g, "");
+  return normalized || fallbackSlug;
+}
+
 export function resolvePaymentBillingPeriodCodeFromCycleDays(
   billingCycleDays: unknown,
   fallback: PlanBillingPeriodCode = DEFAULT_PLAN_BILLING_PERIOD_CODE,
@@ -145,6 +161,7 @@ export function readPaymentCheckoutPathDetails(input: {
 }
 
 export function buildPaymentCheckoutPath(input: {
+  productSlug?: unknown;
   planCode?: unknown;
   billingPeriodCode?: unknown;
   fallbackPlanCode?: PlanCode;
@@ -160,7 +177,8 @@ export function buildPaymentCheckoutPath(input: {
     input.billingPeriodCode,
     fallbackBillingPeriodCode,
   );
-  const basePath = `/payment/${resolvePlanSlug(planCode)}/${resolvePlanBillingPeriodSlug(
+  const productSlug = normalizePaymentProductSlug(input.productSlug || resolvePlanSlug(planCode), planCode);
+  const basePath = `/payment/${productSlug}/${resolvePlanBillingPeriodSlug(
     billingPeriodCode,
     fallbackBillingPeriodCode,
   )}`;
@@ -184,6 +202,7 @@ export function buildPaymentCheckoutPath(input: {
 }
 
 export function buildPaymentCheckoutEntryHref(input: {
+  productSlug?: unknown;
   planCode?: unknown;
   billingPeriodCode?: unknown;
   fallbackPlanCode?: PlanCode;
@@ -194,6 +213,7 @@ export function buildPaymentCheckoutEntryHref(input: {
   omitSearchParamKeys?: string[];
 }) {
   const pathname = buildPaymentCheckoutPath({
+    productSlug: input.productSlug,
     planCode: input.planCode,
     billingPeriodCode: input.billingPeriodCode,
     fallbackPlanCode: input.fallbackPlanCode,
@@ -224,6 +244,7 @@ export function buildPaymentBasePathFromCurrentPathname(pathname: string) {
   }
 
   return buildPaymentCheckoutPath({
+    productSlug: details.planSlug,
     planCode: details.planCode,
     billingPeriodCode: details.billingPeriodCode,
   });
@@ -243,6 +264,7 @@ export function buildPaymentPathForOrder(input: {
   });
 
   return buildPaymentCheckoutPath({
+    productSlug: details?.planSlug,
     planCode: details?.planCode || input.fallbackPlanCode || DEFAULT_PLAN_CODE,
     billingPeriodCode:
       details?.billingPeriodCode ||
@@ -275,6 +297,7 @@ export function buildPaymentCanonicalPathFromSlugs(input: {
   const orderId = decodePaymentCartSlug(input.cartSlug || null);
 
   return buildPaymentCheckoutPath({
+    productSlug: input.planSlug,
     planCode,
     billingPeriodCode,
     fallbackPlanCode,

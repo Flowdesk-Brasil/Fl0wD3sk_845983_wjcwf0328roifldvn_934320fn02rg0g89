@@ -12,7 +12,7 @@ type CloudflareZone = {
 };
 
 function configured() {
-  return Boolean(process.env.CLOUDFLARE_API_TOKEN?.trim() && process.env.CLOUDFLARE_ACCOUNT_ID?.trim());
+  return Boolean(process.env.CLOUDFLARE_API_TOKEN?.trim());
 }
 
 async function request<T>(path: string, init: RequestInit) {
@@ -51,11 +51,16 @@ async function request<T>(path: string, init: RequestInit) {
 }
 
 export async function createCloudflareZone(fqdn: string) {
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
+  if (!accountId) {
+    throw new Error("Cloudflare Account ID nao configurado para criar zona.");
+  }
+
   const zone = await request<CloudflareZone>("/zones", {
     method: "POST",
     body: JSON.stringify({
       name: fqdn,
-      account: { id: process.env.CLOUDFLARE_ACCOUNT_ID!.trim() },
+      account: { id: accountId },
       type: "full",
       jump_start: false,
     }),
@@ -80,12 +85,25 @@ export async function createCloudflareZone(fqdn: string) {
 }
 
 export async function getCloudflareZone(fqdn: string) {
-  const zones = await request<CloudflareZone[]>(
-    `/zones?name=${encodeURIComponent(fqdn)}&account.id=${encodeURIComponent(
-      process.env.CLOUDFLARE_ACCOUNT_ID!.trim(),
-    )}`,
-    { method: "GET" },
-  );
+  const configuredZoneId = process.env.CLOUDFLARE_ZONE_ID?.trim();
+  if (configuredZoneId) {
+    const zone = await request<CloudflareZone>(
+      `/zones/${encodeURIComponent(configuredZoneId)}`,
+      { method: "GET" },
+    );
+    const requested = fqdn.trim().toLowerCase();
+    const zoneName = zone.name.trim().toLowerCase();
+    if (requested === zoneName || requested.endsWith(`.${zoneName}`)) {
+      return zone;
+    }
+  }
+
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
+  const query = new URLSearchParams({ name: fqdn });
+  if (accountId) query.set("account.id", accountId);
+  const zones = await request<CloudflareZone[]>(`/zones?${query.toString()}`, {
+    method: "GET",
+  });
   return zones[0] || null;
 }
 
@@ -136,6 +154,7 @@ export async function createCloudflareDnsRecord(
     ttl?: number;
     proxied?: boolean;
     priority?: number | null;
+    data?: Record<string, unknown> | null;
   },
 ) {
   return request<Record<string, unknown>>(`/zones/${zoneId}/dns_records`, {
@@ -147,6 +166,7 @@ export async function createCloudflareDnsRecord(
       ttl: input.ttl || 1,
       proxied: input.proxied ?? false,
       priority: input.priority ?? undefined,
+      data: input.data ?? undefined,
     }),
   });
 }
@@ -161,6 +181,7 @@ export async function updateCloudflareDnsRecord(
     ttl?: number;
     proxied?: boolean;
     priority?: number | null;
+    data?: Record<string, unknown> | null;
   },
 ) {
   return request<Record<string, unknown>>(
@@ -174,6 +195,7 @@ export async function updateCloudflareDnsRecord(
         ttl: input.ttl || 1,
         proxied: input.proxied ?? false,
         priority: input.priority ?? undefined,
+        data: input.data ?? undefined,
       }),
     },
   );

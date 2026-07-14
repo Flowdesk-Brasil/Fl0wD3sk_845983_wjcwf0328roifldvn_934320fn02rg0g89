@@ -1,6 +1,7 @@
 ﻿import { NextResponse } from "next/server";
 import {
   fetchHostingGitHubProfile,
+  HostingGitHubNetworkError,
   hasHostingGitHubTokenCookie,
   isHostingGitHubConfigured,
   isPermanentHostingGitHubAuthError,
@@ -72,6 +73,24 @@ export async function GET() {
       }),
     );
   } catch (error) {
+    if (error instanceof HostingGitHubNetworkError) {
+      return applyNoStoreHeaders(
+        NextResponse.json({
+          ok: true,
+          connected: true,
+          degraded: true,
+          accounts: [],
+          diagnostics: {
+            configured: true,
+            tokenPresent: true,
+            accountsCount: 0,
+          },
+          message:
+            "Sua conta GitHub esta vinculada, mas o GitHub demorou para responder. Tente continuar novamente em alguns segundos.",
+        }),
+      );
+    }
+
     if (session?.user?.id && isPermanentHostingGitHubAuthError(error)) {
       await markHostingGitHubTokenInvalid(
         session.user.id,

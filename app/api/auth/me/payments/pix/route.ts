@@ -76,8 +76,8 @@ import {
 } from "@/lib/plans/catalog";
 import {
   HOSTING_PLANS,
-  HOSTING_REGIONS,
   getHostingKindLabel,
+  resolveHostingRegion,
   type HostingKind,
 } from "@/lib/hosting/catalog";
 
@@ -89,8 +89,10 @@ import {
 import {
   applyFlowPointsToAmount,
   buildPlanTransitionPayload,
+  canUseCurrentPlanRenewalCheckout,
   orderTransitionAllowsImmediateApproval,
   readOrderPlanTransitionPayload,
+  resolveCurrentPlanRenewalPreview,
   resolvePlanChangePreview,
   type PlanChangePreview,
 } from "@/lib/plans/change";
@@ -139,6 +141,7 @@ type CreatePixPaymentBody = {
   giftCardCode?: unknown;
   expectedTotalAmount?: unknown;
   forceNew?: unknown;
+  renew?: unknown;
 };
 
 type ResolvedPurchaseContext = {
@@ -355,7 +358,7 @@ function normalizePurchaseText(value: unknown, maxLength = 180) {
 }
 
 function isHostingKind(value: unknown): value is HostingKind {
-  return value === "site" || value === "bot" || value === "cdn";
+  return value === "site" || value === "bot" || value === "minecraft";
 }
 
 export function resolvePurchaseContext(value: unknown): ResolvedPurchaseContext | null {
@@ -371,11 +374,16 @@ export function resolvePurchaseContext(value: unknown): ResolvedPurchaseContext 
   if (!hostingKind || !hostingPlanId || !hostingRegionId) return null;
 
   const plan = HOSTING_PLANS[hostingKind].find((item) => item.id === hostingPlanId);
-  const region = HOSTING_REGIONS.find((item) => item.id === hostingRegionId);
+  const region = resolveHostingRegion(hostingRegionId);
   if (!plan || !region) return null;
 
   const repository = normalizePurchaseText(record.repository, 220);
-  const title = `${plan.name} VPS`;
+  const minecraftServerName = normalizePurchaseText(record.minecraftServerName, 80);
+  const minecraftVersion = normalizePurchaseText(record.minecraftVersion, 24);
+  const minecraftServerType = normalizePurchaseText(record.minecraftServerType, 40);
+  const minecraftSubdomain = normalizePurchaseText(record.minecraftSubdomain, 64);
+  const minecraftFirstWorldName = normalizePurchaseText(record.minecraftFirstWorldName, 80);
+  const title = hostingKind === "minecraft" ? plan.name : `${plan.name} VPS`;
   const subtitle = `${getHostingKindLabel(hostingKind)} em ${region.city}, ${region.country}`;
   const amount = roundCurrencyAmount(plan.monthlyAmount);
   const currency = plan.currency || resolvePixCurrency();
@@ -397,6 +405,11 @@ export function resolvePurchaseContext(value: unknown): ResolvedPurchaseContext 
         hostingRegionId: region.id,
         hostingRegionName: region.name,
         repository,
+        minecraftServerName,
+        minecraftVersion,
+        minecraftServerType,
+        minecraftSubdomain,
+        minecraftFirstWorldName,
         billingInterval: "monthly",
         amount,
         currency,
@@ -482,6 +495,47 @@ function isUniqueConstraintError(error: { code?: string; message?: string } | nu
     error?.code === "23505" ||
     (typeof error?.message === "string" &&
       error.message.toLowerCase().includes("duplicate key"))
+  );
+}
+
+function readPurchaseContextFingerprint(providerPayload: unknown) {
+  if (!providerPayload || typeof providerPayload !== "object" || Array.isArray(providerPayload)) {
+    return "plan";
+  }
+
+  const payloadRecord = providerPayload as Record<string, unknown>;
+  const purchaseContext = payloadRecord.purchase_context;
+  if (!purchaseContext || typeof purchaseContext !== "object" || Array.isArray(purchaseContext)) {
+    return "plan";
+  }
+
+  return JSON.stringify(purchaseContext);
+}
+
+function buildPurchaseContextFingerprint(value: unknown) {
+  const purchaseContext = resolvePurchaseContext(value);
+  if (!purchaseContext) return "plan";
+  return readPurchaseContextFingerprint(purchaseContext.providerPayload);
+}
+
+function isSamePurchaseContext(
+  order: Pick<PaymentOrderRecord, "provider_payload">,
+  providerPayload?: Record<string, unknown>,
+) {
+  return (
+    readPurchaseContextFingerprint(order.provider_payload) ===
+    readPurchaseContextFingerprint(providerPayload || {})
+  );
+}
+
+function canReuseDraftOrderForPurchase(
+  order: PaymentOrderRecord | null | undefined,
+  providerPayload?: Record<string, unknown>,
+) {
+  return Boolean(
+    order &&
+      canReuseDraftCheckoutOrder(order) &&
+      isSamePurchaseContext(order, providerPayload),
   );
 }
 
@@ -613,6 +667,13 @@ function resolveFriendlyPixProviderErrorMessage(message: string) {
   }
 
   if (
+    normalizedMessage.includes("codigo copia e cola") ||
+    normalizedMessage.includes("qr code")
+  ) {
+    return "A cobranca PIX foi recusada porque o provedor nao retornou um codigo de pagamento valido. Gere uma nova tentativa em instantes; nenhuma cobranca utilizavel foi liberada.";
+  }
+
+  if (
     normalizedMessage.includes("mercado pago") ||
     normalizedMessage.includes("payment") ||
     normalizedMessage.includes("pix")
@@ -627,6 +688,7 @@ async function resolveCheckoutPlanWithoutGuild(input: {
   userId: number;
   requestedPlanCode?: unknown;
   requestedBillingPeriodCode?: unknown;
+  renew?: boolean | null;
 }) {
   const selection = await resolveEffectivePlanSelectionForCheckoutContext({
     userId: input.userId,
@@ -634,18 +696,30 @@ async function resolveCheckoutPlanWithoutGuild(input: {
     preferredPlanCode: input.requestedPlanCode,
     preferredBillingPeriodCode: input.requestedBillingPeriodCode,
   });
-  const planChange = resolvePlanChangePreview({
+  const planChangeBase = resolvePlanChangePreview({
     userPlanState: selection.userPlanState,
     targetPlan: selection.plan,
     flowPointsBalance: selection.flowPointsBalance,
     scheduledChange: selection.scheduledChange,
   });
+  const planRenewal = canUseCurrentPlanRenewalCheckout({
+    renew: input.renew,
+    preview: planChangeBase,
+    targetPlan: selection.plan,
+  });
+  const planChange = planRenewal
+    ? resolveCurrentPlanRenewalPreview({
+        preview: planChangeBase,
+        targetPlan: selection.plan,
+      })
+    : planChangeBase;
 
   return {
     plan: selection.plan,
     amount: Math.max(0, Math.round(planChange.immediateSubtotalAmount * 100) / 100),
     currency: selection.plan.currency || resolvePixCurrency(),
     currentPlanRepurchaseBlocked: planChange.isCurrentSelectionBlocked,
+    planRenewal,
     userPlanState: selection.userPlanState,
     flowPointsBalance: selection.flowPointsBalance,
     scheduledChange: selection.scheduledChange,
@@ -659,6 +733,7 @@ export async function resolveCheckoutPlanForGuild(input: {
   guildId: string | null;
   requestedPlanCode?: unknown;
   requestedBillingPeriodCode?: unknown;
+  renew?: boolean | null;
 }) {
   const { guildId } = input;
   if (!guildId) {
@@ -671,22 +746,63 @@ export async function resolveCheckoutPlanForGuild(input: {
     preferredPlanCode: input.requestedPlanCode,
     preferredBillingPeriodCode: input.requestedBillingPeriodCode,
   });
-  const planChange = resolvePlanChangePreview({
+  const planChangeBase = resolvePlanChangePreview({
     userPlanState: selection.userPlanState,
     targetPlan: selection.plan,
     flowPointsBalance: selection.flowPointsBalance,
     scheduledChange: selection.scheduledChange,
   });
+  const planRenewal = canUseCurrentPlanRenewalCheckout({
+    renew: input.renew,
+    preview: planChangeBase,
+    targetPlan: selection.plan,
+  });
+  const planChange = planRenewal
+    ? resolveCurrentPlanRenewalPreview({
+        preview: planChangeBase,
+        targetPlan: selection.plan,
+      })
+    : planChangeBase;
 
   return {
     plan: selection.plan,
     amount: Math.max(0, Math.round(planChange.immediateSubtotalAmount * 100) / 100),
     currency: selection.plan.currency || resolvePixCurrency(),
     currentPlanRepurchaseBlocked: planChange.isCurrentSelectionBlocked,
+    planRenewal,
     userPlanState: selection.userPlanState,
     flowPointsBalance: selection.flowPointsBalance,
     scheduledChange: selection.scheduledChange,
     planChange,
+  };
+}
+
+export function buildPlanRenewalProviderPayload(input: {
+  planRenewal?: boolean;
+  plan: PlanPricingDefinition;
+  userPlanState?: {
+    plan_code?: string | null;
+    billing_cycle_days?: number | null;
+    activated_at?: string | null;
+    expires_at?: string | null;
+  } | null;
+}) {
+  if (!input.planRenewal) return {};
+
+  return {
+    purchase_context: {
+      type: "plan",
+      mode: "renewal",
+    },
+    renewal: {
+      type: "plan_renewal",
+      planCode: input.plan.code,
+      billingCycleDays: input.plan.billingCycleDays,
+      currentPlanCode: input.userPlanState?.plan_code || null,
+      currentBillingCycleDays: input.userPlanState?.billing_cycle_days || null,
+      originalActivatedAt: input.userPlanState?.activated_at || null,
+      currentExpiresAt: input.userPlanState?.expires_at || null,
+    },
   };
 }
 
@@ -761,18 +877,23 @@ async function confirmImmediatePixProviderPayment(
 }
 
 export function doesOrderMatchCheckoutPlan(
-  order: Pick<PaymentOrderRecord, "plan_code" | "plan_billing_cycle_days" | "amount" | "currency">,
+  order: Pick<
+    PaymentOrderRecord,
+    "plan_code" | "plan_billing_cycle_days" | "amount" | "currency" | "provider_payload"
+  >,
   checkoutPlan: {
     plan: PlanPricingDefinition;
     amount: number;
     currency: string;
+    providerPayload?: Record<string, unknown>;
   },
 ) {
   return (
     order.plan_code === checkoutPlan.plan.code &&
     order.plan_billing_cycle_days === checkoutPlan.plan.billingCycleDays &&
     amountsMatch(order.amount, checkoutPlan.amount) &&
-    currenciesMatch(order.currency, checkoutPlan.currency)
+    currenciesMatch(order.currency, checkoutPlan.currency) &&
+    isSamePurchaseContext(order, checkoutPlan.providerPayload)
   );
 }
 
@@ -1039,11 +1160,12 @@ async function getCoverageForApprovedOrder(order: PaymentOrderRecord) {
 async function reconcilePixOrderFromProvider(
   order: PaymentOrderRecord,
   source: "poll" | "order_code" | "post_recovery",
+  options: { forceFresh?: boolean } = {},
 ) {
   if (!order.provider_payment_id) return order;
 
   const providerPayment = await fetchMercadoPagoPaymentById(order.provider_payment_id, {
-    forceFresh: order.status === "pending",
+    forceFresh: Boolean(options.forceFresh) || order.status === "pending",
   });
   const providerPaymentId = parsePaymentId(providerPayment.id);
   if (!providerPaymentId) return order;
@@ -1530,6 +1652,10 @@ export async function GET(request: Request) {
       url.searchParams.get("checkoutToken"),
     );
     const forceNew = parseForceNewFlag(url.searchParams.get("forceNew"));
+    const renew = parseForceNewFlag(url.searchParams.get("renew"));
+    const forceProviderRefresh = parseForceNewFlag(
+      url.searchParams.get("forceProviderRefresh"),
+    );
 
     const guildId = guildIdFromQuery;
 
@@ -1575,7 +1701,11 @@ export async function GET(request: Request) {
 
       if (orderByCode.provider_payment_id) {
         try {
-          orderByCode = await reconcilePixOrderFromProvider(orderByCode, "order_code");
+          orderByCode = await reconcilePixOrderFromProvider(
+            orderByCode,
+            "order_code",
+            { forceFresh: forceProviderRefresh },
+          );
           orderByCode = await settleTrustedApprovedOrderForFastRelease(
             orderByCode,
             "payment_pix_order_code_fast_release",
@@ -1617,26 +1747,49 @@ export async function GET(request: Request) {
       guildId,
       requestedPlanCode,
       requestedBillingPeriodCode,
+      renew,
     });
+    const requestedPurchaseType =
+      url.searchParams.get("purchaseType") ||
+      (url.searchParams.get("source") === "dashboard-domains" ? "domain" : null) ||
+      (url.searchParams.get("source") === "dashboard-hosting" ? "hosting" : null);
     const purchaseContext = resolvePurchaseContext({
-      type:
-        url.searchParams.get("purchaseType") ||
-        (url.searchParams.get("source") === "dashboard-domains" ? "domain" : null) ||
-        (url.searchParams.get("source") === "dashboard-hosting" ? "hosting" : null),
+      type: requestedPurchaseType,
       token: url.searchParams.get("domainToken"),
       hostingKind: url.searchParams.get("hostingKind"),
       hostingPlan: url.searchParams.get("hostingPlan"),
       hostingRegion: url.searchParams.get("hostingRegion"),
       repository: url.searchParams.get("repository"),
+      minecraftServerName: url.searchParams.get("minecraftServerName"),
+      minecraftVersion: url.searchParams.get("minecraftVersion"),
+      minecraftServerType: url.searchParams.get("minecraftServerType"),
+      minecraftSubdomain: url.searchParams.get("minecraftSubdomain"),
+      minecraftFirstWorldName: url.searchParams.get("minecraftFirstWorldName"),
     });
+    if (
+      (requestedPurchaseType === "hosting" || requestedPurchaseType === "domain") &&
+      !purchaseContext
+    ) {
+      return respond(
+        {
+          ok: false,
+          message:
+            "Nao foi possivel validar os dados desta compra. Volte ao produto e inicie o pagamento novamente.",
+        },
+        { status: 400 },
+      );
+    }
     const checkoutAmount = purchaseContext?.amount ?? checkoutPlan.amount;
     const checkoutCurrency = purchaseContext?.currency ?? checkoutPlan.currency;
     const checkoutProviderPayload =
       purchaseContext?.providerPayload ||
-      buildCheckoutTransitionProviderPayload({
-        planChange: checkoutPlan.planChange,
-        flowPointsApplied: 0,
-      });
+      {
+        ...buildPlanRenewalProviderPayload(checkoutPlan),
+        ...buildCheckoutTransitionProviderPayload({
+          planChange: checkoutPlan.planChange,
+          flowPointsApplied: 0,
+        }),
+      };
 
     if (!purchaseContext && checkoutPlan.currentPlanRepurchaseBlocked) {
       return respond(
@@ -1687,7 +1840,9 @@ export async function GET(request: Request) {
       latestOrder.provider_payment_id
     ) {
       try {
-        latestOrder = await reconcilePixOrderFromProvider(latestOrder, "poll");
+        latestOrder = await reconcilePixOrderFromProvider(latestOrder, "poll", {
+          forceFresh: forceProviderRefresh,
+        });
         if (latestOrder?.status === "approved") {
           latestOrder = await settleTrustedApprovedOrderForFastRelease(
             latestOrder,
@@ -1723,7 +1878,10 @@ export async function GET(request: Request) {
     let order = latestPendingPixOrder;
     if (forceNew) {
       // forceNew só cria novo se não há rascunho reutilizável — evita multiplos rascunhos
-      if (latestDraftOrder && !isOrderExpiredOrExpiringSoon(latestDraftOrder, ORDER_EXPIRATION_SAFETY_BUFFER_MS)) {
+      if (
+        latestDraftOrder &&
+        canReuseDraftOrderForPurchase(latestDraftOrder, checkoutProviderPayload)
+      ) {
         order = await reuseDraftOrderForCheckout({
           order: latestDraftOrder,
           amount: checkoutAmount,
@@ -1743,9 +1901,17 @@ export async function GET(request: Request) {
       }
     } else if (
       latestPendingPixOrder &&
-      !doesOrderMatchCheckoutPlan(latestPendingPixOrder, checkoutPlan)
+      !doesOrderMatchCheckoutPlan(latestPendingPixOrder, {
+        ...checkoutPlan,
+        amount: checkoutAmount,
+        currency: checkoutCurrency,
+        providerPayload: checkoutProviderPayload,
+      })
     ) {
-      if (latestDraftOrder && !isOrderExpiredOrExpiringSoon(latestDraftOrder, ORDER_EXPIRATION_SAFETY_BUFFER_MS)) {
+      if (
+        latestDraftOrder &&
+        canReuseDraftOrderForPurchase(latestDraftOrder, checkoutProviderPayload)
+      ) {
         // Tem rascunho sem PIX: atualiza no lugar sem criar novo pedido
         order = await reuseDraftOrderForCheckout({
           order: latestDraftOrder,
@@ -1893,6 +2059,7 @@ export async function POST(request: Request) {
             ),
           ),
           forceNew: flowSecureDto.optional(flowSecureDto.unknown()),
+          renew: flowSecureDto.optional(flowSecureDto.unknown()),
         },
         {
           rejectUnknown: true,
@@ -1918,6 +2085,10 @@ export async function POST(request: Request) {
       body.expectedTotalAmount,
     );
     const forceNew = parseForceNewFlag(body.forceNew);
+    const renew = parseForceNewFlag(body.renew);
+    const purchaseContextFingerprint = buildPurchaseContextFingerprint(
+      body.purchaseContext,
+    );
 
     const access = await ensureGuildAccess(guildId);
     if (!access.ok) {
@@ -1943,6 +2114,7 @@ export async function POST(request: Request) {
         typeof body.couponCode === "string" ? body.couponCode : "",
         typeof body.giftCardCode === "string" ? body.giftCardCode : "",
         expectedTotalAmount ?? "__auto__",
+        purchaseContextFingerprint,
         forceNew,
       ],
     });
@@ -1983,6 +2155,11 @@ export async function POST(request: Request) {
         await logSecurityAuditEventSafe(auditContext, {
           action: "payment_pix_post",
           outcome: "started",
+          metadata: {
+            purchaseContextFingerprint,
+            expectedTotalAmount,
+            forceNew,
+          },
         });
 
         const user = access.context.sessionData.authSession.user;
@@ -1999,8 +2176,20 @@ export async function POST(request: Request) {
       guildId,
       requestedPlanCode: body.planCode,
       requestedBillingPeriodCode: body.billingPeriodCode,
+      renew,
     });
     const purchaseContext = resolvePurchaseContext(body.purchaseContext);
+    if (typeof body.purchaseContext !== "undefined" && !purchaseContext) {
+      return respond(
+        {
+          ok: false,
+          message:
+            "Nao foi possivel validar os dados desta compra. Volte ao produto e inicie o pagamento novamente.",
+        },
+        { status: 400 },
+      );
+    }
+    const purchaseType = purchaseContext?.type || "plan";
     if (purchaseContext?.authUserId && purchaseContext.authUserId !== user.id) {
       return respond(
         { ok: false, message: "Este checkout de dominio pertence a outra conta." },
@@ -2008,7 +2197,8 @@ export async function POST(request: Request) {
       );
     }
     const checkoutItemName = purchaseContext?.title || checkoutPlan.plan.name;
-    const checkoutProviderPayload = purchaseContext?.providerPayload || {};
+    const checkoutProviderPayload =
+      purchaseContext?.providerPayload || buildPlanRenewalProviderPayload(checkoutPlan);
 
     if (!purchaseContext && checkoutPlan.planChange.execution === "schedule_for_renewal") {
       return respond(
@@ -2024,10 +2214,12 @@ export async function POST(request: Request) {
 
     const latestCoverage = guildId ? await getLatestApprovedLicenseCoverageForGuild(guildId) : null;
     const renewalDecision =
-      (guildId && checkoutPlan.planChange.kind === "upgrade")
+      (guildId && (checkoutPlan.planChange.kind === "upgrade" || checkoutPlan.planRenewal))
         ? {
             allowed: true as const,
-            reason: "immediate_upgrade" as const,
+            reason: checkoutPlan.planRenewal
+              ? ("account_plan_renewal" as const)
+              : ("immediate_upgrade" as const),
             licenseStartsAtMs: Date.now(),
           }
         : resolveRenewalPaymentDecision(latestCoverage);
@@ -2043,7 +2235,7 @@ export async function POST(request: Request) {
     }
 
     const supabase = getSupabaseAdminClientOrThrow();
-    let latestOrder = guildId ? await getLatestOrderForUserAndGuild(user.id, guildId) : null;
+    let latestOrder = await getLatestOrderForUserAndGuild(user.id, guildId);
 
     if (
       latestOrder &&
@@ -2108,31 +2300,35 @@ export async function POST(request: Request) {
     const flowPointsPreview = applyFlowPointsToAmount({
       amount: pricing.totalAmount,
       flowPointsBalance:
-        purchaseContext?.type === "domain" ? 0 : checkoutPlan.flowPointsBalance,
+        purchaseContext ? 0 : checkoutPlan.flowPointsBalance,
     });
     const pricingWithFlowPoints = {
       ...pricing,
       totalAmount: flowPointsPreview.remainingAmount,
       flowPoints: {
         appliedAmount: flowPointsPreview.appliedAmount,
-        balanceBefore: checkoutPlan.flowPointsBalance,
+        balanceBefore: purchaseContext ? 0 : checkoutPlan.flowPointsBalance,
         balanceAfter: flowPointsPreview.nextBalanceAmount,
       },
     };
-    const flowPointsGranted = resolveFlowPointsGrantedFromSubtotal({
-      planChange: checkoutPlan.planChange,
-      discountedSubtotalAmount: pricing.subtotalAmount,
-    });
+    const flowPointsGranted = purchaseContext
+      ? 0
+      : resolveFlowPointsGrantedFromSubtotal({
+          planChange: checkoutPlan.planChange,
+          discountedSubtotalAmount: pricing.subtotalAmount,
+        });
     const payerName = requestedPayerName;
     const payerDocument = requestedPayerDocument;
     const amount = pricingWithFlowPoints.totalAmount;
     const currency = pricingWithFlowPoints.currency;
-    const transitionProviderPayload = buildCheckoutTransitionProviderPayload({
-      planChange: checkoutPlan.planChange,
-      flowPointsApplied: flowPointsPreview.appliedAmount,
-      flowPointsGranted,
-      scheduledChangeId: checkoutPlan.scheduledChange?.id || null,
-    });
+    const transitionProviderPayload = purchaseContext
+      ? {}
+      : buildCheckoutTransitionProviderPayload({
+          planChange: checkoutPlan.planChange,
+          flowPointsApplied: flowPointsPreview.appliedAmount,
+          flowPointsGranted,
+          scheduledChangeId: checkoutPlan.scheduledChange?.id || null,
+        });
 
     if (
       hasCheckoutAmountMismatch({
@@ -2147,6 +2343,7 @@ export async function POST(request: Request) {
           reason: "checkout_amount_mismatch",
           expectedTotalAmount,
           actualAmount: amount,
+          purchaseType,
         },
       });
 
@@ -2156,7 +2353,7 @@ export async function POST(request: Request) {
           actualAmount: amount,
           pricing,
           flowPointsApplied: flowPointsPreview.appliedAmount,
-          flowPointsBalance: checkoutPlan.flowPointsBalance,
+          flowPointsBalance: purchaseContext ? 0 : checkoutPlan.flowPointsBalance,
           flowPointsBalanceAfter: flowPointsPreview.nextBalanceAmount,
         }),
         { status: 409 },
@@ -2210,6 +2407,7 @@ export async function POST(request: Request) {
       latestOrder &&
       latestOrder.plan_code === checkoutPlan.plan.code &&
       latestOrder.plan_billing_cycle_days === checkoutPlan.plan.billingCycleDays &&
+      isSamePurchaseContext(latestOrder, checkoutProviderPayload) &&
       canReuseExistingPixCheckoutOrder(
         latestOrder,
         amount,
@@ -2234,7 +2432,9 @@ export async function POST(request: Request) {
     let createdOrder: PaymentOrderRecord;
     const draftOrderToReuse =
       !forceNew && latestOrder && canReuseDraftCheckoutOrder(latestOrder)
-        ? latestOrder
+        ? canReuseDraftOrderForPurchase(latestOrder, checkoutProviderPayload)
+          ? latestOrder
+          : null
         : null;
 
     if (draftOrderToReuse) {
@@ -2296,6 +2496,8 @@ export async function POST(request: Request) {
         orderNumber: createdOrder.order_number,
         guildId,
         userId: user.id,
+        purchaseType,
+        requestId: baseRequestContext.requestId,
       });
     } else {
       createdOrder = await createDraftOrderForCheckout({
@@ -2483,6 +2685,11 @@ export async function POST(request: Request) {
       const paymentIdentifiers = extractMercadoPagoPaymentIdentifiers(
         confirmedMercadoPagoPayment,
       );
+      if (resolvedStatus === "pending" && !transactionData?.qr_code) {
+        throw new Error(
+          "Mercado Pago criou a cobranca PIX, mas nao retornou o codigo copia e cola.",
+        );
+      }
       const trustedTimestamps = resolveTrustedMercadoPagoPaymentTimestamps({
         providerPayment: confirmedMercadoPagoPayment,
         currentPaidAt: createdOrder.paid_at,
@@ -2549,6 +2756,8 @@ export async function POST(request: Request) {
         txId: paymentIdentifiers.txId,
         endToEndId: paymentIdentifiers.endToEndId,
         providerLastUpdatedAt: trustedTimestamps.lastUpdatedAt,
+        purchaseType,
+        requestId: baseRequestContext.requestId,
       });
 
       let responseOrder = updatedOrderResult.data;
@@ -2573,6 +2782,8 @@ export async function POST(request: Request) {
         metadata: {
           orderNumber: updatedOrderResult.data.order_number,
           status: updatedOrderResult.data.status,
+          purchaseType,
+          providerPaymentId,
         },
       });
 
@@ -2654,6 +2865,11 @@ export async function POST(request: Request) {
           const paymentIdentifiers = extractMercadoPagoPaymentIdentifiers(
             createdProviderPayment,
           );
+          if (resolvedStatus === "pending" && !transactionData?.qr_code) {
+            throw new Error(
+              "Pagamento PIX recuperado sem codigo copia e cola valido.",
+            );
+          }
           const trustedTimestamps = resolveTrustedMercadoPagoPaymentTimestamps({
             providerPayment: createdProviderPayment,
             currentPaidAt: createdOrder.paid_at,
@@ -2809,13 +3025,19 @@ export async function POST(request: Request) {
 
       await createPaymentOrderEvent(createdOrder.id, "provider_payment_failed", {
         message,
+        purchaseType,
+        requestId: baseRequestContext.requestId,
       });
 
       const friendlyMessage = resolveFriendlyPixProviderErrorMessage(message);
       const responseStatus = isProviderDocumentErrorMessage(message) ? 400 : 503;
 
           return respond(
-            { ok: false, message: friendlyMessage },
+            {
+              ok: false,
+              message: friendlyMessage,
+              recoverable: responseStatus >= 500,
+            },
             { status: responseStatus },
           );
         }

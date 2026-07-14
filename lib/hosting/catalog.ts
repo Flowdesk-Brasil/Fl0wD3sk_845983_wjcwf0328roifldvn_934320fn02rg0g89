@@ -1,4 +1,4 @@
-export type HostingKind = "site" | "bot";
+export type HostingKind = "site" | "bot" | "minecraft";
 export type HostingStep = "kind" | "github" | "repository" | "region" | "plan" | "payment" | "ready";
 
 export type HostingGitHubAccount = {
@@ -74,6 +74,8 @@ export const HOSTING_STEP_BY_PATH_SEGMENT: Record<string, HostingStep> = {
   "step-7": "ready",
 };
 
+export const DEFAULT_HOSTING_REGION_ID = "us-bos";
+
 export const HOSTING_KIND_OPTIONS: Array<{
   id: HostingKind;
   title: string;
@@ -95,22 +97,44 @@ export const HOSTING_KIND_OPTIONS: Array<{
     description: "Projetos Node, Python ou workers para Discord, WhatsApp e automacoes em VPS Windows.",
     bullets: ["Processo persistente", "Restart automatico", "Variaveis seguras"],
   },
-  ];
+  {
+    id: "minecraft",
+    title: "Servidor Minecraft",
+    label: "Hospedar Minecraft",
+    description: "Servidores Java Edition com versao, loader, mundos, mods e plugins controlados pela Flowdesk.",
+    bullets: ["Subdominio gratis", "Backups por mundo", "Console em tempo real"],
+  },
+];
 
 export const HOSTING_REGIONS: HostingRegion[] = [
   {
-    id: "br-sp",
-    name: "Sao Paulo, Brasil",
-    country: "Brasil",
-    city: "Sao Paulo",
-    pingMs: 18,
+    id: DEFAULT_HOSTING_REGION_ID,
+    name: "Boston, United States",
+    country: "United States",
+    city: "Boston",
+    pingMs: 42,
     status: "available",
     coordinates: {
-      x: 38,
-      y: 74,
+      x: 30,
+      y: 40,
     },
   },
 ];
+
+const LEGACY_HOSTING_REGION_ALIASES: Record<string, string> = {
+  "br-sp": DEFAULT_HOSTING_REGION_ID,
+};
+
+export function resolveHostingRegion(regionId?: string | null) {
+  const normalizedId = String(regionId || "").trim();
+  const resolvedId = LEGACY_HOSTING_REGION_ALIASES[normalizedId] || normalizedId;
+  return (
+    HOSTING_REGIONS.find((region) => region.id === resolvedId) ||
+    HOSTING_REGIONS.find((region) => region.id === DEFAULT_HOSTING_REGION_ID) ||
+    HOSTING_REGIONS[0] ||
+    null
+  );
+}
 
 export const MOCK_GITHUB_REPOSITORIES: HostingRepository[] = [
   {
@@ -339,6 +363,141 @@ export const HOSTING_PLANS: Record<HostingKind, HostingPlan[]> = {
       limitedOffer: "Operacao Mestra",
       description: "Hospedagem definitiva e profissional para quem precisa criar verdadeiras fazendas de bots.",
       specs: ["1 GB RAM", "2 GB SSD NVMe", "15 Bots", "Reinicio Automatico", "Logs em Tempo Real", "Protecao DDoS"],
+      paymentPlanCode: "master",
+    },
+  ],
+  minecraft: [
+    {
+      id: "minecraft-starter",
+      kind: "minecraft",
+      name: "Minecraft Starter",
+      badge: "Inicial",
+      monthlyAmount: 19.99,
+      compareMonthlyAmount: 39.99,
+      currency: "BRL",
+      billingLabel: "/mes",
+      cycleBadge: "Para comecar",
+      limitedOffer: "Comunidades pequenas",
+      description: "Para servidor inicial com plugins leves, poucos mundos e controle financeiro simples.",
+      specs: [
+        "1 GB RAM",
+        "5 GB SSD NVMe",
+        "Ate 10 jogadores",
+        "2 mundos",
+        "Ate 15 Mods",
+        "Ate 15 Plugins",
+      ],
+      paymentPlanCode: "basic",
+    },
+    {
+      id: "minecraft-basic",
+      kind: "minecraft",
+      name: "Minecraft Basic",
+      badge: "Basico",
+      monthlyAmount: 29.99,
+      compareMonthlyAmount: 59.99,
+      currency: "BRL",
+      billingLabel: "/mes",
+      cycleBadge: "Mais folga",
+      limitedOffer: "Survival leve",
+      description: "Para survival pequeno com mais armazenamento, backups e limite maior de jogadores.",
+      specs: [
+        "2 GB RAM",
+        "10 GB SSD NVMe",
+        "Ate 20 jogadores",
+        "3 mundos",
+        "Ate 30 Mods",
+        "Ate 30 Plugins",
+      ],
+      paymentPlanCode: "basic",
+    },
+    {
+      id: "minecraft-plus",
+      kind: "minecraft",
+      name: "Minecraft Plus",
+      badge: "Plus",
+      monthlyAmount: 39.99,
+      compareMonthlyAmount: 79.99,
+      currency: "BRL",
+      billingLabel: "/mes",
+      cycleBadge: "Intermediario",
+      limitedOffer: "Mods e plugins",
+      description: "Para comunidades em crescimento usando loaders, plugins e varios mundos ativos.",
+      specs: [
+        "3 GB RAM",
+        "15 GB SSD NVMe",
+        "Ate 35 jogadores",
+        "5 mundos",
+        "Ate 50 Mods",
+        "Ate 50 Plugins",
+      ],
+      paymentPlanCode: "pro",
+    },
+    {
+      id: "minecraft-pro",
+      kind: "minecraft",
+      name: "Minecraft Pro",
+      badge: "Popular",
+      recommended: true,
+      monthlyAmount: 54.99,
+      compareMonthlyAmount: 109.99,
+      currency: "BRL",
+      billingLabel: "/mes",
+      cycleBadge: "Recomendado",
+      limitedOffer: "Servidor serio",
+      description: "Plano equilibrado para servidores com modpacks, eventos e uso constante.",
+      specs: [
+        "4 GB RAM",
+        "25 GB SSD NVMe",
+        "Ate 60 jogadores",
+        "8 mundos",
+        "Ate 90 Mods",
+        "Ate 90 Plugins",
+      ],
+      paymentPlanCode: "pro",
+    },
+    {
+      id: "minecraft-ultra",
+      kind: "minecraft",
+      name: "Minecraft Ultra",
+      badge: "Ultra",
+      monthlyAmount: 69.99,
+      compareMonthlyAmount: 139.99,
+      currency: "BRL",
+      billingLabel: "/mes",
+      cycleBadge: "Alta carga",
+      limitedOffer: "Redes maiores",
+      description: "Para servidores maiores com muitos jogadores, mundos separados e backups frequentes.",
+      specs: [
+        "6 GB RAM",
+        "40 GB SSD NVMe",
+        "Ate 100 jogadores",
+        "15 mundos",
+        "Ate 150 Mods",
+        "Ate 150 Plugins",
+      ],
+      paymentPlanCode: "ultra",
+    },
+    {
+      id: "minecraft-master",
+      kind: "minecraft",
+      name: "Minecraft Master",
+      badge: "Master",
+      monthlyAmount: 89.99,
+      compareMonthlyAmount: 179.99,
+      currency: "BRL",
+      billingLabel: "/mes",
+      cycleBadge: "Ilimitado",
+      limitedOffer: "Maximo controle",
+      description: "Plano superior para operacoes Minecraft com limites liberados no painel e na API.",
+      specs: [
+        "8 GB RAM",
+        "60 GB SSD NVMe",
+        "Jogadores ilimitados",
+        "Mundos ilimitados",
+        "Mods ilimitados",
+        "Plugins ilimitados",
+      ],
       paymentPlanCode: "master",
     },
   ],

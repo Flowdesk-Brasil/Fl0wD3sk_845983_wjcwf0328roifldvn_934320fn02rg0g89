@@ -25,6 +25,7 @@ import {
   X,
 } from "lucide-react";
 import { DomainSearchSection } from "@/components/domains/DomainSearchSection";
+import { buildDomainPaymentHref as buildUnifiedDomainPaymentHref } from "@/lib/payments/unifiedCheckout";
 
 type Mode = "overview" | "acquire" | "transfers";
 
@@ -364,8 +365,17 @@ function ModalShell({
   );
 }
 
-function buildDomainPaymentHref(purchaseContext: DomainPurchaseContext) {
-  return `/payment/domain/${encodeURIComponent(purchaseContext.token)}?fresh=1&returnPath=${encodeURIComponent("/dashboard/domains")}`;
+function buildDomainPaymentHref(
+  purchaseContext: DomainPurchaseContext,
+  input: { fqdn?: string | null; operation?: "register" | "transfer" | null } = {},
+) {
+  return buildUnifiedDomainPaymentHref({
+    token: purchaseContext.token,
+    fqdn: input.fqdn,
+    operation: input.operation,
+    returnPath: "/dashboard/domains",
+    fresh: true,
+  });
 }
 
 function RegisterDomainDialog({
@@ -416,7 +426,7 @@ function RegisterDomainDialog({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ quoteId: quote.id }),
       });
-      router.push(buildDomainPaymentHref(checkout.purchaseContext));
+      router.push(buildDomainPaymentHref(checkout.purchaseContext, { fqdn, operation: "register" }));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Falha ao preparar checkout.");
     } finally {
@@ -487,7 +497,7 @@ function TransferInDialog({ onClose }: { onClose: () => void }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ quoteId: quotePayload.quote.id, authCode }),
       });
-      router.push(buildDomainPaymentHref(checkout.purchaseContext));
+      router.push(buildDomainPaymentHref(checkout.purchaseContext, { fqdn: fqdn.trim().toLowerCase(), operation: "transfer" }));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Falha ao preparar transferencia.");
     } finally {

@@ -65,6 +65,25 @@ function readRefundAccessAction(providerPayload: unknown) {
     : null;
 }
 
+function readPurchaseContextType(providerPayload: unknown) {
+  if (!isRecord(providerPayload)) return null;
+  const purchaseContext = isRecord(providerPayload.purchase_context)
+    ? providerPayload.purchase_context
+    : null;
+  const type =
+    typeof purchaseContext?.type === "string"
+      ? purchaseContext.type.trim().toLowerCase()
+      : "";
+  return type || null;
+}
+
+export function isPlanEntitlementPaymentRecord(
+  record: Pick<TrustedApprovedPaymentLike, "provider_payload"> | null | undefined,
+) {
+  const purchaseContextType = readPurchaseContextType(record?.provider_payload);
+  return !purchaseContextType || purchaseContextType === "plan";
+}
+
 export function roundPaymentCurrencyAmount(value: number) {
   if (!Number.isFinite(value)) return 0;
   return Math.round(value * 100) / 100;
@@ -150,6 +169,7 @@ export function isRefundedPaymentStatusForAccess(status: string | null | undefin
 export function isTrustedPurchasedPaymentRecord(
   record: TrustedApprovedPaymentLike | null | undefined,
 ) {
+  if (!isPlanEntitlementPaymentRecord(record)) return false;
   if (isTrustedApprovedPaymentRecord(record)) return true;
   if (!record) return false;
 
@@ -168,6 +188,7 @@ export function isTrustedPurchasedPaymentRecord(
 export function isTrustedLicenseEntitlementPaymentRecord(
   record: TrustedApprovedPaymentLike | null | undefined,
 ) {
+  if (!isPlanEntitlementPaymentRecord(record)) return false;
   if (isTrustedApprovedPaymentRecord(record)) return true;
   if (!isTrustedPurchasedPaymentRecord(record)) return false;
 

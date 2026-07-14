@@ -8,7 +8,7 @@ import {
 } from "@/lib/auth/discordGuildAccess";
 import { getEffectiveDashboardPermissions } from "@/lib/teams/userTeams";
 import { cleanupExpiredUnpaidServerSetups } from "@/lib/payments/setupCleanup";
-import { getGuildLicenseStatus } from "@/lib/payments/licenseStatus";
+import { getGuildLicenseStatusForUser } from "@/lib/payments/licenseStatus";
 import {
   ensureSameOriginJsonMutationRequest,
   applyNoStoreHeaders,
@@ -532,9 +532,9 @@ export async function POST(request: Request) {
       hasTeamAccess,
     });
 
-    let licenseStatus = await getGuildLicenseStatus(guildId);
+    let licenseStatus = await getGuildLicenseStatusForUser(guildId, authUserId);
     if (licenseStatus !== "paid") {
-      licenseStatus = await getGuildLicenseStatus(guildId, { forceFresh: true });
+      licenseStatus = await getGuildLicenseStatusForUser(guildId, authUserId, { forceFresh: true });
     }
 
     if (licenseStatus === "expired" || licenseStatus === "off") {

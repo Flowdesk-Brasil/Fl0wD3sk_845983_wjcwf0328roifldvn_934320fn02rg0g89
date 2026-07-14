@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { PUBLIC_LANDING_CACHE_HEADER } from "@/lib/http/publicCache";
 import { FEATURED_SERVER_IDS } from "@/lib/landing/featuredServers";
 import { createSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
@@ -374,7 +375,15 @@ export async function GET() {
       if (now - cachedIconsAt > CACHE_STALE_THRESHOLD && botToken) {
         backgroundSync(botToken);
       }
-      return NextResponse.json({ icons: cachedIcons }, { headers: { "Cache-Control": "no-store", "X-Cache": "MEMORY_STALE" }});
+      return NextResponse.json(
+        { icons: cachedIcons },
+        {
+          headers: {
+            "Cache-Control": PUBLIC_LANDING_CACHE_HEADER,
+            "X-Cache": "MEMORY_STALE",
+          },
+        },
+      );
     }
 
     // 2. Check DB Cache (Survives server restarts)
@@ -383,11 +392,29 @@ export async function GET() {
       cachedIcons = dbIcons;
       cachedIconsAt = now; // Mark as fresh in memory to avoid constant DB calls
       if (botToken) backgroundSync(botToken);
-      return NextResponse.json({ icons: dbIcons }, { headers: { "Cache-Control": "no-store", "X-Cache": "DB_PERSISTENT" }});
+      return NextResponse.json(
+        { icons: dbIcons },
+        {
+          headers: {
+            "Cache-Control": PUBLIC_LANDING_CACHE_HEADER,
+            "X-Cache": "DB_PERSISTENT",
+          },
+        },
+      );
     }
 
     // 3. Absolute Fallback: Fresh sync (only if cache is empty)
-    if (!botToken) return NextResponse.json({ icons: [] });
+    if (!botToken) {
+      return NextResponse.json(
+        { icons: [] },
+        {
+          headers: {
+            "Cache-Control": PUBLIC_LANDING_CACHE_HEADER,
+            "X-Cache": "EMPTY_NO_BOT",
+          },
+        },
+      );
+    }
     
     const guilds = await fetchBotGuilds(botToken);
     const icons = await mapGuildsToIcons(botToken, guilds);
@@ -396,9 +423,25 @@ export async function GET() {
     cachedIconsAt = now;
     backgroundSync(botToken); // Updates DB in background
     
-    return NextResponse.json({ icons }, { headers: { "Cache-Control": "no-store", "X-Cache": "MISS" }});
+    return NextResponse.json(
+      { icons },
+      {
+        headers: {
+          "Cache-Control": PUBLIC_LANDING_CACHE_HEADER,
+          "X-Cache": "MISS",
+        },
+      },
+    );
 
   } catch {
-    return NextResponse.json({ icons: cachedIcons || [] }, { headers: { "Cache-Control": "no-store", "X-Cache": "ERROR_FALLBACK" }});
+    return NextResponse.json(
+      { icons: cachedIcons || [] },
+      {
+        headers: {
+          "Cache-Control": "public, s-maxage=30, stale-while-revalidate=300",
+          "X-Cache": "ERROR_FALLBACK",
+        },
+      },
+    );
   }
 }

@@ -23,9 +23,20 @@ import {
 } from "@/lib/hosting/github";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { applyNoStoreHeaders } from "@/lib/security/http";
+import { flowSecureDto, parseFlowSecureDto } from "@/lib/security/flowSecure";
 
 type RouteProps = {
   params: Promise<{ code: string }>;
+};
+
+const FILE_ACTIONS = ["create-file", "create-folder", "rename", "delete", "move"] as const;
+
+type FilesPostBody = {
+  action?: (typeof FILE_ACTIONS)[number];
+  path?: string;
+  targetPath?: string;
+  type?: "file" | "directory";
+  content?: string;
 };
 
 async function load(code: string) {
@@ -404,9 +415,16 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
   const sync = request.nextUrl.searchParams.get("sync") === "1";
   const raw = request.nextUrl.searchParams.get("raw") === "1";
   try {
+    const agentParams = new URLSearchParams({
+      path,
+    });
+    if (sync) agentParams.set("recursive", "1");
+    if (loaded.project.hosting_kind === "minecraft") {
+      agentParams.set("kind", "minecraft");
+    }
     const payload = await requestVpsAgent({
       project: loaded.project,
-      path: `/v1/vps/${loaded.project.vps_code}/files?path=${encodeURIComponent(path)}${sync ? "&recursive=1" : ""}`,
+      path: `/v1/vps/${loaded.project.vps_code}/files?${agentParams.toString()}`,
       timeoutMs: 12_000,
     });
     
@@ -572,7 +590,27 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
       NextResponse.json({ ok: false, message: "VPS nao encontrada." }, { status: 404 }),
     );
   }
-  const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+  let body: FilesPostBody;
+  try {
+    body = parseFlowSecureDto<FilesPostBody>(
+      await request.json().catch(() => ({})),
+      {
+        action: flowSecureDto.optional(flowSecureDto.enum(FILE_ACTIONS)),
+        path: flowSecureDto.optional(flowSecureDto.string({ maxLength: 2048, rejectThreatPatterns: false })),
+        targetPath: flowSecureDto.optional(flowSecureDto.string({ maxLength: 2048, rejectThreatPatterns: false })),
+        type: flowSecureDto.optional(flowSecureDto.enum(["file", "directory"] as const)),
+        content: flowSecureDto.optional(flowSecureDto.string({ maxLength: 2_000_000, trim: false, allowEmpty: true, rejectThreatPatterns: false })),
+      },
+      { rejectUnknown: true },
+    );
+  } catch (error) {
+    return applyNoStoreHeaders(
+      NextResponse.json(
+        { ok: false, message: error instanceof Error ? error.message : "Payload invalido." },
+        { status: 400 },
+      ),
+    );
+  }
   const action = readString(body.action) || "";
   const path = normalizeFilePath(body.path);
   const targetPath = normalizeFilePath(body.targetPath);
@@ -597,7 +635,13 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
         project: loaded.project,
         method: "POST",
         path: `/v1/vps/${loaded.project.vps_code}/files/actions`,
-        body: { action, path, targetPath, type: nodeType },
+        body: {
+          action,
+          path,
+          targetPath,
+          type: nodeType,
+          kind: loaded.project.hosting_kind,
+        },
         timeoutMs: 15_000,
       });
       agentOk = true;
@@ -653,6 +697,60 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
   const fileContents = isRecord(currentPayload.fileContents)
     ? { ...currentPayload.fileContents } as Record<string, string>
     : {};
+
+  if (loaded.project.hosting_kind === "minecraft") {
+    let agentTree: FileTreeNode[] | null = null;
+    try {
+      const agentPayload = await requestVpsAgent<Record<string, unknown>>({
+        project: loaded.project,
+        method: "POST",
+        path: `/v1/vps/${loaded.project.vps_code}/files`,
+        body: { path, content, kind: "minecraft" },
+        timeoutMs: 15_000,
+      });
+      if (Array.isArray(agentPayload.tree)) {
+        agentTree = agentPayload.tree as FileTreeNode[];
+      }
+    } catch (error) {
+      return applyNoStoreHeaders(
+        NextResponse.json(
+          {
+            ok: false,
+            message:
+              error instanceof Error
+                ? error.message
+                : "Nao foi possivel salvar o arquivo na pasta Minecraft.",
+          },
+          { status: 502 },
+        ),
+      );
+    }
+
+    fileContents[path] = content;
+    await updateRuntimeFilesPayload({
+      projectId: loaded.project.id,
+      currentPayload,
+      tree: agentTree || currentTree,
+      fileContents,
+    }).catch(() => null);
+    await appendVpsEvent({
+      projectId: loaded.project.id,
+      userId: loaded.session.user.id,
+      action: "file_write",
+      status: "succeeded",
+      message: `Arquivo Minecraft ${path} salvo na VPS.`,
+      responsePayload: { source: "minecraft_workspace", agentConnected: true },
+    });
+    return applyNoStoreHeaders(
+      NextResponse.json({
+        ok: true,
+        tree: agentTree || currentTree,
+        agentConnected: true,
+        source: "minecraft_workspace",
+      }),
+    );
+  }
+
   const token = await readHostingGitHubToken(loaded.project.user_id);
   let githubCommit: Awaited<ReturnType<typeof commitHostingGitHubRepositoryFile>> | null = null;
   let githubCommitSource: "oauth" | "github_app" = "oauth";
@@ -799,7 +897,7 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
       project: loaded.project,
       method: "POST",
       path: `/v1/vps/${loaded.project.vps_code}/files`,
-      body: { path, content },
+      body: { path, content, kind: loaded.project.hosting_kind },
       timeoutMs: 15_000,
     });
     agentOk = true;

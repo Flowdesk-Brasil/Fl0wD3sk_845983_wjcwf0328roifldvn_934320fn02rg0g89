@@ -34,7 +34,10 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const state = createHostingGitHubState();
+  const state = createHostingGitHubState({
+    request,
+    mode: request.nextUrl.searchParams.get("mode"),
+  });
   const response = NextResponse.redirect(
     buildHostingGitHubAuthorizeUrl(request, state),
     302,

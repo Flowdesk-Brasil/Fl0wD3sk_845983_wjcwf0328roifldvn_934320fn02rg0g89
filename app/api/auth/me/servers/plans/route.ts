@@ -16,7 +16,10 @@ import {
   areCardPaymentsEnabled,
   CARD_RECURRING_DISABLED_MESSAGE,
 } from "@/lib/payments/cardAvailability";
-import { getLockedGuildLicenseByGuildId } from "@/lib/payments/licenseStatus";
+import {
+  getLockedGuildLicenseByGuildId,
+  invalidateGuildLicenseCaches,
+} from "@/lib/payments/licenseStatus";
 import { ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -36,8 +39,10 @@ import {
   resolvePlanPricing,
 } from "@/lib/plans/catalog";
 import {
+  canUseCurrentPlanRenewalCheckout,
   getUserPlanFlowPointsBalance,
   getUserPlanScheduledChange,
+  resolveCurrentPlanRenewalPreview,
   resolveFlowPointsBalanceAmount,
   resolvePlanChangePreview,
   type UserPlanScheduledChangeRecord,
@@ -52,6 +57,7 @@ import {
   type GuildPlanSettingsRecord,
   type UserPlanStateRecord,
 } from "@/lib/plans/state";
+import { licenseGuildForUser } from "@/lib/plans/planGuilds";
 import {
   extractAuditErrorMessage,
   sanitizeErrorMessage,
@@ -106,6 +112,44 @@ function normalizeRequestedPlanCode(value: unknown) {
 function normalizeRequestedBillingPeriodCode(value: unknown) {
   if (typeof value !== "string") return null;
   return normalizePlanBillingPeriodCode(value, DEFAULT_PLAN_BILLING_PERIOD_CODE);
+}
+
+function isAccountPlanUsableForServerLink(planState: UserPlanStateRecord | null) {
+  if (!planState) return false;
+  if (planState.status !== "active" && planState.status !== "trial") return false;
+  if (!planState.expires_at) return true;
+
+  const expiresAtMs = Date.parse(planState.expires_at);
+  return !Number.isFinite(expiresAtMs) || expiresAtMs > Date.now();
+}
+
+async function repairGuildLinkFromActiveAccountPlan(input: {
+  userId: number;
+  guildId: string | null;
+  userPlanState: UserPlanStateRecord | null;
+}) {
+  if (!input.guildId || !isAccountPlanUsableForServerLink(input.userPlanState)) {
+    return;
+  }
+
+  const lockedGuildLicense = await getLockedGuildLicenseByGuildId(input.guildId, {
+    forceFresh: true,
+  });
+  if (lockedGuildLicense?.userId === input.userId) {
+    return;
+  }
+
+  const result = await licenseGuildForUser({
+    userId: input.userId,
+    guildId: input.guildId,
+    maxLicensedServers: Math.max(input.userPlanState?.max_licensed_servers || 1, 1),
+    currentPlanCode: input.userPlanState?.plan_code || null,
+    currentPlanState: input.userPlanState,
+  });
+
+  if (result.ok) {
+    invalidateGuildLicenseCaches(input.guildId);
+  }
 }
 
 async function ensureGuildAccess(guildId: string | null) {
@@ -250,6 +294,7 @@ function toPlanResponse(input: {
   recurringMethod: SavedMethodSummary | null;
   availableMethods: SavedMethodSummary[];
   availableMethodsCount: number;
+  renew?: boolean | null;
 }) {
   const settings = input.settings;
   const userPlanState = input.userPlanState;
@@ -287,12 +332,23 @@ function toPlanResponse(input: {
   const shouldReuseStoredPlanSettings = Boolean(
     settings && settings.plan_code === resolvedPlan.code,
   );
-  const selectedPlanChange = resolvePlanChangePreview({
+  const selectedPlanChangeBase = resolvePlanChangePreview({
     userPlanState,
     targetPlan: resolvedPlan,
     flowPointsBalance: input.flowPointsBalance,
     scheduledChange: input.scheduledChange,
   });
+  const isRenewalCheckout = canUseCurrentPlanRenewalCheckout({
+    renew: input.renew,
+    preview: selectedPlanChangeBase,
+    targetPlan: resolvedPlan,
+  });
+  const selectedPlanChange = isRenewalCheckout
+    ? resolveCurrentPlanRenewalPreview({
+        preview: selectedPlanChangeBase,
+        targetPlan: resolvedPlan,
+      })
+    : selectedPlanChangeBase;
   const isActiveBasicPlan =
     resolvedPlan.code === "basic" &&
     !!userPlanState &&
@@ -334,6 +390,7 @@ function toPlanResponse(input: {
     checkoutAmount,
     checkoutMode: selectedPlanChange.kind,
     checkoutExecution: selectedPlanChange.execution,
+    renewalCheckout: isRenewalCheckout,
     planChange: {
       kind: selectedPlanChange.kind,
       execution: selectedPlanChange.execution,
@@ -444,12 +501,22 @@ function toPlanResponse(input: {
       cycleBadge: plan.cycleBadge,
       isTrial: plan.isTrial,
       isAvailable: (() => {
-        const planChange = resolvePlanChangePreview({
+        const planChangeBase = resolvePlanChangePreview({
           userPlanState,
           targetPlan: plan,
           flowPointsBalance: input.flowPointsBalance,
           scheduledChange: input.scheduledChange,
         });
+        const planChange = canUseCurrentPlanRenewalCheckout({
+          renew: input.renew,
+          preview: planChangeBase,
+          targetPlan: plan,
+        })
+          ? resolveCurrentPlanRenewalPreview({
+              preview: planChangeBase,
+              targetPlan: plan,
+            })
+          : planChangeBase;
         const basicAvailable =
           plan.code !== "basic" ||
           input.basicPlanAvailability.isAvailable ||
@@ -459,12 +526,22 @@ function toPlanResponse(input: {
         return basicAvailable && !planChange.isCurrentSelectionBlocked;
       })(),
       unavailableReason: (() => {
-        const planChange = resolvePlanChangePreview({
+        const planChangeBase = resolvePlanChangePreview({
           userPlanState,
           targetPlan: plan,
           flowPointsBalance: input.flowPointsBalance,
           scheduledChange: input.scheduledChange,
         });
+        const planChange = canUseCurrentPlanRenewalCheckout({
+          renew: input.renew,
+          preview: planChangeBase,
+          targetPlan: plan,
+        })
+          ? resolveCurrentPlanRenewalPreview({
+              preview: planChangeBase,
+              targetPlan: plan,
+            })
+          : planChangeBase;
         if (planChange.isCurrentSelectionBlocked && !plan.isTrial) {
           return "Seu plano atual ja esta ativo nesta conta. Escolha outro plano para mudar agora.";
         }
@@ -526,6 +603,7 @@ export async function GET(request: Request) {
       planCode?: string | null;
       billingPeriodCode?: string | null;
       includePaymentMethods?: boolean;
+      renew?: boolean;
     };
     try {
       query = parseFlowSecureDto(
@@ -536,6 +614,7 @@ export async function GET(request: Request) {
             url.searchParams.get("billingPeriodCode") ?? undefined,
           includePaymentMethods:
             url.searchParams.get("includePaymentMethods") ?? undefined,
+          renew: url.searchParams.get("renew") ?? undefined,
         },
         {
           guildId: flowSecureDto.optional(
@@ -560,6 +639,7 @@ export async function GET(request: Request) {
           includePaymentMethods: flowSecureDto.optional(
             flowSecureDto.looseBoolean(),
           ),
+          renew: flowSecureDto.optional(flowSecureDto.looseBoolean()),
         },
         {
           rejectUnknown: true,
@@ -628,6 +708,29 @@ export async function GET(request: Request) {
     const userPlanState = selection.userPlanState || null;
     const basicPlanAvailability = selection.basicPlanAvailability;
 
+    try {
+      await repairGuildLinkFromActiveAccountPlan({
+        userId,
+        guildId,
+        userPlanState,
+      });
+    } catch (error) {
+      await logSecurityAuditEventSafe(
+        extendSecurityRequestContext(requestContext, {
+          sessionId: access.context.sessionData.authSession.id,
+          userId,
+          guildId,
+        }),
+        {
+          action: "server_plan_auto_link_repair",
+          outcome: "failed",
+          metadata: {
+            message: extractAuditErrorMessage(error),
+          },
+        },
+      );
+    }
+
     const recurringMethodId = settings?.recurring_method_id || null;
     const recurringMethod =
       recurringMethodId
@@ -649,6 +752,7 @@ export async function GET(request: Request) {
         recurringMethod,
         availableMethods: savedMethods,
         availableMethodsCount: savedMethods.length,
+        renew: query.renew,
       }),
     }), requestContext.requestId);
   } catch (error) {
@@ -948,4 +1052,3 @@ export async function POST(request: Request) {
     ), baseRequestContext.requestId);
   }
 }
-

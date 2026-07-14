@@ -88,6 +88,7 @@ const BASIC_PLAN_ELIGIBILITY_SELECT_COLUMNS =
   "id, status, plan_code, payment_method, provider_payment_id, provider_status_detail, provider_payload, paid_at, expires_at, amount, created_at";
 
 const BASIC_PLAN_FIRST_PURCHASE_BONUS_DAYS = 7;
+const PLAN_STATE_REPAIR_APPROVED_ORDER_LOOKBACK_LIMIT = 60;
 
 type PaymentOrderPlanRecord = {
   id: number;
@@ -115,6 +116,10 @@ type PaymentOrderPlanRecord = {
 type PaymentOrderEventPayload = Record<string, unknown>;
 
 type UserPlanStateMetadataRecord = {
+  plan_code?: PlanCode | null;
+  billing_cycle_days?: number | null;
+  activated_at?: string | null;
+  expires_at?: string | null;
   metadata: Record<string, unknown> | null;
 };
 
@@ -378,11 +383,13 @@ export async function resolveApprovedOrderLicenseExpiresAt(input: {
     | "plan_code"
     | "payment_method"
     | "plan_billing_cycle_days"
+    | "provider_payload"
     | "paid_at"
     | "created_at"
   >;
   paidAtOverride?: string | null;
 }) {
+  const supabase = getSupabaseAdminClientOrThrow();
   const resolvedPlanCode = isPlanCode(input.order.plan_code)
     ? input.order.plan_code
     : DEFAULT_PLAN_CODE;
@@ -399,6 +406,55 @@ export async function resolveApprovedOrderLicenseExpiresAt(input: {
     : await listApprovedOrdersForBasicPlanRules(input.order.user_id, {
         excludeOrderId: input.order.id,
       });
+  const [providerPayload, currentPlanStateResult] = await Promise.all([
+    resolveOrderProviderPayload(input.order),
+    supabase
+      .from("auth_user_plan_state")
+      .select("plan_code, billing_cycle_days, activated_at, expires_at, metadata")
+      .eq("user_id", input.order.user_id)
+      .maybeSingle<UserPlanStateMetadataRecord>(),
+  ]);
+
+  if (currentPlanStateResult.error) {
+    throw new Error(
+      currentPlanStateResult.error.message ||
+        "Falha ao carregar plano atual para calcular renovacao.",
+    );
+  }
+
+  const currentPlanState = currentPlanStateResult.data || null;
+  const transition = readOrderPlanTransitionPayload(providerPayload);
+  const renewalPayload = isRecord(providerPayload)
+    ? providerPayload.renewal
+    : null;
+  const isPlanRenewalPayload =
+    (isRecord(renewalPayload) && renewalPayload.type === "plan_renewal") ||
+    Boolean(
+      transition &&
+        transition.kind === "current" &&
+        transition.execution === "pay_now" &&
+        transition.payableBeforeDiscountsAmount > 0,
+    );
+  const currentBillingCycleDays = resolveEffectivePlanBillingCycleDays({
+    billingCycleDays: currentPlanState?.billing_cycle_days,
+    planCode: currentPlanState?.plan_code,
+    fallbackPlanCode: resolvedPlanCode,
+  });
+  const paidAtMs = parseUtcTimestampMs(activatedAt);
+  const currentExpiresAtMs = currentPlanState?.expires_at
+    ? parseUtcTimestampMs(currentPlanState.expires_at)
+    : Number.NaN;
+  const shouldExtendFromCurrentExpiration =
+    isPlanRenewalPayload &&
+    currentPlanState?.plan_code === resolvedPlanCode &&
+    currentBillingCycleDays === resolvedBillingCycleDays &&
+    Number.isFinite(paidAtMs) &&
+    Number.isFinite(currentExpiresAtMs) &&
+    currentExpiresAtMs > paidAtMs;
+  const cycleBaseTimestamp =
+    shouldExtendFromCurrentExpiration && currentPlanState?.expires_at
+      ? currentPlanState.expires_at
+      : activatedAt;
   const shouldGrantFirstPaidBonus =
     !isTrialOrder && priorApprovedOrders.length === 0;
   const effectiveBillingCycleDays = shouldGrantFirstPaidBonus
@@ -408,7 +464,7 @@ export async function resolveApprovedOrderLicenseExpiresAt(input: {
   return {
     expiresAt:
       resolvePlanLicenseExpiresAtIso({
-        baseTimestamp: activatedAt,
+        baseTimestamp: cycleBaseTimestamp,
         billingCycleDays: effectiveBillingCycleDays,
         planCode: resolvedPlanCode,
         fallbackPlanCode: resolvedPlanCode,
@@ -416,6 +472,9 @@ export async function resolveApprovedOrderLicenseExpiresAt(input: {
     bonusDaysApplied: shouldGrantFirstPaidBonus
       ? BASIC_PLAN_FIRST_PURCHASE_BONUS_DAYS
       : 0,
+    renewalApplied: isPlanRenewalPayload,
+    renewalExtendedFromCurrentExpiration: shouldExtendFromCurrentExpiration,
+    cycleBaseTimestamp,
   };
 }
 
@@ -520,7 +579,9 @@ async function resolveApprovedOrderBenefits(input: {
   } satisfies ApprovedOrderBenefits;
 }
 
-async function resolveOrderProviderPayload(order: PaymentOrderPlanRecord) {
+async function resolveOrderProviderPayload(
+  order: Pick<PaymentOrderPlanRecord, "id" | "provider_payload">,
+) {
   if (order.provider_payload !== undefined) {
     return order.provider_payload;
   }
@@ -805,8 +866,8 @@ export async function getUserPlanState(userId: number) {
       .in("status", ["approved", "refunded", "partially_refunded"])
       .order("paid_at", { ascending: false, nullsFirst: false })
       .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle<PaymentOrderPlanRecord>(),
+      .limit(PLAN_STATE_REPAIR_APPROVED_ORDER_LOOKBACK_LIMIT)
+      .returns<PaymentOrderPlanRecord[]>(),
   ]);
 
   if (planStateResult.error) {
@@ -820,11 +881,20 @@ export async function getUserPlanState(userId: number) {
   }
 
   const currentPlanState = planStateResult.data || null;
-  const latestApprovedOrder = filterTrustedLicenseEntitlementPaymentRecords(
-    latestApprovedOrderResult.data ? [latestApprovedOrderResult.data] : [],
-  )[0] || null;
+  const approvedOrders = latestApprovedOrderResult.data || [];
+  const latestApprovedOrder =
+    filterTrustedLicenseEntitlementPaymentRecords(approvedOrders)[0] || null;
 
   if (!latestApprovedOrder) {
+    if (currentPlanState?.last_payment_order_id) {
+      await supabase
+        .from("auth_user_plan_state")
+        .delete()
+        .eq("user_id", userId)
+        .eq("last_payment_order_id", currentPlanState.last_payment_order_id);
+      return null;
+    }
+
     return currentPlanState;
   }
 
@@ -1148,7 +1218,7 @@ export async function syncUserPlanStateFromOrder(order: PaymentOrderPlanRecord) 
   const [currentPlanStateResult, approvedOrderBenefits, expirationResolution] = await Promise.all([
     supabase
       .from("auth_user_plan_state")
-      .select("metadata")
+      .select("plan_code, billing_cycle_days, activated_at, expires_at, metadata")
       .eq("user_id", order.user_id)
       .maybeSingle<UserPlanStateMetadataRecord>(),
     resolveApprovedOrderBenefits({
@@ -1163,7 +1233,13 @@ export async function syncUserPlanStateFromOrder(order: PaymentOrderPlanRecord) 
     }),
   ]);
 
-  const expiresAt = normalizeValidIso(order.expires_at) || expirationResolution.expiresAt;
+  const expiresAt = expirationResolution.renewalApplied
+    ? expirationResolution.expiresAt
+    : normalizeValidIso(order.expires_at) || expirationResolution.expiresAt;
+  const planActivatedAt =
+    expirationResolution.renewalApplied && currentPlanStateResult.data?.activated_at
+      ? currentPlanStateResult.data.activated_at
+      : activatedAt;
 
   if (currentPlanStateResult.error) {
     throw new Error(
@@ -1212,6 +1288,17 @@ export async function syncUserPlanStateFromOrder(order: PaymentOrderPlanRecord) 
     nextMetadata.trial = nextTrialMetadata;
   }
 
+  if (expirationResolution.renewalApplied) {
+    nextMetadata.renewal = {
+      lastPaymentOrderId: order.id,
+      renewedAt: activatedAt,
+      previousExpiresAt: currentPlanStateResult.data?.expires_at || null,
+      cycleBaseTimestamp: expirationResolution.cycleBaseTimestamp,
+      extendedFromCurrentExpiration:
+        expirationResolution.renewalExtendedFromCurrentExpiration,
+    };
+  }
+
   const resolvedCyclePricing = resolveActivePlanCyclePricing({
     planCode: resolvedPlanCode,
     billingCycleDays: resolvedBillingCycleDays,
@@ -1248,7 +1335,7 @@ export async function syncUserPlanStateFromOrder(order: PaymentOrderPlanRecord) 
     ),
     last_payment_order_id: order.id,
     last_payment_guild_id: order.guild_id,
-    activated_at: activatedAt,
+    activated_at: planActivatedAt,
     expires_at: expiresAt,
     metadata: nextMetadata,
   };
