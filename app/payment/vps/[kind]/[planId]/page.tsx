@@ -1,16 +1,9 @@
 import {
   renderHostingPaymentPage,
-} from "../../../hosting/[kind]/[planId]/page";
+  type HostingPaymentPageProps,
+} from "../../../hosting/HostingPaymentRenderer";
 
-type VpsPaymentPageProps = {
-  params: Promise<{
-    kind: string;
-    planId: string;
-  }>;
-  searchParams?: Promise<Record<string, string | string[] | undefined>>;
-};
-
-export default async function VpsPaymentPage(props: VpsPaymentPageProps) {
+export default async function VpsPaymentPage(props: HostingPaymentPageProps) {
   return renderHostingPaymentPage({
     ...props,
     surface: "vps",

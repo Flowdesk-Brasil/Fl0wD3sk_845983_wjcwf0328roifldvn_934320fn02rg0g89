@@ -1,6 +1,7 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import {
   fetchHostingGitHubRepositories,
+  HostingGitHubNetworkError,
   isHostingGitHubConfigured,
   readHostingGitHubToken,
 } from "@/lib/hosting/github";
@@ -68,6 +69,17 @@ export async function GET(request: NextRequest) {
       }),
     );
   } catch (error) {
+    if (error instanceof HostingGitHubNetworkError) {
+      return applyNoStoreHeaders(
+        NextResponse.json({
+          ok: false,
+          repositories: [],
+          message:
+            "O GitHub demorou para responder. Sua conta continua vinculada; tente carregar os repositorios novamente em alguns segundos.",
+        }, { status: 503 }),
+      );
+    }
+
     return applyNoStoreHeaders(
       NextResponse.json({
         ok: false,

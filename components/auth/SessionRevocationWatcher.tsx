@@ -13,6 +13,8 @@ const PROTECTED_PATH_PREFIXES = [
   "/vps",
 ] as const;
 
+const SESSION_STATE_POLL_INTERVAL_MS = 15_000;
+
 function isProtectedPath(pathname: string) {
   return PROTECTED_PATH_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
@@ -29,12 +31,14 @@ export function SessionRevocationWatcher({ enabled }: { enabled: boolean }) {
 
     let cancelled = false;
     let redirecting = false;
+    let inFlight = false;
 
     async function validateSession() {
-      if (cancelled || redirecting || document.visibilityState === "hidden") {
+      if (cancelled || redirecting || inFlight || document.visibilityState === "hidden") {
         return;
       }
 
+      inFlight = true;
       try {
         const response = await fetch("/api/auth/me/session-state", {
           cache: "no-store",
@@ -50,12 +54,14 @@ export function SessionRevocationWatcher({ enabled }: { enabled: boolean }) {
         );
       } catch {
         // Falhas temporarias de rede nao encerram uma sessao valida.
+      } finally {
+        inFlight = false;
       }
     }
 
     const intervalId = window.setInterval(() => {
       void validateSession();
-    }, 4_000);
+    }, SESSION_STATE_POLL_INTERVAL_MS);
     const handleVisibility = () => {
       if (document.visibilityState === "visible") {
         void validateSession();

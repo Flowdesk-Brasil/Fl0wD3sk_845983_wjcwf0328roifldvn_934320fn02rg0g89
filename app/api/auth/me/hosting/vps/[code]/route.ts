@@ -5,8 +5,13 @@ import {
   isRecord,
   normalizeVpsCode,
   readString,
+  requestVpsAgent,
   resolveRuntimeStatus,
 } from "@/lib/hosting/vpsRuntime";
+import {
+  resolveRuntimeHealth,
+  resolveVpsProjectSettings,
+} from "@/lib/hosting/vpsSettings";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 
@@ -46,7 +51,7 @@ export async function GET(_request: NextRequest, { params }: RouteProps) {
         .select("*")
         .eq("hosting_project_id", loaded.project.id)
         .order("sampled_at", { ascending: false })
-        .limit(48),
+        .limit(720),
       supabase
         .from("hosting_vps_logs")
         .select("*")
@@ -76,12 +81,52 @@ export async function GET(_request: NextRequest, { params }: RouteProps) {
   const runtimePayload = isRecord(loaded.project.runtime_status_payload)
     ? loaded.project.runtime_status_payload
     : {};
+  let resolvedRuntimeStatus = resolveRuntimeStatus(loaded.project.runtime_status);
+  let resolvedRuntimePayload: Record<string, unknown> = runtimePayload;
+  let resolvedRuntimeLastSeenAt = loaded.project.runtime_last_seen_at;
+
+  if (loaded.project.hosting_kind === "minecraft") {
+    const liveMinecraftStatus = await requestVpsAgent<Record<string, unknown>>({
+      project: loaded.project,
+      method: "GET",
+      path: `/v1/minecraft/servers/${loaded.project.vps_code}/status`,
+      timeoutMs: 3500,
+    }).catch(() => null);
+    const liveRuntimeStatus = resolveRuntimeStatus(liveMinecraftStatus?.status);
+    if (liveMinecraftStatus && liveRuntimeStatus !== "unknown") {
+      resolvedRuntimeStatus = liveRuntimeStatus;
+      resolvedRuntimePayload = { ...runtimePayload, minecraft: liveMinecraftStatus };
+      resolvedRuntimeLastSeenAt = new Date().toISOString();
+      void supabase
+        .from("hosting_projects")
+        .update({
+          runtime_status: liveRuntimeStatus,
+          runtime_status_payload: resolvedRuntimePayload,
+          runtime_last_seen_at: resolvedRuntimeLastSeenAt,
+        })
+        .eq("id", loaded.project.id);
+    }
+  }
   const fileTree = Array.isArray(runtimePayload.fileTree)
     ? runtimePayload.fileTree
     : [];
   const provisioningRepository = isRecord(loaded.project.provisioning_payload)
     ? loaded.project.provisioning_payload.repository
     : null;
+  const repositoryFullName = `${loaded.project.github_owner}/${loaded.project.github_repo}`;
+  const settings = resolveVpsProjectSettings(loaded.project.provisioning_payload, {
+    vpsCode: loaded.project.vps_code,
+    repositoryName: loaded.project.github_repo,
+    repositoryFullName,
+    repositoryBranch: loaded.project.github_branch,
+    repositoryHtmlUrl: `https://github.com/${repositoryFullName}`,
+    ownerEmail: loaded.session.user.email || loaded.session.user.username,
+  });
+  const runtimeHealth = resolveRuntimeHealth({
+    runtimePayload: resolvedRuntimePayload,
+    regionLabel: loaded.project.hosting_region_id,
+    lastSeenAt: resolvedRuntimeLastSeenAt,
+  });
 
   return applyNoStoreHeaders(
     NextResponse.json({
@@ -90,9 +135,10 @@ export async function GET(_request: NextRequest, { params }: RouteProps) {
         id: loaded.project.id,
         vpsCode: loaded.project.vps_code,
         status: loaded.project.status,
-        runtimeStatus: resolveRuntimeStatus(loaded.project.runtime_status),
-        runtimeLastSeenAt: loaded.project.runtime_last_seen_at,
-        runtimePayload,
+        runtimeStatus: resolvedRuntimeStatus,
+        runtimeLastSeenAt: resolvedRuntimeLastSeenAt,
+        runtimePayload: resolvedRuntimePayload,
+        runtimeHealth,
         kind: loaded.project.hosting_kind,
         planId: loaded.project.hosting_plan_id,
         regionId: loaded.project.hosting_region_id,
@@ -101,10 +147,11 @@ export async function GET(_request: NextRequest, { params }: RouteProps) {
           name: loaded.project.github_repo,
           id: loaded.project.github_repo_id,
           branch: loaded.project.github_branch,
-          fullName: `${loaded.project.github_owner}/${loaded.project.github_repo}`,
+          fullName: settings.repository.connected ? repositoryFullName : "Repository disconnected",
           description: readString(
             isRecord(provisioningRepository) ? provisioningRepository.description : null,
           ),
+          connected: settings.repository.connected,
         },
         provisioningPayload: loaded.project.provisioning_payload,
       },
@@ -114,6 +161,7 @@ export async function GET(_request: NextRequest, { params }: RouteProps) {
       envVars: envResult.data || [],
       actions: actionsResult.data || [],
       fileTree,
+      settings,
     }),
   );
 }

@@ -47,6 +47,12 @@ import {
 
 const DISCOUNT_PREVIEW_ROUTE_COALESCE_TTL_MS = 1_500;
 
+function normalizePurchaseType(value: unknown) {
+  if (typeof value !== "string") return "plan";
+  const normalized = value.trim().toLowerCase();
+  return normalized === "hosting" || normalized === "domain" ? normalized : "plan";
+}
+
 function normalizeGuildId(value: unknown) {
   if (typeof value !== "string") return null;
   const guildId = value.trim();
@@ -178,6 +184,7 @@ export async function POST(request: Request) {
       currency?: string | null;
       planCode?: string | null;
       billingPeriodCode?: string | null;
+      purchaseType?: string | null;
     };
     try {
       payload = parseFlowSecureDto(
@@ -237,6 +244,14 @@ export async function POST(request: Request) {
               }),
             ),
           ),
+          purchaseType: flowSecureDto.optional(
+            flowSecureDto.nullable(
+              flowSecureDto.string({
+                maxLength: 24,
+                pattern: /^[A-Za-z][A-Za-z0-9_-]{0,23}$/,
+              }),
+            ),
+          ),
         },
         {
           rejectUnknown: true,
@@ -258,6 +273,7 @@ export async function POST(request: Request) {
     }
 
     const guildId = normalizeGuildId(payload.guildId);
+    const purchaseType = normalizePurchaseType(payload.purchaseType);
 
     const access = await ensureGuildAccess(guildId);
     if (!access.ok) {
@@ -284,6 +300,7 @@ export async function POST(request: Request) {
           normalizeCurrency(payload.currency),
           normalizePlanCode(payload.planCode) || "",
           normalizeBillingPeriodCode(payload.billingPeriodCode) || "",
+          purchaseType,
         ],
       });
 
@@ -335,10 +352,14 @@ export async function POST(request: Request) {
             payload.billingPeriodCode,
           ),
         });
-        const flowPointsBalanceRecord = await getUserPlanFlowPointsBalance(
-          access.sessionData.authSession.user.id,
-        );
-        const flowPointsBalance = resolveFlowPointsBalanceAmount(flowPointsBalanceRecord);
+        const flowPointsBalance =
+          purchaseType === "plan"
+            ? resolveFlowPointsBalanceAmount(
+                await getUserPlanFlowPointsBalance(
+                  access.sessionData.authSession.user.id,
+                ),
+              )
+            : 0;
         const flowPointsPreview = applyFlowPointsToAmount({
           amount: preview.totalAmount,
           flowPointsBalance,

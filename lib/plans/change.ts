@@ -581,6 +581,40 @@ export function resolvePlanChangePreview(input: {
   };
 }
 
+export function canUseCurrentPlanRenewalCheckout(input: {
+  renew?: boolean | null;
+  preview: PlanChangePreview;
+  targetPlan: PlanPricingDefinition;
+}) {
+  return Boolean(
+    input.renew &&
+      !input.targetPlan.isTrial &&
+      input.preview.kind === "current" &&
+      input.preview.currentPlanCode === input.targetPlan.code &&
+      input.preview.currentBillingCycleDays === input.targetPlan.billingCycleDays,
+  );
+}
+
+export function resolveCurrentPlanRenewalPreview(input: {
+  preview: PlanChangePreview;
+  targetPlan: PlanPricingDefinition;
+}) {
+  const targetTotalAmount = roundMoney(input.targetPlan.totalAmount);
+
+  return {
+    ...input.preview,
+    execution: "pay_now" as const,
+    targetTotalAmount,
+    currentCreditAmount: 0,
+    creditAppliedToTargetAmount: 0,
+    surplusCreditAmount: 0,
+    immediateSubtotalAmount: targetTotalAmount,
+    flowPointsGrantPreview: 0,
+    isCurrentSelectionBlocked: false,
+    effectiveAt: input.preview.currentExpiresAt,
+  } satisfies PlanChangePreview;
+}
+
 export function buildPlanTransitionPayload(input: {
   preview: PlanChangePreview;
   flowPointsApplied: number;
@@ -689,6 +723,8 @@ export function orderTransitionAllowsImmediateApproval(
     transition &&
       transition.appliedImmediately &&
       transition.execution === "pay_now" &&
-      transition.kind === "upgrade",
+      (transition.kind === "upgrade" ||
+        (transition.kind === "current" &&
+          transition.payableBeforeDiscountsAmount > 0)),
   );
 }

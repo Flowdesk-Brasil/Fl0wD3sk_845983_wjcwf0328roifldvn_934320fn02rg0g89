@@ -237,6 +237,9 @@ export function ServerDiscordLinkModal({
   onClose?: () => void;
   onConnect: () => void;
 }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   useEffect(() => {
     if (!open || !onClose) return;
     const closeModal = onClose;
@@ -247,7 +250,7 @@ export function ServerDiscordLinkModal({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose, open]);
 
-  if (!open || typeof document === "undefined") return null;
+  if (!mounted || !open || typeof document === "undefined") return null;
 
   const isReconnect = mode === "reconnect";
   const title = isReconnect
@@ -358,6 +361,9 @@ export function ServerDeleteConfirmModal({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   useEffect(() => {
     if (!open) return;
     function handleKeyDown(event: KeyboardEvent) {
@@ -367,7 +373,7 @@ export function ServerDeleteConfirmModal({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onCancel, open]);
 
-  if (!open || typeof document === "undefined") return null;
+  if (!mounted || !open || typeof document === "undefined") return null;
 
   return createPortal(
     <div className="fixed inset-0 z-[2600] isolate overflow-y-auto overscroll-contain">

@@ -1,4 +1,4 @@
-﻿import { createHash, createHmac } from "crypto";
+import { createHash, createHmac } from "crypto";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import type { HostingKind } from "@/lib/hosting/catalog";
 import {
@@ -9,13 +9,14 @@ import {
 export type VpsRuntimeStatus =
   | "online"
   | "offline"
+  | "starting"
   | "restarting"
   | "deploying"
   | "crashed"
   | "suspended"
   | "unknown";
 
-export type VpsAction = "start" | "stop" | "restart" | "deploy" | "rollback" | "sync";
+export type VpsAction = "start" | "stop" | "restart" | "deploy" | "rollback" | "sync" | "kill" | "reset-world" | "command";
 
 export type HostingProjectAccess = {
   id: number;
@@ -78,6 +79,7 @@ export function readNumber(value: unknown) {
 export function resolveRuntimeStatus(value: unknown): VpsRuntimeStatus {
   return value === "online" ||
     value === "offline" ||
+    value === "starting" ||
     value === "restarting" ||
     value === "deploying" ||
     value === "crashed" ||
@@ -213,7 +215,7 @@ export async function requestVpsAgent<T = unknown>(input: AgentRequestInput): Pr
   const baseUrl = resolveAgentBaseUrl();
   const token = resolveAgentToken();
   if (!baseUrl || !token) {
-    throw new Error("Agente Windows da VPS nao configurado no backend.");
+    throw new Error("Agente da VPS nao configurado no backend.");
   }
 
   const controller = new AbortController();

@@ -6,7 +6,8 @@ export type SensitiveAccountAction =
   | "provider_unlink"
   | "totp_enable"
   | "totp_disable"
-  | "passkey_remove";
+  | "passkey_remove"
+  | "vps_delete";
 
 export type SensitiveActionMetadata = {
   action?: unknown;
@@ -27,6 +28,7 @@ export const SENSITIVE_ACCOUNT_ACTIONS = [
   "totp_enable",
   "totp_disable",
   "passkey_remove",
+  "vps_delete",
 ] as const satisfies readonly SensitiveAccountAction[];
 
 export function normalizeSensitiveAccountAction(value: unknown) {

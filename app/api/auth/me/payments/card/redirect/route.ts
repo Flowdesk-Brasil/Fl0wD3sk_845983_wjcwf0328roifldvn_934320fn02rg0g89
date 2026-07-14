@@ -26,6 +26,7 @@ import {
   ensureGuildAccess,
   buildCheckoutTransitionProviderPayload,
   canReuseDraftCheckoutOrder,
+  buildPlanRenewalProviderPayload,
   createPaymentOrderEventSafe,
   doesOrderMatchCheckoutPlan,
   invalidatePaymentReadCachesForOrder,
@@ -89,7 +90,11 @@ const CARD_REDIRECT_ROUTE_COALESCE_TTL_MS = 1500;
 function normalizeReturnTarget(value: unknown) {
   if (typeof value !== "string") return null;
   const normalized = value.trim().toLowerCase();
-  return normalized === "servers" || normalized === "hosting" ? normalized : null;
+  return normalized === "servers" ||
+    normalized === "hosting" ||
+    normalized === "account"
+    ? normalized
+    : null;
 }
 
 function normalizeReturnTab(value: unknown) {
@@ -105,7 +110,7 @@ function buildHostedCheckoutReturnInternalPath(input: {
   order: Pick<PaymentOrderRecord, "id" | "order_number">;
   checkoutToken: string | null;
   renew: boolean;
-  returnTarget: "servers" | "hosting" | null;
+  returnTarget: "servers" | "hosting" | "account" | null;
   returnGuildId: string | null;
   returnTab: string;
   returnPath: string | null;
@@ -118,6 +123,24 @@ function buildHostedCheckoutReturnInternalPath(input: {
       ...(input.checkoutToken ? { checkoutToken: input.checkoutToken } : {}),
     });
     return `${input.returnPath}?${params.toString()}`;
+  }
+
+  if (input.returnTarget === "account") {
+    return buildPaymentCheckoutEntryHref({
+      planCode: input.planCode,
+      billingPeriodCode: input.billingPeriodCode,
+      orderNumber: input.order.order_number,
+      orderId: input.order.id,
+      searchParams: {
+        ...(input.checkoutToken ? { checkoutToken: input.checkoutToken } : {}),
+        renew: 1,
+        return: "account",
+        returnPath:
+          input.returnPath === "/account" || input.returnPath === "/account/plans"
+            ? input.returnPath
+            : "/account/plans",
+      },
+    });
   }
 
   return buildPaymentCheckoutEntryHref({
@@ -172,7 +195,7 @@ export async function POST(request: Request) {
       giftCardCode?: string | null;
       expectedTotalAmount?: number | null;
       renew?: boolean;
-      returnTarget?: "servers" | "hosting" | null;
+      returnTarget?: "servers" | "hosting" | "account" | null;
       returnGuildId?: string | null;
       returnTab?: "plans" | "settings" | null;
       returnPath?: string | null;
@@ -370,6 +393,7 @@ export async function POST(request: Request) {
           guildId,
           requestedPlanCode: payload.planCode,
           requestedBillingPeriodCode: payload.billingPeriodCode,
+          renew,
         });
         const purchaseContext = resolvePurchaseContext(payload.purchaseContext);
         if (purchaseContext?.authUserId && purchaseContext.authUserId !== user.id) {
@@ -379,7 +403,8 @@ export async function POST(request: Request) {
           );
         }
         const checkoutItemName = purchaseContext?.title || checkoutPlan.plan.name;
-        const checkoutProviderPayload = purchaseContext?.providerPayload || {};
+        const checkoutProviderPayload =
+          purchaseContext?.providerPayload || buildPlanRenewalProviderPayload(checkoutPlan);
 
         if (!purchaseContext && checkoutPlan.planChange.execution === "schedule_for_renewal") {
           return respond(
@@ -396,10 +421,12 @@ export async function POST(request: Request) {
           ? await getLatestApprovedLicenseCoverageForGuild(guildId)
           : null;
         const renewalDecision =
-          guildId && checkoutPlan.planChange.kind === "upgrade"
+          guildId && (checkoutPlan.planChange.kind === "upgrade" || checkoutPlan.planRenewal)
             ? {
                 allowed: true as const,
-                reason: "immediate_upgrade" as const,
+                reason: checkoutPlan.planRenewal
+                  ? ("account_plan_renewal" as const)
+                  : ("immediate_upgrade" as const),
                 licenseStartsAtMs: Date.now(),
               }
             : resolveRenewalPaymentDecision(latestCoverage);
@@ -453,29 +480,33 @@ export async function POST(request: Request) {
         const flowPointsPreview = applyFlowPointsToAmount({
           amount: pricing.totalAmount,
           flowPointsBalance:
-            purchaseContext?.type === "domain" ? 0 : checkoutPlan.flowPointsBalance,
+            purchaseContext ? 0 : checkoutPlan.flowPointsBalance,
         });
         const pricingWithFlowPoints = {
           ...pricing,
           totalAmount: flowPointsPreview.remainingAmount,
           flowPoints: {
             appliedAmount: flowPointsPreview.appliedAmount,
-            balanceBefore: checkoutPlan.flowPointsBalance,
+            balanceBefore: purchaseContext ? 0 : checkoutPlan.flowPointsBalance,
             balanceAfter: flowPointsPreview.nextBalanceAmount,
           },
         };
-        const flowPointsGranted = resolveFlowPointsGrantedFromSubtotal({
-          planChange: checkoutPlan.planChange,
-          discountedSubtotalAmount: pricing.subtotalAmount,
-        });
+        const flowPointsGranted = purchaseContext
+          ? 0
+          : resolveFlowPointsGrantedFromSubtotal({
+              planChange: checkoutPlan.planChange,
+              discountedSubtotalAmount: pricing.subtotalAmount,
+            });
         const amount = pricingWithFlowPoints.totalAmount;
         const currency = pricingWithFlowPoints.currency;
-        const transitionProviderPayload = buildCheckoutTransitionProviderPayload({
-          planChange: checkoutPlan.planChange,
-          flowPointsApplied: flowPointsPreview.appliedAmount,
-          flowPointsGranted,
-          scheduledChangeId: checkoutPlan.scheduledChange?.id || null,
-        });
+        const transitionProviderPayload = purchaseContext
+          ? {}
+          : buildCheckoutTransitionProviderPayload({
+              planChange: checkoutPlan.planChange,
+              flowPointsApplied: flowPointsPreview.appliedAmount,
+              flowPointsGranted,
+              scheduledChangeId: checkoutPlan.scheduledChange?.id || null,
+            });
 
         if (
           hasCheckoutAmountMismatch({
@@ -499,7 +530,7 @@ export async function POST(request: Request) {
               actualAmount: amount,
               pricing,
               flowPointsApplied: flowPointsPreview.appliedAmount,
-              flowPointsBalance: checkoutPlan.flowPointsBalance,
+              flowPointsBalance: purchaseContext ? 0 : checkoutPlan.flowPointsBalance,
               flowPointsBalanceAfter: flowPointsPreview.nextBalanceAmount,
             }),
             { status: 409 },
@@ -545,6 +576,7 @@ export async function POST(request: Request) {
             plan: checkoutPlan.plan,
             amount,
             currency,
+            providerPayload: checkoutProviderPayload,
           });
 
         let preparedOrder: PaymentOrderRecord;

@@ -30,7 +30,7 @@ export function DomainHero({ initialTab = "register" }: DomainHeroProps) {
       </LandingReveal>
 
       <div className="relative z-10">
-        <div className="mx-auto flex max-w-[980px] flex-col items-center text-center">
+        <div className="mx-auto flex max-w-[1280px] flex-col items-center text-center">
           <LandingReveal delay={220}>
             <div className="flex w-full justify-center">
               <LandingGlowTag>
@@ -40,14 +40,14 @@ export function DomainHero({ initialTab = "register" }: DomainHeroProps) {
           </LandingReveal>
 
           <LandingReveal delay={310}>
-            <h1 className="mt-[20px] max-w-[920px] bg-[linear-gradient(90deg,#DADADA_0%,#C1C1C1_100%)] bg-clip-text text-[40px] leading-[1.08] font-normal tracking-[-0.04em] text-transparent md:text-[52px] lg:text-[60px]">
+            <h1 className="mt-[20px] max-w-[980px] bg-[linear-gradient(90deg,#DADADA_0%,#C1C1C1_100%)] bg-clip-text text-[40px] leading-[1.08] font-normal tracking-[-0.04em] text-transparent md:text-[52px] lg:text-[60px]">
               Encontre o seu dominio
               <span className="block">de forma rapida e segura</span>
             </h1>
           </LandingReveal>
 
           <LandingReveal delay={400}>
-            <div className="mt-[48px] w-full max-w-[1200px]">
+            <div className="mt-[48px] w-full max-w-[1280px]">
               <DomainSearchSection initialTab={initialTab} />
             </div>
           </LandingReveal>

@@ -51,6 +51,16 @@ type UserPlanStateStatusRecord = {
   expires_at: string | null;
 };
 
+type RepairableUserPlanStateRecord = UserPlanStateStatusRecord & {
+  max_licensed_servers: number | null;
+};
+
+type PlanGuildOwnershipProbeRecord = {
+  id: number;
+  user_id: number;
+  is_active: boolean;
+};
+
 type AccountBackedGuildStatusRecord = {
   guildId: string;
   userId: number;
@@ -815,6 +825,150 @@ export async function getGuildLicenseStatus(
 
   guildLicenseStatusInflight.set(normalizedGuildId, loadPromise);
   return loadPromise;
+}
+
+function isRepairableAccountPlanState(
+  planState: RepairableUserPlanStateRecord | null | undefined,
+) {
+  if (!planState) return false;
+  if (planState.status !== "active" && planState.status !== "trial") return false;
+  if (!planState.expires_at) return true;
+
+  const expiresAtMs = parseUtcTimestampMs(planState.expires_at);
+  return !Number.isFinite(expiresAtMs) || expiresAtMs > Date.now();
+}
+
+async function readRepairableUserPlanState(userId: number) {
+  const result = await getSupabaseAdminClientOrThrow()
+    .from("auth_user_plan_state")
+    .select("user_id, status, activated_at, expires_at, max_licensed_servers")
+    .eq("user_id", userId)
+    .maybeSingle<RepairableUserPlanStateRecord>();
+
+  if (result.error) {
+    throw new Error(`Erro ao validar plano da conta: ${result.error.message}`);
+  }
+
+  return result.data || null;
+}
+
+async function countActivePlanGuildLinks(userId: number) {
+  const result = await getSupabaseAdminClientOrThrow()
+    .from("auth_user_plan_guilds")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .eq("is_active", true);
+
+  if (result.error) {
+    throw new Error(`Erro ao validar limite de servidores do plano: ${result.error.message}`);
+  }
+
+  return result.count || 0;
+}
+
+async function repairGuildLicenseFromUserPlan(input: {
+  userId: number;
+  guildId: string;
+}) {
+  const supabase = getSupabaseAdminClientOrThrow();
+  const planState = await readRepairableUserPlanState(input.userId);
+  if (!isRepairableAccountPlanState(planState)) {
+    return false;
+  }
+
+  const existingLinkResult = await supabase
+    .from("auth_user_plan_guilds")
+    .select("id, user_id, is_active")
+    .eq("guild_id", input.guildId)
+    .limit(1)
+    .maybeSingle<PlanGuildOwnershipProbeRecord>();
+
+  if (existingLinkResult.error) {
+    throw new Error(`Erro ao consultar licenca atual do servidor: ${existingLinkResult.error.message}`);
+  }
+
+  const existingLink = existingLinkResult.data || null;
+  if (existingLink?.user_id === input.userId) {
+    if (existingLink.is_active) {
+      return true;
+    }
+
+    const reactivateResult = await supabase
+      .from("auth_user_plan_guilds")
+      .update({
+        is_active: true,
+        deactivated_reason: null,
+        deactivated_at: null,
+        reactivated_at: new Date().toISOString(),
+      })
+      .eq("id", existingLink.id);
+
+    if (reactivateResult.error) {
+      throw new Error(`Erro ao reativar licenca do servidor: ${reactivateResult.error.message}`);
+    }
+
+    return true;
+  }
+
+  if (existingLink?.user_id && existingLink.user_id !== input.userId) {
+    const ownerPlanState = await readRepairableUserPlanState(existingLink.user_id);
+    if (isRepairableAccountPlanState(ownerPlanState)) {
+      return false;
+    }
+
+    const deleteResult = await supabase
+      .from("auth_user_plan_guilds")
+      .delete()
+      .eq("id", existingLink.id);
+
+    if (deleteResult.error) {
+      throw new Error(`Erro ao liberar licenca expirada do servidor: ${deleteResult.error.message}`);
+    }
+  }
+
+  const activeLinksCount = await countActivePlanGuildLinks(input.userId);
+  const maxLicensedServers = Math.max(1, planState?.max_licensed_servers || 1);
+  if (activeLinksCount >= maxLicensedServers) {
+    return false;
+  }
+
+  const insertResult = await supabase.from("auth_user_plan_guilds").insert({
+    user_id: input.userId,
+    guild_id: input.guildId,
+    is_active: true,
+    deactivated_reason: null,
+    deactivated_at: null,
+    reactivated_at: new Date().toISOString(),
+  });
+
+  if (insertResult.error) {
+    throw new Error(`Erro ao vincular servidor ao plano da conta: ${insertResult.error.message}`);
+  }
+
+  return true;
+}
+
+export async function getGuildLicenseStatusForUser(
+  guildId: string | null,
+  userId: number | null | undefined,
+  options?: LicenseStatusQueryOptions,
+) {
+  const status = await getGuildLicenseStatus(guildId, options);
+  if (status === "paid" || !guildId || !userId) {
+    return status;
+  }
+
+  const repaired = await repairGuildLicenseFromUserPlan({
+    userId,
+    guildId: guildId.trim(),
+  });
+
+  if (!repaired) {
+    return status;
+  }
+
+  invalidateGuildLicenseCaches(guildId);
+  return getGuildLicenseStatus(guildId, { forceFresh: true });
 }
 
 export async function getLockedGuildLicenseByGuildId(

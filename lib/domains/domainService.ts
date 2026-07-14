@@ -31,6 +31,7 @@ import {
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 const QUOTE_TTL_MINUTES = 20;
+const FLOWDESK_OPERATIONAL_CONTACT_PROVIDER = "flowdesk_operational";
 
 type QuoteRow = {
   id: string;
@@ -54,6 +55,7 @@ type QuoteRow = {
 
 type ContactRow = {
   id: string;
+  auth_user_id?: number;
   full_name: string;
   email: string;
   phone: string;
@@ -64,6 +66,9 @@ type ContactRow = {
   country: string;
   document_type: DomainContact["documentType"];
   document_encrypted: string | null;
+  provider?: string | null;
+  provider_contact_id?: string | null;
+  verification_status?: string | null;
 };
 
 type DomainRow = {
@@ -74,6 +79,7 @@ type DomainRow = {
   tld: string;
   provider: DomainProviderName;
   provider_domain_id: string | null;
+  registrant_contact_id?: string | null;
   status: DomainRecord["status"];
   registration_period: number;
   auto_renew: boolean;
@@ -120,6 +126,13 @@ type DomainPaymentOrder = {
   provider_payload?: unknown;
 };
 
+type DomainMoveTargetUser = {
+  id: number;
+  email: string | null;
+  username: string | null;
+  display_name: string | null;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -133,6 +146,37 @@ function normalizeDocument(contact: DomainContact) {
   return contact.documentType === "passport"
     ? raw.toUpperCase().replace(/[^A-Z0-9]/g, "")
     : raw.replace(/\D/g, "");
+}
+
+function readFlowdeskRegistrantEnv(key: string, fallback: string) {
+  const value = process.env[key]?.trim();
+  if (value) return value;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(`Configure ${key} para registrar dominios em nome da Flowdesk.`);
+  }
+  return fallback;
+}
+
+function readFlowdeskDocumentType(): DomainContact["documentType"] {
+  const raw = process.env.FLOWDESK_DOMAIN_REGISTRANT_DOCUMENT_TYPE?.trim().toLowerCase();
+  return raw === "cpf" || raw === "cnpj" || raw === "passport" || raw === "none" ? raw : "cnpj";
+}
+
+function buildFlowdeskOperationalContact(tld: string): DomainContact {
+  const contact: DomainContact = {
+    fullName: readFlowdeskRegistrantEnv("FLOWDESK_DOMAIN_REGISTRANT_NAME", "Flowdesk Brasil"),
+    email: readFlowdeskRegistrantEnv("FLOWDESK_DOMAIN_REGISTRANT_EMAIL", "domains@flwdesk.com"),
+    phone: readFlowdeskRegistrantEnv("FLOWDESK_DOMAIN_REGISTRANT_PHONE", "+5511999999999"),
+    street: readFlowdeskRegistrantEnv("FLOWDESK_DOMAIN_REGISTRANT_STREET", "Avenida Paulista 1106"),
+    city: readFlowdeskRegistrantEnv("FLOWDESK_DOMAIN_REGISTRANT_CITY", "Sao Paulo"),
+    state: readFlowdeskRegistrantEnv("FLOWDESK_DOMAIN_REGISTRANT_STATE", "SP"),
+    postalCode: readFlowdeskRegistrantEnv("FLOWDESK_DOMAIN_REGISTRANT_POSTAL_CODE", "01310914"),
+    country: readFlowdeskRegistrantEnv("FLOWDESK_DOMAIN_REGISTRANT_COUNTRY", "BR"),
+    documentType: readFlowdeskDocumentType(),
+    documentNumber: readFlowdeskRegistrantEnv("FLOWDESK_DOMAIN_REGISTRANT_DOCUMENT_NUMBER", "00000000000000"),
+  };
+  validateContactForTld(contact, tld);
+  return contact;
 }
 
 function contactFromRow(row: ContactRow): DomainContact {
@@ -153,7 +197,16 @@ function contactFromRow(row: ContactRow): DomainContact {
   };
 }
 
-function mapDomain(row: DomainRow): DomainRecord {
+function contactStatusFromRow(contact: Pick<ContactRow, "provider"> | null | undefined) {
+  if (!contact) return "unknown" as const;
+  return contact.provider === FLOWDESK_OPERATIONAL_CONTACT_PROVIDER ? "flowdesk_operational" : "owner";
+}
+
+function mapDomain(
+  row: DomainRow,
+  contact?: Pick<ContactRow, "provider"> | null,
+): DomainRecord {
+  const registrantContactStatus = contactStatusFromRow(contact);
   return {
     id: row.id,
     authUserId: row.auth_user_id,
@@ -176,6 +229,8 @@ function mapDomain(row: DomainRow): DomainRecord {
     purchasePriceBrl: row.purchase_price_brl,
     renewalPriceBrl: row.renewal_price_brl,
     paymentOrderId: row.payment_order_id,
+    registrantNeedsSetup: registrantContactStatus !== "owner",
+    registrantContactStatus,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -221,7 +276,15 @@ async function getQuote(
   return result.data;
 }
 
-async function saveContact(authUserId: number, contact: DomainContact) {
+async function saveContact(
+  authUserId: number,
+  contact: DomainContact,
+  options: {
+    provider?: string;
+    providerContactId?: string | null;
+    verificationStatus?: "pending" | "verified" | "failed";
+  } = {},
+) {
   const document = normalizeDocument(contact);
   const supabase = getSupabaseAdminClientOrThrow();
   const result = await supabase
@@ -245,7 +308,9 @@ async function saveContact(authUserId: number, contact: DomainContact) {
         purpose: "payment_pii",
         subcontext: "domain_contact_document",
       }),
-      provider: "openprovider",
+      provider: options.provider || "openprovider",
+      provider_contact_id: options.providerContactId || null,
+      verification_status: options.verificationStatus || "pending",
     })
     .select("id")
     .single<{ id: string }>();
@@ -369,11 +434,16 @@ async function acceptQuote(quoteId: string, authUserId: number) {
 export async function prepareDomainCheckout(input: {
   authUserId: number;
   quoteId: string;
-  contact: DomainContact;
 }) {
   const quote = await getQuote(input.authUserId, input.quoteId, "register");
-  validateContactForTld(input.contact, quote.tld);
-  const contactId = await saveContact(input.authUserId, input.contact);
+  const contactId = await saveContact(
+    input.authUserId,
+    buildFlowdeskOperationalContact(quote.tld),
+    {
+      provider: FLOWDESK_OPERATIONAL_CONTACT_PROVIDER,
+      verificationStatus: "verified",
+    },
+  );
   const parsed = parseFqdn(quote.fqdn)!;
   const idempotencyKey = buildDomainRegistrationIdempotencyKey({
     userId: input.authUserId,
@@ -456,20 +526,29 @@ export async function prepareDomainCheckout(input: {
     currency: "BRL",
     expiresAt: quote.expires_at,
   };
-  return { domain: mapDomain(domain), quote, purchaseContext: { type: "domain", token: createDomainCheckoutToken(payload) } };
+  return {
+    domain: mapDomain(domain, { provider: FLOWDESK_OPERATIONAL_CONTACT_PROVIDER }),
+    quote,
+    purchaseContext: { type: "domain", token: createDomainCheckoutToken(payload) },
+  };
 }
 
 export async function prepareDomainTransferCheckout(input: {
   authUserId: number;
   quoteId: string;
   authCode: string;
-  contact: DomainContact;
 }) {
   const quote = await getQuote(input.authUserId, input.quoteId, "transfer");
-  validateContactForTld(input.contact, quote.tld);
   const authCode = input.authCode.trim();
   if (authCode.length < 4) throw new Error("Informe o Auth Code/EPP do dominio.");
-  const contactId = await saveContact(input.authUserId, input.contact);
+  const contactId = await saveContact(
+    input.authUserId,
+    buildFlowdeskOperationalContact(quote.tld),
+    {
+      provider: FLOWDESK_OPERATIONAL_CONTACT_PROVIDER,
+      verificationStatus: "verified",
+    },
+  );
   const idempotencyKey = buildDomainTransferIdempotencyKey({
     userId: input.authUserId,
     fqdn: quote.fqdn,
@@ -717,7 +796,26 @@ export async function listUserDomains(authUserId: number) {
     .eq("auth_user_id", authUserId)
     .order("created_at", { ascending: false });
   if (result.error) throw new Error(result.error.message);
-  return (result.data || []).map((row) => mapDomain(row as DomainRow));
+  const rows = (result.data || [])
+    .filter((row) => {
+      const status = String((row as DomainRow).status || "");
+      return !["draft", "quote_created", "payment_pending", "failed", "cancelled"].includes(status);
+    }) as DomainRow[];
+  const contactIds = rows
+    .map((row) => row.registrant_contact_id)
+    .filter((id): id is string => Boolean(id));
+  const contactsById = new Map<string, ContactRow>();
+  if (contactIds.length) {
+    const contacts = await getSupabaseAdminClientOrThrow()
+      .from("domain_contacts")
+      .select("id, provider, verification_status, full_name, email, phone, street, city, state, postal_code, country, document_type, document_encrypted")
+      .in("id", contactIds);
+    if (contacts.error) throw new Error(contacts.error.message);
+    for (const contact of contacts.data || []) {
+      contactsById.set((contact as ContactRow).id, contact as ContactRow);
+    }
+  }
+  return rows.map((row) => mapDomain(row, row.registrant_contact_id ? contactsById.get(row.registrant_contact_id) : null));
 }
 
 export async function getUserDomain(authUserId: number, domainId: string) {
@@ -728,7 +826,18 @@ export async function getUserDomain(authUserId: number, domainId: string) {
     .eq("auth_user_id", authUserId)
     .maybeSingle<DomainRow>();
   if (result.error) throw new Error(result.error.message);
-  return result.data ? mapDomain(result.data) : null;
+  if (!result.data) return null;
+  let contact: ContactRow | null = null;
+  if (result.data.registrant_contact_id) {
+    const contactResult = await getSupabaseAdminClientOrThrow()
+      .from("domain_contacts")
+      .select("id, provider, verification_status, full_name, email, phone, street, city, state, postal_code, country, document_type, document_encrypted")
+      .eq("id", result.data.registrant_contact_id)
+      .maybeSingle<ContactRow>();
+    if (contactResult.error) throw new Error(contactResult.error.message);
+    contact = contactResult.data || null;
+  }
+  return mapDomain(result.data, contact);
 }
 
 async function getDomainRow(authUserId: number, domainId: string) {
@@ -778,6 +887,213 @@ export async function requestDomainAuthCode(input: { authUserId: number; domainI
   if (!provider || !domain.provider_domain_id) throw new Error("Registrador do dominio indisponivel.");
   if (domain.transfer_lock) throw new Error("Desative o bloqueio de transferencia antes de solicitar o Auth Code.");
   return provider.requestAuthCode(domain.provider_domain_id, domain.fqdn);
+}
+
+export async function getDomainRegistrantProfile(input: { authUserId: number; domainId: string }) {
+  const domain = await getDomainRow(input.authUserId, input.domainId);
+  if (!domain.registrant_contact_id) {
+    return { domain: mapDomain(domain, null), contact: null, needsSetup: true };
+  }
+
+  const contactResult = await getSupabaseAdminClientOrThrow()
+    .from("domain_contacts")
+    .select("*")
+    .eq("id", domain.registrant_contact_id)
+    .eq("auth_user_id", input.authUserId)
+    .maybeSingle<ContactRow>();
+  if (contactResult.error) throw new Error(contactResult.error.message);
+  const contact = contactResult.data || null;
+  const needsSetup = contactStatusFromRow(contact) !== "owner";
+  return {
+    domain: mapDomain(domain, contact),
+    contact: needsSetup || !contact ? null : contactFromRow(contact),
+    needsSetup,
+  };
+}
+
+export async function updateDomainRegistrantProfile(input: {
+  authUserId: number;
+  domainId: string;
+  contact: DomainContact;
+}) {
+  const domain = await getDomainRow(input.authUserId, input.domainId);
+  if (!["active", "registration_pending", "transfer_in_pending", "action_required"].includes(domain.status)) {
+    throw new Error("Aguarde o pagamento e o provisionamento do dominio antes de atualizar o titular.");
+  }
+  validateContactForTld(input.contact, domain.tld);
+  if (!domain.provider_domain_id) throw new Error("Registrador do dominio ainda nao esta vinculado.");
+
+  const provider = domainProviderOrchestrator.getProvider(domain.provider);
+  if (!provider?.updateDomainContact) {
+    throw new Error("Este registrador ainda nao suporta atualizacao automatica de titular pelo painel.");
+  }
+
+  const contactId = await saveContact(input.authUserId, input.contact, {
+    provider: domain.provider,
+    verificationStatus: "pending",
+  });
+  const updateResult = await provider.updateDomainContact({
+    providerDomainId: domain.provider_domain_id,
+    fqdn: domain.fqdn,
+    contact: input.contact,
+    idempotencyKey: `domain_contact:${input.authUserId}:${domain.id}:${contactId}`,
+  });
+
+  const supabase = getSupabaseAdminClientOrThrow();
+  const contactUpdate = await supabase
+    .from("domain_contacts")
+    .update({
+      provider: domain.provider,
+      provider_contact_id: updateResult.providerContactRef || null,
+      verification_status: "verified",
+    })
+    .eq("id", contactId)
+    .eq("auth_user_id", input.authUserId);
+  if (contactUpdate.error) throw new Error(contactUpdate.error.message);
+
+  const domainUpdate = await supabase
+    .from("domains")
+    .update({
+      registrant_contact_id: contactId,
+      last_synced_at: new Date().toISOString(),
+    })
+    .eq("id", domain.id)
+    .eq("auth_user_id", input.authUserId)
+    .select("*")
+    .single<DomainRow>();
+  if (domainUpdate.error || !domainUpdate.data) {
+    throw new Error(domainUpdate.error?.message || "Falha ao atualizar titular do dominio.");
+  }
+
+  await logDomainEvent({
+    domainId: domain.id,
+    authUserId: input.authUserId,
+    eventType: "registrant_contact_updated",
+    providerRef: updateResult.providerContactRef || null,
+    payload: {
+      provider: domain.provider,
+      providerDomainId: domain.provider_domain_id,
+      contactId,
+    },
+  });
+
+  return {
+    domain: mapDomain(domainUpdate.data, { provider: domain.provider }),
+    contact: input.contact,
+  };
+}
+
+async function findDomainMoveTargetUser(targetAccount: string) {
+  const normalized = targetAccount.trim().toLowerCase();
+  if (!/^[a-z0-9._%+\-@]{3,254}$/i.test(normalized)) {
+    throw new Error("Informe um e-mail ou usuario Flowdesk valido.");
+  }
+
+  const supabase = getSupabaseAdminClientOrThrow();
+  const candidates = new Map<number, DomainMoveTargetUser>();
+  const addCandidate = (user: Record<string, unknown>) => {
+    const id = Number(user.id);
+    if (!Number.isInteger(id) || id <= 0) return;
+    candidates.set(id, {
+      id,
+      email: typeof user.email === "string" ? user.email : null,
+      username: typeof user.username === "string" ? user.username : null,
+      display_name: typeof user.display_name === "string" ? user.display_name : null,
+    });
+  };
+
+  if (normalized.includes("@")) {
+    const byEmail = await supabase
+      .from("auth_users")
+      .select("id, email, username, display_name")
+      .ilike("email", normalized)
+      .limit(2);
+    if (byEmail.error) throw new Error(byEmail.error.message);
+    for (const user of byEmail.data || []) addCandidate(user as Record<string, unknown>);
+  }
+
+  const byUsername = await supabase
+    .from("auth_users")
+    .select("id, email, username, display_name")
+    .ilike("username", normalized.replace(/^@/, ""))
+    .limit(2);
+  if (byUsername.error) throw new Error(byUsername.error.message);
+  for (const user of byUsername.data || []) addCandidate(user as Record<string, unknown>);
+
+  if (candidates.size === 0) throw new Error("Conta Flowdesk de destino nao encontrada.");
+  if (candidates.size > 1) throw new Error("Mais de uma conta corresponde ao destino. Use o e-mail completo.");
+
+  return Array.from(candidates.values())[0];
+}
+
+export async function moveDomainToFlowdeskAccount(input: {
+  authUserId: number;
+  domainId: string;
+  targetAccount: string;
+}) {
+  const domain = await getDomainRow(input.authUserId, input.domainId);
+  if (!["active", "registered", "expired", "suspended", "client_hold", "server_hold"].includes(domain.status)) {
+    throw new Error("Somente dominios ja registrados podem ser movidos para outra conta.");
+  }
+
+  const targetUser = await findDomainMoveTargetUser(input.targetAccount);
+  if (targetUser.id === input.authUserId) {
+    throw new Error("Esse dominio ja pertence a esta conta.");
+  }
+
+  const supabase = getSupabaseAdminClientOrThrow();
+  const existingTargetDomain = await supabase
+    .from("domains")
+    .select("id")
+    .eq("auth_user_id", targetUser.id)
+    .eq("fqdn", domain.fqdn)
+    .maybeSingle<{ id: string }>();
+  if (existingTargetDomain.error) throw new Error(existingTargetDomain.error.message);
+  if (existingTargetDomain.data) {
+    throw new Error("A conta de destino ja possui esse dominio.");
+  }
+
+  const now = new Date().toISOString();
+  const moved = await supabase
+    .from("domains")
+    .update({
+      auth_user_id: targetUser.id,
+      updated_at: now,
+    })
+    .eq("id", domain.id)
+    .eq("auth_user_id", input.authUserId)
+    .select("*")
+    .single<DomainRow>();
+  if (moved.error || !moved.data) throw new Error(moved.error?.message || "Falha ao mover dominio.");
+
+  await Promise.all([
+    supabase.from("domain_dns_records").update({ auth_user_id: targetUser.id }).eq("domain_id", domain.id),
+    supabase.from("domain_transfers").update({ auth_user_id: targetUser.id }).eq("domain_id", domain.id),
+    domain.registrant_contact_id
+      ? supabase.from("domain_contacts").update({ auth_user_id: targetUser.id }).eq("id", domain.registrant_contact_id)
+      : Promise.resolve({ error: null }),
+  ]);
+
+  await logDomainEvent({
+    domainId: domain.id,
+    authUserId: input.authUserId,
+    eventType: "internal_account_move_completed",
+    payload: {
+      fromAuthUserId: input.authUserId,
+      toAuthUserId: targetUser.id,
+      targetUsername: targetUser.username || null,
+    },
+  });
+
+  return {
+    domain: mapDomain(moved.data),
+    target: {
+      id: targetUser.id,
+      username: targetUser.username,
+      displayName: targetUser.display_name,
+      email: targetUser.email,
+    },
+  };
 }
 
 export async function listUserDomainTransfers(input: { authUserId: number }) {
