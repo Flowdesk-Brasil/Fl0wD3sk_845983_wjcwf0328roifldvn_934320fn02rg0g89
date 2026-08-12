@@ -80,6 +80,12 @@ function resolveLoginErrorMessage(
       return "Esta conta do Discord ja esta vinculada a outra conta Flowdesk.";
     case "discord_unverified_email":
       return "Sua conta Discord precisa ter email verificado para concluir o acesso.";
+    case "discord_redirect_mismatch":
+      return "A URL de callback do Discord nao bate com a configuracao do provedor. Revise DISCORD_REDIRECT_URI_PROD e o Redirect URI no Discord Developer Portal.";
+    case "discord_provider_config_invalid":
+      return "As credenciais do Discord neste ambiente estao invalidas. Revise DISCORD_CLIENT_ID e DISCORD_CLIENT_SECRET.";
+    case "discord_oauth_exchange_failed":
+      return "O Discord recusou a troca do codigo de login. Revise as credenciais e a URL de callback configurada.";
     case "discord_auth_failed":
       return loginMode === "link"
         ? "Nao foi possivel vincular sua conta Discord agora. Tente novamente."
@@ -92,6 +98,14 @@ function resolveLoginErrorMessage(
       return "Sua conta Google precisa ter um email verificado para continuar.";
     case "google_not_configured":
       return "O login com Google ainda nao esta configurado neste ambiente.";
+    case "google_redirect_mismatch":
+      return "A URL de callback do Google nao bate com a configuracao do provedor. Revise GOOGLE_REDIRECT_URI_PROD e o Authorized redirect URI no Google Cloud.";
+    case "google_provider_config_invalid":
+      return "As credenciais do Google neste ambiente estao invalidas. Revise GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET.";
+    case "google_oidc_failed":
+      return "O token de identidade do Google nao passou na validacao. Revise GOOGLE_CLIENT_ID e o nonce do fluxo OAuth.";
+    case "google_oauth_exchange_failed":
+      return "O Google recusou a troca do codigo de login. Revise as credenciais e a URL de callback configurada.";
     case "google_embedded_browser":
       return "O Google bloqueia login dentro do navegador embutido do app. Abra esta pagina no Chrome, Safari ou Edge para continuar.";
     case "google_auth_failed":
@@ -104,6 +118,14 @@ function resolveLoginErrorMessage(
       return "Sua conta Microsoft precisa retornar um email valido para continuar.";
     case "microsoft_not_configured":
       return "O login com Microsoft ainda nao esta configurado neste ambiente.";
+    case "microsoft_redirect_mismatch":
+      return "A URL de callback da Microsoft nao bate com a configuracao do provedor. Revise MICROSOFT_REDIRECT_URI_PROD e o Redirect URI no Azure.";
+    case "microsoft_provider_config_invalid":
+      return "As credenciais da Microsoft neste ambiente estao invalidas. Revise MICROSOFT_CLIENT_ID e MICROSOFT_CLIENT_SECRET.";
+    case "microsoft_oidc_failed":
+      return "O token de identidade da Microsoft nao passou na validacao. Revise MICROSOFT_CLIENT_ID e o nonce do fluxo OAuth.";
+    case "microsoft_oauth_exchange_failed":
+      return "A Microsoft recusou a troca do codigo de login. Revise as credenciais e a URL de callback configurada.";
     case "microsoft_embedded_browser":
       return "O Microsoft bloqueia login dentro do navegador embutido do app. Abra esta pagina no Chrome, Safari ou Edge para continuar.";
     case "microsoft_auth_failed":

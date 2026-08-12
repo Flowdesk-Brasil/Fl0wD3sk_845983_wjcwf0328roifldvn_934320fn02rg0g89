@@ -5,11 +5,8 @@ import {
   normalizeInternalNextPath,
 } from "@/lib/auth/config";
 import {
-  clearSharedTrustedDeviceCookie,
-  getSharedAuthCookieProofName,
   setSharedSessionCookie,
 } from "@/lib/auth/cookies";
-import { createLoginOtpChallenge } from "@/lib/auth/emailOtp";
 import {
   clearOAuthTransactionCookies,
   validateOAuthTransactionFromRequest,
@@ -17,7 +14,6 @@ import {
 } from "@/lib/auth/oauthIdentity";
 import { exchangeGoogleCodeForToken, fetchGoogleUser } from "@/lib/auth/google";
 import {
-  buildLoginOtpRedirectLocation,
   buildLoginRedirectResponse,
   buildLoginTwoFactorRedirectLocation,
 } from "@/lib/auth/loginFlash";
@@ -28,7 +24,6 @@ import {
   markAuthUserLastLogin,
   resolveAuthUserForGoogleLogin,
 } from "@/lib/auth/session";
-import { validateTrustedDevice } from "@/lib/auth/trustedDevice";
 import { createPendingTwoFactorLoginIfNeeded } from "@/lib/auth/twoFactor";
 import { buildCanonicalUrlFromInternalPath } from "@/lib/routing/subdomains";
 import { applyNoStoreHeaders } from "@/lib/security/http";
@@ -75,6 +70,28 @@ function resolveGoogleAuthErrorCode(error: unknown) {
   }
 
   if (
+    message.includes("redirect_uri_mismatch") ||
+    (message.includes("invalid_grant") && message.includes("redirect"))
+  ) {
+    return "google_redirect_mismatch";
+  }
+
+  if (
+    message.includes("invalid_client") ||
+    message.includes("unauthorized_client")
+  ) {
+    return "google_provider_config_invalid";
+  }
+
+  if (message.includes("oidc google invalido")) {
+    return "google_oidc_failed";
+  }
+
+  if (message.includes("falha ao trocar codigo oauth do google")) {
+    return "google_oauth_exchange_failed";
+  }
+
+  if (
     message.includes("ja esta vinculada a outra conta flowdesk") ||
     message.includes("ja esta vinculada a outra conta google") ||
     message.includes("ja esta vinculado a outra conta google") ||
@@ -92,16 +109,6 @@ function resolveGoogleAuthErrorCode(error: unknown) {
   }
 
   return "google_auth_failed";
-}
-
-function readTrustedDeviceCookies(request: NextRequest) {
-  return {
-    token: request.cookies.get(authConfig.rememberedDeviceCookieName)?.value || null,
-    tokenProof:
-      request.cookies.get(
-        getSharedAuthCookieProofName(authConfig.rememberedDeviceCookieName),
-      )?.value || null,
-  };
 }
 
 export async function handleGoogleAuthCallback(request: NextRequest) {
@@ -180,8 +187,6 @@ export async function handleGoogleAuthCallback(request: NextRequest) {
     });
     return attachRequestId(response, initialRequestContext.requestId);
   }
-
-  let shouldClearTrustedDeviceCookie = false;
 
   try {
     const fallbackNextPath = oauthModeCookie === "link" ? "/servers" : "/dashboard";
@@ -282,94 +287,23 @@ export async function handleGoogleAuthCallback(request: NextRequest) {
       return attachRequestId(response, initialRequestContext.requestId);
     }
 
-    const rememberedDevice = await validateTrustedDevice({
-      userId: user.id,
-      userAgent: request.headers.get("user-agent"),
-      ...readTrustedDeviceCookies(request),
-    });
-    shouldClearTrustedDeviceCookie = rememberedDevice.shouldClearCookie;
-
-    if (rememberedDevice.ok) {
-      const session = await createSessionForUser(
-        user.id,
-        {
-          ipAddress: extractClientIp(request),
-          userAgent: request.headers.get("user-agent"),
-        },
-        {
-          authMethod: "google",
-          discordAccessToken: null,
-          discordRefreshToken: null,
-          discordTokenExpiresAt: null,
-        },
-        {
-          rememberSession: true,
-        },
-      );
-
-      const response = redirectWithLocation(successLocation);
-      setSharedSessionCookie(request, response, session.sessionToken, {
-        maxAge: session.maxAgeSeconds,
-      });
-      clearOAuthCookies(request, response);
-
-      const authenticatedContext = extendSecurityRequestContext(
-        initialRequestContext,
-        {
-          userId: user.id,
-        },
-      );
-
-      await logSecurityAuditEventSafe(authenticatedContext, {
-        action: "auth_google_callback",
-        outcome: "succeeded",
-        metadata: {
-          redirectTo: successLocation,
-          oauthMode: oauthModeCookie,
-          otpRequired: false,
-          rememberedDevice: true,
-        },
-      });
-
-      return attachRequestId(response, initialRequestContext.requestId);
-    }
-
-    if (!user.email) {
-      throw new Error("Sua conta Google precisa retornar um email verificado para continuar.");
-    }
-
-    const challenge = await createLoginOtpChallenge({
-      userId: user.id,
-      email: user.email,
-      ipAddress: extractClientIp(request),
-      userAgent: request.headers.get("user-agent"),
-      metadata: {
-        provider: "google",
-        oauthMode: oauthModeCookie,
-        session: {
-          authMethod: "google",
-          nextPath: nextPathCookie || fallbackNextPath,
-          discordAccessToken: null,
-          discordRefreshToken: null,
-          discordTokenExpiresAt: null,
-        },
+    const session = await createSessionForUser(
+      user.id,
+      {
+        ipAddress: extractClientIp(request),
+        userAgent: request.headers.get("user-agent"),
       },
+      {
+        authMethod: "google",
+        discordAccessToken: null,
+        discordRefreshToken: null,
+        discordTokenExpiresAt: null,
+      },
+    );
+    const response = redirectWithLocation(successLocation);
+    setSharedSessionCookie(request, response, session.sessionToken, {
+      maxAge: session.maxAgeSeconds,
     });
-
-    const otpLocation = buildLoginOtpRedirectLocation(request, {
-      challengeId: challenge.challengeId,
-      maskedEmail: challenge.maskedEmail,
-      expiresAt: challenge.expiresAt,
-      resendAvailableAt: challenge.resendAvailableAt,
-      provider: "google",
-      nextPath: nextPathCookie || fallbackNextPath,
-    });
-    const response = redirectWithLocation(otpLocation);
-
-    if (shouldClearTrustedDeviceCookie) {
-      clearSharedTrustedDeviceCookie(request, response);
-    }
-
     clearOAuthCookies(request, response);
 
     const authenticatedContext = extendSecurityRequestContext(
@@ -383,23 +317,27 @@ export async function handleGoogleAuthCallback(request: NextRequest) {
       action: "auth_google_callback",
       outcome: "succeeded",
       metadata: {
-        redirectTo: otpLocation,
+        redirectTo: successLocation,
         oauthMode: oauthModeCookie,
-        otpRequired: true,
-        rememberedDevice: false,
+        otpRequired: false,
+        socialSession: true,
       },
     });
 
     return attachRequestId(response, initialRequestContext.requestId);
   } catch (error) {
+    const errorCode = resolveGoogleAuthErrorCode(error);
+    console.warn("[auth_google_callback] failed", {
+      requestId: initialRequestContext.requestId,
+      errorCode,
+      errorName: error instanceof Error ? error.name : typeof error,
+      detail: error instanceof Error ? error.message : "unknown_error",
+    });
     const response = buildLoginRedirectResponse(request, {
       nextPath: nextPathCookie,
       mode: oauthModeCookie,
-      error: resolveGoogleAuthErrorCode(error),
+      error: errorCode,
     });
-    if (shouldClearTrustedDeviceCookie) {
-      clearSharedTrustedDeviceCookie(request, response);
-    }
     clearOAuthCookies(request, response);
     await logSecurityAuditEventSafe(initialRequestContext, {
       action: "auth_google_callback",

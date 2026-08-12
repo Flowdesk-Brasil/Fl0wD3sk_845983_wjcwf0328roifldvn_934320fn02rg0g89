@@ -1,21 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  authConfig,
   normalizeInternalNextPath,
 } from "@/lib/auth/config";
 import {
-  clearSharedTrustedDeviceCookie,
-  getSharedAuthCookieProofName,
   setSharedSessionCookie,
 } from "@/lib/auth/cookies";
 import { exchangeCodeForToken, fetchDiscordUser } from "@/lib/auth/discord";
-import { createLoginOtpChallenge } from "@/lib/auth/emailOtp";
 import {
   clearOAuthTransactionCookies,
   validateOAuthTransactionFromRequest,
 } from "@/lib/auth/oauthIdentity";
 import {
-  buildLoginOtpRedirectLocation,
   buildLoginRedirectResponse,
   buildLoginTwoFactorRedirectLocation,
 } from "@/lib/auth/loginFlash";
@@ -27,7 +22,6 @@ import {
   resolveAuthUserForDiscordLogin,
   updateSessionDiscordTokens,
 } from "@/lib/auth/session";
-import { validateTrustedDevice } from "@/lib/auth/trustedDevice";
 import { createPendingTwoFactorLoginIfNeeded } from "@/lib/auth/twoFactor";
 import {
   buildCanonicalUrlFromInternalPath,
@@ -79,6 +73,24 @@ function resolveDiscordAuthErrorCode(error: unknown) {
   }
 
   if (
+    message.includes("redirect_uri_mismatch") ||
+    (message.includes("invalid_grant") && message.includes("redirect"))
+  ) {
+    return "discord_redirect_mismatch";
+  }
+
+  if (
+    message.includes("invalid_client") ||
+    message.includes("unauthorized_client")
+  ) {
+    return "discord_provider_config_invalid";
+  }
+
+  if (message.includes("falha ao trocar codigo oauth")) {
+    return "discord_oauth_exchange_failed";
+  }
+
+  if (
     message.includes("ja esta vinculada a outra conta") ||
     message.includes("ja esta vinculado a outro discord") ||
     message.includes("email desta conta ja esta vinculado")
@@ -91,16 +103,6 @@ function resolveDiscordAuthErrorCode(error: unknown) {
   }
 
   return "discord_auth_failed";
-}
-
-function readTrustedDeviceCookies(request: NextRequest) {
-  return {
-    token: request.cookies.get(authConfig.rememberedDeviceCookieName)?.value || null,
-    tokenProof:
-      request.cookies.get(
-        getSharedAuthCookieProofName(authConfig.rememberedDeviceCookieName),
-      )?.value || null,
-  };
 }
 
 function isLocalDiscordAuthRequest(request: NextRequest) {
@@ -173,8 +175,6 @@ export async function handleDiscordAuthCallback(request: NextRequest) {
     });
     return attachRequestId(response, initialRequestContext.requestId);
   }
-
-  let shouldClearTrustedDeviceCookie = false;
 
   try {
     const fallbackNextPath = oauthModeCookie === "link" ? "/servers" : "/dashboard";
@@ -276,140 +276,27 @@ export async function handleDiscordAuthCallback(request: NextRequest) {
       return attachRequestId(response, initialRequestContext.requestId);
     }
 
-    if (!user.email) {
-      throw new Error("Sua conta Discord precisa ter um email verificado para continuar.");
-    }
-
-    if (localDiscordAuth) {
-      const session = await createSessionForUser(
-        user.id,
-        {
-          ipAddress: extractClientIp(request),
-          userAgent: request.headers.get("user-agent"),
-        },
-        {
-          authMethod: "discord",
-          discordAccessToken: tokenPayload.access_token,
-          discordRefreshToken: tokenPayload.refresh_token || null,
-          discordTokenExpiresAt,
-        },
-        {
-          rememberSession: true,
-          skipLoginNotification: true,
-        },
-      );
-
-      const response = redirectWithLocation(successLocation);
-      setSharedSessionCookie(request, response, session.sessionToken, {
-        maxAge: session.maxAgeSeconds,
-      });
-      clearOAuthCookies(request, response);
-
-      const authenticatedContext = extendSecurityRequestContext(
-        initialRequestContext,
-        {
-          userId: user.id,
-        },
-      );
-
-      await logSecurityAuditEventSafe(authenticatedContext, {
-        action: "auth_discord_callback",
-        outcome: "succeeded",
-        metadata: {
-          redirectTo: successLocation,
-          oauthMode: oauthModeCookie,
-          otpRequired: false,
-          localDiscordAuth: true,
-        },
-      });
-
-      return attachRequestId(response, initialRequestContext.requestId);
-    }
-
-    const rememberedDevice = await validateTrustedDevice({
-      userId: user.id,
-      userAgent: request.headers.get("user-agent"),
-      ...readTrustedDeviceCookies(request),
-    });
-    shouldClearTrustedDeviceCookie = rememberedDevice.shouldClearCookie;
-
-    if (rememberedDevice.ok) {
-      const session = await createSessionForUser(
-        user.id,
-        {
-          ipAddress: extractClientIp(request),
-          userAgent: request.headers.get("user-agent"),
-        },
-        {
-          authMethod: "discord",
-          discordAccessToken: tokenPayload.access_token,
-          discordRefreshToken: tokenPayload.refresh_token || null,
-          discordTokenExpiresAt,
-        },
-        {
-          rememberSession: true,
-        },
-      );
-
-      const response = redirectWithLocation(successLocation);
-      setSharedSessionCookie(request, response, session.sessionToken, {
-        maxAge: session.maxAgeSeconds,
-      });
-      clearOAuthCookies(request, response);
-
-      const authenticatedContext = extendSecurityRequestContext(
-        initialRequestContext,
-        {
-          userId: user.id,
-        },
-      );
-
-      await logSecurityAuditEventSafe(authenticatedContext, {
-        action: "auth_discord_callback",
-        outcome: "succeeded",
-        metadata: {
-          redirectTo: successLocation,
-          oauthMode: oauthModeCookie,
-          otpRequired: false,
-          rememberedDevice: true,
-        },
-      });
-
-      return attachRequestId(response, initialRequestContext.requestId);
-    }
-
-    const challenge = await createLoginOtpChallenge({
-      userId: user.id,
-      email: user.email,
-      ipAddress: extractClientIp(request),
-      userAgent: request.headers.get("user-agent"),
-      metadata: {
-        provider: "discord",
-        oauthMode: oauthModeCookie,
-        session: {
-          authMethod: "discord",
-          nextPath: nextPathCookie || fallbackNextPath,
-          discordAccessToken: tokenPayload.access_token,
-          discordRefreshToken: tokenPayload.refresh_token || null,
-          discordTokenExpiresAt,
-        },
+    const session = await createSessionForUser(
+      user.id,
+      {
+        ipAddress: extractClientIp(request),
+        userAgent: request.headers.get("user-agent"),
       },
+      {
+        authMethod: "discord",
+        discordAccessToken: tokenPayload.access_token,
+        discordRefreshToken: tokenPayload.refresh_token || null,
+        discordTokenExpiresAt,
+      },
+      {
+        rememberSession: localDiscordAuth,
+        skipLoginNotification: localDiscordAuth,
+      },
+    );
+    const response = redirectWithLocation(successLocation);
+    setSharedSessionCookie(request, response, session.sessionToken, {
+      maxAge: session.maxAgeSeconds,
     });
-
-    const otpLocation = buildLoginOtpRedirectLocation(request, {
-      challengeId: challenge.challengeId,
-      maskedEmail: challenge.maskedEmail,
-      expiresAt: challenge.expiresAt,
-      resendAvailableAt: challenge.resendAvailableAt,
-      provider: "discord",
-      nextPath: nextPathCookie || fallbackNextPath,
-    });
-    const response = redirectWithLocation(otpLocation);
-
-    if (shouldClearTrustedDeviceCookie) {
-      clearSharedTrustedDeviceCookie(request, response);
-    }
-
     clearOAuthCookies(request, response);
 
     const authenticatedContext = extendSecurityRequestContext(
@@ -423,23 +310,28 @@ export async function handleDiscordAuthCallback(request: NextRequest) {
       action: "auth_discord_callback",
       outcome: "succeeded",
       metadata: {
-        redirectTo: otpLocation,
+        redirectTo: successLocation,
         oauthMode: oauthModeCookie,
-        otpRequired: true,
-        rememberedDevice: false,
+        otpRequired: false,
+        socialSession: true,
+        localDiscordAuth,
       },
     });
 
     return attachRequestId(response, initialRequestContext.requestId);
   } catch (error) {
+    const errorCode = resolveDiscordAuthErrorCode(error);
+    console.warn("[auth_discord_callback] failed", {
+      requestId: initialRequestContext.requestId,
+      errorCode,
+      errorName: error instanceof Error ? error.name : typeof error,
+      detail: error instanceof Error ? error.message : "unknown_error",
+    });
     const response = buildLoginRedirectResponse(request, {
       nextPath: nextPathCookie,
       mode: oauthModeCookie,
-      error: resolveDiscordAuthErrorCode(error),
+      error: errorCode,
     });
-    if (shouldClearTrustedDeviceCookie) {
-      clearSharedTrustedDeviceCookie(request, response);
-    }
     clearOAuthCookies(request, response);
     await logSecurityAuditEventSafe(initialRequestContext, {
       action: "auth_discord_callback",

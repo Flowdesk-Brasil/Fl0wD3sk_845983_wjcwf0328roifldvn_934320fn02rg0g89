@@ -5,11 +5,8 @@ import {
   normalizeInternalNextPath,
 } from "@/lib/auth/config";
 import {
-  clearSharedTrustedDeviceCookie,
-  getSharedAuthCookieProofName,
   setSharedSessionCookie,
 } from "@/lib/auth/cookies";
-import { createLoginOtpChallenge } from "@/lib/auth/emailOtp";
 import {
   clearOAuthTransactionCookies,
   validateOAuthTransactionFromRequest,
@@ -21,7 +18,6 @@ import {
   syncMicrosoftProfilePhotoForAuthUser,
 } from "@/lib/auth/microsoft";
 import {
-  buildLoginOtpRedirectLocation,
   buildLoginRedirectResponse,
   buildLoginTwoFactorRedirectLocation,
 } from "@/lib/auth/loginFlash";
@@ -32,7 +28,6 @@ import {
   markAuthUserLastLogin,
   resolveAuthUserForMicrosoftLogin,
 } from "@/lib/auth/session";
-import { validateTrustedDevice } from "@/lib/auth/trustedDevice";
 import { createPendingTwoFactorLoginIfNeeded } from "@/lib/auth/twoFactor";
 import { buildCanonicalUrlFromInternalPath } from "@/lib/routing/subdomains";
 import { applyNoStoreHeaders } from "@/lib/security/http";
@@ -65,16 +60,6 @@ function redirectWithLocation(location: string) {
   );
 }
 
-function readTrustedDeviceCookies(request: NextRequest) {
-  return {
-    token: request.cookies.get(authConfig.rememberedDeviceCookieName)?.value || null,
-    tokenProof:
-      request.cookies.get(
-        getSharedAuthCookieProofName(authConfig.rememberedDeviceCookieName),
-      )?.value || null,
-  };
-}
-
 function resolveMicrosoftAuthErrorCode(error: unknown) {
   const message = error instanceof Error ? error.message.toLowerCase() : "";
 
@@ -86,6 +71,28 @@ function resolveMicrosoftAuthErrorCode(error: unknown) {
     message.includes("relation")
   ) {
     return "auth_schema_outdated";
+  }
+
+  if (
+    message.includes("redirect_uri_mismatch") ||
+    (message.includes("invalid_grant") && message.includes("redirect"))
+  ) {
+    return "microsoft_redirect_mismatch";
+  }
+
+  if (
+    message.includes("invalid_client") ||
+    message.includes("unauthorized_client")
+  ) {
+    return "microsoft_provider_config_invalid";
+  }
+
+  if (message.includes("oidc microsoft invalido")) {
+    return "microsoft_oidc_failed";
+  }
+
+  if (message.includes("falha ao trocar codigo oauth microsoft")) {
+    return "microsoft_oauth_exchange_failed";
   }
 
   if (
@@ -184,8 +191,6 @@ export async function handleMicrosoftAuthCallback(request: NextRequest) {
     });
     return attachRequestId(response, initialRequestContext.requestId);
   }
-
-  let shouldClearTrustedDeviceCookie = false;
 
   try {
     const fallbackNextPath = oauthModeCookie === "link" ? "/servers" : "/dashboard";
@@ -293,89 +298,23 @@ export async function handleMicrosoftAuthCallback(request: NextRequest) {
       return attachRequestId(response, initialRequestContext.requestId);
     }
 
-    const rememberedDevice = await validateTrustedDevice({
-      userId: user.id,
-      userAgent: request.headers.get("user-agent"),
-      ...readTrustedDeviceCookies(request),
-    });
-    shouldClearTrustedDeviceCookie = rememberedDevice.shouldClearCookie;
-
-    if (rememberedDevice.ok) {
-      const session = await createSessionForUser(
-        user.id,
-        {
-          ipAddress: extractClientIp(request),
-          userAgent: request.headers.get("user-agent"),
-        },
-        {
-          authMethod: "microsoft",
-          discordAccessToken: null,
-          discordRefreshToken: null,
-          discordTokenExpiresAt: null,
-        },
-        {
-          rememberSession: true,
-        },
-      );
-
-      const response = redirectWithLocation(successLocation);
-      setSharedSessionCookie(request, response, session.sessionToken, {
-        maxAge: session.maxAgeSeconds,
-      });
-      clearOAuthCookies(request, response);
-      const authenticatedContext = extendSecurityRequestContext(
-        initialRequestContext,
-        {
-          userId: user.id,
-        },
-      );
-      await logSecurityAuditEventSafe(authenticatedContext, {
-        action: "auth_microsoft_callback",
-        outcome: "succeeded",
-        metadata: {
-          redirectTo: successLocation,
-          oauthMode: oauthModeCookie,
-          otpRequired: false,
-          rememberedDevice: true,
-        },
-      });
-      return attachRequestId(response, initialRequestContext.requestId);
-    }
-
-    if (!user.email) {
-      throw new Error("Sua conta Microsoft precisa retornar um email valido para continuar.");
-    }
-
-    const challenge = await createLoginOtpChallenge({
-      userId: user.id,
-      email: user.email,
-      ipAddress: extractClientIp(request),
-      userAgent: request.headers.get("user-agent"),
-      metadata: {
-        provider: "microsoft",
-        oauthMode: oauthModeCookie,
-        session: {
-          authMethod: "microsoft",
-          nextPath: nextPathCookie || fallbackNextPath,
-          discordAccessToken: null,
-          discordRefreshToken: null,
-          discordTokenExpiresAt: null,
-        },
+    const session = await createSessionForUser(
+      user.id,
+      {
+        ipAddress: extractClientIp(request),
+        userAgent: request.headers.get("user-agent"),
       },
+      {
+        authMethod: "microsoft",
+        discordAccessToken: null,
+        discordRefreshToken: null,
+        discordTokenExpiresAt: null,
+      },
+    );
+    const response = redirectWithLocation(successLocation);
+    setSharedSessionCookie(request, response, session.sessionToken, {
+      maxAge: session.maxAgeSeconds,
     });
-
-    const otpLocation = buildLoginOtpRedirectLocation(request, {
-      challengeId: challenge.challengeId,
-      maskedEmail: challenge.maskedEmail,
-      expiresAt: challenge.expiresAt,
-      resendAvailableAt: challenge.resendAvailableAt,
-      provider: "microsoft",
-      nextPath: nextPathCookie || fallbackNextPath,
-    });
-    const response = redirectWithLocation(otpLocation);
-    if (shouldClearTrustedDeviceCookie) {
-      clearSharedTrustedDeviceCookie(request, response);
-    }
     clearOAuthCookies(request, response);
     const authenticatedContext = extendSecurityRequestContext(
       initialRequestContext,
@@ -387,22 +326,26 @@ export async function handleMicrosoftAuthCallback(request: NextRequest) {
       action: "auth_microsoft_callback",
       outcome: "succeeded",
       metadata: {
-        redirectTo: otpLocation,
+        redirectTo: successLocation,
         oauthMode: oauthModeCookie,
-        otpRequired: true,
-        rememberedDevice: false,
+        otpRequired: false,
+        socialSession: true,
       },
     });
     return attachRequestId(response, initialRequestContext.requestId);
   } catch (error) {
+    const errorCode = resolveMicrosoftAuthErrorCode(error);
+    console.warn("[auth_microsoft_callback] failed", {
+      requestId: initialRequestContext.requestId,
+      errorCode,
+      errorName: error instanceof Error ? error.name : typeof error,
+      detail: error instanceof Error ? error.message : "unknown_error",
+    });
     const response = buildLoginRedirectResponse(request, {
         nextPath: nextPathCookie,
         mode: oauthModeCookie,
-        error: resolveMicrosoftAuthErrorCode(error),
+        error: errorCode,
       });
-    if (shouldClearTrustedDeviceCookie) {
-      clearSharedTrustedDeviceCookie(request, response);
-    }
     clearOAuthCookies(request, response);
     await logSecurityAuditEventSafe(initialRequestContext, {
       action: "auth_microsoft_callback",
