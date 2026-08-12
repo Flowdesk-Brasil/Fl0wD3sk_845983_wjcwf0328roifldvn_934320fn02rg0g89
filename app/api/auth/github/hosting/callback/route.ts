@@ -5,7 +5,9 @@ import {
   exchangeHostingGitHubCode,
   fetchHostingGitHubProfile,
   isHostingGitHubConfigured,
+  readHostingGitHubStatePayload,
   readHostingGitHubStateCookie,
+  resolveHostingGitHubRelayOrigin,
   setHostingGitHubTokenCookie,
   storeHostingGitHubTokenForUser,
   validateHostingGitHubState,
@@ -55,6 +57,40 @@ function popupHtml(input: {
   );
 }
 
+function popupRelayHtml(
+  returnOrigin: string | null,
+  input: {
+    ok: boolean;
+    message: string;
+    handoffToken?: string | null;
+    user?: PopupGitHubAccount | null;
+    accounts?: PopupGitHubAccount[];
+  },
+) {
+  if (!returnOrigin) return popupHtml(input);
+
+  const relayUrl = new URL("/api/auth/github/hosting/relay", returnOrigin);
+  const payload = {
+    source: "flowdesk-hosting-github",
+    ...input,
+  };
+  const hash = new URLSearchParams({
+    payload: JSON.stringify(payload),
+  });
+
+  return new NextResponse(
+    `<!doctype html><html><body><script>
+      window.location.replace(${JSON.stringify(`${relayUrl.toString()}#${hash.toString()}`)});
+    </script>${input.message}</body></html>`,
+    {
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Referrer-Policy": "no-referrer",
+      },
+    },
+  );
+}
+
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code")?.trim() || "";
   const state = request.nextUrl.searchParams.get("state")?.trim() || "";
@@ -68,6 +104,8 @@ export async function GET(request: NextRequest) {
 
   const stateMatchesCookie = Boolean(expectedState && state === expectedState);
   const stateMatchesSignedPayload = validateHostingGitHubState(state);
+  const statePayload = readHostingGitHubStatePayload(state);
+  const relayOrigin = resolveHostingGitHubRelayOrigin(request, statePayload);
 
   if (!code || !state || (!stateMatchesCookie && !stateMatchesSignedPayload)) {
     return applyNoStoreHeaders(
@@ -114,7 +152,7 @@ export async function GET(request: NextRequest) {
       ).catch(() => null);
     }
     const handoffToken = createHostingGitHubHandoffTokenBundle(tokenBundle);
-    const response = popupHtml({
+    const response = popupRelayHtml(relayOrigin, {
       ok: true,
       message: "GitHub conectado com sucesso.",
       handoffToken,
@@ -126,7 +164,7 @@ export async function GET(request: NextRequest) {
     return applyNoStoreHeaders(response);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Falha ao conectar GitHub.";
-    const response = popupHtml({ ok: false, message });
+    const response = popupRelayHtml(relayOrigin, { ok: false, message });
     clearHostingGitHubStateCookie(request, response);
     return applyNoStoreHeaders(response);
   }

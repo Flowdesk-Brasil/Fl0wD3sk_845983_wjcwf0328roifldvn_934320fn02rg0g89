@@ -732,3 +732,38 @@ export async function sendSupportTicketOpenedEmailSafe(input: {
     console.warn("[transactional-email] support-ticket failed:", error);
   });
 }
+
+export async function sendVpsProvisionedEmailSafe(input: {
+  userId: number;
+  vpsCode: string;
+  repoName: string;
+  planName: string;
+  dashboardUrl: string;
+}) {
+  try {
+    const user = await getUserForEmail(input.userId);
+    const email = normalizeEmail(user?.email);
+    if (!email) return;
+
+    await sendFlowdeskTransactionalEmail({
+      toEmail: email,
+      type: "vps-provisioned",
+      subject: `Flowdesk | Sua VPS ${input.vpsCode} esta online`,
+      preheader: "O provisionamento da sua maquina foi concluido.",
+      badgeLabel: "Hospedagem",
+      title: "Sua VPS esta pronta",
+      intro: `A configuracao da infraestrutura para ${input.repoName} foi finalizada. A maquina virtual esta ativa e conectada ao painel.`,
+      sections: [
+        { label: "Codigo", value: input.vpsCode },
+        { label: "Repositorio", value: input.repoName },
+        { label: "Plano", value: input.planName },
+      ],
+      action: {
+        label: "ACESSAR PAINEL",
+        href: input.dashboardUrl,
+      },
+    });
+  } catch (error) {
+    console.warn("[transactional-email] vps-provisioned failed:", error);
+  }
+}

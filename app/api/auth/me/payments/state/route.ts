@@ -1,4 +1,4 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import {
   assertUserAdminInGuildOrNull,
   hasAcceptedTeamAccessToGuild,
@@ -117,6 +117,28 @@ function readOrderFinalizationStatus(providerPayload: unknown) {
   return null;
 }
 
+function readOrderFinalizationError(providerPayload: unknown) {
+  if (!providerPayload || typeof providerPayload !== "object" || Array.isArray(providerPayload)) {
+    return null;
+  }
+
+  const payloadRecord = providerPayload as Record<string, unknown>;
+  const rawFinalization =
+    payloadRecord.flowdesk_finalization &&
+    typeof payloadRecord.flowdesk_finalization === "object" &&
+    !Array.isArray(payloadRecord.flowdesk_finalization)
+      ? (payloadRecord.flowdesk_finalization as Record<string, unknown>)
+      : payloadRecord.finalization &&
+          typeof payloadRecord.finalization === "object" &&
+          !Array.isArray(payloadRecord.finalization)
+        ? (payloadRecord.finalization as Record<string, unknown>)
+        : null;
+
+  return rawFinalization && typeof rawFinalization.lastError === "string"
+    ? rawFinalization.lastError.trim()
+    : null;
+}
+
 function toOrderState(
   order: PaymentOrderStateRecord,
   checkoutAccessToken: string | null = null,
@@ -143,6 +165,7 @@ function toOrderState(
     planTransitionKind: transition?.kind || null,
     planTransitionExecution: transition?.execution || null,
     finalizationStatus: readOrderFinalizationStatus(order.provider_payload),
+    finalizationError: readOrderFinalizationError(order.provider_payload),
     createdAt: order.created_at,
     updatedAt: order.updated_at,
   };

@@ -120,7 +120,7 @@ const FILTERS: FilterOption[] = [
   },
 ];
 
-const MODE_ROUTE: Record<DomainMode, string> = {
+const DEFAULT_MODE_ROUTE: Record<DomainMode, string> = {
   register: "/domains/search",
   ai: "/domains/flowai/search",
 };
@@ -264,7 +264,7 @@ function AvailabilityText({ result }: { result: DomainResult }) {
 
 function DomainSkeleton() {
   return (
-    <div className="mx-auto mt-7 w-full max-w-[1200px] space-y-3">
+    <div className="mx-auto mt-7 w-full max-w-[1280px] space-y-3">
       <div className="grid gap-3 lg:grid-cols-2">
         {[1, 2].map((item) => (
           <div
@@ -287,13 +287,30 @@ function DomainSkeleton() {
 
 type DomainSearchSectionProps = {
   initialTab?: DomainMode;
+  initialQuery?: string;
+  routeByMode?: Partial<Record<DomainMode, string>>;
+  syncRoute?: boolean;
+  onDomainSelect?: (domain: string) => void;
 };
 
-export function DomainSearchSection({ initialTab = "register" }: DomainSearchSectionProps) {
+export function DomainSearchSection({
+  initialTab = "register",
+  initialQuery = "",
+  routeByMode,
+  syncRoute = true,
+  onDomainSelect,
+}: DomainSearchSectionProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const modeRoute = useMemo(
+    () => ({
+      ...DEFAULT_MODE_ROUTE,
+      ...routeByMode,
+    }),
+    [routeByMode],
+  );
   const [activeTab, setActiveTab] = useState<DomainMode>(initialTab);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState(initialQuery.trim());
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isMaintenanceMode, setIsMaintenanceMode] = useState(false);
@@ -307,9 +324,13 @@ export function DomainSearchSection({ initialTab = "register" }: DomainSearchSec
   const activeRequestRef = useRef<AbortController | null>(null);
   const openDashboardCheckout = useCallback(
     (domain: string) => {
+      if (onDomainSelect) {
+        onDomainSelect(domain);
+        return;
+      }
       router.push(`/dashboard/domains/acquire?domain=${encodeURIComponent(domain)}`);
     },
-    [router],
+    [onDomainSelect, router],
   );
 
   const aiSelection = useMemo(() => {
@@ -535,12 +556,14 @@ export function DomainSearchSection({ initialTab = "register" }: DomainSearchSec
     setActiveFilter("popular");
     setSearchQuery(readStoredSearch(mode));
 
-    const targetRoute = MODE_ROUTE[mode];
+    if (!syncRoute) return;
+
+    const targetRoute = modeRoute[mode];
     const currentPath = typeof window === "undefined" ? pathname : window.location.pathname;
     if (currentPath !== targetRoute) {
       replaceVisibleRoute(targetRoute);
     }
-  }, [pathname]);
+  }, [modeRoute, pathname, syncRoute]);
 
   const onFormSubmit = useCallback((event?: FormEvent) => {
     event?.preventDefault();
@@ -551,23 +574,25 @@ export function DomainSearchSection({ initialTab = "register" }: DomainSearchSec
     }
 
     persistSearch(activeTab, normalizedQuery);
-    const targetRoute = MODE_ROUTE[activeTab];
+    const targetRoute = modeRoute[activeTab];
     autoSearchKeyRef.current = `${targetRoute}:${activeTab}:${normalizedQuery}`;
     void handleSearch(normalizedQuery, activeTab === "ai");
+
+    if (!syncRoute) return;
 
     const currentPath = typeof window === "undefined" ? pathname : window.location.pathname;
     if (currentPath !== targetRoute) {
       replaceVisibleRoute(targetRoute);
     }
-  }, [activeTab, handleSearch, pathname, searchQuery]);
+  }, [activeTab, handleSearch, modeRoute, pathname, searchQuery, syncRoute]);
 
   useEffect(() => {
-    router.prefetch(MODE_ROUTE.register);
-    router.prefetch(MODE_ROUTE.ai);
-  }, [router]);
+    router.prefetch(modeRoute.register);
+    router.prefetch(modeRoute.ai);
+  }, [modeRoute, router]);
 
   useEffect(() => {
-    if (pathname !== MODE_ROUTE[activeTab]) {
+    if (!syncRoute || pathname !== modeRoute[activeTab]) {
       return;
     }
 
@@ -584,7 +609,19 @@ export function DomainSearchSection({ initialTab = "register" }: DomainSearchSec
     autoSearchKeyRef.current = autoKey;
     setSearchQuery(storedQuery);
     void handleSearch(storedQuery, activeTab === "ai");
-  }, [activeTab, handleSearch, pathname]);
+  }, [activeTab, handleSearch, modeRoute, pathname, syncRoute]);
+
+  useEffect(() => {
+    const normalizedQuery = initialQuery.trim();
+    if (!normalizedQuery) return;
+
+    const autoKey = `initial:${activeTab}:${normalizedQuery}`;
+    if (autoSearchKeyRef.current === autoKey) return;
+
+    autoSearchKeyRef.current = autoKey;
+    setSearchQuery(normalizedQuery);
+    void handleSearch(normalizedQuery, activeTab === "ai");
+  }, [activeTab, handleSearch, initialQuery]);
 
   useEffect(() => {
     return () => {
@@ -715,7 +752,7 @@ export function DomainSearchSection({ initialTab = "register" }: DomainSearchSec
       {isLoading && <DomainSkeleton />}
 
       {!isLoading && !isMaintenanceMode && activeTab === "ai" && aiData && aiData.suggestions.length > 0 && (
-        <div className="mx-auto mt-7 w-full max-w-[1200px] rounded-[22px] border border-[#141414] bg-[#090909] p-[16px]">
+        <div className="mx-auto mt-7 w-full max-w-[1280px] rounded-[22px] border border-[#141414] bg-[#090909] p-[16px]">
           <div className="flex flex-col items-start gap-[14px] lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0 space-y-[8px] text-left">
               <div className="inline-flex items-center gap-[8px] rounded-[7px] border border-[#16315F] bg-[#0E1728] px-[10px] py-[6px] text-[11px] leading-none font-medium text-[#8DB7FF]">
@@ -774,7 +811,7 @@ export function DomainSearchSection({ initialTab = "register" }: DomainSearchSec
       )}
 
       {!isLoading && !isMaintenanceMode && exactMatch && (
-        <div className="mx-auto mt-7 w-full max-w-[1200px] space-y-3">
+        <div className="mx-auto mt-7 w-full max-w-[1280px] space-y-3">
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1.06fr)_minmax(0,0.94fr)]">
             <section className="flex flex-col rounded-[22px] border border-[#141414] bg-[#0A0A0A] p-[16px]">
               <div className="flex flex-wrap items-center gap-[8px]">

@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -6,10 +6,12 @@ import {
   Bot,
   Check,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   Cpu,
   Database,
   ExternalLink,
+  Gamepad2,
   GitBranch,
   Globe2,
   HardDrive,
@@ -22,13 +24,15 @@ import {
   Zap,
 } from "lucide-react";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
-import { buildBrowserRoutingTargetFromInternalPath } from "@/lib/routing/subdomains";
+import { buildHostingPaymentHref } from "@/lib/payments/unifiedCheckout";
 import {
+  DEFAULT_HOSTING_REGION_ID,
   HOSTING_KIND_OPTIONS,
   HOSTING_PLANS,
   HOSTING_REGIONS,
   HOSTING_STEP_PATH_BY_STEP,
   getHostingKindLabel,
+  resolveHostingRegion,
   type HostingGitHubAccount,
   type HostingKind,
   type HostingPlan,
@@ -43,6 +47,11 @@ type HostingDraft = {
   selectedGithubAccountLogin: string | null;
   selectedRepositoryId: string | null;
   selectedRepository: HostingRepository | null;
+  minecraftServerName: string;
+  minecraftVersion: string;
+  minecraftServerType: string;
+  minecraftSubdomain: string;
+  minecraftFirstWorldName: string;
   selectedRegionId: string;
   selectedPlanId: string | null;
   vpsCode: string | null;
@@ -52,6 +61,16 @@ type HostingDraft = {
 const STORAGE_KEY = "flowdesk_hosting_onboarding_v1";
 const LEGACY_STORAGE_KEY = "flowdesk_hosting_onboarding_v1";
 const GITHUB_HANDOFF_STORAGE_KEY = "flowdesk_hosting_github_handoff_v1";
+const GITHUB_POPUP_CLOSE_GRACE_MS = 12_000;
+const MINECRAFT_DEFAULT_VERSION = "1.21.1";
+const MINECRAFT_SERVER_TYPES = [
+  { id: "paper", label: "Paper", description: "Plugins com desempenho alto para survival e redes publicas." },
+  { id: "purpur", label: "Purpur", description: "Paper com ajustes extras para performance e personalizacao." },
+  { id: "fabric", label: "Fabric", description: "Mods leves e modpacks modernos com loader Fabric." },
+  { id: "forge", label: "Forge", description: "Modpacks classicos e ecossistema Forge." },
+  { id: "neoforge", label: "NeoForge", description: "Modpacks novos com base NeoForge." },
+  { id: "vanilla", label: "Vanilla", description: "Servidor limpo sem mods ou plugins." },
+] as const;
 
 const DEFAULT_DRAFT: HostingDraft = {
   kind: null,
@@ -59,19 +78,26 @@ const DEFAULT_DRAFT: HostingDraft = {
   selectedGithubAccountLogin: null,
   selectedRepositoryId: null,
   selectedRepository: null,
-  selectedRegionId: "br-sp",
+  minecraftServerName: "Servidor Minecraft",
+  minecraftVersion: MINECRAFT_DEFAULT_VERSION,
+  minecraftServerType: "paper",
+  minecraftSubdomain: "",
+  minecraftFirstWorldName: "world",
+  selectedRegionId: DEFAULT_HOSTING_REGION_ID,
   selectedPlanId: null,
   vpsCode: null,
   step: "kind",
 };
 
 const STEP_ORDER: HostingStep[] = ["kind", "github", "repository", "region", "plan", "payment", "ready"];
+const MINECRAFT_STEP_ORDER: HostingStep[] = ["kind", "github", "region", "plan", "payment", "ready"];
 
 type StepDirection = "forward" | "backward";
 
 type GitHubStatusResponse = {
   ok: boolean;
   connected: boolean;
+  degraded?: boolean;
   message?: string;
   accounts?: HostingGitHubAccount[];
   user?: HostingGitHubAccount;
@@ -97,6 +123,12 @@ type HostingProvisionResponse = {
   message?: string;
   vpsCode?: string;
   redirectUrl?: string;
+};
+
+type MinecraftVersionOption = {
+  id: string;
+  label: string;
+  recommended?: boolean;
 };
 
 export type HostingProjectCard = {
@@ -129,8 +161,13 @@ export type HostingProjectCard = {
   }> | null;
 };
 
-function resolveStepDirection(from: HostingStep, to: HostingStep): StepDirection {
-  return STEP_ORDER.indexOf(to) >= STEP_ORDER.indexOf(from) ? "forward" : "backward";
+function resolveDraftStepOrder(kind: HostingKind | null | undefined) {
+  return kind === "minecraft" ? MINECRAFT_STEP_ORDER : STEP_ORDER;
+}
+
+function resolveStepDirection(from: HostingStep, to: HostingStep, kind?: HostingKind | null): StepDirection {
+  const order = resolveDraftStepOrder(kind);
+  return order.indexOf(to) >= order.indexOf(from) ? "forward" : "backward";
 }
 
 function formatMoney(amount: number, currency = "BRL") {
@@ -149,13 +186,21 @@ function readDraft() {
     const raw = window.sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_DRAFT;
     const parsed = JSON.parse(raw) as Partial<HostingDraft>;
+    const kind = parsed.kind || DEFAULT_DRAFT.kind;
+    const stepOrder = resolveDraftStepOrder(kind);
     return {
       ...DEFAULT_DRAFT,
       ...parsed,
-      selectedRegionId: parsed.selectedRegionId || "br-sp",
-      step: STEP_ORDER.includes(parsed.step as HostingStep)
+      selectedRegionId: resolveHostingRegion(parsed.selectedRegionId)?.id || DEFAULT_HOSTING_REGION_ID,
+      minecraftSubdomain:
+        typeof parsed.minecraftSubdomain === "string"
+          ? normalizeMinecraftSlug(parsed.minecraftSubdomain)
+          : DEFAULT_DRAFT.minecraftSubdomain,
+      step: stepOrder.includes(parsed.step as HostingStep)
         ? (parsed.step as HostingStep)
-        : "kind",
+        : kind === "minecraft"
+          ? "github"
+          : "kind",
     };
   } catch {
     return DEFAULT_DRAFT;
@@ -165,6 +210,49 @@ function readDraft() {
 function writeDraft(draft: HostingDraft) {
   if (typeof window === "undefined") return;
   window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
+}
+
+function normalizeMinecraftSlug(value: string) {
+  const normalized = value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-")
+    .slice(0, 48);
+  return normalized || "minecraft";
+}
+
+function resolveMinecraftSubdomain(draft: HostingDraft) {
+  return normalizeMinecraftSlug(draft.minecraftSubdomain || draft.minecraftServerName);
+}
+
+function isMinecraftConfigReady(draft: HostingDraft) {
+  const name = draft.minecraftServerName.trim();
+  const version = draft.minecraftVersion.trim();
+  const subdomain = resolveMinecraftSubdomain(draft);
+  return Boolean(
+    name.length >= 3 &&
+      version.length >= 3 &&
+      draft.minecraftFirstWorldName.trim().length >= 3 &&
+      MINECRAFT_SERVER_TYPES.some((type) => type.id === draft.minecraftServerType) &&
+      /^[a-z0-9](?:[a-z0-9-]{1,46}[a-z0-9])?$/.test(subdomain),
+  );
+}
+
+function buildMinecraftConfig(draft: HostingDraft) {
+  const serverType = MINECRAFT_SERVER_TYPES.some((type) => type.id === draft.minecraftServerType)
+    ? draft.minecraftServerType
+    : "paper";
+  const subdomain = resolveMinecraftSubdomain(draft);
+  return {
+    serverName: draft.minecraftServerName.trim() || "Servidor Minecraft",
+    version: draft.minecraftVersion.trim() || MINECRAFT_DEFAULT_VERSION,
+    serverType,
+    subdomain,
+    firstWorldName: draft.minecraftFirstWorldName.trim() || "world",
+  };
 }
 
 function resolveVpsDisplayUrl(code: string) {
@@ -178,6 +266,7 @@ function resolveVpsInternalPath(code: string) {
 function resolveKindIcon(kind: HostingKind) {
   if (kind === "site") return Globe2;
   if (kind === "bot") return Bot;
+  if (kind === "minecraft") return Gamepad2;
   return ImageIcon;
 }
 
@@ -216,7 +305,7 @@ function resolveProjectCardStatus(project: HostingProjectCard) {
   if (paymentStatus === "refunded" || paymentStatus === "partially_refunded" || billingStatus === "refunded") {
     return { label: "Restornada ate vencimento", tone: "warning" as const, accessUntil };
   }
-  if (project.status === "active") {
+  if (project.status === "active" || project.runtime_status === "online") {
     return { label: "Ativa", tone: "success" as const, accessUntil };
   }
   return { label: "Provisionando", tone: "info" as const, accessUntil };
@@ -268,8 +357,8 @@ function HostingProjectsOverview({
     window.localStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
     setReconnectMessage(data.message || null);
     if (!data.ok) return true;
-    await completeReconnect(data.handoffToken);
-    return true;
+    if (await completeReconnect(data.handoffToken)) return true;
+    return false;
   }
 
   async function processStoredReconnectHandoff() {
@@ -306,6 +395,7 @@ function HostingProjectsOverview({
     let finished = false;
     let timeoutId = 0;
     let pollIntervalId = 0;
+    let popupClosedAt = 0;
 
     const finish = () => {
       finished = true;
@@ -322,14 +412,23 @@ function HostingProjectsOverview({
         return;
       }
       if (popup.closed) {
+        if (!popupClosedAt) {
+          popupClosedAt = Date.now();
+          setReconnectMessage("GitHub autorizado. Validando a conexao neste dominio...");
+          return;
+        }
+
         const response = await fetch("/api/auth/me/hosting/github/status", { cache: "no-store" });
         const payload = await response.json() as GitHubStatusResponse;
         if (payload.connected) {
           onReconnect();
-        } else {
-          setReconnectMessage(payload.message || "A reconexao do GitHub nao foi concluida.");
+          finish();
+          return;
         }
-        finish();
+        if (Date.now() - popupClosedAt >= GITHUB_POPUP_CLOSE_GRACE_MS) {
+          setReconnectMessage(payload.message || "A reconexao do GitHub nao foi concluida.");
+          finish();
+        }
       }
     };
 
@@ -407,7 +506,7 @@ function HostingProjectsOverview({
         {projects.map((project) => {
           const Icon = resolveKindIcon(project.hosting_kind);
           const plan = HOSTING_PLANS[project.hosting_kind]?.find((item) => item.id === project.hosting_plan_id);
-          const region = HOSTING_REGIONS.find((item) => item.id === project.hosting_region_id) || HOSTING_REGIONS[0];
+          const region = resolveHostingRegion(project.hosting_region_id) || HOSTING_REGIONS[0];
           const status = resolveProjectCardStatus(project);
           const statusClass =
             status.tone === "success"
@@ -440,10 +539,10 @@ function HostingProjectsOverview({
                   <div className="flex flex-wrap items-start justify-between gap-[12px]">
                     <div className="min-w-0">
                       <h3 className="truncate text-[20px] font-semibold tracking-[-0.04em] text-white">
-                        {project.github_repo}
+                        {project.github_repo.length > 15 ? project.github_repo.slice(0, 15) + "..." : project.github_repo}
                       </h3>
                       <p className="mt-[5px] truncate font-mono text-[12px] text-[#858585]">
-                        {project.github_owner}/{project.github_repo} - {project.github_branch}
+                        {project.github_owner}/{project.github_repo.length > 15 ? project.github_repo.slice(0, 15) + "..." : project.github_repo} - {project.github_branch}
                       </p>
                     </div>
                     <span className={`rounded-full border px-[10px] py-[6px] text-[11px] font-bold uppercase tracking-[0.12em] ${statusClass}`}>
@@ -500,20 +599,24 @@ function StepRail({
 }) {
   const labels: Record<HostingStep, string> = {
     kind: "Tipo",
-    github: "GitHub",
+    github: draft.kind === "minecraft" ? "Servidor" : "GitHub",
     repository: "Repositorio",
     region: "Localizacao",
     plan: "Plano",
     payment: "Pagamento",
     ready: "VPS",
   };
-  const currentIndex = STEP_ORDER.indexOf(current);
+  const stepOrder = resolveDraftStepOrder(draft.kind);
+  const currentIndex = stepOrder.indexOf(current);
 
   return (
     <div className="flex w-full gap-[8px] overflow-x-auto rounded-[18px] border border-[#171717] bg-[#080808] p-[8px]">
-      {STEP_ORDER.map((step, index) => {
+      {stepOrder.map((step, index) => {
         const isActive = step === current;
-        const isDone = index < currentIndex || (step === "github" && draft.githubConnected);
+        const isDone =
+          index < currentIndex ||
+          (step === "github" &&
+            (draft.kind === "minecraft" ? isMinecraftConfigReady(draft) : draft.githubConnected));
         return (
           <div
             key={step}
@@ -612,10 +715,16 @@ function KindStep({
               onClick={() =>
                 onPatch({
                   kind: option.id,
+                  githubConnected: option.id === "minecraft" ? false : draft.githubConnected,
+                  selectedGithubAccountLogin: option.id === "minecraft" ? null : draft.selectedGithubAccountLogin,
                   selectedRepositoryId: null,
                   selectedRepository: null,
                   selectedPlanId: null,
                   vpsCode: null,
+                  minecraftSubdomain:
+                    option.id === "minecraft"
+                      ? resolveMinecraftSubdomain(draft)
+                      : draft.minecraftSubdomain,
                   step: "github",
                 })
               }
@@ -695,11 +804,11 @@ function GithubStep({
     }
 
     const completed = await completeGitHubConnection(data.handoffToken);
-    if (!completed) {
-      await refreshStatus(true);
+    if (completed) {
+      return true;
     }
 
-    return true;
+    return await refreshStatus(true);
   }
 
   async function processStoredGitHubHandoff() {
@@ -740,12 +849,13 @@ function GithubStep({
       setMessage(payload.message || "GitHub conectado com sucesso.");
       setAccounts(payload.accounts || []);
 
-      if (response.ok && payload.connected && payload.accounts?.length) {
+      if (response.ok && payload.connected) {
+        const firstAccount = payload.accounts?.[0] || null;
         onPatch({
           githubConnected: true,
           selectedGithubAccountLogin:
-            draft.selectedGithubAccountLogin || payload.accounts[0]?.login || null,
-          step: "repository",
+            draft.selectedGithubAccountLogin || firstAccount?.login || null,
+          ...(firstAccount ? { step: "repository" as const } : {}),
         });
         return true;
       }
@@ -766,13 +876,17 @@ function GithubStep({
       setMessage(payload.message || null);
       setAccounts(payload.accounts || []);
 
-      if (payload.connected && payload.accounts?.length) {
+      if (payload.connected) {
+        const firstAccount = payload.accounts?.[0] || null;
         onPatch({
           githubConnected: true,
           selectedGithubAccountLogin:
-            draft.selectedGithubAccountLogin || payload.accounts[0]?.login || null,
-          ...(advanceWhenConnected ? { step: "repository" as const } : {}),
+            draft.selectedGithubAccountLogin || firstAccount?.login || null,
+          ...(advanceWhenConnected && firstAccount ? { step: "repository" as const } : {}),
         });
+        if (advanceWhenConnected && !firstAccount && !payload.message) {
+          setMessage("GitHub conectado, mas a lista de contas ainda nao carregou. Tente continuar novamente em alguns segundos.");
+        }
         return true;
       } else {
         onPatch({ githubConnected: false });
@@ -824,6 +938,7 @@ function GithubStep({
     let timeoutId = 0;
     let pollIntervalId = 0;
     let finished = false;
+    let popupClosedAt = 0;
 
     const finishConnectionAttempt = () => {
       finished = true;
@@ -847,9 +962,19 @@ function GithubStep({
       }
 
       if (popup.closed && !finished) {
-        finishConnectionAttempt();
+        if (!popupClosedAt) {
+          popupClosedAt = Date.now();
+          setMessage("GitHub autorizado. Validando a conexao neste dominio...");
+          return;
+        }
+
         setMessage("GitHub autorizado. Conferindo permissao da conta...");
         await refreshStatus(true);
+
+        if (Date.now() - popupClosedAt >= GITHUB_POPUP_CLOSE_GRACE_MS) {
+          finishConnectionAttempt();
+          setMessage("GitHub autorizou, mas a confirmacao nao chegou neste dominio. Tente conectar novamente ou recarregue o painel.");
+        }
       }
     };
 
@@ -931,6 +1056,220 @@ function GithubStep({
   );
 }
 
+function MinecraftSetupStep({
+  draft,
+  onPatch,
+}: {
+  draft: HostingDraft;
+  onPatch: (patch: Partial<HostingDraft>) => void;
+}) {
+  const minecraft = buildMinecraftConfig(draft);
+  const ready = isMinecraftConfigReady(draft);
+  const [versionOptions, setVersionOptions] = useState<MinecraftVersionOption[]>([]);
+  const [versionMenuOpen, setVersionMenuOpen] = useState(false);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const selectedVersion = versionOptions.find((item) => item.id === draft.minecraftVersion) || null;
+
+  useEffect(() => {
+    let mounted = true;
+    setVersionsLoading(true);
+    fetch("/api/auth/me/hosting/minecraft/versions", { cache: "no-store" })
+      .then(async (response) => {
+        const payload = await response.json() as {
+          ok?: boolean;
+          recommendedVersion?: string;
+          versions?: MinecraftVersionOption[];
+        };
+        if (!mounted || !response.ok || !payload.ok || !payload.versions?.length) return;
+        setVersionOptions(payload.versions);
+        if (!draft.minecraftVersion || draft.minecraftVersion === MINECRAFT_DEFAULT_VERSION) {
+          onPatch({ minecraftVersion: payload.recommendedVersion || payload.versions[0].id });
+        }
+      })
+      .catch(() => null)
+      .finally(() => {
+        if (mounted) setVersionsLoading(false);
+      });
+    return () => {
+      mounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once when the Minecraft step opens.
+  }, []);
+
+  return (
+    <div className="grid gap-[18px] xl:grid-cols-[minmax(0,1fr)_390px]">
+      <div className="rounded-[22px] border border-[#171717] bg-[#080808] p-[22px]">
+        <SectionHeader
+          eyebrow="Minecraft"
+          title="Configure o servidor sem GitHub"
+          description="O Flowdesk vai criar os arquivos diretamente na VPS, com runtime, mundos isolados, limites do plano e dominio gerenciado pelo control-plane."
+        />
+
+        <div className="mt-[22px] grid gap-[14px] md:grid-cols-2">
+          <label className="space-y-[8px]">
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#656565]">
+              Nome do servidor
+            </span>
+            <input
+              value={draft.minecraftServerName}
+              onChange={(event) =>
+                onPatch({
+                  minecraftServerName: event.target.value.slice(0, 80),
+                  minecraftSubdomain: draft.minecraftSubdomain || normalizeMinecraftSlug(event.target.value),
+                })
+              }
+              className="h-[48px] w-full rounded-[14px] border border-[#1B1B1B] bg-[#0B0B0B] px-[13px] text-[14px] font-semibold text-[#EDEDED] outline-none transition-colors placeholder:text-[#555555] focus:border-[#0F62FE]"
+              placeholder="Servidor Minecraft"
+            />
+          </label>
+          <div className="space-y-[8px]">
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#656565]">
+              Versao Minecraft
+            </span>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setVersionMenuOpen((current) => !current)}
+                className="flex h-[48px] w-full items-center justify-between gap-[12px] rounded-[14px] border border-[#1B1B1B] bg-[#0B0B0B] px-[13px] text-left text-[14px] font-semibold text-[#EDEDED] outline-none transition-colors hover:border-[#2B2B2B] focus:border-[#0F62FE]"
+              >
+                <span className="min-w-0 truncate">
+                  {versionsLoading ? "Carregando versoes..." : selectedVersion?.label || draft.minecraftVersion || MINECRAFT_DEFAULT_VERSION}
+                </span>
+                <span className="flex items-center gap-[8px]">
+                  {selectedVersion?.recommended ? (
+                    <span className="rounded-full bg-[rgba(52,168,83,0.12)] px-[8px] py-[3px] text-[10px] font-bold uppercase tracking-[0.12em] text-[#9BE7AC]">
+                      Recomendada
+                    </span>
+                  ) : null}
+                  <ChevronDown className={`h-[16px] w-[16px] text-[#777777] transition-transform ${versionMenuOpen ? "rotate-180" : ""}`} />
+                </span>
+              </button>
+              {versionMenuOpen ? (
+                <div className="absolute left-0 right-0 top-[56px] z-40 overflow-hidden rounded-[14px] border border-[#202020] bg-[#080808] p-[6px] shadow-[0_20px_60px_rgba(0,0,0,0.55)]">
+                  <div className="max-h-[288px] overflow-y-auto pr-[2px]">
+                    {(versionOptions.length ? versionOptions : [{ id: draft.minecraftVersion || MINECRAFT_DEFAULT_VERSION, label: draft.minecraftVersion || MINECRAFT_DEFAULT_VERSION, recommended: true }]).map((version) => {
+                      const selected = version.id === draft.minecraftVersion;
+                      return (
+                        <button
+                          key={version.id}
+                          type="button"
+                          onClick={() => {
+                            onPatch({ minecraftVersion: version.id });
+                            setVersionMenuOpen(false);
+                          }}
+                          className={`flex h-[48px] w-full items-center justify-between gap-[10px] rounded-[10px] px-[10px] text-left transition-colors ${
+                            selected ? "bg-[rgba(15,98,254,0.12)] text-white" : "text-[#DADADA] hover:bg-[#101010]"
+                          }`}
+                        >
+                          <span className="font-mono text-[13px] font-semibold">{version.label}</span>
+                          {version.recommended ? <span className="text-[11px] font-bold text-[#9BE7AC]">Recomendada</span> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+          <label className="space-y-[8px] md:col-span-2">
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#656565]">
+              Subdominio Flowdesk
+            </span>
+            <div className="flex min-h-[48px] overflow-hidden rounded-[14px] border border-[#1B1B1B] bg-[#0B0B0B] focus-within:border-[#0F62FE]">
+              <input
+                value={draft.minecraftSubdomain || normalizeMinecraftSlug(draft.minecraftServerName)}
+                onChange={(event) => onPatch({ minecraftSubdomain: normalizeMinecraftSlug(event.target.value) })}
+                className="min-w-0 flex-1 bg-transparent px-[13px] text-[14px] font-semibold text-[#EDEDED] outline-none"
+                placeholder="meu-servidor"
+              />
+              <span className="flex items-center border-l border-[#1B1B1B] bg-[#0F0F0F] px-[12px] text-[13px] font-semibold text-[#8D8D8D]">
+                .mine.flwdesk.com
+              </span>
+            </div>
+          </label>
+          <label className="space-y-[8px] md:col-span-2">
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#656565]">
+              Primeiro mundo
+            </span>
+            <input
+              value={draft.minecraftFirstWorldName}
+              onChange={(event) => onPatch({ minecraftFirstWorldName: event.target.value.slice(0, 80) })}
+              className="h-[48px] w-full rounded-[14px] border border-[#1B1B1B] bg-[#0B0B0B] px-[13px] text-[14px] font-semibold text-[#EDEDED] outline-none transition-colors placeholder:text-[#555555] focus:border-[#0F62FE]"
+              placeholder="world"
+            />
+          </label>
+        </div>
+
+        <div className="mt-[18px] grid gap-[10px] md:grid-cols-2 xl:grid-cols-3">
+          {MINECRAFT_SERVER_TYPES.map((type) => {
+            const selected = draft.minecraftServerType === type.id;
+            return (
+              <button
+                key={type.id}
+                type="button"
+                onClick={() => onPatch({ minecraftServerType: type.id })}
+                className={`min-h-[118px] rounded-[16px] border p-[13px] text-left transition-colors ${
+                  selected
+                    ? "border-[#0F62FE] bg-[rgba(15,98,254,0.10)]"
+                    : "border-[#171717] bg-[#0B0B0B] hover:border-[#2A2A2A]"
+                }`}
+              >
+                <span className="flex items-center justify-between gap-[10px]">
+                  <span className="text-[14px] font-semibold text-[#EFEFEF]">{type.label}</span>
+                  <span
+                    className={`flex h-[22px] w-[22px] items-center justify-center rounded-full border ${
+                      selected ? "border-[#0F62FE] bg-[#0F62FE] text-white" : "border-[#2A2A2A] text-transparent"
+                    }`}
+                  >
+                    <Check className="h-[12px] w-[12px]" />
+                  </span>
+                </span>
+                <p className="mt-[9px] text-[12px] leading-[1.5] text-[#777777]">{type.description}</p>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mt-[20px] flex flex-wrap items-center gap-[12px]">
+          <ActionButton
+            disabled={!ready}
+            onClick={() => onPatch({ step: "region" })}
+            icon={<ChevronRight className="h-[16px] w-[16px]" />}
+          >
+            Continuar para localizacao
+          </ActionButton>
+          {!ready ? (
+            <span className="text-[12px] font-medium text-[#F3DD7A]">
+              Preencha nome, versao e subdominio valido.
+            </span>
+          ) : null}
+        </div>
+      </div>
+
+      <aside className="rounded-[22px] border border-[#171717] bg-[#080808] p-[18px]">
+        <p className="text-[13px] font-bold uppercase tracking-[0.14em] text-[#606060]">
+          Control-plane
+        </p>
+        <div className="mt-[14px] space-y-[10px]">
+          {[
+            ["Servidor", minecraft.serverName],
+            ["Runtime", MINECRAFT_SERVER_TYPES.find((type) => type.id === minecraft.serverType)?.label || "Paper"],
+            ["Versao", minecraft.version],
+            ["Mundo inicial", minecraft.firstWorldName],
+            ["Dominio", `${minecraft.subdomain}.mine.flwdesk.com`],
+            ["Mundos", "Isolados por projeto"],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-[14px] border border-[#151515] bg-[#0B0B0B] p-[12px]">
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#555555]">{label}</p>
+              <p className="mt-[5px] break-words text-[13px] font-semibold text-[#DADADA]">{value}</p>
+            </div>
+          ))}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
 function RepositoryStep({
   draft,
   onPatch,
@@ -957,8 +1296,12 @@ function RepositoryStep({
       onPatch({ githubConnected: false, step: "github" });
       return [];
     }
+    onPatch({ githubConnected: true });
     const nextAccounts = payload.accounts || [];
     setAccounts(nextAccounts);
+    if (!nextAccounts.length && payload.message) {
+      setMessage(payload.message);
+    }
     if (!draft.selectedGithubAccountLogin && nextAccounts[0]) {
       onPatch({ selectedGithubAccountLogin: nextAccounts[0].login });
     }
@@ -1260,7 +1603,7 @@ function RegionStep({
   draft: HostingDraft;
   onPatch: (patch: Partial<HostingDraft>) => void;
 }) {
-  const selectedRegion = HOSTING_REGIONS.find((region) => region.id === draft.selectedRegionId) || HOSTING_REGIONS[0];
+  const selectedRegion = resolveHostingRegion(draft.selectedRegionId) || HOSTING_REGIONS[0];
   const [isRegionMenuOpen, setIsRegionMenuOpen] = useState(false);
 
   return (
@@ -1269,7 +1612,7 @@ function RegionStep({
         <SectionHeader
           eyebrow="Localizacao"
           title="Escolha o local de servidor"
-          description="Por enquanto a primeira regiao disponivel e Sao Paulo. A estrutura ja esta preparada para novas regioes e comparacao de ping."
+          description="A regiao principal disponivel agora e Boston, nos Estados Unidos. A latencia e atualizada automaticamente conforme a saude da VPS."
         />
         <div className="relative">
           <button
@@ -1342,7 +1685,9 @@ function RegionStep({
         </div>
         <div className="rounded-[16px] border border-[rgba(52,168,83,0.18)] bg-[rgba(52,168,83,0.07)] p-[14px]">
           <p className="text-[13px] leading-[1.55] text-[#C8EAD0]">
-            A VPS Windows sera provisionada nessa regiao e o deploy puxara o repositorio selecionado diretamente do GitHub.
+            {draft.kind === "minecraft"
+              ? "O servidor Minecraft sera criado nessa regiao com arquivos isolados, limites do plano e subdominio Flowdesk."
+              : "A VPS Windows sera provisionada nessa regiao e o deploy puxara o repositorio selecionado diretamente do GitHub."}
           </p>
         </div>
         <ActionButton onClick={() => onPatch({ step: "plan" })} icon={<ChevronRight className="h-[16px] w-[16px]" />}>
@@ -1364,11 +1709,11 @@ function HostingPlanCard({
   onSelect: () => void;
 }) {
   return (
-    <div className="relative w-full max-w-[372px] justify-self-center min-[1580px]:max-w-none">
+    <div className="relative w-full max-w-[372px] justify-self-center xl:max-w-none">
       {plan.recommended ? (
         <>
-          <div className="pointer-events-none absolute inset-x-0 top-0 z-10 hidden h-[304px] rounded-[25px] bg-[#0062FF] min-[1580px]:top-[-43px] min-[1580px]:block" />
-          <div className="absolute inset-x-0 top-0 z-30 hidden h-[45px] items-center justify-center px-[20px] text-center text-[13px] leading-none font-medium tracking-[0.02em] text-white min-[1580px]:top-[-43px] min-[1580px]:flex">
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-10 hidden h-[304px] rounded-[25px] bg-[#0062FF] xl:top-[-43px] xl:block" />
+          <div className="absolute inset-x-0 top-0 z-30 hidden h-[45px] items-center justify-center px-[20px] text-center text-[13px] leading-none font-medium tracking-[0.02em] text-white xl:top-[-43px] xl:flex">
             RECOMENDADO
           </div>
         </>
@@ -1376,7 +1721,7 @@ function HostingPlanCard({
       <article
         className={`relative z-20 flex h-full flex-col items-start overflow-hidden rounded-[24px] bg-[#0A0A0A] px-[20px] pb-[18px] pt-[20px] text-left ${
           plan.recommended
-            ? "shadow-[inset_0_0_0_2px_#0062FF] min-[1580px]:shadow-[inset_2px_0_0_#0062FF,inset_-2px_0_0_#0062FF,inset_0_-2px_0_#0062FF]"
+            ? "shadow-[inset_0_0_0_2px_#0062FF] xl:shadow-[inset_2px_0_0_#0062FF,inset_-2px_0_0_#0062FF,inset_0_-2px_0_#0062FF]"
             : "shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]"
         }`}
       >
@@ -1462,7 +1807,7 @@ function PlanStep({
           Continuar
         </ActionButton>
       </div>
-      <div className="grid w-full max-w-[372px] grid-cols-1 items-start justify-items-center gap-x-[12px] gap-y-[26px] min-[900px]:max-w-[756px] min-[900px]:grid-cols-2 min-[1580px]:max-w-none min-[1580px]:grid-cols-3 min-[1580px]:justify-items-stretch">
+      <div className="grid w-full max-w-[372px] grid-cols-1 items-start justify-items-center gap-x-[12px] gap-y-[26px] md:gap-y-[64px] xl:gap-y-[72px] md:max-w-[756px] md:grid-cols-2 md:gap-y-[64px] xl:max-w-none xl:grid-cols-3 xl:justify-items-stretch">
         {plans.map((plan) => (
           <HostingPlanCard
             key={plan.id}
@@ -1494,33 +1839,40 @@ function PaymentStep({
   const [autoCheckoutStarted, setAutoCheckoutStarted] = useState(false);
   const checkoutHref = useMemo(() => {
     if (!plan || !draft.kind) return "#";
-    const params = new URLSearchParams({
-      source: "dashboard-hosting",
-      hostingKind: draft.kind,
-      hostingPlan: plan.id,
-      hostingRegion: region.id,
-      repository: repository ? `${repository.owner}/${repository.name}` : "",
-      amount: String(plan.monthlyAmount),
-      currency: plan.currency,
-      return: "hosting",
+    const minecraft = draft.kind === "minecraft" ? buildMinecraftConfig(draft) : null;
+    return buildHostingPaymentHref({
+      kind: draft.kind,
+      planId: plan.id,
+      regionId: region.id,
+      repository: repository ? `${repository.owner}/${repository.name}` : null,
+      minecraft,
       returnPath: HOSTING_STEP_PATH_BY_STEP.payment,
-      fresh: "1",
+      fresh: true,
     });
-    const internalHref = `/payment/vps/${draft.kind}/${plan.id}?${params.toString()}`;
-    if (typeof window === "undefined") return internalHref;
-    return buildBrowserRoutingTargetFromInternalPath(internalHref, {
-      fallbackHost: "pay",
-    }).href;
-  }, [draft.kind, plan, region.id, repository]);
+  }, [
+    draft.kind,
+    draft.minecraftServerName,
+    draft.minecraftServerType,
+    draft.minecraftSubdomain,
+    draft.minecraftVersion,
+    plan,
+    region.id,
+    repository,
+  ]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const approved = params.get("paymentApproved") === "1";
     const orderNumber = params.get("orderNumber") || params.get("order");
-    if (!approved || !orderNumber || !draft.kind || !plan || !repository) return;
+    if (!approved || !orderNumber || !draft.kind || !plan) return;
+    if (draft.kind !== "minecraft" && !repository) return;
 
     setProvisioning(true);
-    setMessage("Pagamento aprovado. Preparando a VPS e permissao de gerenciamento...");
+    setMessage(
+      draft.kind === "minecraft"
+        ? "Pagamento aprovado. Criando servidor Minecraft isolado na VPS..."
+        : "Pagamento aprovado. Preparando a VPS e permissao de gerenciamento...",
+    );
 
     fetch("/api/auth/me/hosting/provision", {
       method: "POST",
@@ -1532,7 +1884,7 @@ function PaymentStep({
         kind: draft.kind,
         planId: plan.id,
         regionId: region.id,
-        repository,
+        ...(draft.kind === "minecraft" ? { minecraft: buildMinecraftConfig(draft) } : { repository }),
       }),
     })
       .then(async (response) => {
@@ -1552,7 +1904,16 @@ function PaymentStep({
         setProvisioning(false);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft.kind, plan?.id, region.id, repository?.id]);
+  }, [
+    draft.kind,
+    draft.minecraftServerName,
+    draft.minecraftServerType,
+    draft.minecraftSubdomain,
+    draft.minecraftVersion,
+    plan?.id,
+    region.id,
+    repository?.id,
+  ]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1570,7 +1931,11 @@ function PaymentStep({
         <SectionHeader
           eyebrow="Pagamento"
           title="Confirme o pagamento da hospedagem"
-          description="O checkout usa o fluxo seguro da Flowdesk. Apos aprovado, a VPS recebe um UUID e o painel de gerenciamento fica liberado."
+          description={
+            draft.kind === "minecraft"
+              ? "O checkout usa o fluxo seguro da Flowdesk. Apos aprovado, o control-plane cria o servidor Minecraft na VPS com mundos e limites isolados."
+              : "O checkout usa o fluxo seguro da Flowdesk. Apos aprovado, a VPS recebe um UUID e o painel de gerenciamento fica liberado."
+          }
         />
         <div className="mt-[22px] grid gap-[12px] md:grid-cols-[minmax(0,360px)]">
           <div className="inline-flex min-h-[52px] w-full items-center justify-center rounded-[14px] bg-white px-[18px] text-[14px] font-bold text-[#111111]">
@@ -1605,19 +1970,32 @@ function SummaryCard({
   region: HostingRegion | null;
   plan: HostingPlan | null;
 }) {
+  const minecraft = draft.kind === "minecraft" ? buildMinecraftConfig(draft) : null;
+  const rows = minecraft
+    ? [
+        ["Tipo", getHostingKindLabel("minecraft")],
+        ["Servidor", minecraft.serverName],
+        ["Versao", minecraft.version],
+        ["Runtime", MINECRAFT_SERVER_TYPES.find((type) => type.id === minecraft.serverType)?.label || "Paper"],
+        ["Subdominio", `${minecraft.subdomain}.mine.flwdesk.com`],
+        ["Regiao", region ? `${region.city}, ${region.country}` : "Nao selecionada"],
+        ["Plano", plan ? `${plan.name} - ${formatMoney(plan.monthlyAmount, plan.currency)}/mes` : "Nao selecionado"],
+      ]
+    : [
+        ["Tipo", draft.kind ? getHostingKindLabel(draft.kind) : "Nao selecionado"],
+        ["GitHub", draft.githubConnected ? "Conectado" : "Pendente"],
+        ["Repositorio", repository ? `${repository.owner}/${repository.name}` : "Nao selecionado"],
+        ["Regiao", region ? `${region.city}, ${region.country}` : "Nao selecionada"],
+        ["Plano", plan ? `${plan.name} - ${formatMoney(plan.monthlyAmount, plan.currency)}/mes` : "Nao selecionado"],
+      ];
+
   return (
     <aside className="rounded-[22px] border border-[#171717] bg-[#080808] p-[18px]">
       <p className="text-[13px] font-bold uppercase tracking-[0.14em] text-[#606060]">
         Resumo
       </p>
       <div className="mt-[14px] space-y-[10px]">
-        {[
-          ["Tipo", draft.kind ? getHostingKindLabel(draft.kind) : "Nao selecionado"],
-          ["GitHub", draft.githubConnected ? "Conectado" : "Pendente"],
-          ["Repositorio", repository ? `${repository.owner}/${repository.name}` : "Nao selecionado"],
-          ["Regiao", region ? `${region.city}, ${region.country}` : "Nao selecionada"],
-          ["Plano", plan ? `${plan.name} - ${formatMoney(plan.monthlyAmount, plan.currency)}/mes` : "Nao selecionado"],
-        ].map(([label, value]) => (
+        {rows.map(([label, value]) => (
           <div key={label} className="rounded-[14px] border border-[#151515] bg-[#0B0B0B] p-[12px]">
             <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#555555]">{label}</p>
             <p className="mt-[5px] break-words text-[13px] font-semibold text-[#DADADA]">{value}</p>
@@ -1668,6 +2046,7 @@ function ReadyStep({
 
   const url = resolveVpsDisplayUrl(vpsCode);
   const panelPath = resolveVpsInternalPath(vpsCode);
+  const isMinecraft = draft.kind === "minecraft";
 
   return (
     <div className="grid gap-[18px] xl:grid-cols-[minmax(0,1fr)_390px]">
@@ -1676,10 +2055,12 @@ function ReadyStep({
           <Rocket className="h-[25px] w-[25px]" />
         </div>
         <h2 className="mt-[18px] text-[28px] font-semibold tracking-[-0.04em] text-[#F1F1F1]">
-          VPS pronta para gerenciamento
+          {isMinecraft ? "Servidor Minecraft pronto" : "VPS pronta para gerenciamento"}
         </h2>
         <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#91B99B]">
-          O identificador foi gerado no formato UUID e o painel de gerenciamento ja esta disponivel para deploys, arquivos, variaveis, console e acompanhamento do runtime.
+          {isMinecraft
+            ? "O servidor foi criado pelo control-plane da Flowdesk com arquivos isolados, limites do plano e dominio de acesso preparados."
+            : "O identificador foi gerado no formato UUID e o painel de gerenciamento ja esta disponivel para deploys, arquivos, variaveis, console e acompanhamento do runtime."}
         </p>
         <div className="mt-[18px] rounded-[16px] border border-[#1D1D1D] bg-[#050505] p-[14px]">
           <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#555555]">URL da VPS</p>
@@ -1690,7 +2071,7 @@ function ReadyStep({
             href={panelPath}
             className="inline-flex h-[44px] items-center justify-center gap-[9px] rounded-[12px] bg-[#0F62FE] px-[16px] text-[13px] font-semibold text-white transition-colors hover:bg-[#2A73FF]"
           >
-            Abrir painel da VPS
+            {isMinecraft ? "Abrir servidor" : "Abrir painel da VPS"}
             <ExternalLink className="h-[16px] w-[16px]" />
           </a>
           <button
@@ -1775,7 +2156,7 @@ export function HostingWorkspace({
     };
 
     if (patch.step && patch.step !== current.step) {
-      setStepDirection(resolveStepDirection(current.step, patch.step));
+      setStepDirection(resolveStepDirection(current.step, patch.step, nextDraft.kind));
       router.push(HOSTING_STEP_PATH_BY_STEP[patch.step], {
         scroll: false,
       });
@@ -1786,7 +2167,7 @@ export function HostingWorkspace({
   }
 
   function reset() {
-    setStepDirection(resolveStepDirection(draftRef.current.step, "kind"));
+    setStepDirection(resolveStepDirection(draftRef.current.step, "kind", draftRef.current.kind));
     draftRef.current = DEFAULT_DRAFT;
     setDraft(DEFAULT_DRAFT);
     router.push(HOSTING_STEP_PATH_BY_STEP.kind, {
@@ -1817,14 +2198,18 @@ export function HostingWorkspace({
   const repository =
     draft.selectedRepository ||
     null;
-  const region = HOSTING_REGIONS.find((item) => item.id === draft.selectedRegionId) || HOSTING_REGIONS[0];
+  const region = resolveHostingRegion(draft.selectedRegionId) || HOSTING_REGIONS[0];
   const plan = draft.kind
     ? HOSTING_PLANS[draft.kind].find((item) => item.id === draft.selectedPlanId) || null
     : null;
 
   function renderCurrentStep() {
     if (draft.step === "kind") return <KindStep draft={draft} onPatch={patchDraft} />;
-    if (draft.step === "github") return <GithubStep draft={draft} onPatch={patchDraft} />;
+    if (draft.step === "github") {
+      return draft.kind === "minecraft"
+        ? <MinecraftSetupStep draft={draft} onPatch={patchDraft} />
+        : <GithubStep draft={draft} onPatch={patchDraft} />;
+    }
     if (draft.step === "repository") return <RepositoryStep draft={draft} onPatch={patchDraft} />;
     if (draft.step === "region") return <RegionStep draft={draft} onPatch={patchDraft} />;
     if (draft.step === "plan") return <PlanStep draft={draft} onPatch={patchDraft} />;
@@ -1880,8 +2265,9 @@ export function HostingWorkspace({
           <button
             type="button"
             onClick={() => {
-              const index = Math.max(0, STEP_ORDER.indexOf(draft.step) - 1);
-              patchDraft({ step: STEP_ORDER[index] });
+              const stepOrder = resolveDraftStepOrder(draft.kind);
+              const index = Math.max(0, stepOrder.indexOf(draft.step) - 1);
+              patchDraft({ step: stepOrder[index] });
             }}
             className="inline-flex h-[40px] items-center justify-center rounded-[12px] border border-[#1B1B1B] bg-[#0D0D0D] px-[14px] text-[13px] font-semibold text-[#AFAFAF] transition-colors hover:border-[#2A2A2A] hover:text-white"
           >

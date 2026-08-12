@@ -38,6 +38,7 @@ export default async function DashboardHostingPage() {
       .from("hosting_projects")
       .select("id, vps_code, payment_order_id, hosting_kind, hosting_plan_id, hosting_region_id, github_owner, github_repo, github_branch, status, runtime_status, billing_status, access_expires_at, refund_access_until, created_at")
       .eq("user_id", session.user.id)
+      .not("status", "in", "(cancelled)")
       .order("created_at", { ascending: false })
       .limit(12);
 

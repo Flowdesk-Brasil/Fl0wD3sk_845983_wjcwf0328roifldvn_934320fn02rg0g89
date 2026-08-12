@@ -837,17 +837,109 @@ export function resolvePaymentRefundSummary(order: {
   };
 }
 
+export function resolveFinancialCategory(order: {
+  plan_code?: string | null;
+  provider_payload?: unknown;
+}): "subscription" | "domain" | "hosting" | "vps" | "addon" | "wallet" | "fee_tax" {
+  if (order.provider_payload && typeof order.provider_payload === "object") {
+    const payload = order.provider_payload as Record<string, unknown>;
+    const context = (payload.purchase_context && typeof payload.purchase_context === "object" && !Array.isArray(payload.purchase_context))
+      ? (payload.purchase_context as Record<string, unknown>)
+      : null;
+
+    if (context && typeof context.type === "string") {
+      const type = context.type.trim().toLowerCase();
+      if (type === "domain") return "domain";
+      if (type === "vps") return "vps";
+      if (type === "hosting") return "hosting";
+      if (type === "addon") return "addon";
+      if (type === "wallet" || type === "credits") return "wallet";
+      if (type === "fee" || type === "tax") return "fee_tax";
+    }
+  }
+
+  const planCode = String(order.plan_code || "").toLowerCase().trim();
+  if (planCode.includes("domain")) return "domain";
+  if (planCode.startsWith("vps") || planCode.includes("-vps") || planCode.includes("vps-")) return "vps";
+  if (planCode.startsWith("hosting") || planCode.includes("-hosting") || planCode.includes("hosting-")) return "hosting";
+  if (planCode.startsWith("addon_") || planCode.includes("addon")) return "addon";
+  if (planCode === "wallet" || planCode === "credits") return "wallet";
+  if (planCode === "fee" || planCode === "tax" || planCode.includes("charge")) return "fee_tax";
+
+  return "subscription";
+}
+
+export async function logLedgerEvent(input: {
+  paymentOrderId: number;
+  order: {
+    plan_code?: string | null;
+    provider_payload?: unknown;
+    status?: string | null;
+    provider_payment_id?: string | null;
+    user_id?: number | null;
+    guild_id?: string | null;
+  };
+  eventType: string;
+  payload?: Record<string, unknown>;
+  actorUserId?: string | null;
+  actorLabel?: string | null;
+}) {
+  try {
+    const supabase = getSupabaseAdminClientOrThrow();
+    const category = resolveFinancialCategory(input.order);
+    
+    const eventPayload = {
+      orderId: input.paymentOrderId,
+      transactionId: input.order.provider_payment_id || null,
+      financialCategory: category,
+      productType: input.order.plan_code || "unknown",
+      status: input.order.status || "unknown",
+      userId: input.order.user_id || null,
+      guildId: input.order.guild_id || null,
+      actorUserId: input.actorUserId || null,
+      actorLabel: input.actorLabel || null,
+      timestamp: new Date().toISOString(),
+      ...(input.payload || {}),
+    };
+
+    await supabase.from("payment_order_events").insert({
+      payment_order_id: input.paymentOrderId,
+      event_type: input.eventType,
+      event_payload: eventPayload,
+    });
+  } catch (error) {
+    console.error("Failed to write ledger event:", error);
+  }
+}
+
 async function createPaymentOrderEventSafe(
   paymentOrderId: number,
   eventType: string,
   eventPayload: Record<string, unknown>,
+  orderRecord?: PaymentRefundOrderRecord,
 ) {
   try {
     const supabase = getSupabaseAdminClientOrThrow();
+    let enrichedPayload = { ...eventPayload };
+    if (orderRecord) {
+      const category = resolveFinancialCategory(orderRecord);
+      enrichedPayload = {
+        orderId: paymentOrderId,
+        transactionId: orderRecord.provider_payment_id || eventPayload.providerPaymentId || null,
+        financialCategory: category,
+        productType: orderRecord.plan_code || "unknown",
+        status: orderRecord.status || "unknown",
+        userId: orderRecord.user_id || null,
+        guildId: orderRecord.guild_id || null,
+        timestamp: new Date().toISOString(),
+        ...eventPayload,
+      };
+    }
+
     const result = await supabase.from("payment_order_events").insert({
       payment_order_id: paymentOrderId,
       event_type: eventType,
-      event_payload: eventPayload,
+      event_payload: enrichedPayload,
     });
     if (result.error) {
       return { ok: false as const, error: result.error.message };
@@ -860,6 +952,7 @@ async function createPaymentOrderEventSafe(
     };
   }
 }
+
 
 async function insertRefundRecordSafe(input: {
   order: PaymentRefundOrderRecord;
@@ -1008,6 +1101,42 @@ export async function applySubscriptionAccessOutcome(input: {
   const supabase = getSupabaseAdminClientOrThrow();
   const nowIso = input.outcome.ledgerEntry.createdAt;
   const action = input.outcome.decision.accessAction;
+  
+  const category = resolveFinancialCategory(input.order);
+  
+  if (category !== "subscription") {
+    if (category === "domain") {
+      await supabase
+        .from("domains")
+        .update({
+          status: "refunded",
+        })
+        .eq("payment_order_id", input.order.id);
+
+      await supabase
+        .from("domain_transfers")
+        .update({
+          status: "cancelled",
+          error_message: "Reembolso automático ou estorno da compra de domínio.",
+        })
+        .eq("payment_order_id", input.order.id);
+    } else if (category === "vps" || category === "hosting") {
+      await supabase
+        .from("hosting_projects")
+        .update({
+          billing_status: "refunded",
+          refunded_at: nowIso,
+          status: "suspended",
+          suspended_at: nowIso,
+          suspension_reason: "payment_refunded",
+        })
+        .eq("payment_order_id", input.order.id);
+    }
+
+    clearPlanStateCacheForUser(input.order.user_id);
+    return { ok: true as const, skippedSubscriptionTouch: true as const };
+  }
+
   const metadataPatch = {
     financialEvent: {
       type: input.outcome.decision.status,
@@ -1170,6 +1299,7 @@ export async function finalizePaymentRefundOutcome<TOrder = unknown>(input: {
           riskScore: input.outcome.ledgerEntry.riskScore,
           riskFlags: input.outcome.ledgerEntry.riskFlags,
         },
+        input.order,
       ),
       insertRefundRecordSafe(input),
       insertRiskFlagSafe(input),

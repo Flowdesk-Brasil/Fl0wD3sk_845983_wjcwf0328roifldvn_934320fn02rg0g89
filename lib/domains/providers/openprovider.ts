@@ -270,6 +270,22 @@ export const openproviderAdapter: DomainProviderAdapter = {
     }
   },
 
+  async updateDomainContact(input) {
+    try {
+      const handle = await createCustomer(input.contact);
+      await openProviderClient.put(`domains/${encodeURIComponent(input.providerDomainId)}`, {
+        owner_handle: handle,
+        admin_handle: handle,
+        tech_handle: handle,
+        billing_handle: handle,
+        comments: `Flowdesk registrant update ${input.idempotencyKey}`,
+      });
+      return { providerContactRef: handle };
+    } catch (error) {
+      throw mapError(error);
+    }
+  },
+
   async startTransferIn(input) {
     const parsed = requireParsed(input.fqdn);
     try {

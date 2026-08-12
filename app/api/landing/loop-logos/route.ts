@@ -1,6 +1,7 @@
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
+import { PUBLIC_LANDING_CACHE_HEADER } from "@/lib/http/publicCache";
 
 const LOOP_DIRECTORY = path.join(process.cwd(), "public", "cdn", "loop");
 const ALLOWED_EXTENSIONS = new Set([
@@ -32,8 +33,14 @@ export async function GET() {
         alt: path.parse(name).name,
       }));
 
-    return NextResponse.json({ logos });
+    return NextResponse.json(
+      { logos },
+      { headers: { "Cache-Control": PUBLIC_LANDING_CACHE_HEADER } },
+    );
   } catch {
-    return NextResponse.json({ logos: [] });
+    return NextResponse.json(
+      { logos: [] },
+      { headers: { "Cache-Control": "public, s-maxage=30, stale-while-revalidate=300" } },
+    );
   }
 }

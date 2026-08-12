@@ -1,9 +1,11 @@
-﻿"use client";
+"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import dynamic from "next/dynamic";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Activity,
+  AlertTriangle,
   ArrowLeft,
   Bot,
   Check,
@@ -28,16 +30,20 @@ import {
   Image as ImageIcon,
   KeyRound,
   Layers,
+  Link2,
+  Lock,
   Loader2,
   LogOut,
   MessageSquare,
   MoreHorizontal,
   Paperclip,
+  Package,
   Pause,
   Pencil,
   Play,
   Plus,
   Power,
+  Puzzle,
   RefreshCw,
   RotateCcw,
   Save,
@@ -48,18 +54,37 @@ import {
   Terminal,
   Trash2,
   Upload,
+  Users,
   UserRound,
   Wifi,
   X,
   ZoomIn,
   ZoomOut,
+  Rocket,
 } from "lucide-react";
 import { useNotifications } from "@/components/notifications/NotificationsProvider";
+import { SensitiveActionModal } from "@/components/account/SensitiveActionModal";
 import { useLiveAccountProfile } from "@/hooks/useLiveAccountProfile";
 import { buildDiscordAuthStartHref, buildLoginHref } from "@/lib/auth/paths";
+import type {
+  VpsFirewallMode,
+  VpsMemberRole,
+  VpsProjectSettings,
+  VpsRuntimeHealth,
+} from "@/lib/hosting/vpsSettings";
 
-type RuntimeStatus = "online" | "offline" | "restarting" | "deploying" | "crashed" | "suspended" | "unknown";
-type TabId = "overview" | "metrics" | "console" | "files" | "deploys" | "env";
+const LazyVpsMetricsChart = dynamic(
+  () => import("@/components/hosting/VpsMetricsChart").then((mod) => mod.VpsMetricsChart),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flowdesk-shimmer h-full w-full rounded-[14px] bg-[#101010]" />
+    ),
+  },
+);
+
+type RuntimeStatus = "online" | "offline" | "starting" | "restarting" | "deploying" | "crashed" | "suspended" | "unknown";
+type TabId = "overview" | "metrics" | "console" | "files" | "library" | "installed" | "minecraft" | "domains" | "deploys" | "env" | "settings";
 type NotifyTone = "success" | "error" | "info";
 type EnvName = "development" | "preview" | "production";
 
@@ -85,6 +110,67 @@ type VpsLog = {
   message?: string;
   metadata?: Record<string, unknown> | null;
   emitted_at?: string;
+};
+
+type MinecraftAddon = {
+  name: string;
+  folder: "mods" | "plugins";
+  type: "mod" | "plugin";
+  path: string;
+  size: number;
+  updatedAt: string;
+};
+
+type MinecraftLibraryHit = {
+  project_id: string;
+  slug?: string;
+  title: string;
+  author?: string;
+  description?: string;
+  icon_url?: string | null;
+  downloads?: number;
+  follows?: number;
+  date_modified?: string;
+  categories?: string[];
+  display_categories?: string[];
+  versions?: string[];
+  project_type?: string;
+};
+
+type MinecraftLibraryVersion = {
+  id: string;
+  name?: string;
+  version_number?: string;
+  date_published?: string;
+  changelog?: string;
+  loaders?: string[];
+  game_versions?: string[];
+  files?: Array<{ url?: string; filename?: string; size?: number; primary?: boolean }>;
+};
+
+type MinecraftLibraryDetail = {
+  project?: {
+    id?: string;
+    slug?: string;
+    title?: string;
+    description?: string;
+    body?: string;
+    icon_url?: string | null;
+    downloads?: number;
+    followers?: number;
+    categories?: string[];
+    gallery?: Array<string | { url?: string; raw_url?: string; title?: string; description?: string; created?: string }>;
+    featured_gallery?: string | { url?: string; raw_url?: string; title?: string; description?: string; created?: string } | null;
+    license?: { id?: string; name?: string };
+    client_side?: string;
+    server_side?: string;
+    source_url?: string;
+    issues_url?: string;
+    wiki_url?: string;
+    discord_url?: string;
+  };
+  versions?: MinecraftLibraryVersion[];
+  latestVersion?: MinecraftLibraryVersion | null;
 };
 
 type VpsDeployment = {
@@ -137,30 +223,37 @@ type VpsFileNode = {
 
 type FileContextMenuState =
   | {
-      kind: "node";
-      x: number;
-      y: number;
-      node: VpsFileNode;
-    }
+    kind: "node";
+    x: number;
+    y: number;
+    node: VpsFileNode;
+  }
   | {
-      kind: "preview";
-      x: number;
-      y: number;
-      node: VpsFileNode;
-    }
+    kind: "preview";
+    x: number;
+    y: number;
+    node: VpsFileNode;
+  }
   | {
-      kind: "empty";
-      x: number;
-      y: number;
-      parentPath: string;
-    }
+    kind: "empty";
+    x: number;
+    y: number;
+    parentPath: string;
+  }
   | null;
+
+type FileContextMenuInput =
+  | { kind: "node"; node: VpsFileNode }
+  | { kind: "preview"; node: VpsFileNode }
+  | { kind: "empty"; parentPath: string };
 
 type FileInlineDraft = {
   parentPath: string;
   type: "file" | "directory";
   value: string;
 } | null;
+
+type DomainDrawerMode = "add" | "edit";
 
 type LoadedVpsFile = {
   name?: string | null;
@@ -220,11 +313,13 @@ export type VpsWorkspaceSnapshot = {
     status: string;
     runtimeStatus: RuntimeStatus;
     runtimeLastSeenAt?: string | null;
+    kind: "site" | "bot" | "minecraft";
     kindLabel: string;
     planName: string;
     planPrice: string;
     planSpecs: string[];
     regionLabel: string;
+    runtimeHealth?: VpsRuntimeHealth;
     runtime: string;
     repository: {
       fullName: string;
@@ -234,11 +329,21 @@ export type VpsWorkspaceSnapshot = {
       private?: boolean | null;
       description?: string | null;
       htmlUrl: string;
+      connected?: boolean;
     };
     paymentLabel: string;
     paymentAmount: string;
     paidAtLabel: string;
     githubConnected?: boolean;
+    minecraft?: {
+      serverName: string;
+      version: string;
+      serverType: string;
+      primaryDomain: string;
+      fixedDomain?: string | null;
+      worlds: string[];
+      limits: Record<string, unknown>;
+    } | null;
   };
   metrics: VpsMetric[];
   logs: VpsLog[];
@@ -246,6 +351,7 @@ export type VpsWorkspaceSnapshot = {
   envVars: VpsEnvVar[];
   actions: Array<Record<string, unknown>>;
   fileTree: VpsFileNode[];
+  settings: VpsProjectSettings;
 };
 
 type VpsWorkspaceProps = {
@@ -286,6 +392,7 @@ const SAVED_PANEL_ACCOUNTS_KEY = "flowdesk_saved_panel_accounts_v1";
 const OFFICIAL_DISCORD_INVITE_URL = "https://discord.gg/flowdesk";
 const FILE_EDITOR_LINE_HEIGHT = 22.1;
 const FILE_EDITOR_OVERSCAN_LINES = 48;
+const METRICS_WINDOW_HOURS = 24;
 
 function accountInitial(name: string, username: string) {
   const base = name || username || "F";
@@ -482,6 +589,7 @@ function languageFromFilePath(path: string) {
     ttf: "font",
     otf: "font",
     zip: "archive",
+    jar: "archive",
     rar: "archive",
     "7z": "archive",
     gz: "archive",
@@ -603,6 +711,10 @@ function isRasterImageFile(file: VpsFileNode | null) {
 
 function isPreviewableImageFile(file: VpsFileNode | null) {
   return isSvgFile(file) || isRasterImageFile(file);
+}
+
+function isJarFile(file: VpsFileNode | null) {
+  return Boolean(file && file.type === "file" && fileExtensionFromPath(file.path) === "jar");
 }
 
 function buildVpsFileRawPath(vpsCode: string, path: string) {
@@ -804,8 +916,13 @@ const TAB_ROUTE_SEGMENTS: Record<TabId, string> = {
   metrics: "metrics",
   console: "console",
   files: "files",
+  library: "library",
+  installed: "installed",
+  minecraft: "minecraft",
+  domains: "domains",
   deploys: "deployments",
   env: "environment-variables",
+  settings: "settings",
 };
 
 const TAB_FROM_ROUTE_SEGMENT: Record<string, TabId> = {
@@ -815,11 +932,20 @@ const TAB_FROM_ROUTE_SEGMENT: Record<string, TabId> = {
   console: "console",
   files: "files",
   arquivos: "files",
+  library: "library",
+  biblioteca: "library",
+  installed: "installed",
+  instalados: "installed",
+  minecraft: "minecraft",
+  domains: "domains",
+  dominios: "domains",
   deployments: "deploys",
   deploys: "deploys",
   "environment-variables": "env",
   env: "env",
   variables: "env",
+  settings: "settings",
+  config: "settings",
 };
 const GITHUB_HANDOFF_STORAGE_KEY = "flowdesk_hosting_github_handoff_v1";
 
@@ -855,6 +981,76 @@ function formatRelative(value?: string | null) {
   return `Updated ${Math.floor(hours / 24)}d ago`;
 }
 
+function formatFileSize(bytes?: number | null) {
+  const value = Number(bytes || 0);
+  if (!Number.isFinite(value) || value <= 0) return "0 KB";
+  if (value >= 1024 * 1024 * 1024) return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(value / 1024))} KB`;
+}
+
+function formatCount(value?: number | null) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return "0";
+  return new Intl.NumberFormat("pt-BR", { notation: number >= 10000 ? "compact" : "standard" }).format(number);
+}
+
+function renderTextBlocks(value?: string | null) {
+  const text = String(value || "").trim();
+  if (!text) return ["Sem conteudo publicado."];
+  return text
+    .replace(/\r/g, "")
+    .split(/\n{2,}/)
+    .map((block) => block.replace(/[#*_>`-]+/g, "").trim())
+    .filter(Boolean)
+    .slice(0, 40);
+}
+
+function libraryGalleryItems(project?: MinecraftLibraryDetail["project"]) {
+  const raw = [
+    project?.featured_gallery,
+    ...(project?.gallery || []),
+  ].filter(Boolean);
+  const seen = new Set<string>();
+  return raw.flatMap((item) => {
+    const gallery = typeof item === "string" ? { url: item, title: "Gallery" } : item || {};
+    const url = gallery.raw_url || gallery.url || "";
+    if (!url || seen.has(url)) return [];
+    seen.add(url);
+    return [{
+      url,
+      title: gallery.title || "Gallery",
+      description: gallery.description || "",
+      created: gallery.created || "",
+    }];
+  });
+}
+
+function libraryProjectLinks(project?: MinecraftLibraryDetail["project"]) {
+  return [
+    ["Modrinth", project?.slug ? `https://modrinth.com/project/${project.slug}` : ""],
+    ["Codigo fonte", project?.source_url || ""],
+    ["Wiki", project?.wiki_url || ""],
+    ["Issues", project?.issues_url || ""],
+    ["Discord", project?.discord_url || ""],
+  ].filter(([, href]) => href);
+}
+
+function minecraftDomainLabel(hostname?: string | null) {
+  const host = String(hostname || "").trim().toLowerCase();
+  const suffix = ".mine.flwdesk.com";
+  return host.endsWith(suffix) ? host.slice(0, -suffix.length) : host;
+}
+
+function minecraftDomainInputValue(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/\/.*$/, "")
+    .replace(/\.mine\.flwdesk\.com$/, "");
+}
+
 function formatUptime(seconds?: number) {
   const value = Math.max(0, Math.floor(seconds || 0));
   const days = Math.floor(value / 86400);
@@ -867,7 +1063,7 @@ function formatUptime(seconds?: number) {
 
 function statusClasses(status: RuntimeStatus) {
   if (status === "online") return "border-[rgba(52,168,83,0.35)] bg-[rgba(52,168,83,0.12)] text-[#9BE7AC]";
-  if (status === "restarting" || status === "deploying") return "border-[rgba(15,98,254,0.35)] bg-[rgba(15,98,254,0.12)] text-[#9BC2FF]";
+  if (status === "starting" || status === "restarting" || status === "deploying") return "border-[rgba(15,98,254,0.35)] bg-[rgba(15,98,254,0.12)] text-[#9BC2FF]";
   if (status === "crashed") return "border-[rgba(255,82,82,0.35)] bg-[rgba(255,82,82,0.12)] text-[#FF9B9B]";
   if (status === "suspended") return "border-[rgba(255,190,80,0.35)] bg-[rgba(255,190,80,0.12)] text-[#FFD28A]";
   return "border-[#242424] bg-[#101010] text-[#9B9B9B]";
@@ -877,6 +1073,7 @@ function statusLabel(status: RuntimeStatus) {
   const labels: Record<RuntimeStatus, string> = {
     online: "Online",
     offline: "Offline",
+    starting: "Iniciando",
     restarting: "Reiniciando",
     deploying: "Deployando",
     crashed: "Crash/Error",
@@ -944,14 +1141,16 @@ function deploymentPrimaryBadge(deploy: VpsDeployment) {
   return { label: "Ready", className: "border-[rgba(52,168,83,0.32)] bg-[rgba(52,168,83,0.1)] text-[#9BE7AC]" };
 }
 
-function deploymentEnvironmentBadges(deploy: VpsDeployment, productionBranch: string) {
+function deploymentEnvironmentBadges(deploy: VpsDeployment, productionBranch: string, isActiveProduction: boolean) {
   const pullRequestUrl = deploymentMetadataString(deploy, "pullRequestUrl");
   const isProduction = deploy.environment === "production" && deploy.branch === productionBranch && !pullRequestUrl;
   const badges = [
     {
       label: isProduction ? "Production" : deploy.environment === "development" ? "Development" : "Preview",
       className: isProduction
-        ? "border-[rgba(15,98,254,0.36)] bg-[#0F62FE] text-white"
+        ? isActiveProduction
+          ? "border-[rgba(15,98,254,0.36)] bg-[#0F62FE] text-white"
+          : "border-[#2A2A2A] bg-[#060606] text-[#808080]"
         : "border-[#2A2A2A] bg-[#060606] text-[#DADADA]",
     },
   ];
@@ -976,6 +1175,46 @@ function deploymentEnvironmentBadges(deploy: VpsDeployment, productionBranch: st
 function metricValue(metric: VpsMetric | null, key: keyof VpsMetric) {
   const value = metric?.[key];
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function formatMetricTime(value?: string | null, options?: { seconds?: boolean }) {
+  if (!value) return "--:--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "--:--";
+  return new Intl.DateTimeFormat("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    ...(options?.seconds ? { second: "2-digit" as const } : {}),
+  }).format(date);
+}
+
+function formatMetricNumber(value: number, suffix: string) {
+  const digits = suffix === "" ? 0 : value >= 100 ? 0 : 1;
+  return `${value.toFixed(digits)}${suffix}`;
+}
+
+function formatMetricsWindowLabel(metrics: VpsMetric[]) {
+  const now = Date.now();
+  const start = new Date(now - (METRICS_WINDOW_HOURS - 1) * 60 * 60 * 1000);
+  return `${formatMetricTime(start.toISOString())} - ${formatMetricTime(new Date(now).toISOString())}`;
+}
+
+function metricAverage(values: number[]) {
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+}
+
+function metricTrend(values: number[]) {
+  if (values.length < 2) return 0;
+  const first = values[0] || 0;
+  const last = values[values.length - 1] || 0;
+  return last - first;
+}
+
+function healthStatusLabel(health?: VpsRuntimeHealth) {
+  if (!health) return "Catalogo";
+  if (health.agentConnected) return "Agente online";
+  if (health.checkedAt) return "Ultimo status salvo";
+  return "Catalogo";
 }
 
 function createDraftRow(overrides: Partial<EnvDraftRow> = {}): EnvDraftRow {
@@ -1065,15 +1304,18 @@ function parseDotEnv(content: string) {
 }
 
 function logFingerprint(log: VpsLog, fallbackIndex = 0) {
-  if (log.id !== undefined && log.id !== null) return `id:${log.id}`;
-  return [
-    "log",
-    log.emitted_at || "",
-    log.level || "",
-    log.source || "",
-    log.message || "",
-    fallbackIndex,
-  ].join(":");
+  // Ignoramos log.id porque a API do daemon gera pseudo-ids (índices), e a lista desliza.
+  const coreStr = `${log.level || ""}:${log.source || ""}:${log.message || ""}`;
+  let hash = 0;
+  for (let i = 0; i < coreStr.length; i++) hash = Math.imul(31, hash) + coreStr.charCodeAt(i) | 0;
+
+  // Para evitar que a exata mesma mensagem repetida de verdade e válida seja comida se já passou de 1 ocorrência
+  // Nós adicionamos o emit_at ou fallbackIndex apenas se a mensagem for curtinha
+  if (coreStr.length < 5) {
+    return `log:${hash}:${log.emitted_at || fallbackIndex}`;
+  }
+
+  return `log:${hash}`;
 }
 
 function mergeUniqueLogs(current: VpsLog[], incoming: VpsLog[]) {
@@ -1087,6 +1329,15 @@ function mergeUniqueLogs(current: VpsLog[], incoming: VpsLog[]) {
     next.push(log);
   });
   return next.slice(-600);
+}
+
+function clampContextMenuPosition(x: number, y: number, width = 196, height = 190) {
+  if (typeof window === "undefined") return { x, y };
+  const margin = 10;
+  return {
+    x: Math.max(margin, Math.min(x, window.innerWidth - width - margin)),
+    y: Math.max(margin, Math.min(y, window.innerHeight - height - margin)),
+  };
 }
 
 function metadataString(metadata: Record<string, unknown> | null | undefined, keys: string[], fallback = "") {
@@ -1126,6 +1377,22 @@ function resolveConsolePath(log: VpsLog) {
 }
 
 function resolveConsoleStatus(log: VpsLog) {
+  const source = String(log.source || log.metadata?.source || "").toLowerCase();
+  const message = String(log.message || "");
+  if (source === "minecraft") {
+    const lowerMessage = message.toLowerCase();
+    const isFatalMinecraftLine =
+      /\[(?:fatal|error)\]/i.test(message) ||
+      lowerMessage.includes("exception in thread") ||
+      lowerMessage.includes("crash report") ||
+      lowerMessage.includes("server crashed") ||
+      lowerMessage.includes("failed to start") ||
+      lowerMessage.includes("falha ao iniciar") ||
+      lowerMessage.includes("start falhou") ||
+      lowerMessage.includes("restart falhou") ||
+      /servidor encerrado com codigo\s+[1-9]/i.test(message);
+    return isFatalMinecraftLine ? 500 : 200;
+  }
   const status = metadataNumber(log.metadata, ["status", "statusCode", "status_code", "code", "httpStatus"]);
   if (status) return Math.round(status);
   if (log.level === "error") return 500;
@@ -1189,24 +1456,6 @@ function buildConsoleEntry(log: VpsLog, index: number, fallbackHost: string) {
     source: log.source || "runtime",
     time: log.emitted_at,
   };
-}
-
-function Sparkline({ values }: { values: number[] }) {
-  const points = values.length ? values : [0];
-  const max = Math.max(1, ...points);
-  const d = points
-    .map((value, index) => {
-      const x = points.length === 1 ? 0 : (index / (points.length - 1)) * 100;
-      const y = 32 - (Math.max(0, value) / max) * 28;
-      return `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
-    })
-    .join(" ");
-
-  return (
-    <svg viewBox="0 0 100 36" className="h-[42px] w-full overflow-visible">
-      <path d={d} fill="none" stroke="#0F62FE" strokeWidth="2.2" strokeLinecap="round" />
-    </svg>
-  );
 }
 
 function SkeletonBar({ className = "" }: { className?: string }) {
@@ -1368,9 +1617,8 @@ function CustomSelect({
                 onChange(option.value);
                 setOpen(false);
               }}
-              className={`flex h-[36px] w-full items-center justify-between rounded-[10px] px-[10px] text-left text-[13px] font-semibold transition-colors ${
-                option.value === value ? "bg-[#171717] text-white" : "text-[#BDBDBD] hover:bg-[#111111] hover:text-white"
-              }`}
+              className={`flex h-[36px] w-full items-center justify-between rounded-[10px] px-[10px] text-left text-[13px] font-semibold transition-colors ${option.value === value ? "bg-[#171717] text-white" : "text-[#BDBDBD] hover:bg-[#111111] hover:text-white"
+                }`}
             >
               {option.label}
               {option.value === value ? <Check className="h-[14px] w-[14px] text-[#0F62FE]" /> : null}
@@ -1571,6 +1819,50 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
   const [envDrawerOpen, setEnvDrawerOpen] = useState(false);
   const [envDrawerMode, setEnvDrawerMode] = useState<"create" | "edit">("create");
   const [envSaving, setEnvSaving] = useState(false);
+  const [settingsSection, setSettingsSection] = useState("general");
+  const [settingsSaving, setSettingsSaving] = useState<string | null>(null);
+  const [minecraftWorlds, setMinecraftWorlds] = useState<string[]>(initialSnapshot.project.minecraft?.worlds || []);
+  const [minecraftWorldName, setMinecraftWorldName] = useState("");
+  const [minecraftBusy, setMinecraftBusy] = useState(false);
+  const [minecraftMods, setMinecraftMods] = useState<MinecraftAddon[]>([]);
+  const [minecraftPlugins, setMinecraftPlugins] = useState<MinecraftAddon[]>([]);
+  const [minecraftAddonsBusy, setMinecraftAddonsBusy] = useState<"mods" | "plugins" | null>(null);
+  const [minecraftLibraryQuery, setMinecraftLibraryQuery] = useState("");
+  const [minecraftLibraryHits, setMinecraftLibraryHits] = useState<MinecraftLibraryHit[]>([]);
+  const [minecraftLibraryBusy, setMinecraftLibraryBusy] = useState(false);
+  const [minecraftLibraryDetail, setMinecraftLibraryDetail] = useState<MinecraftLibraryDetail | null>(null);
+  const [minecraftLibraryDetailTab, setMinecraftLibraryDetailTab] = useState<"description" | "gallery" | "changelog" | "versions">("description");
+  const [minecraftLibraryInstalling, setMinecraftLibraryInstalling] = useState<string | null>(null);
+  const [minecraftCommand, setMinecraftCommand] = useState("");
+  const [settingsHostName, setSettingsHostName] = useState(initialSnapshot.settings.hostName);
+  const [settingsDomainInput, setSettingsDomainInput] = useState("");
+  const [domainSearch, setDomainSearch] = useState("");
+  const [domainDrawerOpen, setDomainDrawerOpen] = useState(false);
+  const [domainDrawerMode, setDomainDrawerMode] = useState<DomainDrawerMode>("add");
+  const [editingDomainHostname, setEditingDomainHostname] = useState<string | null>(null);
+  const [domainInput, setDomainInput] = useState("");
+  const [domainDestination, setDomainDestination] = useState<"production" | "redirect">("production");
+  const [domainRedirectTo, setDomainRedirectTo] = useState("");
+  const [domainRedirectStatus, setDomainRedirectStatus] = useState("307");
+  const [settingsMemberEmail, setSettingsMemberEmail] = useState("");
+  const [settingsMemberRole, setSettingsMemberRole] = useState<VpsMemberRole>("viewer");
+  const [settingsIpInput, setSettingsIpInput] = useState("");
+  const [settingsIpMode, setSettingsIpMode] = useState<VpsFirewallMode>("allow");
+  const [settingsRepoQuery, setSettingsRepoQuery] = useState("");
+  const [settingsRepos, setSettingsRepos] = useState<Array<{
+    id: string;
+    owner: string;
+    name: string;
+    fullName?: string;
+    branch: string;
+    description?: string | null;
+    language?: string | null;
+    htmlUrl?: string;
+    private?: boolean;
+  }>>([]);
+  const [settingsReposLoading, setSettingsReposLoading] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [githubReconnectOpen, setGithubReconnectOpen] = useState(!initialSnapshot.project.githubConnected);
   const [githubReconnectBusy, setGithubReconnectBusy] = useState(false);
   const [githubReconnectSsoUrl, setGithubReconnectSsoUrl] = useState<string | null>(null);
@@ -1596,12 +1888,22 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
   const fileContextMenuRef = useRef<HTMLDivElement | null>(null);
   const autoSyncedFilesRef = useRef(false);
   const autoSyncedDeploymentsRef = useRef(false);
+  const autoSyncedLogsRef = useRef(false);
   const initializedExplorerRef = useRef(false);
   const logsClearedAtRef = useRef<number | null>(null);
   const currentAccount = useLiveAccountProfile(snapshot.account);
   const latestMetric = snapshot.metrics[snapshot.metrics.length - 1] || null;
   const shouldShowTabSkeleton = Boolean(pendingTab && pendingTab === tab);
-  const centeredMainTabs = tab === "overview" || tab === "metrics" || tab === "env";
+  const isMinecraftProject = snapshot.project.kind === "minecraft";
+  const minecraftServerType = snapshot.project.minecraft?.serverType?.toLowerCase() || "vanilla";
+  const minecraftAddonKind = ["paper", "purpur", "spigot", "bukkit", "folia"].includes(minecraftServerType)
+    ? "plugins"
+    : ["fabric", "quilt", "forge", "neoforge"].includes(minecraftServerType)
+      ? "mods"
+      : "vanilla";
+  const supportsMinecraftAddons = isMinecraftProject && minecraftAddonKind !== "vanilla";
+  const minecraftMaxPlayers = Number(snapshot.project.minecraft?.limits?.maxPlayers || 20);
+  const centeredMainTabs = tab === "overview" || tab === "metrics" || tab === "library" || tab === "installed" || tab === "minecraft" || tab === "domains" || tab === "env" || tab === "settings";
   const flowQuotaPercent = Math.min(100, Math.max(0, (flowChatQuota.used / Math.max(1, flowChatQuota.limit)) * 100));
   const flowQuotaResetLabel = flowChatQuota.blockedUntil || flowChatQuota.resetAt
     ? formatDate(flowChatQuota.blockedUntil || flowChatQuota.resetAt)
@@ -1611,6 +1913,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
   const highlightedLanguage = useMemo(() => resolveHighlightLanguage(selectedFile), [selectedFile]);
   const selectedFileIsSvg = useMemo(() => isSvgFile(selectedFile), [selectedFile]);
   const selectedFileIsRasterImage = useMemo(() => isRasterImageFile(selectedFile), [selectedFile]);
+  const selectedFileIsJar = useMemo(() => isJarFile(selectedFile), [selectedFile]);
   const selectedFileIsPreviewableImage = selectedFileIsSvg || selectedFileIsRasterImage;
   const showingImagePreview = selectedFileIsPreviewableImage && filePreviewMode === "preview";
   const selectedFileRawPath = selectedFile
@@ -1726,6 +2029,21 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     });
   }, [router, snapshot.project.vpsCode, tab]);
 
+  useEffect(() => {
+    if (!isMinecraftProject) return;
+    if (tab !== "env" && tab !== "deploys" && tab !== "minecraft" && (supportsMinecraftAddons || (tab !== "library" && tab !== "installed"))) return;
+    const nextTab = tab === "library" || tab === "installed" ? "overview" : "files";
+    setTab(nextTab);
+    setPendingTab(nextTab);
+    router.replace(buildVpsTabPath(snapshot.project.vpsCode, nextTab), {
+      scroll: false,
+    });
+  }, [isMinecraftProject, router, snapshot.project.vpsCode, supportsMinecraftAddons, tab]);
+
+  useEffect(() => {
+    setSettingsHostName(snapshot.settings.hostName);
+  }, [snapshot.settings.hostName]);
+
   const startExplorerResize = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
     const startX = event.clientX;
@@ -1781,8 +2099,14 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     const events = new EventSource(`/api/auth/me/hosting/vps/${snapshot.project.vpsCode}/stream`);
     events.addEventListener("snapshot", (event) => {
       const payload = JSON.parse((event as MessageEvent).data) as {
-        project?: { runtime_status?: RuntimeStatus; runtime_last_seen_at?: string | null };
+        project?: {
+          runtime_status?: RuntimeStatus;
+          runtime_last_seen_at?: string | null;
+          status?: string;
+          runtimeHealth?: VpsRuntimeHealth;
+        };
         metric?: VpsMetric | null;
+        metricsHistory?: VpsMetric[];
         logs?: VpsLog[];
         actions?: Array<Record<string, unknown>>;
       };
@@ -1797,8 +2121,10 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
           ...current.project,
           runtimeStatus: payload.project?.runtime_status || current.project.runtimeStatus,
           runtimeLastSeenAt: payload.project?.runtime_last_seen_at || current.project.runtimeLastSeenAt,
+          status: payload.project?.status || current.project.status,
+          runtimeHealth: payload.project?.runtimeHealth || current.project.runtimeHealth,
         },
-        metrics: payload.metric ? [...current.metrics.slice(-47), payload.metric] : current.metrics,
+        metrics: payload.metricsHistory?.length && current.metrics.length === 0 ? [...payload.metricsHistory, ...(payload.metric ? [payload.metric] : [])].slice(-48) : (payload.metric ? [...current.metrics, payload.metric].slice(-48) : current.metrics),
         logs: logsPaused ? current.logs : mergeUniqueLogs(current.logs, incomingLogs),
         actions: payload.actions || current.actions,
       }));
@@ -1808,12 +2134,6 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     });
     return () => events.close();
   }, [logsPaused, notify, snapshot.project.vpsCode]);
-
-  useEffect(() => {
-    if (!logsPaused) {
-      consoleRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-    }
-  }, [logsPaused, snapshot.logs.length, tab]);
 
   useEffect(() => {
     if (!flowChatOpen) return;
@@ -1860,12 +2180,25 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
   );
 
   const visibleConsoleEntries = useMemo(
-    () =>
-      consoleEntries.filter((entry) =>
+    () => {
+      const filtered = consoleEntries.filter((entry) =>
         consoleStatusFilter === "all" ? true : entry.family === consoleStatusFilter,
-      ).reverse(),
-    [consoleEntries, consoleStatusFilter],
+      );
+      return isMinecraftProject ? filtered : filtered.reverse();
+    },
+    [consoleEntries, consoleStatusFilter, isMinecraftProject],
   );
+
+  useEffect(() => {
+    if (!isMinecraftProject || logsPaused) return;
+    window.requestAnimationFrame(() => {
+      if (!consoleRef.current) return;
+      consoleRef.current.scrollTo({
+        top: consoleRef.current.scrollHeight,
+        behavior: "smooth",
+      });
+    });
+  }, [isMinecraftProject, logsPaused, visibleConsoleEntries.length]);
 
   const consoleStats = useMemo(() => {
     const stats = { all: consoleEntries.length, "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0, other: 0 };
@@ -1888,7 +2221,6 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     [selectedConsoleEntry?.key, visibleConsoleEntries],
   );
   const latestDeployment = snapshot.deployments[0] || null;
-  const recentActions = snapshot.actions.slice(-5).reverse();
   const metricSummary = {
     cpu: metricValue(latestMetric, "cpu_percent"),
     ram: metricValue(latestMetric, "ram_percent"),
@@ -1900,6 +2232,12 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     appRam: metricValue(latestMetric, "app_ram_mb"),
     appCpu: metricValue(latestMetric, "app_cpu_percent"),
   };
+  const runtimeHealth = snapshot.project.runtimeHealth;
+  const primaryDomain = snapshot.settings.domains.find((domain) => domain.primary) || snapshot.settings.domains[0] || null;
+  const readyDeploymentCount = snapshot.deployments.filter((deploy) => deploymentStatusFamily(deploy.status) === "ready").length;
+  const failedDeploymentCount = snapshot.deployments.filter((deploy) => deploymentStatusFamily(deploy.status) === "failed").length;
+  const errorConsoleCount = consoleStats["5xx"] + consoleStats["4xx"];
+  const metricsWindowLabel = formatMetricsWindowLabel(snapshot.metrics);
 
   const deploymentBranchOptions = useMemo(() => {
     const branches = Array.from(new Set(snapshot.deployments.map((deploy) => deploy.branch).filter(Boolean))).sort();
@@ -1969,8 +2307,9 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     });
   }, [envFilter, envSearch, envSort, snapshot.envVars]);
 
-  async function refreshConsoleLogs() {
+  async function refreshConsoleLogs(options?: { silent?: boolean } | ReactMouseEvent) {
     if (logsRefreshing) return;
+    const silent = Boolean(options && "silent" in options && options.silent);
     setLogsRefreshing(true);
     try {
       const params = new URLSearchParams();
@@ -1982,9 +2321,9 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
       const payload = await response.json() as { ok?: boolean; logs?: VpsLog[]; message?: string };
       if (!response.ok || !payload.ok) throw new Error(payload.message || "Nao consegui atualizar os logs.");
       setSnapshot((current) => ({ ...current, logs: payload.logs || [] }));
-      notify("success", "Console atualizado.");
+      if (!silent) notify("success", "Console atualizado.");
     } catch (error) {
-      notify("error", error instanceof Error ? error.message : "Falha ao atualizar logs.");
+      if (!silent) notify("error", error instanceof Error ? error.message : "Falha ao atualizar logs.");
     } finally {
       setLogsRefreshing(false);
     }
@@ -2031,31 +2370,56 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     }
   }
 
-  async function runAction(action: "start" | "stop" | "restart" | "sync") {
+  async function runAction(action: "start" | "stop" | "restart" | "sync" | "deploy" | "kill" | "reset-world" | "command", extraBody: Record<string, unknown> = {}) {
     if (busyAction) return;
     setBusyAction(action);
+    const optimisticStatus =
+      action === "start" ? "starting"
+        : action === "restart" ? "restarting"
+          : action === "stop" || action === "kill" || action === "reset-world" ? "offline"
+            : null;
     setSnapshot((current) => ({
       ...current,
       project: {
         ...current.project,
-        runtimeStatus: action === "restart" ? "restarting" : current.project.runtimeStatus,
+        runtimeStatus: optimisticStatus || current.project.runtimeStatus,
       },
     }));
     try {
       const response = await fetch(`/api/auth/me/hosting/vps/${snapshot.project.vpsCode}/action`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({ action, ...extraBody }),
       });
-      const payload = await response.json() as { ok?: boolean; message?: string; status?: RuntimeStatus };
+      const payload = await response.json() as { ok?: boolean; message?: string; status?: RuntimeStatus; runtimeHealth?: VpsRuntimeHealth };
       if (!response.ok || !payload.ok) throw new Error(payload.message || "Falha na acao.");
       if (payload.status) {
         setSnapshot((current) => ({
           ...current,
-          project: { ...current.project, runtimeStatus: payload.status || current.project.runtimeStatus },
+          project: {
+            ...current.project,
+            runtimeStatus: payload.status || current.project.runtimeStatus,
+            runtimeHealth: payload.runtimeHealth ? {
+              agentConnected: true,
+              regionLabel: payload.runtimeHealth.regionLabel || current.project.runtimeHealth?.regionLabel || current.project.regionLabel,
+              latencyMs: payload.runtimeHealth.latencyMs ?? current.project.runtimeHealth?.latencyMs ?? null,
+              checkedAt: payload.runtimeHealth.checkedAt || new Date().toISOString(),
+              source: "agent",
+              publicIp: payload.runtimeHealth.publicIp || current.project.runtimeHealth?.publicIp || null,
+              host: payload.runtimeHealth.host || current.project.runtimeHealth?.host || null,
+            } : current.project.runtimeHealth,
+          },
         }));
       }
       notify("success", `Acao ${action} enviada para a VPS.`);
+      if (isMinecraftProject && ["start", "restart", "stop", "kill", "reset-world", "command"].includes(action)) {
+        [1200, 4500, 9000, 18000, 32000].forEach((delay) => {
+          window.setTimeout(() => {
+            void refreshMinecraftWorlds();
+            void refreshConsoleLogs({ silent: true });
+          }, delay);
+        });
+      }
     } catch (error) {
       notify("error", error instanceof Error ? error.message : "Falha operacional.");
     } finally {
@@ -2133,6 +2497,366 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     }
   }, [filesBusy, notify, snapshot.project.vpsCode]);
 
+  async function saveProjectSettings(action: string, body: Record<string, unknown> = {}) {
+    if (settingsSaving) return null;
+    setSettingsSaving(action);
+    try {
+      const response = await fetch(`/api/auth/me/hosting/vps/${snapshot.project.vpsCode}/settings`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ action, ...body }),
+      });
+      const payload = await response.json().catch(() => ({})) as {
+        ok?: boolean;
+        message?: string;
+        settings?: VpsProjectSettings;
+        project?: {
+          repository?: Partial<VpsWorkspaceSnapshot["project"]["repository"]>;
+        };
+      };
+      if (!response.ok || !payload.ok || !payload.settings) {
+        throw new Error(payload.message || "Nao foi possivel salvar settings.");
+      }
+      setSnapshot((current) => {
+        const nextSettings = payload.settings || current.settings;
+        const nextPrimaryDomain = nextSettings.domains.find((domain) => domain.primary)?.hostname
+          || nextSettings.domains[0]?.hostname
+          || "";
+        return {
+          ...current,
+          settings: nextSettings,
+          project: {
+            ...current.project,
+            repository: {
+              ...current.project.repository,
+              ...(payload.project?.repository || {}),
+            },
+            minecraft: current.project.minecraft
+              ? {
+                  ...current.project.minecraft,
+                  primaryDomain: nextPrimaryDomain,
+                  fixedDomain: current.project.minecraft.fixedDomain || nextPrimaryDomain || undefined,
+                }
+              : current.project.minecraft,
+          },
+        };
+      });
+      notify("success", payload.message || "Settings salvas.", "Settings");
+      return payload.settings;
+    } catch (error) {
+      notify("error", error instanceof Error ? error.message : "Falha ao salvar settings.", "Settings");
+      return null;
+    } finally {
+      setSettingsSaving(null);
+    }
+  }
+
+  async function refreshMinecraftWorlds() {
+    if (snapshot.project.kind !== "minecraft" || minecraftBusy) return;
+    setMinecraftBusy(true);
+    try {
+      const response = await fetch(`/api/auth/me/hosting/vps/${snapshot.project.vpsCode}/minecraft/worlds`, {
+        cache: "no-store",
+      });
+      const payload = await response.json().catch(() => ({})) as {
+        ok?: boolean;
+        minecraft?: {
+          status?: RuntimeStatus;
+          worlds?: string[];
+          limits?: Record<string, unknown>;
+          domains?: { primary?: string; fixed?: string };
+        };
+        message?: string;
+      };
+      if (!response.ok || !payload.ok) throw new Error(payload.message || "Nao foi possivel carregar mundos.");
+      const worlds = payload.minecraft?.worlds || [];
+      setMinecraftWorlds(worlds);
+      setSnapshot((current) => {
+        const settingsPrimaryDomain = current.settings.domains.find((domain) => domain.primary)?.hostname
+          || current.settings.domains[0]?.hostname
+          || "";
+        return {
+          ...current,
+          project: {
+            ...current.project,
+            runtimeStatus: payload.minecraft?.status || current.project.runtimeStatus,
+            minecraft: current.project.minecraft
+              ? {
+                  ...current.project.minecraft,
+                  worlds,
+                  limits: payload.minecraft?.limits || current.project.minecraft.limits,
+                  primaryDomain: settingsPrimaryDomain || payload.minecraft?.domains?.primary || current.project.minecraft.primaryDomain,
+                  fixedDomain: payload.minecraft?.domains?.fixed || current.project.minecraft.fixedDomain || settingsPrimaryDomain || undefined,
+                }
+              : current.project.minecraft,
+          },
+        };
+      });
+    } catch (error) {
+      notify("error", error instanceof Error ? error.message : "Falha ao carregar Minecraft.", "Minecraft");
+    } finally {
+      setMinecraftBusy(false);
+    }
+  }
+
+  async function createMinecraftWorld() {
+    const name = minecraftWorldName.trim();
+    if (!name || minecraftBusy) return;
+    setMinecraftBusy(true);
+    try {
+      const response = await fetch(`/api/auth/me/hosting/vps/${snapshot.project.vpsCode}/minecraft/worlds`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const payload = await response.json().catch(() => ({})) as {
+        ok?: boolean;
+        minecraft?: { worlds?: string[] };
+        message?: string;
+      };
+      if (!response.ok || !payload.ok) throw new Error(payload.message || "Nao foi possivel criar mundo.");
+      setMinecraftWorlds(payload.minecraft?.worlds || []);
+      setMinecraftWorldName("");
+      notify("success", "Mundo Minecraft criado.", "Minecraft");
+    } catch (error) {
+      notify("error", error instanceof Error ? error.message : "Falha ao criar mundo.", "Minecraft");
+    } finally {
+      setMinecraftBusy(false);
+    }
+  }
+
+  async function refreshMinecraftAddons(type: "mods" | "plugins", options?: { silent?: boolean }) {
+    if (snapshot.project.kind !== "minecraft" || minecraftAddonsBusy) return;
+    setMinecraftAddonsBusy(type);
+    try {
+      const response = await fetch(`/api/auth/me/hosting/vps/${snapshot.project.vpsCode}/minecraft/addons?type=${type}`, {
+        cache: "no-store",
+      });
+      const payload = await response.json().catch(() => ({})) as {
+        ok?: boolean;
+        addons?: MinecraftAddon[];
+        message?: string;
+      };
+      if (!response.ok || !payload.ok) throw new Error(payload.message || "Nao foi possivel carregar addons.");
+      if (type === "mods") setMinecraftMods(payload.addons || []);
+      else setMinecraftPlugins(payload.addons || []);
+      if (!options?.silent) {
+        notify("success", type === "mods" ? "Mods atualizados." : "Plugins atualizados.", "Minecraft");
+      }
+    } catch (error) {
+      if (!options?.silent) {
+        notify("error", error instanceof Error ? error.message : "Falha ao carregar addons.", "Minecraft");
+      }
+    } finally {
+      setMinecraftAddonsBusy(null);
+    }
+  }
+
+  async function searchMinecraftLibrary(options?: { query?: string; silent?: boolean }) {
+    if (!supportsMinecraftAddons || minecraftLibraryBusy) return;
+    const query = options?.query ?? minecraftLibraryQuery;
+    setMinecraftLibraryBusy(true);
+    try {
+      const params = new URLSearchParams({
+        q: query.trim(),
+        limit: "20",
+        index: query.trim() ? "relevance" : "downloads",
+      });
+      const response = await fetch(`/api/auth/me/hosting/vps/${snapshot.project.vpsCode}/minecraft/library?${params.toString()}`, {
+        cache: "no-store",
+      });
+      const payload = await response.json().catch(() => ({})) as {
+        ok?: boolean;
+        hits?: MinecraftLibraryHit[];
+        message?: string;
+      };
+      if (!response.ok || !payload.ok) throw new Error(payload.message || "Nao foi possivel carregar a biblioteca.");
+      setMinecraftLibraryHits(payload.hits || []);
+      setMinecraftLibraryDetail(null);
+      if (!options?.silent) notify("success", "Biblioteca atualizada.", "Minecraft");
+    } catch (error) {
+      if (!options?.silent) notify("error", error instanceof Error ? error.message : "Falha na biblioteca.", "Minecraft");
+    } finally {
+      setMinecraftLibraryBusy(false);
+    }
+  }
+
+  async function openMinecraftLibraryDetail(projectId: string) {
+    if (!supportsMinecraftAddons || minecraftLibraryBusy) return;
+    setMinecraftLibraryBusy(true);
+    try {
+      const response = await fetch(`/api/auth/me/hosting/vps/${snapshot.project.vpsCode}/minecraft/library?projectId=${encodeURIComponent(projectId)}`, {
+        cache: "no-store",
+      });
+      const payload = await response.json().catch(() => ({})) as MinecraftLibraryDetail & { ok?: boolean; message?: string };
+      if (!response.ok || !payload.ok) throw new Error(payload.message || "Nao foi possivel abrir o projeto.");
+      setMinecraftLibraryDetail(payload);
+      setMinecraftLibraryDetailTab("description");
+    } catch (error) {
+      notify("error", error instanceof Error ? error.message : "Falha ao abrir projeto.", "Minecraft");
+    } finally {
+      setMinecraftLibraryBusy(false);
+    }
+  }
+
+  async function installMinecraftLibraryVersion(version?: MinecraftLibraryVersion | null) {
+    const selected = version || minecraftLibraryDetail?.latestVersion;
+    const file = selected?.files?.find((item) => item.primary && item.url && item.filename)
+      || selected?.files?.find((item) => item.url && item.filename);
+    if (!selected?.id || !file?.url || !file.filename || minecraftLibraryInstalling) return;
+    setMinecraftLibraryInstalling(selected.id);
+    try {
+      const response = await fetch(`/api/auth/me/hosting/vps/${snapshot.project.vpsCode}/minecraft/library`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "install",
+          url: file.url,
+          filename: file.filename,
+          project: minecraftLibraryDetail?.project || {},
+          version: selected,
+        }),
+      });
+      const payload = await response.json().catch(() => ({})) as { ok?: boolean; addons?: MinecraftAddon[]; message?: string };
+      if (!response.ok || !payload.ok) throw new Error(payload.message || "Nao foi possivel instalar.");
+      if (minecraftAddonKind === "mods") setMinecraftMods(payload.addons || []);
+      if (minecraftAddonKind === "plugins") setMinecraftPlugins(payload.addons || []);
+      notify("success", "Arquivo instalado. Reinicie o servidor para carregar.", "Minecraft");
+    } catch (error) {
+      notify("error", error instanceof Error ? error.message : "Falha ao instalar.", "Minecraft");
+    } finally {
+      setMinecraftLibraryInstalling(null);
+    }
+  }
+
+  async function deleteMinecraftInstalled(addon: MinecraftAddon) {
+    if (minecraftLibraryInstalling) return;
+    setMinecraftLibraryInstalling(addon.path);
+    try {
+      const response = await fetch(`/api/auth/me/hosting/vps/${snapshot.project.vpsCode}/minecraft/library`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete", name: addon.name, folder: addon.folder, type: addon.folder }),
+      });
+      const payload = await response.json().catch(() => ({})) as { ok?: boolean; addons?: MinecraftAddon[]; message?: string };
+      if (!response.ok || !payload.ok) throw new Error(payload.message || "Nao foi possivel remover.");
+      if (addon.folder === "mods") setMinecraftMods(payload.addons || []);
+      else setMinecraftPlugins(payload.addons || []);
+      notify("success", "Addon removido.", "Minecraft");
+    } catch (error) {
+      notify("error", error instanceof Error ? error.message : "Falha ao remover addon.", "Minecraft");
+    } finally {
+      setMinecraftLibraryInstalling(null);
+    }
+  }
+
+  async function sendMinecraftConsoleCommand() {
+    const command = minecraftCommand.trim();
+    if (!command) return;
+    await runAction("command", { command });
+    setMinecraftCommand("");
+    void refreshConsoleLogs();
+  }
+
+  function openAddDomainDrawer() {
+    setDomainDrawerMode("add");
+    setEditingDomainHostname(null);
+    setDomainInput("");
+    setDomainDestination("production");
+    setDomainRedirectTo("");
+    setDomainRedirectStatus("307");
+    setDomainDrawerOpen(true);
+  }
+
+  function openEditDomainDrawer(domain: VpsProjectSettings["domains"][number]) {
+    setDomainDrawerMode("edit");
+    setEditingDomainHostname(domain.hostname);
+    setDomainInput(isMinecraftProject ? minecraftDomainLabel(domain.hostname) : domain.hostname);
+    setDomainDestination(domain.redirectTo ? "redirect" : "production");
+    setDomainRedirectTo(domain.redirectTo || "");
+    setDomainRedirectStatus(String(domain.redirectStatus || 307));
+    setDomainDrawerOpen(true);
+  }
+
+  async function submitDomainDrawer() {
+    const hostname = isMinecraftProject
+      ? minecraftDomainInputValue(domainInput)
+      : domainInput.trim().toLowerCase();
+    if (!hostname) return;
+    if (domainDestination === "redirect" && !domainRedirectTo.trim()) {
+      notify("error", "Informe o dominio de destino do redirect.", "Domains");
+      return;
+    }
+
+    const saved = await saveProjectSettings(domainDrawerMode === "edit" ? "update_domain" : "add_domain", {
+      id: editingDomainHostname,
+      hostname,
+      redirectTo: domainDestination === "redirect" ? domainRedirectTo.trim().toLowerCase() : null,
+      redirectStatus: domainDestination === "redirect" ? Number(domainRedirectStatus) : null,
+    });
+    if (!saved) return;
+    setDomainDrawerOpen(false);
+    setDomainInput("");
+    setEditingDomainHostname(null);
+  }
+
+  const filteredDomains = useMemo(() => {
+    const query = domainSearch.trim().toLowerCase();
+    if (!query) return snapshot.settings.domains;
+    return snapshot.settings.domains.filter((domain) =>
+      `${domain.hostname} ${domain.status} ${domain.source}`.toLowerCase().includes(query),
+    );
+  }, [domainSearch, snapshot.settings.domains]);
+
+  async function loadAvailableRepositories() {
+    if (settingsReposLoading) return;
+    setSettingsReposLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (settingsRepoQuery.trim()) params.set("q", settingsRepoQuery.trim());
+      const response = await fetch(`/api/auth/me/hosting/github/repositories?${params.toString()}`, {
+        cache: "no-store",
+      });
+      const payload = await response.json().catch(() => ({})) as {
+        ok?: boolean;
+        message?: string;
+        repositories?: typeof settingsRepos;
+      };
+      if (!response.ok || !payload.ok) throw new Error(payload.message || "Nao foi possivel carregar repositorios.");
+      setSettingsRepos(payload.repositories || []);
+    } catch (error) {
+      notify("error", error instanceof Error ? error.message : "Falha ao carregar repositorios.", "GitHub");
+    } finally {
+      setSettingsReposLoading(false);
+    }
+  }
+
+  async function deleteProjectWithProof(securityProof: string | null) {
+    setSettingsSaving("delete_project");
+    try {
+      const response = await fetch(`/api/auth/me/hosting/vps/${snapshot.project.vpsCode}/settings`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ securityProof }),
+      });
+      const payload = await response.json().catch(() => ({})) as {
+        ok?: boolean;
+        message?: string;
+        redirectUrl?: string;
+      };
+      if (!response.ok || !payload.ok) throw new Error(payload.message || "Nao foi possivel deletar a VPS.");
+      notify("success", payload.message || "Projeto removido.", "Settings");
+      window.location.assign(payload.redirectUrl || "/dashboard/hosting");
+    } catch (error) {
+      notify("error", error instanceof Error ? error.message : "Falha ao deletar a VPS.", "Settings");
+    } finally {
+      setSettingsSaving(null);
+      setDeleteModalOpen(false);
+    }
+  }
+
   const completeGithubReconnect = useCallback(async (handoffToken?: string | null) => {
     const response = await fetch("/api/auth/me/hosting/github/complete", {
       method: "POST",
@@ -2200,7 +2924,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     );
     try {
       window.localStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
-    } catch {}
+    } catch { }
 
     const popup = window.open(
       installTarget || "/api/auth/github/hosting/start",
@@ -2304,6 +3028,26 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
   }, [syncDeployments, tab]);
 
   useEffect(() => {
+    if (!isMinecraftProject) return;
+    if (tab === "installed" && supportsMinecraftAddons) void refreshMinecraftAddons(minecraftAddonKind as "mods" | "plugins", { silent: true });
+    if (tab === "library" && supportsMinecraftAddons && !minecraftLibraryHits.length) void searchMinecraftLibrary({ silent: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load addon lists only when opening each tab.
+  }, [isMinecraftProject, tab]);
+
+  useEffect(() => {
+    if (tab === "overview" && !autoSyncedLogsRef.current) {
+      autoSyncedLogsRef.current = true;
+      void refreshConsoleLogs();
+    }
+  }, [tab]); // Cannot add refreshConsoleLogs here or it might loop if not careful, wait, it's defined inside component and changes. Actually let's just use empty dependency or ignore.
+
+  useEffect(() => {
+    if (tab !== "settings" || settingsRepos.length || settingsReposLoading) return;
+    void loadAvailableRepositories();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once when the settings tab opens.
+  }, [tab]);
+
+  useEffect(() => {
     if (initializedExplorerRef.current || !snapshot.fileTree.length) return;
     initializedExplorerRef.current = true;
     setExpandedFilePaths(new Set(snapshot.fileTree.filter((node) => node.type === "directory").map((node) => node.path)));
@@ -2332,7 +3076,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     setSelectedFile(node);
     setLoadedFile(null);
     setFileDirty(false);
-    setFilePreviewMode(isPreviewableImageFile(node) ? "preview" : "code");
+    setFilePreviewMode(isPreviewableImageFile(node) || isJarFile(node) ? "preview" : "code");
     setImageZoom(1);
     setFileEditorViewport((current) => ({ ...current, scrollTop: 0, scrollLeft: 0 }));
     if (fileEditorTextareaRef.current) {
@@ -2343,6 +3087,11 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     if (highlightedCodeRef.current) {
       highlightedCodeRef.current.scrollTop = 0;
       highlightedCodeRef.current.scrollLeft = 0;
+    }
+    if (isJarFile(node)) {
+      setLoadedFile({ path: node.path, name: node.name, content: "", encoding: "binary", size: null });
+      setFileContent("");
+      return;
     }
     const response = await fetch(`/api/auth/me/hosting/vps/${snapshot.project.vpsCode}/files?path=${encodeURIComponent(node.path)}`);
     const payload = await response.json().catch(() => ({})) as { file?: LoadedVpsFile; message?: string };
@@ -2521,25 +3270,21 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     setRenamingFilePath(null);
     if (!name || name === node.name) return;
     const targetPath = joinFilePath(parentFilePath(node.path), name);
-    setSnapshot((current) => ({
-      ...current,
-      fileTree: updateFileTree(current.fileTree, (nodes) => renameNodeInTree(nodes, node.path, targetPath)),
-    }));
-    if (selectedFile?.path === node.path) {
-      setSelectedFile({ ...node, name, path: targetPath, language: node.type === "file" ? languageFromFilePath(targetPath) : null });
-      setLoadedFile((current) => current ? { ...current, name, path: targetPath } : current);
-      setFilePreviewMode(isPreviewableImageFile({ ...node, name, path: targetPath, language: node.type === "file" ? languageFromFilePath(targetPath) : null }) ? "preview" : "code");
-    }
+    const nextSelectedFile = { ...node, name, path: targetPath, language: node.type === "file" ? languageFromFilePath(targetPath) : null };
     const ok = await runFileOperation({ action: "rename", path: node.path, targetPath, type: node.type });
-    if (ok) notify("success", "Renomeado com sucesso.", "Arquivos");
+    if (!ok) return;
+    if (selectedFile?.path === node.path) {
+      setSelectedFile(nextSelectedFile);
+      setLoadedFile((current) => current ? { ...current, name, path: targetPath } : current);
+      setFilePreviewMode(isPreviewableImageFile(nextSelectedFile) ? "preview" : "code");
+    }
+    notify("success", "Renomeado com sucesso.", "Arquivos");
   }
 
   async function deleteFileNode(node: VpsFileNode) {
     setFileContextMenu(null);
-    setSnapshot((current) => ({
-      ...current,
-      fileTree: updateFileTree(current.fileTree, (nodes) => removeNodeFromTree(nodes, node.path)),
-    }));
+    const ok = await runFileOperation({ action: "delete", path: node.path, type: node.type });
+    if (!ok) return;
     if (selectedFile?.path === node.path || selectedFile?.path.startsWith(`${node.path}/`)) {
       setSelectedFile(null);
       setLoadedFile(null);
@@ -2548,25 +3293,21 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
       setFilePreviewMode("code");
       setImageZoom(1);
     }
-    const ok = await runFileOperation({ action: "delete", path: node.path, type: node.type });
-    if (ok) notify("success", `${node.type === "directory" ? "Pasta" : "Arquivo"} removido.`, "Arquivos");
+    notify("success", `${node.type === "directory" ? "Pasta" : "Arquivo"} removido.`, "Arquivos");
   }
 
   async function moveFileNode(path: string, targetParentPath: string) {
     const node = findNodeInTree(snapshot.fileTree, path);
     if (!node || node.path === targetParentPath || targetParentPath.startsWith(`${node.path}/`)) return;
     const targetPath = joinFilePath(targetParentPath, node.name);
-    setSnapshot((current) => ({
-      ...current,
-      fileTree: updateFileTree(current.fileTree, (nodes) => moveNodeInTree(nodes, path, targetParentPath)),
-    }));
+    const ok = await runFileOperation({ action: "move", path, targetPath, type: node.type });
+    if (!ok) return;
     if (selectedFile?.path === path) {
       setSelectedFile({ ...node, path: targetPath });
       setLoadedFile((current) => current ? { ...current, path: targetPath } : current);
       setFilePreviewMode(isPreviewableImageFile({ ...node, path: targetPath }) ? "preview" : "code");
     }
-    const ok = await runFileOperation({ action: "move", path, targetPath, type: node.type });
-    if (ok) notify("success", "Movido com sucesso.", "Arquivos");
+    notify("success", "Movido com sucesso.", "Arquivos");
   }
 
   function copyFileNode(node: VpsFileNode) {
@@ -2606,6 +3347,16 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
       () => notify("success", "Caminho copiado.", "Arquivos"),
       () => notify("error", "Nao consegui copiar.", "Arquivos"),
     );
+  }
+
+  function openFileContextMenu(
+    event: ReactMouseEvent,
+    menu: FileContextMenuInput,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    const position = clampContextMenuPosition(event.clientX, event.clientY);
+    setFileContextMenu({ ...menu, ...position });
   }
 
   function addFlowChatImages(files: FileList | null) {
@@ -2857,8 +3608,20 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     { id: "metrics", label: "Metricas", icon: <Cpu className="h-[15px] w-[15px]" /> },
     { id: "console", label: "Console", icon: <Terminal className="h-[15px] w-[15px]" /> },
     { id: "files", label: "Arquivos", icon: <Folder className="h-[15px] w-[15px]" /> },
-    { id: "deploys", label: "Deploys", icon: <GitBranch className="h-[15px] w-[15px]" /> },
-    { id: "env", label: "Env", icon: <KeyRound className="h-[15px] w-[15px]" /> },
+    ...(supportsMinecraftAddons
+      ? [
+        { id: "library" as const, label: "Biblioteca", icon: <Puzzle className="h-[15px] w-[15px]" /> },
+        { id: "installed" as const, label: "Instalados", icon: <Package className="h-[15px] w-[15px]" /> },
+      ]
+      : []),
+    { id: "domains", label: "Domains", icon: <Globe2 className="h-[15px] w-[15px]" /> },
+    ...(isMinecraftProject
+      ? []
+      : [
+        { id: "deploys" as const, label: "Deploys", icon: <GitBranch className="h-[15px] w-[15px]" /> },
+        { id: "env" as const, label: "Env", icon: <KeyRound className="h-[15px] w-[15px]" /> },
+      ]),
+    { id: "settings", label: "Configurações", icon: <Cog className="h-[15px] w-[15px]" /> },
   ];
 
   const normalizedSidebarSearch = normalizeSearchText(sidebarSearchText);
@@ -2867,9 +3630,9 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     normalizeSearchText(`${item.label} ${item.id}`).includes(normalizedSidebarSearch),
   );
   const actionItems: Array<{ id: "start" | "restart" | "stop" | "sync"; label: string; icon: typeof Play }> = [
-    { id: "start", label: "Iniciar VPS", icon: Play },
-    { id: "restart", label: "Reiniciar VPS", icon: RotateCcw },
-    { id: "stop", label: "Parar VPS", icon: Power },
+    { id: "start", label: isMinecraftProject ? "Iniciar servidor" : "Iniciar VPS", icon: Play },
+    { id: "restart", label: isMinecraftProject ? "Reiniciar servidor" : "Reiniciar VPS", icon: RotateCcw },
+    { id: "stop", label: isMinecraftProject ? "Parar servidor" : "Parar VPS", icon: Power },
     { id: "sync", label: "Verificar status", icon: RefreshCw },
   ];
   const filteredActionItems = actionItems.filter((item) =>
@@ -2877,6 +3640,13 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     normalizeSearchText(`${item.label} ${item.id}`).includes(normalizedSidebarSearch),
   );
   const showSidebarEmptyState = Boolean(normalizedSidebarSearch && !filteredSidebarTabs.length && !filteredActionItems.length && !normalizeSearchText("Dashboard voltar hospedagem").includes(normalizedSidebarSearch));
+  const minecraftAddonTabType = supportsMinecraftAddons ? minecraftAddonKind as "mods" | "plugins" : null;
+  const minecraftAddonList = minecraftAddonTabType === "mods" ? minecraftMods : minecraftAddonTabType === "plugins" ? minecraftPlugins : [];
+  const minecraftAddonLimit = minecraftAddonTabType === "mods"
+    ? snapshot.project.minecraft?.limits?.maxMods
+    : minecraftAddonTabType === "plugins"
+      ? snapshot.project.minecraft?.limits?.maxPlugins
+      : null;
 
   const filteredTree = useMemo(() => {
     if (!fileQuery.trim()) return snapshot.fileTree;
@@ -2890,6 +3660,32 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     };
     return snapshot.fileTree.map(filterNode).filter((item): item is VpsFileNode => Boolean(item));
   }, [fileQuery, snapshot.fileTree]);
+
+  if (snapshot.project.status === "provisioning" || snapshot.project.status === "pending_provision" || snapshot.project.status === "pending_payment") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#050505] p-6 font-sans">
+        <div className="w-full max-w-[500px] rounded-[24px] border border-[#171717] bg-[#0A0A0A] p-[38px] text-center shadow-[0_24px_80px_rgba(0,0,0,0.28)]">
+          <span className="mx-auto flex h-[64px] w-[64px] items-center justify-center rounded-[20px] border border-[#202020] bg-[#111111] text-white">
+            <Rocket className="h-[28px] w-[28px]" />
+          </span>
+          <h2 className="mt-[24px] text-[24px] font-semibold tracking-[-0.04em] text-white">
+            Preparando sua VPS...
+          </h2>
+          <p className="mt-[12px] text-[14px] leading-[1.6] text-[#8E8E8E]">
+            Estamos alocando os recursos na regiao escolhida, configurando seu ambiente isolado e integrando o GitHub.
+            <br /><br />
+            Volte aqui em cerca de <strong className="text-white">3 minutos</strong>. Voce tambem sera avisado por e-mail assim que a maquina estiver online e pronta para uso.
+          </p>
+          <div className="mt-[36px] flex flex-col items-center justify-center gap-[14px]">
+            <Loader2 className="h-[24px] w-[24px] animate-spin text-[#0F62FE]" />
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#555555]">
+              Provisionando infraestrutura
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <main className="flowdesk-vps-ui min-h-screen bg-[#050505] text-[#F1F1F1]">
@@ -2958,11 +3754,10 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                         key={item.id}
                         type="button"
                         onClick={() => navigateToTab(item.id)}
-                        className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-all duration-200 ${
-                          isActive
+                        className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-all duration-200 ${isActive
                             ? "bg-[#1E1E1E] text-[#F0F0F0]"
                             : "text-[#B5B5B5] hover:bg-[#111111] hover:text-[#E3E3E3]"
-                        }`}
+                          }`}
                       >
                         <span className={`inline-flex h-[22px] w-[22px] items-center justify-center ${isActive ? "text-[#F0F0F0]" : "text-[#8A8A8A] group-hover:text-[#DADADA]"}`}>
                           {item.icon}
@@ -3015,7 +3810,9 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                 <div className="px-[2px]">
                   <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#555555]">Repositorio</p>
                   <p className="mt-[6px] truncate font-mono text-[12px] font-semibold text-[#DADADA]" title={snapshot.project.repository.fullName}>{snapshot.project.repository.fullName}</p>
-                  <p className="mt-[4px] truncate text-[12px] text-[#777777]" title={snapshot.project.regionLabel}>{snapshot.project.regionLabel}</p>
+                  <p className="mt-[4px] truncate text-[12px] text-[#777777]" title={runtimeHealth?.regionLabel || snapshot.project.regionLabel}>
+                    {runtimeHealth?.regionLabel || snapshot.project.regionLabel}{runtimeHealth?.latencyMs ? ` - ${runtimeHealth.latencyMs}ms` : ""}
+                  </p>
                 </div>
                 <div className="mt-[14px] border-t border-[#151515] pt-[14px]">
                   <div ref={profileMenuRef} className="relative">
@@ -3046,9 +3843,8 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                                     key={resolveSavedAccountKey(account)}
                                     type="button"
                                     onClick={() => handleSwitchSavedAccount(account)}
-                                    className={`flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-colors ${
-                                      isCurrent ? "bg-[#141414] text-[#ECECEC]" : "text-[#A7A7A7] hover:bg-[#111111] hover:text-[#E6E6E6]"
-                                    }`}
+                                    className={`flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-colors ${isCurrent ? "bg-[#141414] text-[#ECECEC]" : "text-[#A7A7A7] hover:bg-[#111111] hover:text-[#E6E6E6]"
+                                      }`}
                                   >
                                     <AccountAvatar avatarUrl={account.avatarUrl} displayName={account.displayName} username={account.username} className="h-[36px] w-[36px] shrink-0" />
                                     <span className="min-w-0 flex-1">
@@ -3110,7 +3906,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
               </div>
             </div>
           </div>
-                </aside>
+        </aside>
 
         <section className="flex h-screen min-w-0 flex-1 flex-col overflow-hidden">
           <div className="flex min-h-[64px] items-center justify-between gap-[12px] border-b border-[#171717] bg-[#080808] px-[14px] lg:px-[22px]">
@@ -3135,9 +3931,8 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                     key={item.id}
                     type="button"
                     onClick={() => navigateToTab(item.id)}
-                    className={`flex h-[34px] w-[34px] items-center justify-center rounded-[10px] ${
-                      tab === item.id ? "bg-[#0F62FE] text-white" : "bg-[#101010] text-[#9B9B9B]"
-                    }`}
+                    className={`flex h-[34px] w-[34px] items-center justify-center rounded-[10px] ${tab === item.id ? "bg-[#0F62FE] text-white" : "bg-[#101010] text-[#9B9B9B]"
+                      }`}
                     aria-label={item.label}
                   >
                     {item.icon}
@@ -3154,1247 +3949,2336 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
             ) : (
               <div className={centeredMainTabs ? "mx-auto w-full max-w-[1180px]" : ""}>
 
-        {tab === "overview" ? (
-          <section className="grid gap-[14px]">
-            <div className="overflow-hidden rounded-[24px] border border-[#171717] bg-[#070707]">
-              <div className="grid lg:grid-cols-[minmax(0,1.2fr)_360px]">
-                <div className="border-b border-[#171717] p-[18px] lg:border-b-0 lg:border-r">
-                  <div className="flex flex-wrap items-start justify-between gap-[14px]">
-                    <div className="min-w-0">
-                      <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#606060]">Instancia Windows</p>
-                      <h2 className="mt-[8px] truncate text-[28px] font-semibold tracking-[-0.055em] text-white" title={snapshot.project.repository.fullName}>
-                        {snapshot.project.repository.name}
-                      </h2>
-                      <p className="mt-[8px] max-w-[760px] text-[13px] leading-[1.6] text-[#8A8A8A]">
-                        Deploy conectado ao GitHub, provisionado em {snapshot.project.regionLabel}. O painel acompanha status,
-                        uso de recursos, logs e arquivos sincronizados da VPS.
-                      </p>
-                    </div>
-                    <span className={`inline-flex items-center gap-[8px] rounded-full border px-[11px] py-[7px] text-[11px] font-bold uppercase tracking-[0.13em] ${statusClasses(snapshot.project.runtimeStatus)}`}>
-                      <span className="h-[7px] w-[7px] rounded-full bg-current" />
-                      {statusLabel(snapshot.project.runtimeStatus)}
-                    </span>
-                  </div>
-                  <div className="mt-[18px] grid gap-[10px] md:grid-cols-3">
-                    {[
-                      ["Runtime", snapshot.project.runtime],
-                      ["Branch", snapshot.project.repository.branch],
-                      ["Ultimo contato", formatDate(snapshot.project.runtimeLastSeenAt)],
-                    ].map(([label, value]) => (
-                      <div key={label} className="rounded-[16px] border border-[#151515] bg-[#0B0B0B] p-[12px]">
-                        <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-[#555555]">{label}</p>
-                        <p className="mt-[7px] truncate text-[13px] font-semibold text-[#E7E7E7]" title={value}>{value}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div className="p-[18px]">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#606060]">Plano atual</p>
-                  <p className="mt-[9px] text-[22px] font-semibold tracking-[-0.04em] text-white">{snapshot.project.planName}</p>
-                  <p className="mt-[4px] text-[13px] text-[#8A8A8A]">{snapshot.project.planPrice}</p>
-                  <div className="mt-[14px] space-y-[8px]">
-                    {snapshot.project.planSpecs.slice(0, 4).map((spec) => (
-                      <div key={spec} className="flex items-center gap-[8px] text-[12px] text-[#CFCFCF]">
-                        <Check className="h-[14px] w-[14px] text-[#64D987]" />
-                        <span className="truncate">{spec}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="mt-[16px] rounded-[14px] border border-[#151515] bg-[#050505] p-[12px]">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#555555]">Pagamento</p>
-                    <p className="mt-[7px] truncate text-[13px] font-semibold text-[#E7E7E7]">{snapshot.project.paymentLabel}</p>
-                    <p className="mt-[4px] text-[12px] text-[#777777]">{snapshot.project.paidAtLabel}</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid gap-[14px] md:grid-cols-2 xl:grid-cols-4">
-              {([
-                ["CPU", `${metricSummary.cpu.toFixed(1)}%`, metricSummary.cpu, Cpu],
-                ["RAM", `${metricSummary.ram.toFixed(1)}%`, metricSummary.ram, Database],
-                ["Disco", `${metricSummary.disk.toFixed(1)}%`, metricSummary.disk, HardDrive],
-                ["Uptime", formatUptime(metricSummary.uptime), 72, Wifi],
-              ] as Array<[string, string, number, typeof Cpu]>).map(([label, value, width, Icon]) => (
-                <article key={String(label)} className="min-h-[128px] rounded-[20px] border border-[#171717] bg-[#080808] p-[16px]">
-                  <div className="flex items-center justify-between">
-                    <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#606060]">{String(label)}</p>
-                    <Icon className="h-[17px] w-[17px] text-[#0F62FE]" />
-                  </div>
-                  <p className="mt-[12px] text-[24px] font-semibold tracking-[-0.03em] text-white">{String(value)}</p>
-                  <div className="mt-[14px] h-[5px] overflow-hidden rounded-full bg-[#111111]">
-                    <div className="h-full rounded-full bg-[#0F62FE]" style={{ width: `${Math.min(100, Number(width) || 0)}%` }} />
-                  </div>
-                  <p className="mt-[9px] text-[11px] text-[#666666]">{latestMetric ? "Atualizado em tempo real" : "Aguardando primeira amostra"}</p>
-                </article>
-              ))}
-            </div>
-
-            <div className="grid gap-[14px] xl:grid-cols-[minmax(0,1fr)_380px]">
-              <article className="rounded-[22px] border border-[#171717] bg-[#080808] p-[16px]">
-                <div className="flex items-center justify-between gap-[12px]">
-                  <div>
-                    <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#606060]">Atividade recente</p>
-                    <h3 className="mt-[7px] text-[18px] font-semibold tracking-[-0.035em] text-white">Runtime e automacoes</h3>
-                  </div>
-                  <Activity className="h-[19px] w-[19px] text-[#0F62FE]" />
-                </div>
-                <div className="mt-[16px] space-y-[8px]">
-                  {recentActions.length ? recentActions.map((action, index) => (
-                    <div key={`${String(action.id || index)}-${String(action.created_at || index)}`} className="grid grid-cols-[28px_minmax(0,1fr)_86px] items-center gap-[10px] rounded-[14px] border border-[#151515] bg-[#0B0B0B] p-[10px]">
-                      <span className="flex h-[28px] w-[28px] items-center justify-center rounded-[10px] bg-[#111111] text-[#9BC2FF]">
-                        <RefreshCw className="h-[14px] w-[14px]" />
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block truncate text-[13px] font-semibold text-[#E7E7E7]">{String(action.action || "acao")}</span>
-                        <span className="mt-[3px] block truncate text-[11px] text-[#666666]">{String(action.message || "Evento operacional registrado")}</span>
-                      </span>
-                      <span className="truncate text-right text-[11px] font-semibold text-[#8A8A8A]">{String(action.status || "ok")}</span>
-                    </div>
-                  )) : (
-                    <div className="rounded-[16px] border border-[#151515] bg-[#0B0B0B] p-[14px] text-[13px] text-[#777777]">
-                      Nenhuma acao operacional recente registrada.
-                    </div>
-                  )}
-                </div>
-              </article>
-
-              <article className="rounded-[22px] border border-[#171717] bg-[#080808] p-[16px]">
-                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#606060]">Deploy atual</p>
-                <h3 className="mt-[7px] truncate text-[18px] font-semibold tracking-[-0.035em] text-white">
-                  {latestDeployment?.commit_message || "Aguardando deploy"}
-                </h3>
-                <div className="mt-[14px] space-y-[10px] text-[12px]">
-                  {[
-                    ["Status", latestDeployment?.status || "sem deploy"],
-                    ["Ambiente", latestDeployment?.environment || "production"],
-                    ["Branch", latestDeployment?.branch || snapshot.project.repository.branch],
-                    ["Commit", latestDeployment?.commit_sha ? latestDeployment.commit_sha.slice(0, 8) : "pendente"],
-                  ].map(([label, value]) => (
-                    <div key={label} className="flex items-center justify-between gap-[14px] border-b border-[#121212] pb-[9px] last:border-b-0 last:pb-0">
-                      <span className="text-[#777777]">{label}</span>
-                      <span className="truncate font-mono font-semibold text-[#DADADA]">{value}</span>
-                    </div>
-                  ))}
-                </div>
-              </article>
-            </div>
-          </section>
-        ) : null}
-
-        {tab === "metrics" ? (
-          <section className="grid gap-[14px]">
-            <div className="rounded-[24px] border border-[#171717] bg-[#070707] p-[18px]">
-              <div className="flex flex-wrap items-start justify-between gap-[14px]">
-                <div>
-                  <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#606060]">Observabilidade</p>
-                  <h2 className="mt-[8px] text-[26px] font-semibold tracking-[-0.055em] text-white">Metricas em tempo real</h2>
-                  <p className="mt-[8px] max-w-[720px] text-[13px] leading-[1.6] text-[#8A8A8A]">
-                    Janela com as ultimas {snapshot.metrics.length || 0} amostras da VPS, incluindo sistema, rede e consumo da aplicacao.
-                  </p>
-                </div>
-                <div className="grid min-w-[280px] grid-cols-2 gap-[8px]">
-                  {[
-                    ["Download", `${metricSummary.rx.toFixed(1)} kb/s`],
-                    ["Upload", `${metricSummary.tx.toFixed(1)} kb/s`],
-                    ["Processos", metricSummary.processes.toFixed(0)],
-                    ["App RAM", `${metricSummary.appRam.toFixed(1)} MB`],
-                  ].map(([label, value]) => (
-                    <div key={label} className="rounded-[14px] border border-[#151515] bg-[#0B0B0B] p-[10px]">
-                      <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#555555]">{label}</p>
-                      <p className="mt-[6px] truncate text-[13px] font-semibold text-[#E7E7E7]">{value}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="grid gap-[14px] lg:grid-cols-2">
-              {([
-                ["CPU", "cpu_percent", "%", Cpu, "Carga do processador da VPS Windows"],
-                ["RAM", "ram_percent", "%", Database, "Memoria total usada pelo ambiente"],
-                ["Disco", "disk_percent", "%", HardDrive, "Uso do volume NVMe provisionado"],
-                ["Download", "network_rx_kbps", "kb/s", Download, "Entrada de rede observada"],
-                ["Upload", "network_tx_kbps", "kb/s", Wifi, "Saida de rede observada"],
-                ["Processos", "process_count", "", Activity, "Processos ativos do runtime"],
-              ] as Array<[string, keyof VpsMetric, string, typeof Cpu, string]>).map(([label, key, suffix, Icon, description]) => {
-                const values = snapshot.metrics.map((item) => metricValue(item, key as keyof VpsMetric));
-                const current = values[values.length - 1] || 0;
-                const peak = Math.max(0, ...values);
-                const average = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
-                return (
-                  <article key={String(key)} className="overflow-hidden rounded-[22px] border border-[#171717] bg-[#080808]">
-                    <div className="flex items-start justify-between gap-[12px] border-b border-[#151515] p-[16px]">
-                      <div className="min-w-0">
-                        <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#606060]">{String(label)}</p>
-                        <p className="mt-[7px] truncate text-[12px] text-[#777777]">{String(description)}</p>
-                      </div>
-                      <span className="inline-flex h-[38px] w-[38px] items-center justify-center rounded-[14px] border border-[#171717] bg-[#0D0D0D]">
-                        <Icon className="h-[19px] w-[19px] text-[#0F62FE]" />
-                      </span>
-                    </div>
-                    <div className="p-[16px]">
-                      <div className="flex items-end justify-between gap-[12px]">
-                        <p className="text-[28px] font-semibold tracking-[-0.045em] text-white">{current.toFixed(suffix === "" ? 0 : 1)}{String(suffix)}</p>
-                        <div className="text-right text-[11px] text-[#777777]">
-                          <p>Pico <span className="font-mono text-[#DADADA]">{peak.toFixed(suffix === "" ? 0 : 1)}{String(suffix)}</span></p>
-                          <p className="mt-[3px]">Media <span className="font-mono text-[#DADADA]">{average.toFixed(suffix === "" ? 0 : 1)}{String(suffix)}</span></p>
-                        </div>
-                      </div>
-                      <div className="mt-[16px] rounded-[16px] border border-[#111111] bg-[#050505] px-[10px] py-[12px]">
-                        <Sparkline values={values} />
-                      </div>
-                      <div className="mt-[12px] h-[5px] overflow-hidden rounded-full bg-[#111111]">
-                        <div className="h-full rounded-full bg-[#0F62FE]" style={{ width: `${Math.min(100, suffix === "" ? (current / Math.max(1, peak)) * 100 : current)}%` }} />
-                      </div>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          </section>
-        ) : null}
-
-        {tab === "console" ? (
-          <section className={`grid h-[calc(100vh-136px)] min-h-[620px] w-full overflow-hidden bg-[#050505] ${
-            selectedConsoleEntry ? "xl:grid-cols-[minmax(0,1fr)_352px]" : "xl:grid-cols-1"
-          }`}>
-            <div className="flex min-h-0 min-w-0 flex-col">
-              <div className="flex flex-col gap-[10px] border-b border-[#171717] bg-[#070707] p-[10px] lg:flex-row lg:items-center">
-                <div className="flex min-w-0 flex-1 items-center gap-[10px] rounded-[10px] border border-[#1B1B1B] bg-[#030303] px-[12px]">
-                  <Search className="h-[15px] w-[15px] text-[#777777]" />
-                  <input value={logQuery} onChange={(event) => setLogQuery(event.target.value)} placeholder="Search logs..." className="h-[38px] min-w-0 flex-1 bg-transparent text-[12px] text-white outline-none placeholder:text-[#555555]" />
-                </div>
-                <div className="flex flex-wrap items-center gap-[8px]">
-                  <CustomSelect value={logLevel} onChange={setLogLevel} options={[...LOG_OPTIONS]} className="w-[154px]" />
-                  <button onClick={() => setLogsPaused((current) => !current)} className={`inline-flex h-[38px] items-center gap-[8px] rounded-[10px] border px-[12px] text-[12px] font-semibold transition-all ${logsPaused ? "border-[#292929] bg-[#111111] text-[#DADADA]" : "border-[#1E3425] bg-[#07140B] text-[#9BE7AC] shadow-[0_0_22px_rgba(52,168,83,0.08)]"}`}>
-                    {logsPaused ? <Pause className="h-[14px] w-[14px]" /> : <span className="h-[7px] w-[7px] rounded-full bg-[#34A853] shadow-[0_0_0_4px_rgba(52,168,83,0.12)]" />}
-                    {logsPaused ? "Live desativado" : "Live ativo"}
-                  </button>
-                  <button onClick={refreshConsoleLogs} disabled={logsRefreshing} className="inline-flex h-[38px] w-[38px] items-center justify-center rounded-[10px] border border-[#1B1B1B] bg-[#0B0B0B] text-[#DADADA] transition-colors hover:border-[#2A2A2A] disabled:cursor-not-allowed disabled:opacity-60" title="Atualizar logs">
-                    <RefreshCw className={`h-[15px] w-[15px] ${logsRefreshing ? "animate-spin" : ""}`} />
-                  </button>
-                  <button onClick={exportConsoleLogs} className="inline-flex h-[38px] w-[38px] items-center justify-center rounded-[10px] border border-[#1B1B1B] bg-[#0B0B0B] text-[#DADADA] transition-colors hover:border-[#2A2A2A]" title="Exportar logs">
-                    <Upload className="h-[15px] w-[15px]" />
-                  </button>
-                  <button onClick={() => void clearConsoleLogs()} disabled={logsClearing} className="inline-flex h-[38px] w-[38px] items-center justify-center rounded-[10px] border border-[#1B1B1B] bg-[#0B0B0B] text-[#DADADA] transition-colors hover:border-[#2A2A2A] disabled:cursor-not-allowed disabled:opacity-60" title="Limpar console">
-                    {logsClearing ? <Loader2 className="h-[15px] w-[15px] animate-spin" /> : <Trash2 className="h-[15px] w-[15px]" />}
-                  </button>
-                </div>
-              </div>
-
-              <div className="border-b border-[#151515] bg-[#050505] px-[10px] py-[8px]">
-                <div className="flex flex-wrap items-center gap-[6px]">
-                  {CONSOLE_STATUS_OPTIONS.map((option) => (
-                    <button
-                      key={option.value}
-                      onClick={() => setConsoleStatusFilter(option.value)}
-                      className={`inline-flex h-[28px] items-center gap-[6px] rounded-[8px] border px-[9px] text-[11px] font-semibold transition-colors ${
-                        consoleStatusFilter === option.value ? "border-[#2C2C2C] bg-[#171717] text-white" : "border-[#171717] bg-[#0A0A0A] text-[#8A8A8A] hover:text-white"
-                      }`}
-                    >
-                      {option.label}
-                      <span className="font-mono text-[10px] text-[#5E5E5E]">{consoleStats[option.value as keyof typeof consoleStats]}</span>
-                    </button>
-                  ))}
-                </div>
-                <div className="mt-[10px] h-[36px] border-t border-[#101010]">
-                  <div className="relative h-full">
-                    {consoleEntries.length ? consoleEntries.slice(-80).map((entry, index, list) => {
-                      const left = list.length <= 1 ? 0 : (index / (list.length - 1)) * 100;
-                      const height = entry.family === "5xx" ? 26 : entry.family === "4xx" ? 20 : 14;
-                      return (
-                        <button
-                          key={`timeline-${entry.key}`}
-                          onClick={() => {
-                            setSelectedConsoleKey(entry.key);
-                            setConsoleStatusFilter(entry.family);
-                          }}
-                          className={`absolute bottom-[2px] w-[4px] rounded-t-[2px] ${entry.family === "5xx" ? "bg-[#FF8E8E]" : entry.family === "4xx" ? "bg-[#FFD28A]" : "bg-[#4A4A4A]"}`}
-                          style={{ left: `${left}%`, height }}
-                          title={`${entry.status} ${entry.path}`}
-                        />
-                      );
-                    }) : null}
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-[104px_1fr_1.4fr_minmax(220px,2fr)] gap-[12px] border-b border-[#171717] bg-[#070707] px-[12px] py-[9px] text-[11px] font-semibold text-[#6A6A6A]">
-                <span>Status</span>
-                <span>Host</span>
-                <span>Request</span>
-                <span>Messages</span>
-              </div>
-              <div ref={consoleRef} className="h-0 min-h-0 flex-1 overflow-x-auto overflow-y-auto bg-[#030303] font-mono text-[12px] [scrollbar-color:#2A2A2A_#050505] [scrollbar-gutter:stable] [scrollbar-width:thin]">
-                {visibleConsoleEntries.length ? visibleConsoleEntries.map((entry) => (
-                  <button
-                    key={entry.key}
-                    onClick={() => setSelectedConsoleKey(entry.key)}
-                    className={`grid w-full min-w-[980px] grid-cols-[104px_1fr_1.4fr_minmax(220px,2fr)] gap-[12px] border-b border-[#0D0D0D] px-[12px] py-[7px] text-left transition-colors hover:bg-[#141414] ${
-                      selectedConsoleEntry?.key === entry.key ? "bg-[#191919]" : "odd:bg-[#060606] even:bg-[#0A0A0A]"
-                    }`}
-                  >
-                    <span className="flex items-center gap-[7px] whitespace-nowrap">
-                      <span className="text-[#7A7A7A]">{formatConsoleClock(entry.time)}</span>
-                      <span className={statusClassName(entry.status)}>{entry.status}</span>
-                    </span>
-                    <span className="truncate font-semibold text-[#EFEFEF]">{entry.host}</span>
-                    <span className="flex min-w-0 items-center gap-[7px]">
-                      <span className="rounded-[4px] border border-[#2A2A2A] px-[4px] py-[1px] text-[10px] text-[#BDBDBD]">{entry.method}</span>
-                      <span className="truncate text-[#F4F4F4]">{entry.path}</span>
-                    </span>
-                    <span className="truncate text-[#BDBDBD]">{entry.message}</span>
-                  </button>
-                )) : (
-                  <div className="flex h-full items-center justify-center text-[#666666]">Nenhum log encontrado para os filtros atuais.</div>
-                )}
-              </div>
-            </div>
-
-            {selectedConsoleEntry ? (
-              <aside className="min-h-0 overflow-auto border-t border-[#171717] bg-[#070707] xl:border-l xl:border-t-0">
-                <div className="p-[14px]">
-                  <div className="flex items-start justify-between gap-[10px]">
-                    <div className="min-w-0">
-                      <div className="flex min-w-0 items-center gap-[8px]">
-                        <span className="rounded-[4px] border border-[#2A2A2A] px-[5px] py-[2px] font-mono text-[10px] text-white">{selectedConsoleEntry.method}</span>
-                        <span className="truncate font-mono text-[13px] font-semibold text-white">{selectedConsoleEntry.path}</span>
-                        <span className={`font-mono text-[12px] font-bold ${statusClassName(selectedConsoleEntry.status)}`}>{selectedConsoleEntry.status}</span>
-                      </div>
-                      <p className="mt-[8px] text-[11px] text-[#777777]">Request started</p>
-                      <p className="mt-[2px] font-mono text-[11px] text-[#DADADA]">{formatDate(selectedConsoleEntry.time)}</p>
-                    </div>
-                    <div className="flex items-center gap-[6px]">
-                      <button
-                        onClick={() => {
-                          const previous = visibleConsoleEntries[Math.max(0, selectedConsoleIndex - 1)];
-                          if (previous) setSelectedConsoleKey(previous.key);
-                        }}
-                        disabled={selectedConsoleIndex <= 0}
-                        className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-[8px] border border-[#1B1B1B] text-[#AAAAAA] hover:text-white disabled:cursor-not-allowed disabled:opacity-35"
-                        title="Evento anterior"
-                      >
-                        <ChevronDown className="h-[14px] w-[14px] rotate-180" />
-                      </button>
-                      <button
-                        onClick={() => {
-                          const next = visibleConsoleEntries[Math.min(visibleConsoleEntries.length - 1, selectedConsoleIndex + 1)];
-                          if (next) setSelectedConsoleKey(next.key);
-                        }}
-                        disabled={selectedConsoleIndex < 0 || selectedConsoleIndex >= visibleConsoleEntries.length - 1}
-                        className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-[8px] border border-[#1B1B1B] text-[#AAAAAA] hover:text-white disabled:cursor-not-allowed disabled:opacity-35"
-                        title="Proximo evento"
-                      >
-                        <ChevronDown className="h-[14px] w-[14px]" />
-                      </button>
-                      <button onClick={() => navigator.clipboard?.writeText(selectedConsoleEntry.requestId)} className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-[8px] border border-[#1B1B1B] text-[#AAAAAA] hover:text-white" title="Copiar request id">
-                        <Copy className="h-[14px] w-[14px]" />
-                      </button>
-                      <button onClick={() => setSelectedConsoleKey(null)} className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-[8px] border border-[#1B1B1B] text-[#AAAAAA] hover:text-white" title="Fechar detalhe">
-                        <X className="h-[14px] w-[14px]" />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="mt-[14px] rounded-[14px] border border-[#1A1A1A] bg-[#0B0B0B]">
-                    {[
-                      ["Request ID", selectedConsoleEntry.requestId],
-                      ["Path", selectedConsoleEntry.path],
-                      ["Host", selectedConsoleEntry.host],
-                      ["Level", selectedConsoleEntry.level.toUpperCase()],
-                      ["Source", selectedConsoleEntry.source],
-                      ["User Agent", selectedConsoleEntry.userAgent],
-                    ].map(([label, value]) => (
-                      <div key={label} className="grid grid-cols-[96px_minmax(0,1fr)] gap-[10px] border-b border-[#151515] px-[12px] py-[10px] last:border-b-0">
-                        <span className="text-[11px] text-[#777777]">{label}</span>
-                        <span className="break-words text-right font-mono text-[11px] text-[#DADADA]">{value}</span>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="mt-[14px] space-y-[10px]">
-                    <article className="rounded-[14px] border border-[#1A1A1A] bg-[#0B0B0B] p-[12px]">
-                      <div className="flex items-center justify-between">
-                        <p className="text-[13px] font-semibold text-white">Firewall</p>
-                        <span className={selectedConsoleEntry.status >= 400 ? "text-[11px] font-semibold text-[#FFD28A]" : "text-[11px] font-semibold text-[#9BE7AC]"}>
-                          {selectedConsoleEntry.status >= 400 ? "Inspecionado" : "Allowed"}
-                        </span>
-                      </div>
-                      <p className="mt-[8px] text-[12px] text-[#777777]">Received in {selectedConsoleEntry.location}</p>
-                    </article>
-                    <article className="rounded-[14px] border border-[#1A1A1A] bg-[#0B0B0B] p-[12px]">
-                      <div className="flex items-center justify-between">
-                        <p className="text-[13px] font-semibold text-white">Middleware</p>
-                        <span className={`font-mono text-[11px] ${statusClassName(selectedConsoleEntry.status)}`}>{selectedConsoleEntry.status}</span>
-                      </div>
-                      <div className="mt-[10px] grid gap-[8px] text-[12px]">
-                        <div className="flex items-center justify-between text-[#888888]">
-                          <span>Execution Duration</span>
-                          <span className="font-mono text-[#DADADA]">{selectedConsoleEntry.durationMs ?? 0}ms</span>
-                        </div>
-                        <div className="flex items-center justify-between text-[#888888]">
-                          <span>External APIs</span>
-                          <span className="font-mono text-[#DADADA]">{selectedConsoleEntry.externalApis ? `${selectedConsoleEntry.externalApis} request(s)` : "No outgoing requests"}</span>
-                        </div>
-                      </div>
-                    </article>
-                    <article className="rounded-[14px] border border-[#1A1A1A] bg-[#0B0B0B] p-[12px]">
-                      <p className="text-[13px] font-semibold text-white">Function Invocation</p>
-                      <div className="mt-[10px] grid gap-[8px] text-[12px]">
-                        <div className="flex items-center justify-between gap-[12px] text-[#888888]">
-                          <span>Route</span>
-                          <span className="truncate font-mono text-[#DADADA]">{selectedConsoleEntry.path}</span>
-                        </div>
-                        <div className="rounded-[10px] border border-[#171717] bg-[#050505] p-[10px] font-mono text-[11px] text-[#CFCFCF]">
-                          {selectedConsoleEntry.message}
-                        </div>
-                      </div>
-                    </article>
-                  </div>
-
-                  <p className={`mt-[14px] flex items-center gap-[7px] text-[12px] font-semibold ${selectedConsoleEntry.status >= 500 ? "text-[#FF8E8E]" : "text-[#9BE7AC]"}`}>
-                    <span className="h-[7px] w-[7px] rounded-full bg-current" />
-                    {selectedConsoleEntry.status >= 500 ? "Request failed" : `Response finished in ${selectedConsoleEntry.durationMs ?? 0}ms`}
-                  </p>
-                </div>
-              </aside>
-            ) : null}
-          </section>
-        ) : null}
-
-        {tab === "files" ? (
-          <section
-            className="grid h-[calc(100vh-64px)] min-h-0 grid-cols-1 bg-[#050505] md:grid-cols-[var(--flowdesk-vps-explorer)_minmax(0,1fr)]"
-            style={{ "--flowdesk-vps-explorer": `${explorerWidth}px` } as CSSProperties}
-          >
-            <aside className="relative min-h-0 border-r border-[#171717] bg-[#080808]">
-              <div className="flex h-[48px] items-center justify-between gap-[10px] border-b border-[#171717] px-[12px]">
-                <div className="min-w-0">
-                  <p className="truncate text-[12px] font-bold uppercase tracking-[0.14em] text-[#E2E2E2]" title={snapshot.project.repository.fullName}>{snapshot.project.repository.fullName}</p>
-                  <p className="mt-[2px] text-[10px] text-[#575757]">{explorerWidth}px</p>
-                </div>
-                <div className="flex shrink-0 items-center gap-[3px]">
-                  <button type="button" onClick={() => startCreateFile("", "file")} className="flex h-[28px] w-[28px] items-center justify-center rounded-[8px] text-[#AFAFAF] hover:bg-[#111111] hover:text-white" title="Novo arquivo">
-                    <FilePlus2 className="h-[15px] w-[15px]" />
-                  </button>
-                  <button type="button" onClick={() => startCreateFile("", "directory")} className="flex h-[28px] w-[28px] items-center justify-center rounded-[8px] text-[#AFAFAF] hover:bg-[#111111] hover:text-white" title="Nova pasta">
-                    <FolderPlus className="h-[15px] w-[15px]" />
-                  </button>
-                  <button type="button" onClick={() => void syncFiles()} disabled={filesBusy} className="flex h-[28px] w-[28px] items-center justify-center rounded-[8px] text-[#AFAFAF] hover:bg-[#111111] hover:text-white disabled:opacity-50" title="Atualizar">
-                    {filesBusy ? <Loader2 className="h-[15px] w-[15px] animate-spin" /> : <RefreshCw className="h-[15px] w-[15px]" />}
-                  </button>
-                  <button type="button" onClick={() => setExpandedFilePaths(new Set())} className="flex h-[28px] w-[28px] items-center justify-center rounded-[8px] text-[#AFAFAF] hover:bg-[#111111] hover:text-white" title="Recolher tudo">
-                    <Layers className="h-[15px] w-[15px]" />
-                  </button>
-                </div>
-              </div>
-              <div className="m-[10px] flex items-center gap-[8px] rounded-[10px] border border-[#171717] bg-[#0B0B0B] px-[10px]">
-                <Search className="h-[15px] w-[15px] text-[#777777]" />
-                <input value={fileQuery} onChange={(event) => setFileQuery(event.target.value)} placeholder="Buscar arquivo" className="h-[38px] min-w-0 flex-1 bg-transparent text-[13px] text-white outline-none" />
-              </div>
-              <div
-                className="h-[calc(100vh-160px)] overflow-auto px-[6px] pb-[12px]"
-                onContextMenu={(event) => {
-                  if (event.defaultPrevented) return;
-                  event.preventDefault();
-                  setFileContextMenu({ kind: "empty", x: event.clientX, y: event.clientY, parentPath: "" });
-                }}
-              >
-                {fileInlineDraft && !fileInlineDraft.parentPath ? (
-                  <InlineFileDraft
-                    draft={fileInlineDraft}
-                    level={0}
-                    onChange={(value) => setFileInlineDraft((current) => current ? { ...current, value } : current)}
-                    onCommit={() => void commitInlineCreate()}
-                    onCancel={() => setFileInlineDraft(null)}
-                  />
-                ) : null}
-                {filteredTree.length ? filteredTree.map((node) => (
-                  <FileTreeNode
-                    key={node.path}
-                    node={node}
-                    activePath={selectedFile?.path || ""}
-                    onSelect={loadFile}
-                    expandedPaths={expandedFilePaths}
-                    onToggle={(path) => setExpandedFilePaths((current) => {
-                      const next = new Set(current);
-                      if (next.has(path)) next.delete(path);
-                      else next.add(path);
-                      return next;
-                    })}
-                    onContextMenu={(event, contextNode) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      setFileContextMenu({ kind: "node", x: event.clientX, y: event.clientY, node: contextNode });
-                    }}
-                    inlineDraft={fileInlineDraft}
-                    onInlineDraftChange={(value) => setFileInlineDraft((current) => current ? { ...current, value } : current)}
-                    onInlineDraftCommit={() => void commitInlineCreate()}
-                    onInlineDraftCancel={() => setFileInlineDraft(null)}
-                    renamingPath={renamingFilePath}
-                    renamingValue={renamingValue}
-                    onRenamingChange={setRenamingValue}
-                    onRenameCommit={(contextNode) => void commitRenameFile(contextNode)}
-                    onRenameCancel={() => setRenamingFilePath(null)}
-                    draggedPath={draggedFilePath}
-                    onDragStart={(contextNode) => setDraggedFilePath(contextNode.path)}
-                    onDragEnd={() => setDraggedFilePath(null)}
-                    onDropOnDirectory={(contextNode) => {
-                      if (draggedFilePath) void moveFileNode(draggedFilePath, contextNode.path);
-                      setDraggedFilePath(null);
-                    }}
-                  />
-                )) : (
-                  <div className="m-[8px] rounded-[12px] border border-[#151515] bg-[#0B0B0B] p-[14px] text-[13px] text-[#777777]">
-                    {filesBusy ? "Espelhando arquivos do GitHub..." : "Aguardando arquivos do repositorio."}
-                  </div>
-                )}
-              </div>
-              <button
-                type="button"
-                onPointerDown={startExplorerResize}
-                className="absolute right-[-4px] top-0 z-20 h-full w-[8px] cursor-col-resize border-x border-transparent transition-colors hover:border-[rgba(15,98,254,0.28)] hover:bg-[rgba(15,98,254,0.14)]"
-                aria-label="Redimensionar Explorer"
-                title="Redimensionar Explorer"
-              />
-            </aside>
-            <div className="flex min-h-0 min-w-0 bg-[#050505]">
-              <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-                <div className="flex h-[48px] items-center justify-between gap-[12px] border-b border-[#171717] bg-[#080808] px-[12px]">
-                  <div className="min-w-0">
-                    <p className="min-w-0 truncate font-mono text-[13px] text-[#DADADA]">{selectedFile?.path || "Selecione um arquivo"}</p>
-                    {selectedFile ? (
-                      <p className="mt-[2px] text-[10px] font-bold uppercase tracking-[0.12em] text-[#555555]">
-                        {showingImagePreview
-                          ? `${selectedFileIsSvg ? "SVG preview" : "Imagem"}${loadedFileSizeLabel ? ` / ${loadedFileSizeLabel}` : ""}`
-                          : highlightedLanguage}
-                      </p>
-                    ) : null}
-                  </div>
-                  <div className="flex shrink-0 items-center gap-[8px]">
-                    {selectedFileIsPreviewableImage ? (
-                      <div className="hidden items-center gap-[4px] md:flex">
-                        <button
-                          type="button"
-                          onClick={() => setFilePreviewMode("preview")}
-                          className={`flex h-[30px] w-[30px] items-center justify-center rounded-[8px] border transition-colors ${
-                            filePreviewMode === "preview"
-                              ? "border-[#2A2A2A] bg-[#171717] text-white"
-                              : "border-[#202020] bg-[#0B0B0B] text-[#9B9B9B] hover:bg-[#111111] hover:text-white"
-                          }`}
-                          title="Preview"
-                        >
-                          <ImageIcon className="h-[14px] w-[14px]" />
-                        </button>
-                        {selectedFileIsSvg ? (
-                          <button
-                            type="button"
-                            onClick={() => setFilePreviewMode("code")}
-                            className={`flex h-[30px] w-[30px] items-center justify-center rounded-[8px] border transition-colors ${
-                              filePreviewMode === "code"
-                                ? "border-[#2A2A2A] bg-[#171717] text-white"
-                                : "border-[#202020] bg-[#0B0B0B] text-[#9B9B9B] hover:bg-[#111111] hover:text-white"
-                            }`}
-                            title="Codigo SVG"
-                          >
-                            <Code2 className="h-[14px] w-[14px]" />
-                          </button>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {showingImagePreview ? (
-                      <div className="hidden items-center gap-[4px] md:flex">
-                        <button type="button" onClick={() => setImageZoom((value) => clampImageZoom(value - 0.25))} className="flex h-[30px] w-[30px] items-center justify-center rounded-[8px] border border-[#202020] bg-[#0B0B0B] text-[#9B9B9B] hover:bg-[#111111] hover:text-white" title="Diminuir zoom">
-                          <ZoomOut className="h-[14px] w-[14px]" />
-                        </button>
-                        <button type="button" onClick={() => setImageZoom(1)} className="h-[30px] min-w-[54px] rounded-[8px] border border-[#202020] bg-[#0B0B0B] px-[8px] font-mono text-[11px] font-semibold text-[#DADADA] hover:bg-[#111111]" title="Resetar zoom">
-                          {Math.round(imageZoom * 100)}%
-                        </button>
-                        <button type="button" onClick={() => setImageZoom((value) => clampImageZoom(value + 0.25))} className="flex h-[30px] w-[30px] items-center justify-center rounded-[8px] border border-[#202020] bg-[#0B0B0B] text-[#9B9B9B] hover:bg-[#111111] hover:text-white" title="Aumentar zoom">
-                          <ZoomIn className="h-[14px] w-[14px]" />
-                        </button>
-                      </div>
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setFlowChatOpen((current) => {
-                          const next = !current;
-                          if (next) void loadFlowChatHistory();
-                          return next;
-                        });
-                      }}
-                      className={`inline-flex h-[32px] items-center gap-[8px] rounded-[9px] px-[11px] text-[12px] font-semibold transition-colors ${
-                        flowChatOpen
-                          ? "border border-[#2A2A2A] bg-[#171717] text-white"
-                          : "border border-[#242424] bg-[#E6E6E6] text-[#050505] hover:bg-white"
-                      }`}
-                    >
-                      <Sparkles className="h-[15px] w-[15px]" /> Falar com Flow
-                    </button>
-                    <button disabled={!selectedFile || !fileDirty} onClick={saveFile} className="inline-flex h-[32px] items-center gap-[8px] rounded-[9px] bg-[#0F62FE] px-[11px] text-[12px] font-semibold text-white disabled:opacity-45">
-                      <Save className="h-[15px] w-[15px]" /> Salvar
-                    </button>
-                  </div>
-                </div>
-                {!selectedFile ? (
-                  <div className="relative min-h-0 flex-1 overflow-hidden bg-[#050505]">
-                    <div className="relative flex h-full min-h-[520px] items-center justify-center px-[28px] py-[34px]">
-                      <div className="grid w-full max-w-[1040px] gap-[28px] lg:grid-cols-[minmax(0,0.9fr)_minmax(360px,1fr)]">
-                        <div className="flex min-w-0 flex-col justify-center">
-                          <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-[#666666]">Flowdesk Files</p>
-                          <h2 className="mt-[10px] text-[34px] font-semibold tracking-[-0.055em] text-[#EDEDED]">Painel de arquivos</h2>
-                          <p className="mt-[6px] text-[14px] leading-[1.6] text-[#8D8D8D]">
-                            {snapshot.project.repository.fullName}
-                          </p>
-                          <div className="mt-[24px] grid gap-[10px] sm:grid-cols-2">
-                            <button type="button" onClick={() => startCreateFile("", "file")} className="group flex h-[52px] items-center gap-[12px] rounded-[14px] border border-[#202020] bg-[#0B0B0B] px-[14px] text-left text-[13px] font-semibold text-[#E8E8E8] shadow-[0_18px_60px_rgba(0,0,0,0.18)] transition-all hover:border-[#303030] hover:bg-[#111111]">
-                              <FilePlus2 className="h-[17px] w-[17px] text-[#9BC2FF] transition-transform group-hover:scale-110" />
-                              Novo arquivo
-                            </button>
-                            <button type="button" onClick={() => startCreateFile("", "directory")} className="group flex h-[52px] items-center gap-[12px] rounded-[14px] border border-[#202020] bg-[#0B0B0B] px-[14px] text-left text-[13px] font-semibold text-[#E8E8E8] shadow-[0_18px_60px_rgba(0,0,0,0.18)] transition-all hover:border-[#303030] hover:bg-[#111111]">
-                              <FolderPlus className="h-[17px] w-[17px] text-[#9BE7AC] transition-transform group-hover:scale-110" />
-                              Nova pasta
-                            </button>
-                            <button type="button" onClick={() => void syncFiles()} disabled={filesBusy} className="group flex h-[52px] items-center gap-[12px] rounded-[14px] border border-[#202020] bg-[#0B0B0B] px-[14px] text-left text-[13px] font-semibold text-[#E8E8E8] shadow-[0_18px_60px_rgba(0,0,0,0.18)] transition-all hover:border-[#303030] hover:bg-[#111111] disabled:opacity-60">
-                              {filesBusy ? <Loader2 className="h-[17px] w-[17px] animate-spin text-[#9BC2FF]" /> : <RefreshCw className="h-[17px] w-[17px] text-[#9BC2FF] transition-transform group-hover:rotate-45" />}
-                              Sincronizar GitHub
-                            </button>
-                            <button type="button" onClick={() => navigateToTab("env")} className="group flex h-[52px] items-center gap-[12px] rounded-[14px] border border-[#202020] bg-[#0B0B0B] px-[14px] text-left text-[13px] font-semibold text-[#E8E8E8] shadow-[0_18px_60px_rgba(0,0,0,0.18)] transition-all hover:border-[#303030] hover:bg-[#111111]">
-                              <KeyRound className="h-[17px] w-[17px] text-[#FFD28A] transition-transform group-hover:scale-110" />
-                              Variaveis
-                            </button>
+                {tab === "overview" && isMinecraftProject && snapshot.project.minecraft ? (
+                  <section className="grid gap-[20px]">
+                    <div className="grid gap-[12px] md:grid-cols-3 xl:grid-cols-6">
+                      {[
+                        ["CPU", formatMetricNumber(metricSummary.cpu, "%"), metricSummary.cpu, "bg-[#8AE6FF]"],
+                        ["RAM", formatMetricNumber(metricSummary.ram, "%"), metricSummary.ram, "bg-[#66E89A]"],
+                        ["Disco", formatMetricNumber(metricSummary.disk, "%"), metricSummary.disk, "bg-[#FFB84D]"],
+                        ["Uptime", formatUptime(metricSummary.uptime), metricSummary.uptime ? 100 : 0, "bg-[#8A9BFF]"],
+                        ["Jogadores", `0/${minecraftMaxPlayers}`, 0, "bg-[#8AE6FF]"],
+                        ["Status", statusLabel(snapshot.project.runtimeStatus), snapshot.project.runtimeStatus === "online" ? 100 : 0, "bg-[#66E89A]"],
+                      ].map(([label, value, progress, color]) => (
+                        <div key={String(label)} className="rounded-[16px] border border-[#171717] bg-[#080808] px-[14px] py-[13px] text-center">
+                          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#8A8A8A]">{label}</p>
+                          <p className="mt-[5px] text-[24px] font-bold tracking-[-0.04em] text-white">{String(value)}</p>
+                          <div className="mt-[10px] h-[4px] overflow-hidden rounded-full bg-[#171717]">
+                            <div className={`h-full rounded-full ${String(color)}`} style={{ width: `${Math.min(100, Number(progress) || 0)}%` }} />
                           </div>
                         </div>
-                        <div className="grid gap-[10px]">
-                          {[
-                            { icon: <Search className="h-[16px] w-[16px]" />, title: "Busca rapida", value: `${flattenFileTreePaths(snapshot.fileTree).length} itens indexados` },
-                            { icon: <ImageIcon className="h-[16px] w-[16px]" />, title: "Preview de imagens", value: "PNG, JPG, GIF, WEBP, SVG" },
-                            { icon: <Terminal className="h-[16px] w-[16px]" />, title: "Console live", value: logsPaused ? "desativado" : "ativo" },
-                            { icon: <Sparkles className="h-[16px] w-[16px]" />, title: "Flow", value: flowChatOpen ? "aberto" : "pronto" },
-                          ].map((item) => (
-                            <article key={item.title} className="group flex min-h-[70px] items-center gap-[14px] rounded-[16px] border border-[#1B1B1B] bg-[rgba(11,11,11,0.78)] px-[15px] shadow-[0_20px_70px_rgba(0,0,0,0.20)] backdrop-blur transition-all hover:border-[#2A2A2A] hover:bg-[#101010]">
-                              <span className="flex h-[36px] w-[36px] shrink-0 items-center justify-center rounded-[12px] border border-[#242424] bg-[#050505] text-[#9B9B9B] transition-colors group-hover:text-white">
-                                {item.icon}
-                              </span>
-                              <div className="min-w-0">
-                                <p className="truncate text-[13px] font-semibold text-[#E8E8E8]">{item.title}</p>
-                                <p className="mt-[3px] truncate text-[12px] text-[#777777]">{item.value}</p>
-                              </div>
-                            </article>
-                          ))}
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setFlowChatOpen(true);
-                              void loadFlowChatHistory();
-                            }}
-                            className="mt-[4px] flex h-[46px] items-center justify-center gap-[9px] rounded-[14px] bg-[#F2F2F2] px-[14px] text-[13px] font-semibold text-[#050505] transition-all hover:bg-white"
-                          >
-                            <Sparkles className="h-[16px] w-[16px]" />
-                            Falar com Flow
-                          </button>
-                        </div>
-                      </div>
+                      ))}
                     </div>
-                  </div>
-                ) : showingImagePreview ? (
-                  <div
-                    className="relative min-h-0 flex-1 overflow-hidden bg-[#050505]"
-                    onContextMenu={(event) => {
-                      if (!selectedFile) return;
-                      event.preventDefault();
-                      setFileContextMenu({ kind: "preview", x: event.clientX, y: event.clientY, node: selectedFile });
-                    }}
-                    onWheel={(event) => {
-                      event.preventDefault();
-                      setImageZoom((value) => clampImageZoom(value + (event.deltaY > 0 ? -0.12 : 0.12)));
-                    }}
-                  >
-                    <div className="h-full overflow-auto [scrollbar-color:#2A2A2A_#050505] [scrollbar-gutter:stable] [scrollbar-width:thin]">
-                      <div
-                        className="flex min-h-full min-w-full items-center justify-center p-[28px]"
-                        style={{
-                          minWidth: `${Math.max(100, imageZoom * 100)}%`,
-                          minHeight: `${Math.max(100, imageZoom * 100)}%`,
-                        }}
-                      >
-                        {selectedImagePreviewSrc ? (
-                          // eslint-disable-next-line @next/next/no-img-element -- File previews can be blob/data URLs and must preserve browser-native image behavior.
-                          <img
-                            src={selectedImagePreviewSrc}
-                            alt={selectedFile?.name || "Preview da imagem"}
-                            draggable={false}
-                            className="select-none rounded-[6px] border border-[#1A1A1A] bg-[#0B0B0B] shadow-[0_18px_60px_rgba(0,0,0,0.28)]"
-                            style={{
-                              maxWidth: "min(100%, 1120px)",
-                              maxHeight: "calc(100vh - 236px)",
-                              transform: `scale(${imageZoom})`,
-                              transformOrigin: "center",
-                              imageRendering: imageZoom >= 3 ? "pixelated" : "auto",
-                            }}
-                          />
-                        ) : (
-                          <div className="rounded-[12px] border border-[#1A1A1A] bg-[#080808] px-[16px] py-[14px] text-center">
-                            <ImageIcon className="mx-auto h-[20px] w-[20px] text-[#777777]" />
-                            <p className="mt-[8px] text-[13px] font-semibold text-[#DADADA]">Preview indisponivel</p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="grid min-h-0 flex-1 grid-cols-[48px_minmax(0,1fr)]">
-                    <div
-                      ref={lineNumbersRef}
-                      className="select-none overflow-hidden border-r border-[#111111] bg-[#070707] py-[12px] text-right font-mono text-[13px] leading-[22.1px] text-[#444444]"
-                    >
-                      <div style={{ height: editorVirtualHeight }}>
-                        <div style={{ transform: `translateY(${visibleLineStart * FILE_EDITOR_LINE_HEIGHT}px)` }}>
-                          {Array.from({ length: visibleLineEnd - visibleLineStart }).map((_, index) => {
-                            const lineNumber = visibleLineStart + index + 1;
-                            return (
-                              <div key={lineNumber} className="h-[22.1px] pr-[10px] leading-[22.1px]">
-                                {lineNumber}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="relative min-h-0 min-w-0 bg-[#050505]">
-                      <div
-                        ref={highlightedCodeRef}
-                        aria-hidden="true"
-                        className="pointer-events-none absolute inset-0 overflow-hidden p-[12px] font-mono text-[13px] leading-[22.1px]"
-                      >
-                        <pre className="m-0 min-w-max whitespace-pre" style={{ height: editorVirtualHeight }}>
-                          <div style={{ transform: `translateY(${visibleLineStart * FILE_EDITOR_LINE_HEIGHT}px)` }}>
-                            {visibleLines.map((line, index) => (
-                            <div key={visibleLineStart + index} className="h-[22.1px] leading-[22.1px]">
-                              {line ? renderHighlightedLine(line, highlightedLanguage) : " "}
+
+                    <div className="grid gap-[20px] xl:grid-cols-[380px_minmax(0,1fr)]">
+                      <aside className="space-y-[18px]">
+                        <section className="rounded-[18px] border border-[#171717] bg-[#080808] p-[20px]">
+                          <p className="text-[12px] font-bold uppercase tracking-[0.14em] text-[#8A8A8A]">Server</p>
+                          <div className="mt-[16px] flex items-center gap-[14px]">
+                            <div className="flex h-[56px] w-[56px] items-center justify-center rounded-[14px] border border-[#242424] bg-[#0B0B0B]">
+                              <Layers className="h-[27px] w-[27px] text-white" />
                             </div>
+                            <div className="min-w-0">
+                              <h2 className="truncate text-[21px] font-bold tracking-[-0.04em] text-white">{snapshot.project.minecraft.serverName}</h2>
+                              <p className="mt-[3px] text-[12px] text-[#8A8A8A]">{snapshot.project.minecraft.version} / {snapshot.project.minecraft.serverType}</p>
+                            </div>
+                          </div>
+                          <div className="mt-[18px] divide-y divide-[#151515]">
+                            {[
+                              ["Server Name", snapshot.project.minecraft.serverName],
+                              ["Players", `0/${minecraftMaxPlayers} online`],
+                              ["IP Address", snapshot.project.minecraft.primaryDomain],
+                              ["Gamemode", "survival"],
+                              ["Difficulty", "normal"],
+                            ].map(([label, value]) => (
+                              <div key={label} className="flex items-center justify-between gap-[14px] py-[11px] text-[13px]">
+                                <span className="text-[#9AA3AF]">{label}</span>
+                                <span className="truncate text-right font-semibold text-white">{value}</span>
+                              </div>
                             ))}
                           </div>
-                        </pre>
-                      </div>
-                      <textarea
-                        ref={fileEditorTextareaRef}
-                        value={fileContent}
-                        onChange={(event) => {
-                          setFileContent(event.target.value);
-                          setFileDirty(true);
-                        }}
-                        onScroll={(event) => {
-                          if (lineNumbersRef.current) {
-                            lineNumbersRef.current.scrollTop = event.currentTarget.scrollTop;
-                          }
-                          if (highlightedCodeRef.current) {
-                            highlightedCodeRef.current.scrollTop = event.currentTarget.scrollTop;
-                            highlightedCodeRef.current.scrollLeft = event.currentTarget.scrollLeft;
-                          }
-                          setFileEditorViewport({
-                            scrollTop: event.currentTarget.scrollTop,
-                            scrollLeft: event.currentTarget.scrollLeft,
-                            height: event.currentTarget.clientHeight || fileEditorViewport.height,
-                          });
-                        }}
-                        spellCheck={false}
-                        wrap="off"
-                        className="absolute inset-0 h-full min-h-0 w-full resize-none overflow-auto border-0 bg-transparent p-[12px] font-mono text-[13px] leading-[22.1px] text-transparent caret-[#E8E8E8] outline-none selection:bg-[rgba(15,98,254,0.35)] placeholder:text-[#5A5A5A]"
-                        placeholder="O conteudo real aparece quando um arquivo sincronizado for selecionado."
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-              {flowChatOpen ? (
-                <aside
-                  className="relative hidden min-h-0 shrink-0 flex-col border-l border-[#171717] bg-[#080808] md:flex"
-                  style={{ width: flowChatWidth }}
-                >
-                  <button
-                    type="button"
-                    onPointerDown={startFlowChatResize}
-                    className="absolute left-[-4px] top-0 z-20 h-full w-[8px] cursor-col-resize border-x border-transparent transition-colors hover:border-[rgba(255,255,255,0.18)] hover:bg-[rgba(255,255,255,0.08)]"
-                    aria-label="Redimensionar chat Flow"
-                    title="Redimensionar chat Flow"
-                  />
-                  <div className="flex h-[48px] items-center justify-between gap-[10px] border-b border-[#171717] px-[12px]">
-                    <div className="flex min-w-0 items-center gap-[9px]">
-                      <span className="flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded-[9px] border border-[#242424] bg-[#111111] text-[#E8E8E8]">
-                        <Bot className="h-[15px] w-[15px]" />
-                      </span>
-                      <div className="min-w-0">
-                        <p className="truncate text-[13px] font-semibold text-white">Flow</p>
-                        <p className="truncate text-[10px] text-[#686868]">Assistente do projeto</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-[4px]">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setFlowChatHistoryOpen((current) => !current);
-                          void loadFlowChatHistory();
-                        }}
-                        className={`flex h-[30px] w-[30px] items-center justify-center rounded-[9px] transition-colors ${
-                          flowChatHistoryOpen ? "bg-[#151515] text-white" : "text-[#9B9B9B] hover:bg-[#111111] hover:text-white"
-                        }`}
-                        aria-label="Historico do Flow"
-                        title="Historico do Flow"
-                      >
-                        <History className="h-[15px] w-[15px]" />
-                      </button>
-                      <button type="button" onClick={() => setFlowChatOpen(false)} className="flex h-[30px] w-[30px] items-center justify-center rounded-[9px] text-[#9B9B9B] hover:bg-[#111111] hover:text-white" aria-label="Fechar Flow">
-                        <X className="h-[15px] w-[15px]" />
-                      </button>
-                    </div>
-                  </div>
-                  {flowChatHistoryOpen ? (
-                    <div className="absolute right-[10px] top-[54px] z-40 w-[min(330px,calc(100%-20px))] overflow-hidden rounded-[16px] border border-[#242424] bg-[#090909] shadow-[0_22px_70px_rgba(0,0,0,0.55)]">
-                      <div className="flex items-center justify-between border-b border-[#171717] px-[12px] py-[10px]">
-                        <div>
-                          <p className="text-[12px] font-semibold text-white">Historico</p>
-                          <p className="text-[10px] text-[#686868]">Conversas desta VPS</p>
-                        </div>
-                        <button type="button" onClick={startNewFlowChat} className="rounded-[8px] border border-[#242424] bg-[#111111] px-[9px] py-[6px] text-[11px] font-semibold text-[#DADADA] hover:bg-[#171717] hover:text-white">
-                          Novo chat
-                        </button>
-                      </div>
-                      <div className="max-h-[320px] overflow-auto p-[6px] [scrollbar-color:#2A2A2A_#090909] [scrollbar-width:thin]">
-                        {flowChatSessions.length ? flowChatSessions.map((chat) => (
-                          <button
-                            key={chat.id}
-                            type="button"
-                            onClick={() => void loadFlowChatHistory(chat.id).then(() => setFlowChatHistoryOpen(false))}
-                            className={`flex w-full flex-col rounded-[11px] px-[10px] py-[9px] text-left transition-colors ${
-                              chat.id === flowChatSessionId ? "bg-[#171717]" : "hover:bg-[#111111]"
-                            }`}
-                          >
-                            <span className="truncate text-[12px] font-semibold text-[#E8E8E8]">{chat.title || "Novo chat"}</span>
-                            <span className="mt-[2px] text-[10px] text-[#666666]">{formatDate(chat.updated_at || chat.created_at || "")}</span>
-                          </button>
-                        )) : (
-                          <div className="px-[10px] py-[18px] text-center text-[12px] text-[#777777]">
-                            Nenhuma conversa salva ainda.
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ) : null}
-                  <div ref={flowChatScrollRef} className="min-h-0 flex-1 space-y-[12px] overflow-auto p-[12px] [scrollbar-color:#2A2A2A_#080808] [scrollbar-width:thin]">
-                    {flowChatMessages.map((message) => (
-                      <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-                        <div className={`max-w-[92%] rounded-[18px] border px-[13px] py-[11px] text-[13px] leading-[1.55] ${
-                          message.role === "user"
-                            ? "border-[#1E3D75] bg-[#0F62FE] text-white"
-                            : "border-[#1C1C1C] bg-[#101010] text-[#DADADA]"
-                        }`}>
-                          <FlowChatMessageContent
-                            content={message.content}
-                            onCopy={(value) => {
-                              navigator.clipboard?.writeText(value).then(
-                                () => notify("success", "Codigo copiado.", "Flow"),
-                                () => notify("error", "Nao consegui copiar o codigo.", "Flow"),
-                              );
-                            }}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                    {flowChatBusy ? (
-                      <div className="flex items-center gap-[8px] text-[12px] text-[#777777]">
-                        <Loader2 className="h-[14px] w-[14px] animate-spin" />
-                        Flow analisando contexto...
-                      </div>
-                    ) : null}
-                  </div>
+                        </section>
 
-                  <div className="border-t border-[#171717] p-[10px]">
-                    <div className="overflow-hidden rounded-[18px] border border-[#202020] bg-[#101010]">
-                      {flowChatQuota.blocked ? (
-                        <div className="border-b border-[#2A1D1D] bg-[#170B0B] px-[12px] py-[10px] text-[12px] leading-[1.45] text-[#FFB4B4]">
-                          Voce atingiu o limite diario do Flow. A IA volta em {flowQuotaResetLabel}.
-                        </div>
-                      ) : null}
-                      <div className="p-[9px]">
-                      <input
-                        ref={flowChatImageInputRef}
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        className="hidden"
-                        onChange={(event) => addFlowChatImages(event.target.files)}
-                      />
-                      <textarea
-                        value={flowChatInput}
-                        onChange={(event) => setFlowChatInput(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" && !event.shiftKey) {
-                            event.preventDefault();
-                            void sendFlowChatMessage();
-                          }
-                        }}
-                        placeholder="Pergunte, pe├ºa review ou uma altera├º├úo no arquivo..."
-                        disabled={flowChatQuota.blocked}
-                        className="max-h-[160px] min-h-[76px] w-full resize-none bg-transparent text-[13px] leading-[1.5] text-white outline-none placeholder:text-[#5F5F5F] disabled:cursor-not-allowed disabled:opacity-55"
-                      />
-                      {flowChatAttachments.length ? (
-                        <div className="mt-[8px] flex flex-wrap gap-[6px]">
-                          {flowChatAttachments.map((attachment) => (
-                            <span key={attachment.id} className="inline-flex h-[26px] max-w-full items-center gap-[6px] rounded-[8px] border border-[#242424] bg-[#080808] px-[8px] text-[11px] text-[#CFCFCF]">
-                              <ImageIcon className="h-[13px] w-[13px] text-[#9BE7AC]" />
-                              <span className="max-w-[160px] truncate">{attachment.name}</span>
-                              <button type="button" onClick={() => setFlowChatAttachments((current) => current.filter((item) => item.id !== attachment.id))} className="text-[#777777] hover:text-white" aria-label="Remover imagem">
-                                <X className="h-[12px] w-[12px]" />
+                        <section className="rounded-[18px] border border-[#171717] bg-[#080808] p-[20px]">
+                          <p className="text-[12px] font-bold uppercase tracking-[0.14em] text-[#8A8A8A]">Quick Tasks</p>
+                          <div className="mt-[14px] grid grid-cols-6 gap-[10px]">
+                            {[
+                              ["start", "Iniciar", Play],
+                              ["stop", "Parar", Power],
+                              ["restart", "Reiniciar", RotateCcw],
+                              ["kill", "Forcar Kill", X],
+                              ["reset-world", "Resetar Mundo", Trash2],
+                              ["settings", "Configuracoes", Cog],
+                            ].map(([action, label, Icon]) => (
+                              <button
+                                key={String(action)}
+                                type="button"
+                                onClick={() => action === "settings" ? navigateToTab("settings") : void runAction(action as "start" | "stop" | "restart" | "kill" | "reset-world")}
+                                disabled={Boolean(busyAction) && action !== "settings"}
+                                className="flex h-[46px] items-center justify-center rounded-[12px] border border-[#242424] bg-[#0B0B0B] text-[#DADADA] transition-colors hover:bg-[#111111] hover:text-white disabled:opacity-50"
+                                title={String(label)}
+                              >
+                                <Icon className="h-[18px] w-[18px]" />
                               </button>
-                            </span>
-                          ))}
-                        </div>
-                      ) : null}
-                      <div className="mt-[8px] flex items-center justify-between gap-[10px]">
-                        <div className="flex items-center gap-[6px]">
-                          <button type="button" onClick={() => flowChatImageInputRef.current?.click()} className="flex h-[30px] w-[30px] items-center justify-center rounded-[9px] text-[#9B9B9B] hover:bg-[#191919] hover:text-white" title="Adicionar imagem">
-                            <ImageIcon className="h-[15px] w-[15px]" />
-                          </button>
-                          <button type="button" onClick={() => notify("success", "Contexto atual anexado: repositorio, arquivo aberto, deploy ativo e variaveis visiveis foram enviados junto com a proxima mensagem.", "Flow")} className="flex h-[30px] w-[30px] items-center justify-center rounded-[9px] text-[#9B9B9B] hover:bg-[#191919] hover:text-white" title="Anexar contexto">
-                            <Paperclip className="h-[15px] w-[15px]" />
-                          </button>
-                          <span className="hidden items-center gap-[5px] text-[11px] text-[#686868] xl:inline-flex">
-                            <MessageSquare className="h-[13px] w-[13px]" />
-                            Projeto
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-[9px]">
-                          <div
-                            className="relative h-[28px] w-[28px] rounded-full"
-                            title={`${flowChatQuota.used.toLocaleString("pt-BR")}/${flowChatQuota.limit.toLocaleString("pt-BR")} tokens usados. Renova em ${flowQuotaResetLabel}. ${flowChatQuota.requestCount}/${flowChatQuota.requestLimit} envios.`}
-                            style={{ background: `conic-gradient(#0F62FE ${flowQuotaPercent}%, #242424 ${flowQuotaPercent}% 100%)` }}
-                          >
-                            <div className="absolute inset-[3px] rounded-full bg-[#101010]" />
-                            <div className="absolute inset-0 flex items-center justify-center text-[8px] font-black text-[#CFCFCF]">
-                              {Math.round(flowQuotaPercent)}
+                            ))}
+                          </div>
+                        </section>
+
+                        <section className="rounded-[18px] border border-[#171717] bg-[#080808] p-[20px]">
+                          <div className="flex items-center justify-between gap-[12px]">
+                            <p className="text-[12px] font-bold uppercase tracking-[0.14em] text-[#8A8A8A]">Active Players</p>
+                            <span className="text-[13px] font-semibold text-[#DADADA]">0/{minecraftMaxPlayers}</span>
+                          </div>
+                          <div className="flex min-h-[92px] items-center justify-center text-[13px] text-[#666666]">Nenhum jogador online</div>
+                        </section>
+                      </aside>
+
+                      <main className="space-y-[20px]">
+                        <section className="rounded-[18px] border border-[#171717] bg-[#080808] p-[20px]">
+                          <div className="flex items-center justify-between gap-[12px]">
+                            <p className="text-[12px] font-bold uppercase tracking-[0.14em] text-[#8A8A8A]">Console <span className="ml-[6px] rounded-full bg-[#451111] px-[7px] py-[2px] text-[10px] text-[#FFB3B3]">{errorConsoleCount} errors</span></p>
+                            <div className="flex gap-[8px]">
+                              <button onClick={() => void clearConsoleLogs()} className="h-[30px] rounded-[9px] border border-[#242424] bg-[#0B0B0B] px-[10px] text-[12px] font-semibold text-[#DADADA] hover:bg-[#111111]">Limpar</button>
+                              <button onClick={refreshConsoleLogs} className="h-[30px] rounded-[9px] border border-[#242424] bg-[#0B0B0B] px-[10px] text-[12px] font-semibold text-[#DADADA] hover:bg-[#111111]">Auto ↓</button>
                             </div>
                           </div>
-                          <button type="button" disabled={(!flowChatInput.trim() && !flowChatAttachments.length) || flowChatBusy || flowChatQuota.blocked} onClick={() => void sendFlowChatMessage()} className="flex h-[34px] w-[34px] items-center justify-center rounded-full bg-[#E8E8E8] text-[#050505] transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-45" aria-label="Enviar mensagem">
-                            {flowChatBusy ? <Loader2 className="h-[15px] w-[15px] animate-spin" /> : <Send className="h-[15px] w-[15px]" />}
+                          <div ref={consoleRef} className="mt-[12px] h-[490px] overflow-auto rounded-[14px] border border-[#171717] bg-black p-[14px] font-mono text-[12px] leading-[1.7] text-white [scrollbar-color:#2A2A2A_#050505] [scrollbar-width:thin]">
+                            {visibleConsoleEntries.length ? visibleConsoleEntries.slice(-90).map((entry) => (
+                              <div key={entry.key} className={entry.message.includes("[STDERR]") || entry.level === "error" ? "text-[#FFD28A]" : "text-[#F5F5F5]"}>
+                                <span className="mr-[8px] text-[#555555]">{formatConsoleClock(entry.time)}</span>
+                                <span>{entry.message}</span>
+                              </div>
+                            )) : (
+                              <div className="flex h-full items-center justify-center text-[#666666]">Nenhum log do servidor ainda.</div>
+                            )}
+                          </div>
+                          <div className="mt-[12px] flex gap-[10px]">
+                            <input
+                              value={minecraftCommand}
+                              onChange={(event) => setMinecraftCommand(event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") void sendMinecraftConsoleCommand();
+                              }}
+                              placeholder="Enter a command..."
+                              className="h-[40px] min-w-0 flex-1 rounded-[12px] border border-[#242424] bg-[#050505] px-[13px] font-mono text-[13px] text-white outline-none placeholder:text-[#555555]"
+                            />
+                            <button onClick={() => void sendMinecraftConsoleCommand()} className="h-[40px] rounded-[12px] bg-[#F2F2F2] px-[20px] text-[13px] font-semibold text-[#050505] hover:bg-white">Enviar</button>
+                          </div>
+                        </section>
+
+                        <section className="rounded-[18px] border border-[#171717] bg-[#080808] p-[20px]">
+                          <p className="text-[12px] font-bold uppercase tracking-[0.14em] text-[#8A8A8A]">Usage</p>
+                          <div className="mt-[12px] h-[220px] rounded-[14px] border border-[#151515] bg-[#050505] p-[10px]">
+                            <LazyVpsMetricsChart metrics={snapshot.metrics} variant="compact" className="h-[198px]" />
+                          </div>
+                        </section>
+                      </main>
+                    </div>
+                  </section>
+                ) : null}
+
+                {tab === "overview" && !isMinecraftProject ? (
+                  <section className="grid gap-[14px]">
+                    <div className="overflow-hidden rounded-[24px] border border-[#171717] bg-[#070707]">
+                      <div className="grid xl:grid-cols-[minmax(0,1fr)_380px]">
+                        <div className="p-[18px] lg:p-[22px]">
+                          <div className="flex flex-wrap items-start justify-between gap-[14px]">
+                            <div className="min-w-0">
+                              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#606060]">VPS control plane</p>
+                              <h2 className="mt-[8px] truncate text-[30px] font-semibold tracking-[-0.055em] text-white" title={snapshot.settings.hostName}>
+                                {snapshot.settings.hostName}
+                              </h2>
+                              <div className="mt-[9px] flex flex-wrap items-center gap-[8px] text-[12px] text-[#8A8A8A]">
+                                <span className={`inline-flex items-center gap-[7px] rounded-full border px-[9px] py-[5px] text-[11px] font-bold uppercase tracking-[0.12em] ${statusClasses(snapshot.project.runtimeStatus)}`}>
+                                  <span className="h-[6px] w-[6px] rounded-full bg-current" />
+                                  {statusLabel(snapshot.project.runtimeStatus)}
+                                </span>
+                                <span className="font-mono">{primaryDomain?.hostname || snapshot.project.vpsCode}</span>
+                                <span className="text-[#3A3A3A]">/</span>
+                                <span>{snapshot.project.planName}</span>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => void runAction("sync")}
+                              disabled={Boolean(busyAction)}
+                              className="inline-flex h-[38px] items-center gap-[8px] rounded-[11px] border border-[#202020] bg-[#0B0B0B] px-[12px] text-[12px] font-semibold text-[#DADADA] hover:bg-[#111111] disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {busyAction === "sync" ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <RefreshCw className="h-[14px] w-[14px]" />}
+                              Verificar
+                            </button>
+                          </div>
+
+                          <div className="mt-[20px] grid gap-[10px] md:grid-cols-2 xl:grid-cols-4">
+                            {([
+                              ["CPU", formatMetricNumber(metricSummary.cpu, "%"), metricSummary.cpu, Cpu],
+                              ["RAM", formatMetricNumber(metricSummary.ram, "%"), metricSummary.ram, Database],
+                              ["Disco", formatMetricNumber(metricSummary.disk, "%"), metricSummary.disk, HardDrive],
+                              ["Uptime", formatUptime(metricSummary.uptime), Math.min(100, metricSummary.uptime ? 100 : 0), Wifi],
+                            ] as Array<[string, string, number, typeof Cpu]>).map(([label, value, width, Icon]) => (
+                              <div key={String(label)} className="rounded-[16px] border border-[#151515] bg-[#0B0B0B] p-[12px]">
+                                <div className="flex items-center justify-between gap-[10px]">
+                                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#555555]">{String(label)}</p>
+                                  <Icon className="h-[15px] w-[15px] text-[#8AB6FF]" />
+                                </div>
+                                <p className="mt-[8px] text-[20px] font-semibold tracking-[-0.035em] text-white">{String(value)}</p>
+                                <div className="mt-[10px] h-[4px] overflow-hidden rounded-full bg-[#151515]">
+                                  <div className="h-full rounded-full bg-[#0F62FE]" style={{ width: `${Math.min(100, Number(width) || 0)}%` }} />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="mt-[14px] h-[320px] rounded-[18px] border border-[#151515] bg-[#050505] p-[12px]">
+                            <div className="mb-[10px] flex items-center justify-between gap-[12px]">
+                              <div>
+                                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#606060]">Janela de recursos</p>
+                                <p className="mt-[4px] text-[12px] text-[#777777]">{metricsWindowLabel}</p>
+                              </div>
+                              <span className="rounded-full border border-[#1F2F48] bg-[#07111F] px-[9px] py-[5px] text-[11px] font-semibold text-[#9BC2FF]">
+                                {snapshot.metrics.length} amostras
+                              </span>
+                            </div>
+                            <LazyVpsMetricsChart
+                              metrics={snapshot.metrics}
+                              variant="compact"
+                              className="h-[248px]"
+                            />
+                          </div>
+                        </div>
+
+                        <aside className="border-t border-[#171717] bg-[#080808] p-[18px] xl:border-l xl:border-t-0">
+                          <div className="rounded-[18px] border border-[#171717] bg-[#0B0B0B] p-[14px]">
+                            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#606060]">Localizacao real</p>
+                            <p className="mt-[8px] text-[15px] font-semibold text-white">{runtimeHealth?.regionLabel || snapshot.project.regionLabel}</p>
+                            <div className="mt-[10px] grid grid-cols-2 gap-[8px] text-[12px]">
+                              <div className="rounded-[12px] border border-[#151515] bg-[#060606] p-[10px]">
+                                <p className="text-[#666666]">Fonte</p>
+                                <p className="mt-[5px] font-semibold text-[#DADADA]">{healthStatusLabel(runtimeHealth)}</p>
+                              </div>
+                              <div className="rounded-[12px] border border-[#151515] bg-[#060606] p-[10px]">
+                                <p className="text-[#666666]">Latencia</p>
+                                <p className="mt-[5px] font-mono font-semibold text-[#DADADA]">{runtimeHealth?.latencyMs ? `${runtimeHealth.latencyMs}ms` : "n/d"}</p>
+                              </div>
+                            </div>
+                            <p className="mt-[10px] truncate text-[11px] text-[#777777]" title={runtimeHealth?.checkedAt || snapshot.project.runtimeLastSeenAt || ""}>
+                              Atualizado {formatRelative(runtimeHealth?.checkedAt || snapshot.project.runtimeLastSeenAt)}
+                            </p>
+                          </div>
+
+                          <div className="mt-[12px] rounded-[18px] border border-[#171717] bg-[#0B0B0B] p-[14px]">
+                            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#606060]">Deploy atual</p>
+                            <p className="mt-[8px] line-clamp-2 text-[15px] font-semibold leading-[1.35] text-white">{latestDeployment?.commit_message || "Aguardando primeiro deploy automatico"}</p>
+                            <div className="mt-[12px] space-y-[8px] text-[12px]">
+                              {[
+                                ["Ready", `${readyDeploymentCount}/${snapshot.deployments.length || 0}`],
+                                ["Falhas", String(failedDeploymentCount)],
+                                ["Branch", latestDeployment?.branch || snapshot.project.repository.branch],
+                                ["Commit", latestDeployment?.commit_sha ? latestDeployment.commit_sha.slice(0, 8) : "pendente"],
+                              ].map(([label, value]) => (
+                                <div key={label} className="flex items-center justify-between gap-[12px]">
+                                  <span className="text-[#777777]">{label}</span>
+                                  <span className="truncate font-mono font-semibold text-[#DADADA]">{value}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="mt-[12px] rounded-[18px] border border-[#171717] bg-[#0B0B0B] p-[14px]">
+                            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#606060]">Sinais operacionais</p>
+                            <div className="mt-[12px] grid gap-[8px]">
+                              {[
+                                ["Console", errorConsoleCount ? `${errorConsoleCount} erro(s)` : "Sem erro recente", errorConsoleCount ? "text-[#FFD28A]" : "text-[#9BE7AC]"],
+                                ["Env", `${snapshot.envVars.length} variaveis protegidas`, "text-[#DADADA]"],
+                                ["Firewall", `${snapshot.settings.firewall.length} regra(s)`, "text-[#DADADA]"],
+                              ].map(([label, value, className]) => (
+                                <div key={label} className="flex items-center justify-between gap-[12px] rounded-[12px] border border-[#151515] bg-[#060606] px-[10px] py-[9px] text-[12px]">
+                                  <span className="text-[#777777]">{label}</span>
+                                  <span className={`truncate font-semibold ${className}`}>{value}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </aside>
+                      </div>
+                    </div>
+                  </section>
+                ) : null}
+
+                {tab === "metrics" ? (
+                  <section className="grid gap-[14px]">
+                    <div className="overflow-hidden rounded-[24px] border border-[#171717] bg-[#070707]">
+                      <div className="flex flex-col gap-[16px] border-b border-[#171717] p-[18px] lg:flex-row lg:items-start lg:justify-between">
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#606060]">Observabilidade</p>
+                          <h2 className="mt-[8px] text-[26px] font-semibold tracking-[-0.055em] text-white">Metricas da VPS</h2>
+                          <p className="mt-[8px] max-w-[760px] text-[13px] leading-[1.6] text-[#8A8A8A]">
+                            Serie das ultimas {snapshot.metrics.length || 0} amostras com horario, consumo de sistema, rede e processo da aplicacao.
+                          </p>
+                        </div>
+                        <div className="grid min-w-[280px] grid-cols-2 gap-[8px]">
+                          {[
+                            ["Agente", healthStatusLabel(runtimeHealth)],
+                            ["Latency", runtimeHealth?.latencyMs ? `${runtimeHealth.latencyMs}ms` : "n/d"],
+                            ["Download", formatMetricNumber(metricSummary.rx, "kb/s")],
+                            ["Upload", formatMetricNumber(metricSummary.tx, "kb/s")],
+                          ].map(([label, value]) => (
+                            <div key={label} className="rounded-[14px] border border-[#151515] bg-[#0B0B0B] p-[10px]">
+                              <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#555555]">{label}</p>
+                              <p className="mt-[6px] truncate text-[13px] font-semibold text-[#E7E7E7]">{value}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="grid xl:grid-cols-[minmax(0,1fr)_320px]">
+                        <div className="min-h-[540px] p-[14px] lg:p-[18px]">
+                          <div className="h-[500px] rounded-[18px] border border-[#151515] bg-[#050505] p-[12px]">
+                            <LazyVpsMetricsChart metrics={snapshot.metrics} />
+                          </div>
+                        </div>
+
+                        <aside className="border-t border-[#171717] p-[14px] xl:border-l xl:border-t-0">
+                          <div className="space-y-[10px]">
+                            {([
+                              ["CPU", "cpu_percent", "%", Cpu, "Processador da maquina"],
+                              ["RAM", "ram_percent", "%", Database, "Memoria do host"],
+                              ["Disco", "disk_percent", "%", HardDrive, "Volume provisionado"],
+                              ["App CPU", "app_cpu_percent", "%", Activity, "Processo principal"],
+                              ["App RAM", "app_ram_mb", "MB", Bot, "Memoria do app"],
+                              ["Processos", "process_count", "", Layers, "Processos ativos"],
+                            ] as Array<[string, keyof VpsMetric, string, typeof Cpu, string]>).map(([label, key, suffix, Icon, description]) => {
+                              const values = snapshot.metrics.map((item) => metricValue(item, key));
+                              const current = values[values.length - 1] || 0;
+                              const peak = Math.max(0, ...values);
+                              const average = metricAverage(values);
+                              const trend = metricTrend(values);
+                              const barWidth = suffix === "%" ? current : peak ? (current / peak) * 100 : 0;
+                              return (
+                                <article key={String(key)} className="rounded-[16px] border border-[#171717] bg-[#0B0B0B] p-[12px]">
+                                  <div className="flex items-start justify-between gap-[12px]">
+                                    <div className="min-w-0">
+                                      <div className="flex items-center gap-[8px]">
+                                        <Icon className="h-[15px] w-[15px] text-[#9BC2FF]" />
+                                        <p className="text-[12px] font-semibold text-white">{label}</p>
+                                      </div>
+                                      <p className="mt-[4px] truncate text-[11px] text-[#666666]">{description}</p>
+                                    </div>
+                                    <p className="font-mono text-[16px] font-semibold text-white">{formatMetricNumber(current, suffix)}</p>
+                                  </div>
+                                  <div className="mt-[10px] h-[4px] overflow-hidden rounded-full bg-[#151515]">
+                                    <div className="h-full rounded-full bg-[#0F62FE]" style={{ width: `${Math.min(100, Math.max(0, barWidth))}%` }} />
+                                  </div>
+                                  <div className="mt-[9px] flex items-center justify-between gap-[10px] text-[10px] text-[#777777]">
+                                    <span>Media <b className="font-mono font-semibold text-[#CFCFCF]">{formatMetricNumber(average, suffix)}</b></span>
+                                    <span>Pico <b className="font-mono font-semibold text-[#CFCFCF]">{formatMetricNumber(peak, suffix)}</b></span>
+                                    <span className={trend > 0 ? "text-[#FFD28A]" : trend < 0 ? "text-[#9BE7AC]" : "text-[#777777]"}>
+                                      {trend > 0 ? "+" : ""}{formatMetricNumber(trend, suffix)}
+                                    </span>
+                                  </div>
+                                </article>
+                              );
+                            })}
+                          </div>
+                        </aside>
+                      </div>
+                    </div>
+                  </section>
+                ) : null}
+
+                {tab === "console" ? (
+                  <section className={`grid h-[calc(100vh-136px)] min-h-[620px] w-full overflow-hidden bg-[#050505] ${selectedConsoleEntry ? "xl:grid-cols-[minmax(0,1fr)_352px]" : "xl:grid-cols-1"
+                    }`}>
+                    <div className="flex min-h-0 min-w-0 flex-col">
+                      <div className="flex flex-col gap-[10px] border-b border-[#171717] bg-[#070707] p-[10px] lg:flex-row lg:items-center">
+                        <div className="flex min-w-0 flex-1 items-center gap-[10px] rounded-[10px] border border-[#1B1B1B] bg-[#030303] px-[12px]">
+                          <Search className="h-[15px] w-[15px] text-[#777777]" />
+                          <input value={logQuery} onChange={(event) => setLogQuery(event.target.value)} placeholder="Search logs..." className="h-[38px] min-w-0 flex-1 bg-transparent text-[12px] text-white outline-none placeholder:text-[#555555]" />
+                        </div>
+                        <div className="flex flex-wrap items-center gap-[8px]">
+                          <CustomSelect value={logLevel} onChange={setLogLevel} options={[...LOG_OPTIONS]} className="w-[154px]" />
+                          <button onClick={() => setLogsPaused((current) => !current)} className={`inline-flex h-[38px] items-center gap-[8px] rounded-[10px] border px-[12px] text-[12px] font-semibold transition-all ${logsPaused ? "border-[#292929] bg-[#111111] text-[#DADADA]" : "border-[#1E3425] bg-[#07140B] text-[#9BE7AC] shadow-[0_0_22px_rgba(52,168,83,0.08)]"}`}>
+                            {logsPaused ? <Pause className="h-[14px] w-[14px]" /> : <span className="h-[7px] w-[7px] rounded-full bg-[#34A853] shadow-[0_0_0_4px_rgba(52,168,83,0.12)]" />}
+                            {logsPaused ? "Live desativado" : "Live ativo"}
+                          </button>
+                          <button onClick={refreshConsoleLogs} disabled={logsRefreshing} className="inline-flex h-[38px] w-[38px] items-center justify-center rounded-[10px] border border-[#1B1B1B] bg-[#0B0B0B] text-[#DADADA] transition-colors hover:border-[#2A2A2A] disabled:cursor-not-allowed disabled:opacity-60" title="Atualizar logs">
+                            <RefreshCw className={`h-[15px] w-[15px] ${logsRefreshing ? "animate-spin" : ""}`} />
+                          </button>
+                          <button onClick={exportConsoleLogs} className="inline-flex h-[38px] w-[38px] items-center justify-center rounded-[10px] border border-[#1B1B1B] bg-[#0B0B0B] text-[#DADADA] transition-colors hover:border-[#2A2A2A]" title="Exportar logs">
+                            <Upload className="h-[15px] w-[15px]" />
+                          </button>
+                          <button onClick={() => void clearConsoleLogs()} disabled={logsClearing} className="inline-flex h-[38px] w-[38px] items-center justify-center rounded-[10px] border border-[#1B1B1B] bg-[#0B0B0B] text-[#DADADA] transition-colors hover:border-[#2A2A2A] disabled:cursor-not-allowed disabled:opacity-60" title="Limpar console">
+                            {logsClearing ? <Loader2 className="h-[15px] w-[15px] animate-spin" /> : <Trash2 className="h-[15px] w-[15px]" />}
                           </button>
                         </div>
                       </div>
-                    </div>
-                  </div>
-                  </div>
-                </aside>
-              ) : null}
-            </div>
-          </section>
-        ) : null}
 
-        {fileContextMenu ? (
-          <div
-            ref={fileContextMenuRef}
-            className="fixed z-[220] w-[196px] overflow-hidden rounded-[14px] border border-[#242424] bg-[#0B0B0B] p-[6px] shadow-[0_18px_60px_rgba(0,0,0,0.48)]"
-            style={{ left: fileContextMenu.x, top: fileContextMenu.y }}
-          >
-            {fileContextMenu.kind === "preview" ? (
-              <>
-                <button onClick={() => copyImageLink(fileContextMenu.node)} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
-                  <Copy className="h-[14px] w-[14px]" /> Copiar
-                </button>
-                {isSvgFile(fileContextMenu.node) ? (
-                  <button onClick={copySelectedSvgCode} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
-                    <Code2 className="h-[14px] w-[14px]" /> Copiar Codigo
-                  </button>
-                ) : null}
-              </>
-            ) : fileContextMenu.kind === "empty" ? (
-              <>
-                <button onClick={() => startCreateFile(fileContextMenu.parentPath, "file")} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
-                  <FilePlus2 className="h-[14px] w-[14px]" /> New File
-                </button>
-                <button onClick={() => startCreateFile(fileContextMenu.parentPath, "directory")} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
-                  <FolderPlus className="h-[14px] w-[14px]" /> New Folder
-                </button>
-                <div className="my-[5px] h-px bg-[#171717]" />
-                <button onClick={() => copyExplorerPath(fileContextMenu.parentPath)} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
-                  <Copy className="h-[14px] w-[14px]" /> Copy Path
-                </button>
-              </>
-            ) : (
-              <>
-                <button onClick={() => startRenameFile(fileContextMenu.node)} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
-                  <Pencil className="h-[14px] w-[14px]" /> Rename
-                </button>
-                {fileContextMenu.node.type === "file" ? (
-                  <>
-                    <button onClick={() => isPreviewableImageFile(fileContextMenu.node) ? copyImageLink(fileContextMenu.node) : copyFileNode(fileContextMenu.node)} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
-                      <Copy className="h-[14px] w-[14px]" /> {isPreviewableImageFile(fileContextMenu.node) ? "Copiar" : "Copy"}
-                    </button>
-                    {isSvgFile(fileContextMenu.node) && selectedFile?.path === fileContextMenu.node.path ? (
-                      <button onClick={copySelectedSvgCode} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
-                        <Code2 className="h-[14px] w-[14px]" /> Copiar Codigo
-                      </button>
-                    ) : null}
-                  </>
-                ) : (
-                  <>
-                    <button onClick={() => startCreateFile(fileContextMenu.node.path, "file")} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
-                      <FilePlus2 className="h-[14px] w-[14px]" /> Add File
-                    </button>
-                    <button onClick={() => startCreateFile(fileContextMenu.node.path, "directory")} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
-                      <FolderPlus className="h-[14px] w-[14px]" /> Add Folder
-                    </button>
-                  </>
-                )}
-                <div className="my-[5px] h-px bg-[#171717]" />
-                <button onClick={() => void deleteFileNode(fileContextMenu.node)} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#FF7373] hover:bg-[#191919]">
-                  <Trash2 className="h-[14px] w-[14px]" /> Delete
-                </button>
-              </>
-            )}
-          </div>
-        ) : null}
-
-        {tab === "deploys" ? (
-          <section className="flex h-[calc(100vh-136px)] min-h-[620px] w-full flex-col overflow-hidden bg-[#050505]">
-            <div className="shrink-0 border-b border-[#151515] bg-[#080808] p-[12px]">
-              <div className="flex flex-col gap-[12px] xl:flex-row xl:items-center xl:justify-between">
-                <div className="min-w-0">
-                  <h2 className="text-[18px] font-semibold tracking-[-0.035em] text-white">Deployments</h2>
-                  <p className="mt-[4px] truncate text-[12px] text-[#777777]">
-                    Commits, previews e producao sincronizados de {snapshot.project.repository.fullName}.
-                  </p>
-                </div>
-                <button onClick={() => void syncDeployments()} disabled={Boolean(busyAction)} className="inline-flex h-[36px] shrink-0 items-center justify-center gap-[8px] rounded-[10px] border border-[#202020] bg-[#101010] px-[12px] text-[12px] font-semibold text-[#DADADA] transition-colors hover:bg-[#151515] disabled:cursor-not-allowed disabled:opacity-60">
-                  {busyAction === "sync" ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <RefreshCw className="h-[14px] w-[14px]" />}
-                  Sincronizar
-                </button>
-              </div>
-              <div className="mt-[12px] grid gap-[8px] xl:grid-cols-[minmax(190px,1fr)_minmax(190px,1fr)_220px_210px_180px_42px]">
-                <CustomSelect value={deploymentBranchFilter} onChange={setDeploymentBranchFilter} options={deploymentBranchOptions} icon={<GitBranch className="h-[14px] w-[14px]" />} />
-                <CustomSelect value={deploymentAuthorFilter} onChange={setDeploymentAuthorFilter} options={deploymentAuthorOptions} icon={<Search className="h-[14px] w-[14px]" />} />
-                <CustomSelect value={deploymentEnvironmentFilter} onChange={setDeploymentEnvironmentFilter} options={deploymentEnvironmentOptions} icon={<Globe2 className="h-[14px] w-[14px]" />} />
-                <CustomSelect
-                  value={deploymentDateFilter}
-                  onChange={setDeploymentDateFilter}
-                  options={[
-                    { value: "all", label: "Select Date Range" },
-                    { value: "24h", label: "Last 24 hours" },
-                    { value: "7d", label: "Last 7 days" },
-                    { value: "30d", label: "Last 30 days" },
-                  ]}
-                  icon={<History className="h-[14px] w-[14px]" />}
-                />
-                <CustomSelect value={deploymentStatusFilter} onChange={setDeploymentStatusFilter} options={deploymentStatusOptions} icon={<Activity className="h-[14px] w-[14px]" />} />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDeploymentBranchFilter("all");
-                    setDeploymentAuthorFilter("all");
-                    setDeploymentEnvironmentFilter("all");
-                    setDeploymentStatusFilter("all");
-                    setDeploymentDateFilter("all");
-                  }}
-                  className="flex h-[42px] items-center justify-center rounded-[12px] border border-[#202020] bg-[#080808] text-[#9B9B9B] transition-colors hover:border-[#303030] hover:text-white"
-                  title="Limpar filtros"
-                >
-                  <X className="h-[15px] w-[15px]" />
-                </button>
-              </div>
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-auto [scrollbar-color:#2A2A2A_#050505] [scrollbar-gutter:stable] [scrollbar-width:thin]">
-              <div className="min-w-[1180px]">
-                <div className="grid grid-cols-[minmax(360px,1.8fr)_132px_116px_112px_minmax(190px,0.9fr)_120px_54px] border-b border-[#101010] bg-[#060606] px-[12px] py-[9px] text-[10px] font-bold uppercase tracking-[0.12em] text-[#565656]">
-                  <span>Deployment</span>
-                  <span>Status</span>
-                  <span>Environment</span>
-                  <span>Commit</span>
-                  <span>Branch</span>
-                  <span className="text-right">Updated</span>
-                  <span />
-                </div>
-                {filteredDeployments.length ? filteredDeployments.map((deploy) => {
-                  const commitUrl = deploymentMetadataString(deploy, "commitUrl") ||
-                    (deploy.commit_sha ? `${snapshot.project.repository.htmlUrl}/commit/${deploy.commit_sha}` : null);
-                  const pullRequestUrl = deploymentMetadataString(deploy, "pullRequestUrl");
-                  const authorAvatarUrl = deploymentMetadataString(deploy, "authorAvatarUrl");
-                  const statusBadge = deploymentPrimaryBadge(deploy);
-                  const environmentBadges = deploymentEnvironmentBadges(deploy, snapshot.project.repository.branch);
-                  return (
-                    <article key={deploy.id} className={`relative grid min-h-[56px] grid-cols-[minmax(360px,1.8fr)_132px_116px_112px_minmax(190px,0.9fr)_120px_54px] items-center border-b border-[#101010] px-[12px] text-[12px] transition-colors hover:bg-[#0B0B0B] ${deploymentMenuId === deploy.id ? "z-[170]" : "z-0"}`}>
-                      <div className="min-w-0 pr-[18px]">
-                        <p className="truncate text-[13px] font-semibold text-[#F2F2F2]">
-                          {deploy.commit_message || `Deploy ${deploy.branch}`}
-                        </p>
-                        <div className="mt-[4px] flex min-w-0 items-center gap-[8px] text-[11px] text-[#777777]">
-                          <span className="truncate">{deploy.commit_author || "GitHub"}</span>
-                          {pullRequestUrl ? (
-                            <>
-                              <span className="text-[#303030]">/</span>
-                              <span className="truncate text-[#9B9B9B]">Pull request preparado</span>
-                            </>
-                          ) : null}
+                      <div className="border-b border-[#151515] bg-[#050505] px-[10px] py-[8px]">
+                        <div className="flex flex-wrap items-center gap-[6px]">
+                          {CONSOLE_STATUS_OPTIONS.map((option) => (
+                            <button
+                              key={option.value}
+                              onClick={() => setConsoleStatusFilter(option.value)}
+                              className={`inline-flex h-[28px] items-center gap-[6px] rounded-[8px] border px-[9px] text-[11px] font-semibold transition-colors ${consoleStatusFilter === option.value ? "border-[#2C2C2C] bg-[#171717] text-white" : "border-[#171717] bg-[#0A0A0A] text-[#8A8A8A] hover:text-white"
+                                }`}
+                            >
+                              {option.label}
+                              <span className="font-mono text-[10px] text-[#5E5E5E]">{consoleStats[option.value as keyof typeof consoleStats]}</span>
+                            </button>
+                          ))}
+                        </div>
+                        <div className="mt-[10px] h-[36px] border-t border-[#101010]">
+                          <div className="relative h-full">
+                            {consoleEntries.length ? consoleEntries.slice(-80).map((entry, index, list) => {
+                              const left = list.length <= 1 ? 0 : (index / (list.length - 1)) * 100;
+                              const height = entry.family === "5xx" ? 26 : entry.family === "4xx" ? 20 : 14;
+                              return (
+                                <button
+                                  key={`timeline-${entry.key}`}
+                                  onClick={() => {
+                                    setSelectedConsoleKey(entry.key);
+                                    setConsoleStatusFilter(entry.family);
+                                  }}
+                                  className={`absolute bottom-[2px] w-[4px] rounded-t-[2px] ${entry.family === "5xx" ? "bg-[#FF8E8E]" : entry.family === "4xx" ? "bg-[#FFD28A]" : "bg-[#4A4A4A]"}`}
+                                  style={{ left: `${left}%`, height }}
+                                  title={`${entry.status} ${entry.path}`}
+                                />
+                              );
+                            }) : null}
+                          </div>
                         </div>
                       </div>
-                      <div className="flex min-w-0 items-center gap-[7px]">
-                        <span className={`inline-flex h-[24px] shrink-0 items-center rounded-full border px-[9px] text-[11px] font-semibold ${statusBadge.className}`}>
-                          {statusBadge.label}
-                        </span>
-                        <span className="whitespace-nowrap text-[11px] text-[#777777]">{deploymentDurationLabel(deploy)}</span>
+
+                      <div className="grid grid-cols-[104px_1fr_1.4fr_minmax(220px,2fr)] gap-[12px] border-b border-[#171717] bg-[#070707] px-[12px] py-[9px] text-[11px] font-semibold text-[#6A6A6A]">
+                        <span>Status</span>
+                        <span>Host</span>
+                        <span>Request</span>
+                        <span>Messages</span>
                       </div>
-                      <div className="flex min-w-0 flex-wrap items-center gap-[5px]">
-                        {environmentBadges.map((badge) => (
-                          <span key={badge.label} className={`inline-flex h-[22px] items-center gap-[6px] whitespace-nowrap rounded-full border px-[8px] text-[11px] font-semibold ${badge.className}`}>
-                            <span className="h-[6px] w-[6px] rounded-full bg-current opacity-80" />
-                            {badge.label}
-                          </span>
-                        ))}
-                      </div>
-                      <a
-                        href={commitUrl || undefined}
-                        target="_blank"
-                        rel="noreferrer"
-                        onClick={(event) => {
-                          if (!commitUrl) event.preventDefault();
-                        }}
-                        className={`inline-flex min-w-0 items-center gap-[7px] font-mono text-[12px] font-semibold ${commitUrl ? "text-[#E8E8E8] hover:text-white" : "text-[#777777]"}`}
-                      >
-                        <GitBranch className="h-[13px] w-[13px] shrink-0 text-[#777777]" />
-                        <span className="truncate">{deploymentShortSha(deploy.commit_sha)}</span>
-                      </a>
-                      <div className="flex min-w-0 items-center gap-[8px] font-mono text-[12px] font-semibold text-[#DADADA]">
-                        <GitBranch className="h-[13px] w-[13px] shrink-0 text-[#777777]" />
-                        <span className="truncate">{deploy.branch || "main"}</span>
-                      </div>
-                      <div className="flex items-center justify-end gap-[8px] text-right text-[12px] text-[#9B9B9B]">
-                        <span className="whitespace-nowrap">{formatRelative(deploy.deployed_at || deploy.created_at)}</span>
-                        {authorAvatarUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element -- GitHub avatar URLs are small external images outside the app image pipeline.
-                          <img src={authorAvatarUrl} alt="" className="h-[20px] w-[20px] rounded-full border border-[#242424]" />
-                        ) : (
-                          <span className="flex h-[20px] w-[20px] items-center justify-center rounded-full border border-[#242424] bg-[#111111] text-[9px] font-bold text-[#AFAFAF]">
-                            {deploymentAuthorInitials(deploy.commit_author)}
-                          </span>
+                      <div ref={consoleRef} className="h-0 min-h-0 flex-1 overflow-x-auto overflow-y-auto bg-[#030303] font-mono text-[12px] [scrollbar-color:#2A2A2A_#050505] [scrollbar-gutter:stable] [scrollbar-width:thin]">
+                        {visibleConsoleEntries.length ? visibleConsoleEntries.map((entry) => (
+                          <button
+                            key={entry.key}
+                            onClick={() => setSelectedConsoleKey(entry.key)}
+                            className={`grid w-full min-w-[980px] grid-cols-[104px_1fr_1.4fr_minmax(220px,2fr)] gap-[12px] border-b border-[#0D0D0D] px-[12px] py-[7px] text-left transition-colors hover:bg-[#141414] ${selectedConsoleEntry?.key === entry.key ? "bg-[#191919]" : "odd:bg-[#060606] even:bg-[#0A0A0A]"
+                              }`}
+                          >
+                            <span className="flex items-center gap-[7px] whitespace-nowrap">
+                              <span className="text-[#7A7A7A]">{formatConsoleClock(entry.time)}</span>
+                              <span className={statusClassName(entry.status)}>{entry.status}</span>
+                            </span>
+                            <span className="truncate font-semibold text-[#EFEFEF]">{entry.host}</span>
+                            <span className="flex min-w-0 items-center gap-[7px]">
+                              <span className="rounded-[4px] border border-[#2A2A2A] px-[4px] py-[1px] text-[10px] text-[#BDBDBD]">{entry.method}</span>
+                              <span className="truncate text-[#F4F4F4]">{entry.path}</span>
+                            </span>
+                            <span className="truncate text-[#BDBDBD]">{entry.message}</span>
+                          </button>
+                        )) : (
+                          <div className="flex h-full items-center justify-center text-[#666666]">Nenhum log encontrado para os filtros atuais.</div>
                         )}
                       </div>
-                      <div className="flex justify-end">
+                    </div>
+
+                    {selectedConsoleEntry ? (
+                      <aside className="min-h-0 overflow-auto border-t border-[#171717] bg-[#070707] xl:border-l xl:border-t-0">
+                        <div className="p-[14px]">
+                          <div className="flex items-start justify-between gap-[10px]">
+                            <div className="min-w-0">
+                              <div className="flex min-w-0 items-center gap-[8px]">
+                                <span className="rounded-[4px] border border-[#2A2A2A] px-[5px] py-[2px] font-mono text-[10px] text-white">{selectedConsoleEntry.method}</span>
+                                <span className="truncate font-mono text-[13px] font-semibold text-white">{selectedConsoleEntry.path}</span>
+                                <span className={`font-mono text-[12px] font-bold ${statusClassName(selectedConsoleEntry.status)}`}>{selectedConsoleEntry.status}</span>
+                              </div>
+                              <p className="mt-[8px] text-[11px] text-[#777777]">Request started</p>
+                              <p className="mt-[2px] font-mono text-[11px] text-[#DADADA]">{formatDate(selectedConsoleEntry.time)}</p>
+                            </div>
+                            <div className="flex items-center gap-[6px]">
+                              <button
+                                onClick={() => {
+                                  const previous = visibleConsoleEntries[Math.max(0, selectedConsoleIndex - 1)];
+                                  if (previous) setSelectedConsoleKey(previous.key);
+                                }}
+                                disabled={selectedConsoleIndex <= 0}
+                                className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-[8px] border border-[#1B1B1B] text-[#AAAAAA] hover:text-white disabled:cursor-not-allowed disabled:opacity-35"
+                                title="Evento anterior"
+                              >
+                                <ChevronDown className="h-[14px] w-[14px] rotate-180" />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const next = visibleConsoleEntries[Math.min(visibleConsoleEntries.length - 1, selectedConsoleIndex + 1)];
+                                  if (next) setSelectedConsoleKey(next.key);
+                                }}
+                                disabled={selectedConsoleIndex < 0 || selectedConsoleIndex >= visibleConsoleEntries.length - 1}
+                                className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-[8px] border border-[#1B1B1B] text-[#AAAAAA] hover:text-white disabled:cursor-not-allowed disabled:opacity-35"
+                                title="Proximo evento"
+                              >
+                                <ChevronDown className="h-[14px] w-[14px]" />
+                              </button>
+                              <button onClick={() => navigator.clipboard?.writeText(selectedConsoleEntry.requestId)} className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-[8px] border border-[#1B1B1B] text-[#AAAAAA] hover:text-white" title="Copiar request id">
+                                <Copy className="h-[14px] w-[14px]" />
+                              </button>
+                              <button onClick={() => setSelectedConsoleKey(null)} className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-[8px] border border-[#1B1B1B] text-[#AAAAAA] hover:text-white" title="Fechar detalhe">
+                                <X className="h-[14px] w-[14px]" />
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="mt-[14px] rounded-[14px] border border-[#1A1A1A] bg-[#0B0B0B]">
+                            {[
+                              ["Request ID", selectedConsoleEntry.requestId],
+                              ["Path", selectedConsoleEntry.path],
+                              ["Host", selectedConsoleEntry.host],
+                              ["Level", selectedConsoleEntry.level.toUpperCase()],
+                              ["Source", selectedConsoleEntry.source],
+                              ["User Agent", selectedConsoleEntry.userAgent],
+                            ].map(([label, value]) => (
+                              <div key={label} className="grid grid-cols-[96px_minmax(0,1fr)] gap-[10px] border-b border-[#151515] px-[12px] py-[10px] last:border-b-0">
+                                <span className="text-[11px] text-[#777777]">{label}</span>
+                                <span className="break-words text-right font-mono text-[11px] text-[#DADADA]">{value}</span>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="mt-[14px] space-y-[10px]">
+                            <article className="rounded-[14px] border border-[#1A1A1A] bg-[#0B0B0B] p-[12px]">
+                              <div className="flex items-center justify-between">
+                                <p className="text-[13px] font-semibold text-white">Firewall</p>
+                                <span className={selectedConsoleEntry.status >= 400 ? "text-[11px] font-semibold text-[#FFD28A]" : "text-[11px] font-semibold text-[#9BE7AC]"}>
+                                  {selectedConsoleEntry.status >= 400 ? "Inspecionado" : "Allowed"}
+                                </span>
+                              </div>
+                              <p className="mt-[8px] text-[12px] text-[#777777]">Received in {selectedConsoleEntry.location}</p>
+                            </article>
+                            <article className="rounded-[14px] border border-[#1A1A1A] bg-[#0B0B0B] p-[12px]">
+                              <div className="flex items-center justify-between">
+                                <p className="text-[13px] font-semibold text-white">Middleware</p>
+                                <span className={`font-mono text-[11px] ${statusClassName(selectedConsoleEntry.status)}`}>{selectedConsoleEntry.status}</span>
+                              </div>
+                              <div className="mt-[10px] grid gap-[8px] text-[12px]">
+                                <div className="flex items-center justify-between text-[#888888]">
+                                  <span>Execution Duration</span>
+                                  <span className="font-mono text-[#DADADA]">{selectedConsoleEntry.durationMs ?? 0}ms</span>
+                                </div>
+                                <div className="flex items-center justify-between text-[#888888]">
+                                  <span>External APIs</span>
+                                  <span className="font-mono text-[#DADADA]">{selectedConsoleEntry.externalApis ? `${selectedConsoleEntry.externalApis} request(s)` : "No outgoing requests"}</span>
+                                </div>
+                              </div>
+                            </article>
+                            <article className="rounded-[14px] border border-[#1A1A1A] bg-[#0B0B0B] p-[12px]">
+                              <p className="text-[13px] font-semibold text-white">Function Invocation</p>
+                              <div className="mt-[10px] grid gap-[8px] text-[12px]">
+                                <div className="flex items-center justify-between gap-[12px] text-[#888888]">
+                                  <span>Route</span>
+                                  <span className="truncate font-mono text-[#DADADA]">{selectedConsoleEntry.path}</span>
+                                </div>
+                                <div className="rounded-[10px] border border-[#171717] bg-[#050505] p-[10px] font-mono text-[11px] text-[#CFCFCF]">
+                                  {selectedConsoleEntry.message}
+                                </div>
+                              </div>
+                            </article>
+                          </div>
+
+                          <p className={`mt-[14px] flex items-center gap-[7px] text-[12px] font-semibold ${selectedConsoleEntry.status >= 500 ? "text-[#FF8E8E]" : "text-[#9BE7AC]"}`}>
+                            <span className="h-[7px] w-[7px] rounded-full bg-current" />
+                            {selectedConsoleEntry.status >= 500 ? "Request failed" : `Response finished in ${selectedConsoleEntry.durationMs ?? 0}ms`}
+                          </p>
+                        </div>
+                      </aside>
+                    ) : null}
+                  </section>
+                ) : null}
+
+                {tab === "files" ? (
+                  <section
+                    className="grid h-[calc(100vh-64px)] min-h-0 grid-cols-1 bg-[#050505] md:grid-cols-[var(--flowdesk-vps-explorer)_minmax(0,1fr)]"
+                    style={{ "--flowdesk-vps-explorer": `${explorerWidth}px` } as CSSProperties}
+                  >
+                    <aside className="relative min-h-0 border-r border-[#171717] bg-[#080808]">
+                      <div className="flex h-[48px] items-center justify-between gap-[10px] border-b border-[#171717] px-[12px]">
+                        <div className="min-w-0">
+                          <p className="truncate text-[12px] font-bold uppercase tracking-[0.14em] text-[#E2E2E2]" title={snapshot.project.repository.fullName}>{snapshot.project.repository.fullName}</p>
+                          <p className="mt-[2px] text-[10px] text-[#575757]">{explorerWidth}px</p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-[3px]">
+                          <button type="button" onClick={() => startCreateFile("", "file")} className="flex h-[28px] w-[28px] items-center justify-center rounded-[8px] text-[#AFAFAF] hover:bg-[#111111] hover:text-white" title="Novo arquivo">
+                            <FilePlus2 className="h-[15px] w-[15px]" />
+                          </button>
+                          <button type="button" onClick={() => startCreateFile("", "directory")} className="flex h-[28px] w-[28px] items-center justify-center rounded-[8px] text-[#AFAFAF] hover:bg-[#111111] hover:text-white" title="Nova pasta">
+                            <FolderPlus className="h-[15px] w-[15px]" />
+                          </button>
+                          <button type="button" onClick={() => void syncFiles()} disabled={filesBusy} className="flex h-[28px] w-[28px] items-center justify-center rounded-[8px] text-[#AFAFAF] hover:bg-[#111111] hover:text-white disabled:opacity-50" title="Atualizar">
+                            {filesBusy ? <Loader2 className="h-[15px] w-[15px] animate-spin" /> : <RefreshCw className="h-[15px] w-[15px]" />}
+                          </button>
+                          <button type="button" onClick={() => setExpandedFilePaths(new Set())} className="flex h-[28px] w-[28px] items-center justify-center rounded-[8px] text-[#AFAFAF] hover:bg-[#111111] hover:text-white" title="Recolher tudo">
+                            <Layers className="h-[15px] w-[15px]" />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="m-[10px] flex items-center gap-[8px] rounded-[10px] border border-[#171717] bg-[#0B0B0B] px-[10px]">
+                        <Search className="h-[15px] w-[15px] text-[#777777]" />
+                        <input value={fileQuery} onChange={(event) => setFileQuery(event.target.value)} placeholder="Buscar arquivo" className="h-[38px] min-w-0 flex-1 bg-transparent text-[13px] text-white outline-none" />
+                      </div>
+                      <div
+                        className="h-[calc(100vh-160px)] overflow-auto px-[6px] pb-[12px]"
+                        onContextMenu={(event) => {
+                          if (event.defaultPrevented) return;
+                          openFileContextMenu(event, { kind: "empty", parentPath: "" });
+                        }}
+                      >
+                        {fileInlineDraft && !fileInlineDraft.parentPath ? (
+                          <InlineFileDraft
+                            draft={fileInlineDraft}
+                            level={0}
+                            onChange={(value) => setFileInlineDraft((current) => current ? { ...current, value } : current)}
+                            onCommit={() => void commitInlineCreate()}
+                            onCancel={() => setFileInlineDraft(null)}
+                          />
+                        ) : null}
+                        {filteredTree.length ? filteredTree.map((node) => (
+                          <FileTreeNode
+                            key={node.path}
+                            node={node}
+                            activePath={selectedFile?.path || ""}
+                            onSelect={loadFile}
+                            expandedPaths={expandedFilePaths}
+                            onToggle={(path) => setExpandedFilePaths((current) => {
+                              const next = new Set(current);
+                              if (next.has(path)) next.delete(path);
+                              else next.add(path);
+                              return next;
+                            })}
+                            onContextMenu={(event, contextNode) => {
+                              openFileContextMenu(event, { kind: "node", node: contextNode });
+                            }}
+                            inlineDraft={fileInlineDraft}
+                            onInlineDraftChange={(value) => setFileInlineDraft((current) => current ? { ...current, value } : current)}
+                            onInlineDraftCommit={() => void commitInlineCreate()}
+                            onInlineDraftCancel={() => setFileInlineDraft(null)}
+                            renamingPath={renamingFilePath}
+                            renamingValue={renamingValue}
+                            onRenamingChange={setRenamingValue}
+                            onRenameCommit={(contextNode) => void commitRenameFile(contextNode)}
+                            onRenameCancel={() => setRenamingFilePath(null)}
+                            draggedPath={draggedFilePath}
+                            onDragStart={(contextNode) => setDraggedFilePath(contextNode.path)}
+                            onDragEnd={() => setDraggedFilePath(null)}
+                            onDropOnDirectory={(contextNode) => {
+                              if (draggedFilePath) void moveFileNode(draggedFilePath, contextNode.path);
+                              setDraggedFilePath(null);
+                            }}
+                          />
+                        )) : (
+                          <div className="m-[8px] rounded-[12px] border border-[#151515] bg-[#0B0B0B] p-[14px] text-[13px] text-[#777777]">
+                            {filesBusy ? "Espelhando arquivos do GitHub..." : "Aguardando arquivos do repositorio."}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onPointerDown={startExplorerResize}
+                        className="absolute right-[-4px] top-0 z-20 h-full w-[8px] cursor-col-resize border-x border-transparent transition-colors hover:border-[rgba(15,98,254,0.28)] hover:bg-[rgba(15,98,254,0.14)]"
+                        aria-label="Redimensionar Explorer"
+                        title="Redimensionar Explorer"
+                      />
+                    </aside>
+                    <div className="flex min-h-0 min-w-0 bg-[#050505]">
+                      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                        <div className="flex h-[48px] items-center justify-between gap-[12px] border-b border-[#171717] bg-[#080808] px-[12px]">
+                          <div className="min-w-0">
+                            <p className="min-w-0 truncate font-mono text-[13px] text-[#DADADA]">{selectedFile?.path || "Selecione um arquivo"}</p>
+                            {selectedFile ? (
+                              <p className="mt-[2px] text-[10px] font-bold uppercase tracking-[0.12em] text-[#555555]">
+                                {showingImagePreview
+                                  ? `${selectedFileIsSvg ? "SVG preview" : "Imagem"}${loadedFileSizeLabel ? ` / ${loadedFileSizeLabel}` : ""}`
+                                  : highlightedLanguage}
+                              </p>
+                            ) : null}
+                          </div>
+                          <div className="flex shrink-0 items-center gap-[8px]">
+                            {selectedFileIsPreviewableImage ? (
+                              <div className="hidden items-center gap-[4px] md:flex">
+                                <button
+                                  type="button"
+                                  onClick={() => setFilePreviewMode("preview")}
+                                  className={`flex h-[30px] w-[30px] items-center justify-center rounded-[8px] border transition-colors ${filePreviewMode === "preview"
+                                      ? "border-[#2A2A2A] bg-[#171717] text-white"
+                                      : "border-[#202020] bg-[#0B0B0B] text-[#9B9B9B] hover:bg-[#111111] hover:text-white"
+                                    }`}
+                                  title="Preview"
+                                >
+                                  <ImageIcon className="h-[14px] w-[14px]" />
+                                </button>
+                                {selectedFileIsSvg ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setFilePreviewMode("code")}
+                                    className={`flex h-[30px] w-[30px] items-center justify-center rounded-[8px] border transition-colors ${filePreviewMode === "code"
+                                        ? "border-[#2A2A2A] bg-[#171717] text-white"
+                                        : "border-[#202020] bg-[#0B0B0B] text-[#9B9B9B] hover:bg-[#111111] hover:text-white"
+                                      }`}
+                                    title="Codigo SVG"
+                                  >
+                                    <Code2 className="h-[14px] w-[14px]" />
+                                  </button>
+                                ) : null}
+                              </div>
+                            ) : null}
+                            {showingImagePreview ? (
+                              <div className="hidden items-center gap-[4px] md:flex">
+                                <button type="button" onClick={() => setImageZoom((value) => clampImageZoom(value - 0.25))} className="flex h-[30px] w-[30px] items-center justify-center rounded-[8px] border border-[#202020] bg-[#0B0B0B] text-[#9B9B9B] hover:bg-[#111111] hover:text-white" title="Diminuir zoom">
+                                  <ZoomOut className="h-[14px] w-[14px]" />
+                                </button>
+                                <button type="button" onClick={() => setImageZoom(1)} className="h-[30px] min-w-[54px] rounded-[8px] border border-[#202020] bg-[#0B0B0B] px-[8px] font-mono text-[11px] font-semibold text-[#DADADA] hover:bg-[#111111]" title="Resetar zoom">
+                                  {Math.round(imageZoom * 100)}%
+                                </button>
+                                <button type="button" onClick={() => setImageZoom((value) => clampImageZoom(value + 0.25))} className="flex h-[30px] w-[30px] items-center justify-center rounded-[8px] border border-[#202020] bg-[#0B0B0B] text-[#9B9B9B] hover:bg-[#111111] hover:text-white" title="Aumentar zoom">
+                                  <ZoomIn className="h-[14px] w-[14px]" />
+                                </button>
+                              </div>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFlowChatOpen((current) => {
+                                  const next = !current;
+                                  if (next) void loadFlowChatHistory();
+                                  return next;
+                                });
+                              }}
+                              className={`inline-flex h-[32px] items-center gap-[8px] rounded-[9px] px-[11px] text-[12px] font-semibold transition-colors ${flowChatOpen
+                                  ? "border border-[#2A2A2A] bg-[#171717] text-white"
+                                  : "border border-[#242424] bg-[#E6E6E6] text-[#050505] hover:bg-white"
+                                }`}
+                            >
+                              <Sparkles className="h-[15px] w-[15px]" /> Falar com Flow
+                            </button>
+                            <button disabled={!selectedFile || !fileDirty} onClick={saveFile} className="inline-flex h-[32px] items-center gap-[8px] rounded-[9px] bg-[#0F62FE] px-[11px] text-[12px] font-semibold text-white disabled:opacity-45">
+                              <Save className="h-[15px] w-[15px]" /> Salvar
+                            </button>
+                          </div>
+                        </div>
+                        {!selectedFile ? (
+                          <div className="relative min-h-0 flex-1 overflow-hidden bg-[#050505]">
+                            <div className="relative flex h-full min-h-[520px] items-center justify-center px-[28px] py-[34px]">
+                              <div className="grid w-full max-w-[1040px] gap-[28px] lg:grid-cols-[minmax(0,0.9fr)_minmax(360px,1fr)]">
+                                <div className="flex min-w-0 flex-col justify-center">
+                                  <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-[#666666]">Flowdesk Files</p>
+                                  <h2 className="mt-[10px] text-[34px] font-semibold tracking-[-0.055em] text-[#EDEDED]">Painel de arquivos</h2>
+                                  <p className="mt-[6px] text-[14px] leading-[1.6] text-[#8D8D8D]">
+                                    {snapshot.project.repository.fullName}
+                                  </p>
+                                  <div className="mt-[24px] grid gap-[10px] sm:grid-cols-2">
+                                    <button type="button" onClick={() => startCreateFile("", "file")} className="group flex h-[52px] items-center gap-[12px] rounded-[14px] border border-[#202020] bg-[#0B0B0B] px-[14px] text-left text-[13px] font-semibold text-[#E8E8E8] shadow-[0_18px_60px_rgba(0,0,0,0.18)] transition-all hover:border-[#303030] hover:bg-[#111111]">
+                                      <FilePlus2 className="h-[17px] w-[17px] text-[#9BC2FF] transition-transform group-hover:scale-110" />
+                                      Novo arquivo
+                                    </button>
+                                    <button type="button" onClick={() => startCreateFile("", "directory")} className="group flex h-[52px] items-center gap-[12px] rounded-[14px] border border-[#202020] bg-[#0B0B0B] px-[14px] text-left text-[13px] font-semibold text-[#E8E8E8] shadow-[0_18px_60px_rgba(0,0,0,0.18)] transition-all hover:border-[#303030] hover:bg-[#111111]">
+                                      <FolderPlus className="h-[17px] w-[17px] text-[#9BE7AC] transition-transform group-hover:scale-110" />
+                                      Nova pasta
+                                    </button>
+                                    {!isMinecraftProject ? (
+                                      <>
+                                        <button type="button" onClick={() => void syncFiles()} disabled={filesBusy} className="group flex h-[52px] items-center gap-[12px] rounded-[14px] border border-[#202020] bg-[#0B0B0B] px-[14px] text-left text-[13px] font-semibold text-[#E8E8E8] shadow-[0_18px_60px_rgba(0,0,0,0.18)] transition-all hover:border-[#303030] hover:bg-[#111111] disabled:opacity-60">
+                                          {filesBusy ? <Loader2 className="h-[17px] w-[17px] animate-spin text-[#9BC2FF]" /> : <RefreshCw className="h-[17px] w-[17px] text-[#9BC2FF] transition-transform group-hover:rotate-45" />}
+                                          Sincronizar GitHub
+                                        </button>
+                                        <button type="button" onClick={() => navigateToTab("env")} className="group flex h-[52px] items-center gap-[12px] rounded-[14px] border border-[#202020] bg-[#0B0B0B] px-[14px] text-left text-[13px] font-semibold text-[#E8E8E8] shadow-[0_18px_60px_rgba(0,0,0,0.18)] transition-all hover:border-[#303030] hover:bg-[#111111]">
+                                          <KeyRound className="h-[17px] w-[17px] text-[#FFD28A] transition-transform group-hover:scale-110" />
+                                          Variaveis
+                                        </button>
+                                      </>
+                                    ) : null}
+                                  </div>
+                                </div>
+                                <div className="grid gap-[10px]">
+                                  {[
+                                    { icon: <Search className="h-[16px] w-[16px]" />, title: "Busca rapida", value: `${flattenFileTreePaths(snapshot.fileTree).length} itens indexados` },
+                                    { icon: <ImageIcon className="h-[16px] w-[16px]" />, title: "Preview de imagens", value: "PNG, JPG, GIF, WEBP, SVG" },
+                                    { icon: <Terminal className="h-[16px] w-[16px]" />, title: "Console live", value: logsPaused ? "desativado" : "ativo" },
+                                    { icon: <Sparkles className="h-[16px] w-[16px]" />, title: "Flow", value: flowChatOpen ? "aberto" : "pronto" },
+                                  ].map((item) => (
+                                    <article key={item.title} className="group flex min-h-[70px] items-center gap-[14px] rounded-[16px] border border-[#1B1B1B] bg-[rgba(11,11,11,0.78)] px-[15px] shadow-[0_20px_70px_rgba(0,0,0,0.20)] backdrop-blur transition-all hover:border-[#2A2A2A] hover:bg-[#101010]">
+                                      <span className="flex h-[36px] w-[36px] shrink-0 items-center justify-center rounded-[12px] border border-[#242424] bg-[#050505] text-[#9B9B9B] transition-colors group-hover:text-white">
+                                        {item.icon}
+                                      </span>
+                                      <div className="min-w-0">
+                                        <p className="truncate text-[13px] font-semibold text-[#E8E8E8]">{item.title}</p>
+                                        <p className="mt-[3px] truncate text-[12px] text-[#777777]">{item.value}</p>
+                                      </div>
+                                    </article>
+                                  ))}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setFlowChatOpen(true);
+                                      void loadFlowChatHistory();
+                                    }}
+                                    className="mt-[4px] flex h-[46px] items-center justify-center gap-[9px] rounded-[14px] bg-[#F2F2F2] px-[14px] text-[13px] font-semibold text-[#050505] transition-all hover:bg-white"
+                                  >
+                                    <Sparkles className="h-[16px] w-[16px]" />
+                                    Falar com Flow
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ) : showingImagePreview ? (
+                          <div
+                            className="relative min-h-0 flex-1 overflow-hidden bg-[#050505]"
+                            onContextMenu={(event) => {
+                              if (!selectedFile) return;
+                              openFileContextMenu(event, { kind: "preview", node: selectedFile });
+                            }}
+                            onWheel={(event) => {
+                              event.preventDefault();
+                              setImageZoom((value) => clampImageZoom(value + (event.deltaY > 0 ? -0.12 : 0.12)));
+                            }}
+                          >
+                            <div className="h-full overflow-auto [scrollbar-color:#2A2A2A_#050505] [scrollbar-gutter:stable] [scrollbar-width:thin]">
+                              <div
+                                className="flex min-h-full min-w-full items-center justify-center p-[28px]"
+                                style={{
+                                  minWidth: `${Math.max(100, imageZoom * 100)}%`,
+                                  minHeight: `${Math.max(100, imageZoom * 100)}%`,
+                                }}
+                              >
+                                {selectedImagePreviewSrc ? (
+                                  // eslint-disable-next-line @next/next/no-img-element -- File previews can be blob/data URLs and must preserve browser-native image behavior.
+                                  <img
+                                    src={selectedImagePreviewSrc}
+                                    alt={selectedFile?.name || "Preview da imagem"}
+                                    draggable={false}
+                                    className="select-none rounded-[6px] border border-[#1A1A1A] bg-[#0B0B0B] shadow-[0_18px_60px_rgba(0,0,0,0.28)]"
+                                    style={{
+                                      maxWidth: "min(100%, 1120px)",
+                                      maxHeight: "calc(100vh - 236px)",
+                                      transform: `scale(${imageZoom})`,
+                                      transformOrigin: "center",
+                                      imageRendering: imageZoom >= 3 ? "pixelated" : "auto",
+                                    }}
+                                  />
+                                ) : (
+                                  <div className="rounded-[12px] border border-[#1A1A1A] bg-[#080808] px-[16px] py-[14px] text-center">
+                                    <ImageIcon className="mx-auto h-[20px] w-[20px] text-[#777777]" />
+                                    <p className="mt-[8px] text-[13px] font-semibold text-[#DADADA]">Preview indisponivel</p>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ) : selectedFileIsJar ? (
+                          <div className="relative min-h-0 flex-1 overflow-hidden bg-[#050505]">
+                            <div className="flex h-full min-h-[520px] items-center justify-center p-[28px]">
+                              <div className="flex w-full max-w-[420px] flex-col items-center rounded-[18px] border border-[#1A1A1A] bg-[#080808] px-[28px] py-[34px] text-center shadow-[0_24px_90px_rgba(0,0,0,0.34)]">
+                                <span className="flex h-[86px] w-[86px] items-center justify-center rounded-[24px] border border-[#263322] bg-[#071208] text-[#9BE7AC] shadow-[0_0_38px_rgba(52,168,83,0.12)]">
+                                  <Package className="h-[42px] w-[42px]" />
+                                </span>
+                                <p className="mt-[18px] max-w-full truncate text-[18px] font-semibold tracking-[-0.025em] text-white">
+                                  {selectedFile.name}
+                                </p>
+                                <p className="mt-[8px] text-[13px] leading-[1.55] text-[#8A8A8A]">
+                                  Arquivo Java do Minecraft. O painel nao carrega o binario para evitar travamento e consumo desnecessario de memoria.
+                                </p>
+                                <div className="mt-[18px] flex flex-wrap justify-center gap-[8px]">
+                                  <span className="rounded-full border border-[#242424] bg-[#0B0B0B] px-[10px] py-[5px] font-mono text-[11px] text-[#BDBDBD]">
+                                    {selectedFile.path}
+                                  </span>
+                                  <span className="rounded-full border border-[#242424] bg-[#0B0B0B] px-[10px] py-[5px] text-[11px] font-semibold text-[#9BE7AC]">
+                                    Mod/Plugin
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="grid min-h-0 flex-1 grid-cols-[48px_minmax(0,1fr)]">
+                            <div
+                              ref={lineNumbersRef}
+                              className="select-none overflow-hidden border-r border-[#111111] bg-[#070707] py-[12px] text-right font-mono text-[13px] leading-[22.1px] text-[#444444]"
+                            >
+                              <div style={{ height: editorVirtualHeight }}>
+                                <div style={{ transform: `translateY(${visibleLineStart * FILE_EDITOR_LINE_HEIGHT}px)` }}>
+                                  {Array.from({ length: visibleLineEnd - visibleLineStart }).map((_, index) => {
+                                    const lineNumber = visibleLineStart + index + 1;
+                                    return (
+                                      <div key={lineNumber} className="h-[22.1px] pr-[10px] leading-[22.1px]">
+                                        {lineNumber}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="relative min-h-0 min-w-0 bg-[#050505]">
+                              <div
+                                ref={highlightedCodeRef}
+                                aria-hidden="true"
+                                className="pointer-events-none absolute inset-0 overflow-hidden p-[12px] font-mono text-[13px] leading-[22.1px]"
+                              >
+                                <pre className="m-0 min-w-max whitespace-pre" style={{ height: editorVirtualHeight }}>
+                                  <div style={{ transform: `translateY(${visibleLineStart * FILE_EDITOR_LINE_HEIGHT}px)` }}>
+                                    {visibleLines.map((line, index) => (
+                                      <div key={visibleLineStart + index} className="h-[22.1px] leading-[22.1px]">
+                                        {line ? renderHighlightedLine(line, highlightedLanguage) : " "}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </pre>
+                              </div>
+                              <textarea
+                                ref={fileEditorTextareaRef}
+                                value={fileContent}
+                                onChange={(event) => {
+                                  setFileContent(event.target.value);
+                                  setFileDirty(true);
+                                }}
+                                onScroll={(event) => {
+                                  if (lineNumbersRef.current) {
+                                    lineNumbersRef.current.scrollTop = event.currentTarget.scrollTop;
+                                  }
+                                  if (highlightedCodeRef.current) {
+                                    highlightedCodeRef.current.scrollTop = event.currentTarget.scrollTop;
+                                    highlightedCodeRef.current.scrollLeft = event.currentTarget.scrollLeft;
+                                  }
+                                  setFileEditorViewport({
+                                    scrollTop: event.currentTarget.scrollTop,
+                                    scrollLeft: event.currentTarget.scrollLeft,
+                                    height: event.currentTarget.clientHeight || fileEditorViewport.height,
+                                  });
+                                }}
+                                spellCheck={false}
+                                wrap="off"
+                                className="absolute inset-0 h-full min-h-0 w-full resize-none overflow-auto border-0 bg-transparent p-[12px] font-mono text-[13px] leading-[22.1px] text-transparent caret-[#E8E8E8] outline-none selection:bg-[rgba(15,98,254,0.35)] placeholder:text-[#5A5A5A]"
+                                placeholder="O conteudo real aparece quando um arquivo sincronizado for selecionado."
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      {flowChatOpen ? (
+                        <aside
+                          className="relative hidden min-h-0 shrink-0 flex-col border-l border-[#171717] bg-[#080808] md:flex"
+                          style={{ width: flowChatWidth }}
+                        >
+                          <button
+                            type="button"
+                            onPointerDown={startFlowChatResize}
+                            className="absolute left-[-4px] top-0 z-20 h-full w-[8px] cursor-col-resize border-x border-transparent transition-colors hover:border-[rgba(255,255,255,0.18)] hover:bg-[rgba(255,255,255,0.08)]"
+                            aria-label="Redimensionar chat Flow"
+                            title="Redimensionar chat Flow"
+                          />
+                          <div className="flex h-[48px] items-center justify-between gap-[10px] border-b border-[#171717] px-[12px]">
+                            <div className="flex min-w-0 items-center gap-[9px]">
+                              <span className="flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded-[9px] border border-[#242424] bg-[#111111] text-[#E8E8E8]">
+                                <Bot className="h-[15px] w-[15px]" />
+                              </span>
+                              <div className="min-w-0">
+                                <p className="truncate text-[13px] font-semibold text-white">Flow</p>
+                                <p className="truncate text-[10px] text-[#686868]">Assistente do projeto</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-[4px]">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setFlowChatHistoryOpen((current) => !current);
+                                  void loadFlowChatHistory();
+                                }}
+                                className={`flex h-[30px] w-[30px] items-center justify-center rounded-[9px] transition-colors ${flowChatHistoryOpen ? "bg-[#151515] text-white" : "text-[#9B9B9B] hover:bg-[#111111] hover:text-white"
+                                  }`}
+                                aria-label="Historico do Flow"
+                                title="Historico do Flow"
+                              >
+                                <History className="h-[15px] w-[15px]" />
+                              </button>
+                              <button type="button" onClick={() => setFlowChatOpen(false)} className="flex h-[30px] w-[30px] items-center justify-center rounded-[9px] text-[#9B9B9B] hover:bg-[#111111] hover:text-white" aria-label="Fechar Flow">
+                                <X className="h-[15px] w-[15px]" />
+                              </button>
+                            </div>
+                          </div>
+                          {flowChatHistoryOpen ? (
+                            <div className="absolute right-[10px] top-[54px] z-40 w-[min(330px,calc(100%-20px))] overflow-hidden rounded-[16px] border border-[#242424] bg-[#090909] shadow-[0_22px_70px_rgba(0,0,0,0.55)]">
+                              <div className="flex items-center justify-between border-b border-[#171717] px-[12px] py-[10px]">
+                                <div>
+                                  <p className="text-[12px] font-semibold text-white">Historico</p>
+                                  <p className="text-[10px] text-[#686868]">Conversas desta VPS</p>
+                                </div>
+                                <button type="button" onClick={startNewFlowChat} className="rounded-[8px] border border-[#242424] bg-[#111111] px-[9px] py-[6px] text-[11px] font-semibold text-[#DADADA] hover:bg-[#171717] hover:text-white">
+                                  Novo chat
+                                </button>
+                              </div>
+                              <div className="max-h-[320px] overflow-auto p-[6px] [scrollbar-color:#2A2A2A_#090909] [scrollbar-width:thin]">
+                                {flowChatSessions.length ? flowChatSessions.map((chat) => (
+                                  <button
+                                    key={chat.id}
+                                    type="button"
+                                    onClick={() => void loadFlowChatHistory(chat.id).then(() => setFlowChatHistoryOpen(false))}
+                                    className={`flex w-full flex-col rounded-[11px] px-[10px] py-[9px] text-left transition-colors ${chat.id === flowChatSessionId ? "bg-[#171717]" : "hover:bg-[#111111]"
+                                      }`}
+                                  >
+                                    <span className="truncate text-[12px] font-semibold text-[#E8E8E8]">{chat.title || "Novo chat"}</span>
+                                    <span className="mt-[2px] text-[10px] text-[#666666]">{formatDate(chat.updated_at || chat.created_at || "")}</span>
+                                  </button>
+                                )) : (
+                                  <div className="px-[10px] py-[18px] text-center text-[12px] text-[#777777]">
+                                    Nenhuma conversa salva ainda.
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ) : null}
+                          <div ref={flowChatScrollRef} className="min-h-0 flex-1 space-y-[12px] overflow-auto p-[12px] [scrollbar-color:#2A2A2A_#080808] [scrollbar-width:thin]">
+                            {flowChatMessages.map((message) => (
+                              <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+                                <div className={`max-w-[92%] rounded-[18px] border px-[13px] py-[11px] text-[13px] leading-[1.55] ${message.role === "user"
+                                    ? "border-[#1E3D75] bg-[#0F62FE] text-white"
+                                    : "border-[#1C1C1C] bg-[#101010] text-[#DADADA]"
+                                  }`}>
+                                  <FlowChatMessageContent
+                                    content={message.content}
+                                    onCopy={(value) => {
+                                      navigator.clipboard?.writeText(value).then(
+                                        () => notify("success", "Codigo copiado.", "Flow"),
+                                        () => notify("error", "Nao consegui copiar o codigo.", "Flow"),
+                                      );
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                            {flowChatBusy ? (
+                              <div className="flex items-center gap-[8px] text-[12px] text-[#777777]">
+                                <Loader2 className="h-[14px] w-[14px] animate-spin" />
+                                Flow analisando contexto...
+                              </div>
+                            ) : null}
+                          </div>
+
+                          <div className="border-t border-[#171717] p-[10px]">
+                            <div className="overflow-hidden rounded-[18px] border border-[#202020] bg-[#101010]">
+                              {flowChatQuota.blocked ? (
+                                <div className="border-b border-[#2A1D1D] bg-[#170B0B] px-[12px] py-[10px] text-[12px] leading-[1.45] text-[#FFB4B4]">
+                                  Voce atingiu o limite diario do Flow. A IA volta em {flowQuotaResetLabel}.
+                                </div>
+                              ) : null}
+                              <div className="p-[9px]">
+                                <input
+                                  ref={flowChatImageInputRef}
+                                  type="file"
+                                  accept="image/*"
+                                  multiple
+                                  className="hidden"
+                                  onChange={(event) => addFlowChatImages(event.target.files)}
+                                />
+                                <textarea
+                                  value={flowChatInput}
+                                  onChange={(event) => setFlowChatInput(event.target.value)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter" && !event.shiftKey) {
+                                      event.preventDefault();
+                                      void sendFlowChatMessage();
+                                    }
+                                  }}
+                                  placeholder="Pergunte, pe├ºa review ou uma altera├º├úo no arquivo..."
+                                  disabled={flowChatQuota.blocked}
+                                  className="max-h-[160px] min-h-[76px] w-full resize-none bg-transparent text-[13px] leading-[1.5] text-white outline-none placeholder:text-[#5F5F5F] disabled:cursor-not-allowed disabled:opacity-55"
+                                />
+                                {flowChatAttachments.length ? (
+                                  <div className="mt-[8px] flex flex-wrap gap-[6px]">
+                                    {flowChatAttachments.map((attachment) => (
+                                      <span key={attachment.id} className="inline-flex h-[26px] max-w-full items-center gap-[6px] rounded-[8px] border border-[#242424] bg-[#080808] px-[8px] text-[11px] text-[#CFCFCF]">
+                                        <ImageIcon className="h-[13px] w-[13px] text-[#9BE7AC]" />
+                                        <span className="max-w-[160px] truncate">{attachment.name}</span>
+                                        <button type="button" onClick={() => setFlowChatAttachments((current) => current.filter((item) => item.id !== attachment.id))} className="text-[#777777] hover:text-white" aria-label="Remover imagem">
+                                          <X className="h-[12px] w-[12px]" />
+                                        </button>
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : null}
+                                <div className="mt-[8px] flex items-center justify-between gap-[10px]">
+                                  <div className="flex items-center gap-[6px]">
+                                    <button type="button" onClick={() => flowChatImageInputRef.current?.click()} className="flex h-[30px] w-[30px] items-center justify-center rounded-[9px] text-[#9B9B9B] hover:bg-[#191919] hover:text-white" title="Adicionar imagem">
+                                      <ImageIcon className="h-[15px] w-[15px]" />
+                                    </button>
+                                    <button type="button" onClick={() => notify("success", "Contexto atual anexado: repositorio, arquivo aberto, deploy ativo e variaveis visiveis foram enviados junto com a proxima mensagem.", "Flow")} className="flex h-[30px] w-[30px] items-center justify-center rounded-[9px] text-[#9B9B9B] hover:bg-[#191919] hover:text-white" title="Anexar contexto">
+                                      <Paperclip className="h-[15px] w-[15px]" />
+                                    </button>
+                                    <span className="hidden items-center gap-[5px] text-[11px] text-[#686868] xl:inline-flex">
+                                      <MessageSquare className="h-[13px] w-[13px]" />
+                                      Projeto
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-[9px]">
+                                    <div
+                                      className="relative h-[28px] w-[28px] rounded-full"
+                                      title={`${flowChatQuota.used.toLocaleString("pt-BR")}/${flowChatQuota.limit.toLocaleString("pt-BR")} tokens usados. Renova em ${flowQuotaResetLabel}. ${flowChatQuota.requestCount}/${flowChatQuota.requestLimit} envios.`}
+                                      style={{ background: `conic-gradient(#0F62FE ${flowQuotaPercent}%, #242424 ${flowQuotaPercent}% 100%)` }}
+                                    >
+                                      <div className="absolute inset-[3px] rounded-full bg-[#101010]" />
+                                      <div className="absolute inset-0 flex items-center justify-center text-[8px] font-black text-[#CFCFCF]">
+                                        {Math.round(flowQuotaPercent)}
+                                      </div>
+                                    </div>
+                                    <button type="button" disabled={(!flowChatInput.trim() && !flowChatAttachments.length) || flowChatBusy || flowChatQuota.blocked} onClick={() => void sendFlowChatMessage()} className="flex h-[34px] w-[34px] items-center justify-center rounded-full bg-[#E8E8E8] text-[#050505] transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-45" aria-label="Enviar mensagem">
+                                      {flowChatBusy ? <Loader2 className="h-[15px] w-[15px] animate-spin" /> : <Send className="h-[15px] w-[15px]" />}
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </aside>
+                      ) : null}
+                    </div>
+                  </section>
+                ) : null}
+
+                {tab === "minecraft" && snapshot.project.minecraft ? (
+                  <div className="space-y-[18px]">
+                    <div className="grid gap-[14px] xl:grid-cols-[minmax(0,1fr)_360px]">
+                      <section className="rounded-[18px] border border-[#171717] bg-[#080808] p-[18px]">
+                        <div className="flex flex-wrap items-start justify-between gap-[12px]">
+                          <div>
+                            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#666666]">Minecraft control-plane</p>
+                            <h2 className="mt-[8px] text-[24px] font-semibold tracking-[-0.04em] text-white">{snapshot.project.minecraft.serverName}</h2>
+                            <p className="mt-[6px] text-[13px] text-[#8A8A8A]">
+                              {snapshot.project.minecraft.serverType} / {snapshot.project.minecraft.version}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void refreshMinecraftWorlds()}
+                            disabled={minecraftBusy}
+                            className="inline-flex h-[38px] items-center gap-[8px] rounded-[11px] border border-[#242424] bg-[#0B0B0B] px-[12px] text-[12px] font-semibold text-[#DADADA] hover:bg-[#111111] disabled:opacity-60"
+                          >
+                            {minecraftBusy ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <RefreshCw className="h-[14px] w-[14px]" />}
+                            Atualizar
+                          </button>
+                        </div>
+
+                        <div className="mt-[18px] grid gap-[10px] md:grid-cols-3">
+                          {[
+                            ["Dominio", snapshot.project.minecraft.primaryDomain],
+                            ["Mundos", `${minecraftWorlds.length}`],
+                            ["Limite", snapshot.project.minecraft.limits.maxWorlds === null ? "Ilimitado" : `${snapshot.project.minecraft.limits.maxWorlds || "Plano"}`],
+                          ].map(([label, value]) => (
+                            <div key={label} className="rounded-[14px] border border-[#151515] bg-[#0B0B0B] p-[12px]">
+                              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#555555]">{label}</p>
+                              <p className="mt-[5px] break-words text-[13px] font-semibold text-[#DADADA]">{String(value)}</p>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="mt-[18px] flex flex-col gap-[10px] md:flex-row">
+                          <input
+                            value={minecraftWorldName}
+                            onChange={(event) => setMinecraftWorldName(event.target.value)}
+                            placeholder="Nome do novo mundo"
+                            className="h-[42px] min-w-0 flex-1 rounded-[12px] border border-[#242424] bg-[#050505] px-[13px] text-[13px] text-white outline-none focus:border-[#3A3A3A]"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void createMinecraftWorld()}
+                            disabled={!minecraftWorldName.trim() || minecraftBusy}
+                            className="inline-flex h-[42px] items-center justify-center gap-[8px] rounded-[12px] bg-[#F2F2F2] px-[14px] text-[13px] font-semibold text-[#050505] hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {minecraftBusy ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <Plus className="h-[14px] w-[14px]" />}
+                            Criar mundo
+                          </button>
+                        </div>
+                      </section>
+
+                      <aside className="rounded-[18px] border border-[#171717] bg-[#080808] p-[18px]">
+                        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#666666]">Limites do plano</p>
+                        <div className="mt-[12px] space-y-[9px]">
+                          {Object.entries(snapshot.project.minecraft.limits || {}).map(([key, value]) => (
+                            <div key={key} className="flex items-center justify-between gap-[12px] rounded-[12px] border border-[#151515] bg-[#0B0B0B] px-[11px] py-[9px]">
+                              <span className="text-[12px] font-semibold text-[#8A8A8A]">{key}</span>
+                              <span className="text-[12px] font-bold text-[#EDEDED]">{value === null ? "Ilimitado" : String(value)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </aside>
+                    </div>
+
+                    <section className="rounded-[18px] border border-[#171717] bg-[#080808] p-[18px]">
+                      <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#666666]">Mundos isolados</p>
+                      <div className="mt-[14px] grid gap-[10px] md:grid-cols-2 xl:grid-cols-3">
+                        {minecraftWorlds.map((world) => (
+                          <div key={world} className="rounded-[14px] border border-[#151515] bg-[#0B0B0B] p-[13px]">
+                            <p className="text-[14px] font-semibold text-white">{world}</p>
+                            <p className="mt-[5px] text-[12px] text-[#777777]">/worlds/{world}</p>
+                          </div>
+                        ))}
+                        {!minecraftWorlds.length ? (
+                          <div className="rounded-[14px] border border-[#151515] bg-[#0B0B0B] p-[13px] text-[13px] text-[#777777]">
+                            Nenhum mundo carregado ainda.
+                          </div>
+                        ) : null}
+                      </div>
+                    </section>
+                  </div>
+                ) : null}
+
+                {tab === "library" && supportsMinecraftAddons && snapshot.project.minecraft ? (
+                  <section className="space-y-[14px]">
+                    {!minecraftLibraryDetail ? (
+                      <>
+                        <div className="flex flex-col gap-[12px] rounded-[18px] border border-[#171717] bg-[#080808] p-[16px] lg:flex-row lg:items-end lg:justify-between">
+                          <div className="min-w-0">
+                            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#666666]">Minecraft / Biblioteca</p>
+                            <h2 className="mt-[6px] text-[24px] font-semibold tracking-[-0.04em] text-white">
+                              Catalogo de {minecraftAddonKind === "mods" ? "mods" : "plugins"}
+                            </h2>
+                            <p className="mt-[6px] text-[13px] text-[#8A8A8A]">
+                              Busca automatica para {snapshot.project.minecraft.serverType} / Minecraft {snapshot.project.minecraft.version}.
+                            </p>
+                          </div>
+                          <div className="flex min-w-0 flex-1 gap-[8px] lg:max-w-[560px]">
+                            <div className="flex h-[42px] min-w-0 flex-1 items-center gap-[10px] rounded-[12px] border border-[#242424] bg-[#050505] px-[12px]">
+                              <Search className="h-[15px] w-[15px] text-[#777777]" />
+                              <input
+                                value={minecraftLibraryQuery}
+                                onChange={(event) => setMinecraftLibraryQuery(event.target.value)}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") void searchMinecraftLibrary();
+                                }}
+                                placeholder={minecraftAddonKind === "mods" ? "Buscar mod..." : "Buscar plugin..."}
+                                className="min-w-0 flex-1 bg-transparent text-[13px] text-white outline-none placeholder:text-[#555555]"
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => void searchMinecraftLibrary()}
+                              disabled={minecraftLibraryBusy}
+                              className="inline-flex h-[42px] items-center justify-center gap-[8px] rounded-[12px] bg-[#F2F2F2] px-[14px] text-[13px] font-semibold text-[#050505] hover:bg-white disabled:opacity-60"
+                            >
+                              {minecraftLibraryBusy ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <Search className="h-[14px] w-[14px]" />}
+                              Buscar
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="grid gap-[12px] md:grid-cols-2 xl:grid-cols-3">
+                          {minecraftLibraryHits.map((hit) => (
+                            <button
+                              key={hit.project_id}
+                              type="button"
+                              onClick={() => void openMinecraftLibraryDetail(hit.project_id)}
+                              className="group flex min-h-[154px] gap-[13px] rounded-[16px] border border-[#171717] bg-[#080808] p-[14px] text-left transition-colors hover:border-[#2A2A2A] hover:bg-[#0B0B0B]"
+                            >
+                              <img src={hit.icon_url || "/favicon.ico"} alt="" className="h-[52px] w-[52px] shrink-0 rounded-[12px] border border-[#202020] bg-[#0B0B0B] object-cover" />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-start justify-between gap-[10px]">
+                                  <p className="line-clamp-1 text-[15px] font-semibold text-white">{hit.title}</p>
+                                  <span className="rounded-full border border-[#202020] bg-[#0B0B0B] px-[8px] py-[4px] text-[10px] font-semibold text-[#DADADA]">
+                                    {formatCount(hit.downloads)} downloads
+                                  </span>
+                                </div>
+                                <p className="mt-[3px] text-[12px] text-[#8A8A8A]">por {hit.author || "Modrinth"}</p>
+                                <p className="mt-[8px] line-clamp-2 text-[12px] leading-[1.45] text-[#777777]">{hit.description || "Sem descricao curta."}</p>
+                                <div className="mt-[10px] flex flex-wrap gap-[6px]">
+                                  {(hit.display_categories || hit.categories || []).slice(0, 4).map((tag) => (
+                                    <span key={tag} className="rounded-full border border-[#202020] bg-[#0B0B0B] px-[7px] py-[3px] text-[10px] font-semibold text-[#8A8A8A]">{tag}</span>
+                                  ))}
+                                </div>
+                              </div>
+                            </button>
+                          ))}
+                          {!minecraftLibraryHits.length ? (
+                            <div className="rounded-[16px] border border-[#171717] bg-[#080808] p-[18px] text-[13px] text-[#777777]">
+                              {minecraftLibraryBusy ? "Carregando biblioteca..." : "Nenhum resultado carregado ainda."}
+                            </div>
+                          ) : null}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="space-y-[14px]">
                         <button
                           type="button"
-                          onClick={() => setDeploymentMenuId((current) => current === deploy.id ? null : deploy.id)}
-                          className="flex h-[32px] w-[34px] items-center justify-center rounded-[9px] border border-transparent text-[#9B9B9B] transition-colors hover:border-[#242424] hover:bg-[#101010] hover:text-white"
-                          aria-label="Opcoes do deployment"
+                          onClick={() => setMinecraftLibraryDetail(null)}
+                          className="inline-flex h-[36px] items-center gap-[8px] rounded-[10px] border border-[#242424] bg-[#0B0B0B] px-[11px] text-[12px] font-semibold text-[#DADADA] hover:bg-[#111111]"
                         >
-                          <MoreHorizontal className="h-[16px] w-[16px]" />
+                          <ArrowLeft className="h-[14px] w-[14px]" />
+                          Voltar
+                        </button>
+                        <section className="grid gap-[14px] xl:grid-cols-[minmax(0,1fr)_340px]">
+                          <div className="rounded-[18px] border border-[#171717] bg-[#080808] p-[18px]">
+                            <div className="flex flex-wrap gap-[16px]">
+                              <img src={minecraftLibraryDetail.project?.icon_url || "/favicon.ico"} alt="" className="h-[72px] w-[72px] rounded-[16px] border border-[#202020] bg-[#0B0B0B] object-cover" />
+                              <div className="min-w-0 flex-1">
+                                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#666666]">Modrinth / {minecraftLibraryDetail.project?.slug || minecraftLibraryDetail.project?.id}</p>
+                                <h2 className="mt-[6px] text-[28px] font-semibold tracking-[-0.05em] text-white">{minecraftLibraryDetail.project?.title || "Projeto"}</h2>
+                                <p className="mt-[7px] max-w-[820px] text-[13px] leading-[1.6] text-[#8A8A8A]">{minecraftLibraryDetail.project?.description || "Sem descricao curta."}</p>
+                              </div>
+                            </div>
+                          </div>
+                          <aside className="rounded-[18px] border border-[#171717] bg-[#080808] p-[18px]">
+                            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#666666]">Instalar</p>
+                            <button
+                              type="button"
+                              onClick={() => void installMinecraftLibraryVersion(minecraftLibraryDetail.latestVersion)}
+                              disabled={!minecraftLibraryDetail.latestVersion || Boolean(minecraftLibraryInstalling)}
+                              className="mt-[12px] inline-flex h-[42px] w-full items-center justify-center gap-[8px] rounded-[12px] bg-[#F2F2F2] px-[14px] text-[13px] font-semibold text-[#050505] hover:bg-white disabled:opacity-50"
+                            >
+                              {minecraftLibraryInstalling ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <Download className="h-[14px] w-[14px]" />}
+                              Instalar ultima compativel
+                            </button>
+                          </aside>
+                        </section>
+                        <div className="flex flex-wrap gap-[8px] rounded-[16px] border border-[#171717] bg-[#080808] p-[8px]">
+                          {([
+                            ["description", "Description"],
+                            ["gallery", "Gallery"],
+                            ["changelog", "Changelog"],
+                            ["versions", "Versions"],
+                          ] as const).map(([id, label]) => (
+                            <button
+                              key={id}
+                              type="button"
+                              onClick={() => setMinecraftLibraryDetailTab(id)}
+                              className={`h-[38px] rounded-[999px] px-[14px] text-[13px] font-semibold transition-colors ${minecraftLibraryDetailTab === id ? "bg-[#0F7A3D] text-white" : "text-[#BDBDBD] hover:bg-[#111111] hover:text-white"}`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+
+                        {minecraftLibraryDetailTab === "description" ? (
+                          <section className="grid gap-[14px] xl:grid-cols-[minmax(0,1fr)_330px]">
+                            <main className="rounded-[18px] border border-[#171717] bg-[#080808] p-[18px]">
+                              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#666666]">Descricao</p>
+                              <div className="mt-[14px] space-y-[12px] text-[14px] leading-[1.65] text-[#CFCFCF]">
+                                {renderTextBlocks(minecraftLibraryDetail.project?.body || minecraftLibraryDetail.project?.description).map((block, index) => (
+                                  <p key={`${index}-${block.slice(0, 20)}`}>{block}</p>
+                                ))}
+                              </div>
+                            </main>
+                            <aside className="space-y-[14px]">
+                              <section className="rounded-[18px] border border-[#171717] bg-[#080808] p-[18px]">
+                                <p className="text-[16px] font-semibold text-white">Compatibility</p>
+                                <div className="mt-[14px] space-y-[10px] text-[13px]">
+                                  {[
+                                    ["Minecraft", "Java Edition"],
+                                    ["Servidor atual", snapshot.project.minecraft.version],
+                                    ["Client-side", minecraftLibraryDetail.project?.client_side || "unknown"],
+                                    ["Server-side", minecraftLibraryDetail.project?.server_side || "unknown"],
+                                    ["License", minecraftLibraryDetail.project?.license?.name || minecraftLibraryDetail.project?.license?.id || "N/A"],
+                                  ].map(([label, value]) => (
+                                    <div key={label} className="flex items-center justify-between gap-[12px] border-b border-[#151515] pb-[8px] last:border-b-0">
+                                      <span className="text-[#9AA3AF]">{label}</span>
+                                      <span className="text-right font-semibold text-white">{value}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </section>
+                              <section className="rounded-[18px] border border-[#171717] bg-[#080808] p-[18px]">
+                                <p className="text-[16px] font-semibold text-white">Links</p>
+                                <div className="mt-[12px] space-y-[8px]">
+                                  {libraryProjectLinks(minecraftLibraryDetail.project).map(([label, href]) => (
+                                    <a key={label} href={href} target="_blank" rel="noreferrer" className="flex h-[38px] items-center justify-between rounded-[10px] border border-[#171717] bg-[#0B0B0B] px-[12px] text-[13px] font-semibold text-white hover:bg-[#111111]">
+                                      {label}
+                                      <ArrowLeft className="h-[13px] w-[13px] rotate-[135deg]" />
+                                    </a>
+                                  ))}
+                                </div>
+                              </section>
+                            </aside>
+                          </section>
+                        ) : null}
+
+                        {minecraftLibraryDetailTab === "gallery" ? (
+                          <section className="rounded-[18px] border border-[#171717] bg-[#080808] p-[18px]">
+                            <p className="text-[16px] font-semibold text-white">Gallery</p>
+                            <div className="mt-[14px] grid gap-[14px] md:grid-cols-2">
+                              {libraryGalleryItems(minecraftLibraryDetail.project).map((item) => (
+                                <article key={item.url} className="overflow-hidden rounded-[16px] border border-[#171717] bg-[#0B0B0B]">
+                                  {/\.(mp4|webm)(\?|$)/i.test(item.url) ? (
+                                    <video src={item.url} controls className="aspect-video w-full bg-black object-cover" />
+                                  ) : (
+                                    <img src={item.url} alt={item.title} className="aspect-video w-full bg-black object-cover" />
+                                  )}
+                                  <div className="p-[14px]">
+                                    <p className="text-[16px] font-semibold text-white">{item.title}</p>
+                                    <p className="mt-[5px] text-[12px] text-[#777777]">{item.description || formatRelative(item.created)}</p>
+                                  </div>
+                                </article>
+                              ))}
+                              {!libraryGalleryItems(minecraftLibraryDetail.project).length ? (
+                                <div className="rounded-[14px] border border-[#171717] bg-[#0B0B0B] p-[16px] text-[13px] text-[#777777]">Este projeto nao publicou galeria.</div>
+                              ) : null}
+                            </div>
+                          </section>
+                        ) : null}
+
+                        {minecraftLibraryDetailTab === "changelog" ? (
+                          <section className="rounded-[18px] border border-[#171717] bg-[#080808] p-[18px]">
+                            <p className="text-[16px] font-semibold text-white">Changelog</p>
+                            <div className="relative mt-[18px] space-y-[0] border-l border-[#1FA463] pl-[24px]">
+                              {(minecraftLibraryDetail.versions || []).slice(0, 12).map((version) => (
+                                <article key={version.id} className="relative border-b border-[#151515] pb-[18px] pt-[4px] last:border-b-0">
+                                  <span className="absolute left-[-33px] top-[6px] h-[17px] w-[17px] rounded-full border border-[#0B0B0B] bg-[#54D98C]" />
+                                  <div className="flex flex-wrap items-start justify-between gap-[12px]">
+                                    <div>
+                                      <h3 className="text-[20px] font-semibold text-white">{version.name || version.version_number || "Versao"}</h3>
+                                      <p className="mt-[3px] text-[12px] text-[#777777]">{formatRelative(version.date_published)}</p>
+                                    </div>
+                                    <button onClick={() => void installMinecraftLibraryVersion(version)} className="inline-flex h-[34px] items-center gap-[7px] rounded-[10px] bg-[#20B864] px-[12px] text-[12px] font-semibold text-[#031308]">
+                                      <Download className="h-[13px] w-[13px]" />
+                                      Download
+                                    </button>
+                                  </div>
+                                  <div className="mt-[12px] space-y-[8px] text-[13px] leading-[1.6] text-[#CFCFCF]">
+                                    {renderTextBlocks(version.changelog || "Sem changelog publicado.").slice(0, 4).map((block, index) => (
+                                      <p key={`${version.id}-${index}`}>{block}</p>
+                                    ))}
+                                  </div>
+                                </article>
+                              ))}
+                            </div>
+                          </section>
+                        ) : null}
+
+                        {minecraftLibraryDetailTab === "versions" ? (
+                          <section className="rounded-[18px] border border-[#171717] bg-[#080808] p-[18px]">
+                          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#666666]">Versoes compativeis</p>
+                          <div className="mt-[12px] divide-y divide-[#151515] overflow-hidden rounded-[14px] border border-[#151515]">
+                            {(minecraftLibraryDetail.versions || []).slice(0, 14).map((version) => {
+                              const file = version.files?.find((item) => item.primary && item.filename) || version.files?.find((item) => item.filename);
+                              return (
+                                <div key={version.id} className="flex flex-wrap items-center justify-between gap-[12px] bg-[#0B0B0B] px-[13px] py-[12px]">
+                                  <div className="min-w-0">
+                                    <p className="truncate text-[13px] font-semibold text-white">{version.name || version.version_number || version.id}</p>
+                                    <p className="mt-[3px] text-[11px] text-[#777777]">{(version.loaders || []).join(", ")} / {(version.game_versions || []).slice(0, 6).join(", ")}</p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => void installMinecraftLibraryVersion(version)}
+                                    disabled={!file || minecraftLibraryInstalling === version.id}
+                                    className="inline-flex h-[34px] items-center gap-[7px] rounded-[10px] border border-[#242424] bg-[#111111] px-[10px] text-[12px] font-semibold text-[#EDEDED] hover:bg-[#171717] disabled:opacity-50"
+                                  >
+                                    {minecraftLibraryInstalling === version.id ? <Loader2 className="h-[13px] w-[13px] animate-spin" /> : <Download className="h-[13px] w-[13px]" />}
+                                    Instalar
+                                  </button>
+                                </div>
+                              );
+                            })}
+                            {!minecraftLibraryDetail.versions?.length ? (
+                              <div className="bg-[#0B0B0B] px-[13px] py-[12px] text-[13px] text-[#777777]">Nenhuma versao compativel encontrada.</div>
+                            ) : null}
+                          </div>
+                        </section>
+                        ) : null}
+                      </div>
+                    )}
+                  </section>
+                ) : null}
+
+                {tab === "installed" && minecraftAddonTabType && snapshot.project.minecraft ? (
+                  <section className="space-y-[14px]">
+                    <div className="flex flex-wrap items-start justify-between gap-[12px]">
+                      <div>
+                        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#666666]">Minecraft / {minecraftAddonTabType}</p>
+                        <h2 className="mt-[6px] text-[24px] font-semibold tracking-[-0.04em] text-white">
+                          {minecraftAddonTabType === "mods" ? "Mods instalados" : "Plugins instalados"}
+                        </h2>
+                        <p className="mt-[6px] text-[13px] text-[#8A8A8A]">
+                          {minecraftAddonTabType === "mods"
+                            ? "Arquivos carregados da pasta mods/ deste servidor."
+                            : "Arquivos carregados da pasta plugins/ deste servidor."}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-[8px]">
+                        <button
+                          type="button"
+                          onClick={() => navigateToTab("files")}
+                          className="inline-flex h-[38px] items-center gap-[8px] rounded-[11px] border border-[#242424] bg-[#0B0B0B] px-[12px] text-[12px] font-semibold text-[#DADADA] hover:bg-[#111111]"
+                        >
+                          <Folder className="h-[14px] w-[14px]" />
+                          Abrir arquivos
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void refreshMinecraftAddons(minecraftAddonTabType)}
+                          disabled={minecraftAddonsBusy === minecraftAddonTabType}
+                          className="inline-flex h-[38px] items-center gap-[8px] rounded-[11px] border border-[#242424] bg-[#0B0B0B] px-[12px] text-[12px] font-semibold text-[#DADADA] hover:bg-[#111111] disabled:opacity-60"
+                        >
+                          {minecraftAddonsBusy === minecraftAddonTabType ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <RefreshCw className="h-[14px] w-[14px]" />}
+                          Atualizar
                         </button>
                       </div>
-                      {deploymentMenuId === deploy.id ? (
-                        <div className="absolute right-[10px] top-[42px] z-[180] w-[216px] overflow-hidden rounded-[14px] border border-[#242424] bg-[#0B0B0B] p-[6px] shadow-[0_18px_60px_rgba(0,0,0,0.48)]">
-                          <button onClick={() => { setDeploymentMenuId(null); if (commitUrl) window.open(commitUrl, "_blank", "noopener,noreferrer"); }} className="flex h-[36px] w-full items-center gap-[9px] rounded-[9px] px-[10px] text-left text-[12px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
-                            <GitBranch className="h-[14px] w-[14px]" /> Abrir commit
-                          </button>
-                          {pullRequestUrl ? (
-                            <button onClick={() => { setDeploymentMenuId(null); window.open(pullRequestUrl, "_blank", "noopener,noreferrer"); }} className="flex h-[36px] w-full items-center gap-[9px] rounded-[9px] px-[10px] text-left text-[12px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
-                              <GitBranch className="h-[14px] w-[14px]" /> Abrir pull request
-                            </button>
-                          ) : null}
-                          <button onClick={() => { setDeploymentMenuId(null); void navigator.clipboard?.writeText(deploy.commit_sha || ""); notify("success", "SHA copiado.", "Deployments"); }} className="flex h-[36px] w-full items-center gap-[9px] rounded-[9px] px-[10px] text-left text-[12px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
-                            <Copy className="h-[14px] w-[14px]" /> Copiar SHA
-                          </button>
-                          <button onClick={() => { setDeploymentMenuId(null); void syncDeployments(); }} className="flex h-[36px] w-full items-center gap-[9px] rounded-[9px] px-[10px] text-left text-[12px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
-                            <RefreshCw className="h-[14px] w-[14px]" /> Revalidar status
-                          </button>
-                        </div>
-                      ) : null}
-                    </article>
-                  );
-                }) : (
-                  <div className="flex min-h-[280px] items-center justify-center border-b border-[#101010] px-[18px] text-center">
-                    <div>
-                      <div className="mx-auto flex h-[42px] w-[42px] items-center justify-center rounded-[14px] border border-[#202020] bg-[#0B0B0B] text-[#777777]">
-                        <GitBranch className="h-[18px] w-[18px]" />
-                      </div>
-                      <p className="mt-[12px] text-[13px] font-semibold text-[#DADADA]">
-                        {snapshot.deployments.length ? "Nenhum deployment corresponde aos filtros." : "Nenhum commit/deploy sincronizado ainda."}
-                      </p>
-                      <p className="mt-[5px] text-[12px] text-[#777777]">Sincronize com o GitHub para carregar commits, previews e producao.</p>
                     </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </section>
-        ) : null}
 
-        {tab === "env" ? (
-          <section className="rounded-[24px] border border-[#171717] bg-[#080808] p-[16px]">
-            <div className="flex flex-col gap-[12px] lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <h2 className="text-[20px] font-semibold text-white">Environment Variables</h2>
-                <p className="mt-[4px] text-[13px] text-[#777777]">Variaveis injetadas no runtime da VPS e nos proximos deploys.</p>
-              </div>
-              <button onClick={openCreateEnvDrawer} className="inline-flex h-[42px] items-center justify-center gap-[8px] rounded-[12px] bg-[#F2F2F2] px-[14px] text-[13px] font-semibold text-[#050505] transition-colors hover:bg-white">
-                <Plus className="h-[15px] w-[15px]" /> Adicionar Variavel
-              </button>
-            </div>
-            <div className="mt-[16px] grid gap-[8px] xl:grid-cols-[minmax(220px,1fr)_250px_230px]">
-              <div className="flex items-center gap-[10px] rounded-[14px] border border-[#202020] bg-[#080808] px-[12px]">
-                <Search className="h-[16px] w-[16px] text-[#777777]" />
-                <input value={envSearch} onChange={(event) => setEnvSearch(event.target.value)} placeholder="Search variables" className="h-[42px] min-w-0 flex-1 bg-transparent text-[13px] text-white outline-none" />
-              </div>
-              <CustomSelect value={envFilter} onChange={setEnvFilter} options={[{ value: "all", label: "All Environments" }, ...ENV_OPTIONS]} icon={<Layers className="h-[15px] w-[15px]" />} />
-              <CustomSelect value={envSort} onChange={setEnvSort} options={[{ value: "updated", label: "Last Updated" }, { value: "name", label: "Name" }]} />
-            </div>
-
-            <div className="mt-[18px] space-y-[8px]">
-              {filteredEnvVars.length ? filteredEnvVars.map((item) => {
-                const canReveal = item.sensitive === false;
-                const revealed = canReveal && visibleEnvValues[item.id];
-                const displayValue = revealed ? item.visible_value || item.value_preview || "" : "************";
-                return (
-                  <article key={`${item.environment}-${item.key}-${item.id}`} className={`relative rounded-[16px] border border-[#202020] bg-[#090909] ${envMenuId === item.id ? "z-[170]" : "z-0"}`}>
-                    <div className="grid min-h-[86px] items-center gap-[12px] px-[18px] py-[14px] lg:grid-cols-[minmax(220px,1fr)_minmax(180px,360px)_220px_82px]">
-                      <div className="flex min-w-0 items-center gap-[14px]">
-                        <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full border border-[#242424] bg-[#050505] text-[#9B9B9B]">
-                          <Code2 className="h-[17px] w-[17px]" />
-                        </span>
-                        <div className="min-w-0">
-                          <p className="truncate font-mono text-[15px] font-semibold text-white">{item.key}</p>
-                          <p className="mt-[3px] text-[13px] text-[#9B9B9B]">{item.environment === "production" ? "Production" : item.environment === "preview" ? "Preview" : "Development"}</p>
+                    <div className="grid gap-[10px] md:grid-cols-3">
+                      {[
+                        ["Total", `${minecraftAddonList.length}`],
+                        ["Limite do plano", minecraftAddonLimit === null ? "Ilimitado" : String(minecraftAddonLimit || "Plano")],
+                        ["Servidor", `${snapshot.project.minecraft.serverType} ${snapshot.project.minecraft.version}`],
+                      ].map(([label, value]) => (
+                        <div key={label} className="rounded-[14px] border border-[#151515] bg-[#080808] p-[12px]">
+                          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#555555]">{label}</p>
+                          <p className="mt-[5px] break-words text-[13px] font-semibold text-[#DADADA]">{value}</p>
                         </div>
+                      ))}
+                    </div>
+
+                    <div className="overflow-hidden rounded-[18px] border border-[#171717] bg-[#080808]">
+                      {minecraftAddonList.length ? (
+                        <div className="divide-y divide-[#151515]">
+                          {minecraftAddonList.map((addon) => (
+                            <div key={addon.path} className="flex flex-wrap items-center justify-between gap-[12px] px-[16px] py-[13px]">
+                              <div className="flex min-w-0 items-center gap-[12px]">
+                                <div className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[11px] border border-[#202020] bg-[#0B0B0B] text-[#DADADA]">
+                                  {addon.folder === "mods" ? <Puzzle className="h-[16px] w-[16px]" /> : <Package className="h-[16px] w-[16px]" />}
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="truncate text-[13px] font-semibold text-white">{addon.name}</p>
+                                  <p className="mt-[3px] truncate font-mono text-[11px] text-[#777777]">{addon.path}</p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-[8px] text-[12px] text-[#8A8A8A]">
+                                <span className="rounded-[999px] border border-[#202020] bg-[#0B0B0B] px-[9px] py-[5px] font-semibold text-[#DADADA]">{formatFileSize(addon.size)}</span>
+                                <span>{formatRelative(addon.updatedAt)}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => void deleteMinecraftInstalled(addon)}
+                                  disabled={minecraftLibraryInstalling === addon.path}
+                                  className="inline-flex h-[32px] w-[32px] items-center justify-center rounded-[9px] border border-[#242424] bg-[#0B0B0B] text-[#DADADA] hover:bg-[#111111] hover:text-[#FF9B9B] disabled:opacity-50"
+                                  title="Remover"
+                                >
+                                  {minecraftLibraryInstalling === addon.path ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <Trash2 className="h-[14px] w-[14px]" />}
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="flex min-h-[180px] flex-col items-center justify-center px-[16px] text-center">
+                          <div className="flex h-[42px] w-[42px] items-center justify-center rounded-[12px] border border-[#202020] bg-[#0B0B0B] text-[#DADADA]">
+                            {minecraftAddonTabType === "mods" ? <Puzzle className="h-[18px] w-[18px]" /> : <Package className="h-[18px] w-[18px]" />}
+                          </div>
+                          <p className="mt-[12px] text-[14px] font-semibold text-white">
+                            {minecraftAddonTabType === "mods" ? "Nenhum mod instalado" : "Nenhum plugin instalado"}
+                          </p>
+                          <p className="mt-[5px] max-w-[420px] text-[12px] leading-[1.6] text-[#777777]">
+                            Envie arquivos .jar pela aba Arquivos dentro de {minecraftAddonTabType}/ e reinicie o servidor para carregar.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </section>
+                ) : null}
+
+                {tab === "domains" ? (
+                  <section className="min-h-[calc(100vh-150px)] overflow-hidden rounded-[22px] border border-[#171717] bg-[#050505]">
+                    <div className="flex h-[54px] items-center justify-between border-b border-[#171717] px-[14px]">
+                      <div className="min-w-0">
+                        <p className="truncate text-[13px] font-semibold text-white">{snapshot.project.vpsCode}</p>
                       </div>
-                      <div className="flex min-w-0 items-center gap-[10px] font-mono text-[13px] text-[#DADADA]">
-                        {canReveal ? (
-                          <button type="button" onClick={() => setVisibleEnvValues((current) => ({ ...current, [item.id]: !current[item.id] }))} className="text-[#8E8E8E] hover:text-white">
-                            <Eye className="h-[16px] w-[16px]" />
+                      <h2 className="text-[14px] font-semibold text-white">Domains</h2>
+                      <div className="w-[120px]" />
+                    </div>
+
+                    <div className="flex flex-col gap-[10px] border-b border-[#171717] p-[12px] lg:flex-row lg:items-center">
+                      <button
+                        type="button"
+                        onClick={() => setDomainSearch("")}
+                        className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-[10px] border border-[#242424] bg-[#080808] text-[#DADADA] hover:border-[#333333] hover:bg-[#101010]"
+                        title="Limpar busca"
+                      >
+                        <X className="h-[15px] w-[15px]" />
+                      </button>
+                      <div className="flex h-[42px] min-w-0 flex-1 items-center gap-[10px] rounded-[10px] border border-[#242424] bg-[#080808] px-[12px]">
+                        <Search className="h-[16px] w-[16px] text-[#777777]" />
+                        <input
+                          value={domainSearch}
+                          onChange={(event) => setDomainSearch(event.target.value)}
+                          placeholder="Search any domain"
+                          className="min-w-0 flex-1 bg-transparent text-[14px] text-white outline-none placeholder:text-[#777777]"
+                        />
+                      </div>
+                      <div className="flex gap-[8px]">
+                        <button
+                          type="button"
+                          onClick={openAddDomainDrawer}
+                          className="h-[42px] rounded-[10px] border border-[#2A2A2A] bg-[#070707] px-[14px] text-[13px] font-semibold text-white hover:border-[#3A3A3A] hover:bg-[#101010]"
+                        >
+                          Add Existing
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => router.push("/dashboard/domains/acquire")}
+                          className="h-[42px] rounded-[10px] bg-[#F2F2F2] px-[16px] text-[13px] font-semibold text-[#050505] hover:bg-white"
+                        >
+                          Buy
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="divide-y divide-[#171717]">
+                      {filteredDomains.length ? filteredDomains.map((domain) => {
+                        const isValid = domain.status === "active";
+                        const isEditing = editingDomainHostname === domain.hostname && domainDrawerOpen && domainDrawerMode === "edit";
+                        return (
+                          <article key={domain.id} className="group bg-[#060606] transition-colors hover:bg-[#090909]">
+                            <div className="grid gap-[12px] px-[18px] py-[18px] lg:grid-cols-[minmax(0,1.2fr)_minmax(220px,0.8fr)_auto] lg:items-center">
+                              <div className="flex min-w-0 items-center gap-[14px]">
+                                <span className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full ${isValid ? "bg-[#0F8BFF] text-[#050505]" : "border border-[#6A4B16] bg-[#171006] text-[#FFD28A]"}`}>
+                                  {isValid ? <Check className="h-[12px] w-[12px] stroke-[3]" /> : <CircleHelp className="h-[12px] w-[12px]" />}
+                                </span>
+                                <div className="min-w-0">
+                                  <p className="truncate text-[14px] font-semibold text-white">{domain.hostname}</p>
+                                  <p className={`mt-[4px] text-[13px] ${isValid ? "text-[#B8D7F5]" : "text-[#FFD28A]"}`}>
+                                    {isValid ? "Valid Configuration" : "Pending DNS Configuration"}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="flex min-w-0 items-center gap-[9px] font-mono text-[14px] text-[#BDBDBD]">
+                                {domain.redirectTo ? (
+                                  <>
+                                    <ArrowLeft className="h-[15px] w-[15px] rotate-180 text-[#8A8A8A]" />
+                                    <span className="rounded-full bg-[#1A1A1A] px-[7px] py-[3px] text-[11px] font-bold text-white">{domain.redirectStatus || 307}</span>
+                                    <span className="truncate">{domain.redirectTo}</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Upload className="h-[15px] w-[15px] rotate-180 text-[#8A8A8A]" />
+                                    <span>Production</span>
+                                  </>
+                                )}
+                              </div>
+
+                              <div className="flex justify-start gap-[8px] lg:justify-end">
+                                <button
+                                  type="button"
+                                  onClick={() => void saveProjectSettings("refresh_domain", { hostname: domain.hostname })}
+                                  disabled={settingsSaving === "refresh_domain"}
+                                  className="inline-flex h-[36px] items-center justify-center gap-[8px] rounded-[10px] border border-[#242424] bg-[#080808] px-[12px] text-[13px] font-semibold text-white hover:border-[#333333] hover:bg-[#101010] disabled:opacity-60"
+                                >
+                                  {settingsSaving === "refresh_domain" ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : null}
+                                  Refresh
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => openEditDomainDrawer(domain)}
+                                  className="h-[36px] rounded-[10px] border border-[#242424] bg-[#080808] px-[12px] text-[13px] font-semibold text-white hover:border-[#333333] hover:bg-[#101010]"
+                                >
+                                  Edit
+                                </button>
+                              </div>
+                            </div>
+
+                            {isEditing ? (
+                              <div className="border-t border-[#171717] px-[18px] pb-[22px] pt-[18px]">
+                                <div className="grid gap-[14px]">
+                                  <label className="block text-[13px] text-[#BDBDBD]">
+                                    Domain
+                                    <input
+                                      value={domainInput}
+                                      onChange={(event) => setDomainInput(
+                                        isMinecraftProject
+                                          ? minecraftDomainInputValue(event.target.value).replace(/[^a-z0-9-]/g, "")
+                                          : event.target.value.toLowerCase(),
+                                      )}
+                                      placeholder={isMinecraftProject ? "nome-do-servidor" : "meusite.flwdesk.com"}
+                                      className="mt-[8px] h-[48px] w-full rounded-[10px] border border-[#2A2A2A] bg-[#080808] px-[12px] font-mono text-[14px] font-semibold text-white outline-none focus:border-[#4A4A4A]"
+                                    />
+                                    {isMinecraftProject ? (
+                                      <span className="mt-[7px] block font-mono text-[12px] text-[#8A8A8A]">
+                                        {domainInput || "nome-do-servidor"}.mine.flwdesk.com
+                                      </span>
+                                    ) : null}
+                                  </label>
+                                  <div className="grid gap-[12px] lg:grid-cols-[260px_minmax(0,1fr)]">
+                                    <button
+                                      type="button"
+                                      onClick={() => setDomainDestination("production")}
+                                      className={`flex h-[52px] items-center gap-[10px] rounded-[12px] border px-[12px] text-left text-[14px] font-semibold ${domainDestination === "production" ? "border-[#3A3A3A] bg-[#101010] text-white" : "border-[#242424] bg-[#080808] text-[#AFAFAF]"}`}
+                                    >
+                                      <span className={`h-[16px] w-[16px] rounded-full border ${domainDestination === "production" ? "border-white bg-white" : "border-[#777777]"}`} />
+                                      Connect to an environment
+                                    </button>
+                                    <CustomSelect value="production" onChange={() => undefined} options={[{ value: "production", label: "Production" }]} icon={<Upload className="h-[14px] w-[14px] rotate-180" />} />
+                                  </div>
+                                  <div className="grid gap-[12px] lg:grid-cols-[260px_1fr_1fr]">
+                                    <button
+                                      type="button"
+                                      onClick={() => setDomainDestination("redirect")}
+                                      className={`flex h-[52px] items-center gap-[10px] rounded-[12px] border px-[12px] text-left text-[14px] font-semibold ${domainDestination === "redirect" ? "border-[#3A3A3A] bg-[#101010] text-white" : "border-[#242424] bg-[#080808] text-[#AFAFAF]"}`}
+                                    >
+                                      <span className={`h-[16px] w-[16px] rounded-full border ${domainDestination === "redirect" ? "border-white bg-white" : "border-[#777777]"}`} />
+                                      Redirect to Another Domain
+                                    </button>
+                                    <CustomSelect value={domainRedirectStatus} onChange={setDomainRedirectStatus} options={[
+                                      { value: "307", label: "307 Temporary Redirect" },
+                                      { value: "308", label: "308 Permanent Redirect" },
+                                      { value: "302", label: "302 Found" },
+                                      { value: "301", label: "301 Moved Permanently" },
+                                    ]} />
+                                    <div className="flex h-[52px] items-center gap-[10px] rounded-[12px] border border-[#242424] bg-[#080808] px-[12px]">
+                                      <Search className="h-[15px] w-[15px] text-[#777777]" />
+                                      <input value={domainRedirectTo} onChange={(event) => setDomainRedirectTo(event.target.value.toLowerCase())} placeholder="No Redirect" className="min-w-0 flex-1 bg-transparent text-[14px] text-white outline-none" />
+                                    </div>
+                                  </div>
+                                  <div className="flex flex-col gap-[10px] sm:flex-row sm:items-center sm:justify-between">
+                                    <button
+                                      type="button"
+                                      onClick={() => void saveProjectSettings("remove_domain", { hostname: domain.hostname }).then((saved) => { if (saved) setDomainDrawerOpen(false); })}
+                                      disabled={(!isMinecraftProject && snapshot.settings.domains.length <= 1) || settingsSaving === "remove_domain"}
+                                      className="h-[42px] rounded-[10px] bg-[#E9323A] px-[16px] text-[13px] font-semibold text-white hover:bg-[#FF424A] disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                      Remove
+                                    </button>
+                                    <div className="flex justify-end gap-[8px]">
+                                      <button type="button" onClick={() => setDomainDrawerOpen(false)} className="h-[42px] rounded-[10px] border border-[#2A2A2A] bg-[#080808] px-[16px] text-[13px] font-semibold text-white hover:bg-[#101010]">Cancel</button>
+                                      <button type="button" onClick={() => void submitDomainDrawer()} disabled={Boolean(settingsSaving)} className="inline-flex h-[42px] min-w-[84px] items-center justify-center gap-[8px] rounded-[10px] bg-[#F2F2F2] px-[18px] text-[13px] font-semibold text-[#050505] hover:bg-white disabled:opacity-60">
+                                        {settingsSaving ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : null}
+                                        Save
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : null}
+                          </article>
+                        );
+                      }) : (
+                        <div className="flex min-h-[300px] flex-col items-center justify-center px-[18px] text-center">
+                          <Globe2 className="h-[26px] w-[26px] text-[#777777]" />
+                          <p className="mt-[12px] text-[15px] font-semibold text-white">Nenhum dominio encontrado</p>
+                          <p className="mt-[6px] text-[13px] text-[#777777]">Adicione um subdominio gratuito *.flwdesk.com ou conecte um dominio existente.</p>
+                        </div>
+                      )}
+                    </div>
+                  </section>
+                ) : null}
+
+                {fileContextMenu ? (
+                  <div
+                    ref={fileContextMenuRef}
+                    className="fixed z-[220] w-[196px] overflow-hidden rounded-[14px] border border-[#242424] bg-[#0B0B0B] p-[6px] shadow-[0_18px_60px_rgba(0,0,0,0.48)]"
+                    style={{ left: fileContextMenu.x, top: fileContextMenu.y }}
+                  >
+                    {fileContextMenu.kind === "preview" ? (
+                      <>
+                        <button onClick={() => copyImageLink(fileContextMenu.node)} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
+                          <Copy className="h-[14px] w-[14px]" /> Copiar
+                        </button>
+                        {isSvgFile(fileContextMenu.node) ? (
+                          <button onClick={copySelectedSvgCode} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
+                            <Code2 className="h-[14px] w-[14px]" /> Copiar Codigo
                           </button>
                         ) : null}
-                        <span className="truncate">{displayValue}</span>
+                      </>
+                    ) : fileContextMenu.kind === "empty" ? (
+                      <>
+                        <button onClick={() => startCreateFile(fileContextMenu.parentPath, "file")} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
+                          <FilePlus2 className="h-[14px] w-[14px]" /> New File
+                        </button>
+                        <button onClick={() => startCreateFile(fileContextMenu.parentPath, "directory")} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
+                          <FolderPlus className="h-[14px] w-[14px]" /> New Folder
+                        </button>
+                        <div className="my-[5px] h-px bg-[#171717]" />
+                        <button onClick={() => copyExplorerPath(fileContextMenu.parentPath)} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
+                          <Copy className="h-[14px] w-[14px]" /> Copy Path
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button onClick={() => startRenameFile(fileContextMenu.node)} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
+                          <Pencil className="h-[14px] w-[14px]" /> Rename
+                        </button>
+                        {fileContextMenu.node.type === "file" ? (
+                          <>
+                            <button onClick={() => isPreviewableImageFile(fileContextMenu.node) ? copyImageLink(fileContextMenu.node) : copyFileNode(fileContextMenu.node)} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
+                              <Copy className="h-[14px] w-[14px]" /> {isPreviewableImageFile(fileContextMenu.node) ? "Copiar" : "Copy"}
+                            </button>
+                            {isSvgFile(fileContextMenu.node) && selectedFile?.path === fileContextMenu.node.path ? (
+                              <button onClick={copySelectedSvgCode} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
+                                <Code2 className="h-[14px] w-[14px]" /> Copiar Codigo
+                              </button>
+                            ) : null}
+                          </>
+                        ) : (
+                          <>
+                            <button onClick={() => startCreateFile(fileContextMenu.node.path, "file")} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
+                              <FilePlus2 className="h-[14px] w-[14px]" /> Add File
+                            </button>
+                            <button onClick={() => startCreateFile(fileContextMenu.node.path, "directory")} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
+                              <FolderPlus className="h-[14px] w-[14px]" /> Add Folder
+                            </button>
+                          </>
+                        )}
+                        <div className="my-[5px] h-px bg-[#171717]" />
+                        <button onClick={() => void deleteFileNode(fileContextMenu.node)} className="flex h-[36px] w-full items-center gap-[10px] rounded-[9px] px-[10px] text-left text-[13px] font-semibold text-[#FF7373] hover:bg-[#191919]">
+                          <Trash2 className="h-[14px] w-[14px]" /> Delete
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ) : null}
+
+                {tab === "deploys" ? (
+                  <section className="flex h-[calc(100vh-136px)] min-h-[620px] w-full flex-col overflow-hidden bg-[#050505]">
+                    <div className="shrink-0 border-b border-[#151515] bg-[#080808] p-[12px]">
+                      <div className="flex flex-col gap-[12px] xl:flex-row xl:items-center xl:justify-between">
+                        <div className="min-w-0">
+                          <h2 className="text-[18px] font-semibold tracking-[-0.035em] text-white">Deployments</h2>
+                          <p className="mt-[4px] truncate text-[12px] text-[#777777]">
+                            Commits, previews e producao sincronizados de {snapshot.project.repository.fullName}.
+                          </p>
+                        </div>
+                        <button onClick={() => void syncDeployments()} disabled={Boolean(busyAction)} className="inline-flex h-[36px] shrink-0 items-center justify-center gap-[8px] rounded-[10px] border border-[#202020] bg-[#101010] px-[12px] text-[12px] font-semibold text-[#DADADA] transition-colors hover:bg-[#151515] disabled:cursor-not-allowed disabled:opacity-60">
+                          {busyAction === "sync" ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <RefreshCw className="h-[14px] w-[14px]" />}
+                          Sincronizar
+                        </button>
                       </div>
-                      <div className="whitespace-nowrap text-[13px] text-[#9B9B9B]">{formatRelative(item.updated_at)}</div>
-                      <div className="flex justify-end">
-                        <button type="button" onClick={() => setEnvMenuId((current) => current === item.id ? null : item.id)} className="flex h-[36px] w-[42px] items-center justify-center rounded-[10px] bg-[#151515] text-[#DADADA] hover:bg-[#1C1C1C]">
-                          <MoreHorizontal className="h-[18px] w-[18px]" />
+                      <div className="mt-[12px] grid gap-[8px] xl:grid-cols-[minmax(190px,1fr)_minmax(190px,1fr)_220px_210px_180px_42px]">
+                        <CustomSelect value={deploymentBranchFilter} onChange={setDeploymentBranchFilter} options={deploymentBranchOptions} icon={<GitBranch className="h-[14px] w-[14px]" />} />
+                        <CustomSelect value={deploymentAuthorFilter} onChange={setDeploymentAuthorFilter} options={deploymentAuthorOptions} icon={<Search className="h-[14px] w-[14px]" />} />
+                        <CustomSelect value={deploymentEnvironmentFilter} onChange={setDeploymentEnvironmentFilter} options={deploymentEnvironmentOptions} icon={<Globe2 className="h-[14px] w-[14px]" />} />
+                        <CustomSelect
+                          value={deploymentDateFilter}
+                          onChange={setDeploymentDateFilter}
+                          options={[
+                            { value: "all", label: "Select Date Range" },
+                            { value: "24h", label: "Last 24 hours" },
+                            { value: "7d", label: "Last 7 days" },
+                            { value: "30d", label: "Last 30 days" },
+                          ]}
+                          icon={<History className="h-[14px] w-[14px]" />}
+                        />
+                        <CustomSelect value={deploymentStatusFilter} onChange={setDeploymentStatusFilter} options={deploymentStatusOptions} icon={<Activity className="h-[14px] w-[14px]" />} />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDeploymentBranchFilter("all");
+                            setDeploymentAuthorFilter("all");
+                            setDeploymentEnvironmentFilter("all");
+                            setDeploymentStatusFilter("all");
+                            setDeploymentDateFilter("all");
+                          }}
+                          className="flex h-[42px] items-center justify-center rounded-[12px] border border-[#202020] bg-[#080808] text-[#9B9B9B] transition-colors hover:border-[#303030] hover:text-white"
+                          title="Limpar filtros"
+                        >
+                          <X className="h-[15px] w-[15px]" />
                         </button>
                       </div>
                     </div>
-                    {envMenuId === item.id ? (
-                      <div className="absolute right-[14px] top-[64px] z-[180] w-[220px] overflow-hidden rounded-[16px] border border-[#242424] bg-[#0B0B0B] p-[6px] shadow-[0_18px_60px_rgba(0,0,0,0.48)]">
-                        <button onClick={() => openEditEnvDrawer(item)} className="flex h-[40px] w-full items-center gap-[10px] rounded-[10px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]"><Code2 className="h-[15px] w-[15px]" /> Edit</button>
-                        <button onClick={() => void copyEnvValue(item)} className="flex h-[40px] w-full items-center gap-[10px] rounded-[10px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]"><Copy className="h-[15px] w-[15px]" /> Copy to Clipboard</button>
-                        <button onClick={() => { setEnvMenuId(null); notify("info", `Versao atual: v${item.version || 1}.`, "Historico"); }} className="flex h-[40px] w-full items-center gap-[10px] rounded-[10px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]"><History className="h-[15px] w-[15px]" /> View History</button>
-                        <button onClick={() => void deleteEnvVar(item)} className="flex h-[40px] w-full items-center gap-[10px] rounded-[10px] px-[10px] text-left text-[13px] font-semibold text-[#FF5252] hover:bg-[#191919]"><Trash2 className="h-[15px] w-[15px]" /> Delete</button>
+
+                    <div className="min-h-0 flex-1 overflow-auto [scrollbar-color:#2A2A2A_#050505] [scrollbar-gutter:stable] [scrollbar-width:thin]">
+                      <div className="min-w-[1180px]">
+                        {(() => {
+                          const activeProductionDeployId = snapshot.deployments.find((d) =>
+                            d.environment === "production" &&
+                            d.branch === snapshot.project.repository.branch &&
+                            !deploymentMetadataString(d, "pullRequestUrl") &&
+                            deploymentStatusFamily(d.status) === "ready"
+                          )?.id;
+
+                          return (
+                            <>
+                              <div className="grid grid-cols-[minmax(360px,1.8fr)_132px_116px_112px_minmax(190px,0.9fr)_120px_54px] border-b border-[#101010] bg-[#060606] px-[12px] py-[9px] text-[10px] font-bold uppercase tracking-[0.12em] text-[#565656]">
+                                <span>Deployment</span>
+                                <span>Status</span>
+                                <span>Environment</span>
+                                <span>Commit</span>
+                                <span>Branch</span>
+                                <span className="text-right">Updated</span>
+                                <span />
+                              </div>
+                              {filteredDeployments.length ? filteredDeployments.map((deploy) => {
+                                const commitUrl = deploymentMetadataString(deploy, "commitUrl") ||
+                                  (deploy.commit_sha ? `${snapshot.project.repository.htmlUrl}/commit/${deploy.commit_sha}` : null);
+                                const pullRequestUrl = deploymentMetadataString(deploy, "pullRequestUrl");
+                                const authorAvatarUrl = deploymentMetadataString(deploy, "authorAvatarUrl");
+                                const statusBadge = deploymentPrimaryBadge(deploy);
+                                const environmentBadges = deploymentEnvironmentBadges(deploy, snapshot.project.repository.branch, deploy.id === activeProductionDeployId);
+
+                                return (
+                                  <article key={deploy.id} className={`relative grid min-h-[56px] grid-cols-[minmax(360px,1.8fr)_132px_116px_112px_minmax(190px,0.9fr)_120px_54px] items-center border-b border-[#101010] px-[12px] text-[12px] transition-colors hover:bg-[#0B0B0B] ${deploymentMenuId === deploy.id ? "z-[170]" : "z-0"}`}>
+                                    <div className="min-w-0 pr-[18px]">
+                                      <p className="truncate text-[13px] font-semibold text-[#F2F2F2]">
+                                        {deploy.commit_message || `Deploy ${deploy.branch}`}
+                                      </p>
+                                      <div className="mt-[4px] flex min-w-0 items-center gap-[8px] text-[11px] text-[#777777]">
+                                        <span className="truncate">{deploy.commit_author || "GitHub"}</span>
+                                        {pullRequestUrl ? (
+                                          <>
+                                            <span className="text-[#303030]">/</span>
+                                            <span className="truncate text-[#9B9B9B]">Pull request preparado</span>
+                                          </>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                    <div className="flex min-w-0 items-center gap-[7px]">
+                                      <span className={`inline-flex h-[24px] shrink-0 items-center rounded-full border px-[9px] text-[11px] font-semibold ${statusBadge.className}`}>
+                                        {statusBadge.label}
+                                      </span>
+                                      <span className="whitespace-nowrap text-[11px] text-[#777777]">{deploymentDurationLabel(deploy)}</span>
+                                    </div>
+                                    <div className="flex min-w-0 flex-wrap items-center gap-[5px]">
+                                      {environmentBadges.map((badge) => (
+                                        <span key={badge.label} className={`inline-flex h-[22px] items-center gap-[6px] whitespace-nowrap rounded-full border px-[8px] text-[11px] font-semibold ${badge.className}`}>
+                                          <span className="h-[6px] w-[6px] rounded-full bg-current opacity-80" />
+                                          {badge.label}
+                                        </span>
+                                      ))}
+                                    </div>
+                                    <a
+                                      href={commitUrl || undefined}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      onClick={(event) => {
+                                        if (!commitUrl) event.preventDefault();
+                                      }}
+                                      className={`inline-flex min-w-0 items-center gap-[7px] font-mono text-[12px] font-semibold ${commitUrl ? "text-[#E8E8E8] hover:text-white" : "text-[#777777]"}`}
+                                    >
+                                      <GitBranch className="h-[13px] w-[13px] shrink-0 text-[#777777]" />
+                                      <span className="truncate">{deploymentShortSha(deploy.commit_sha)}</span>
+                                    </a>
+                                    <div className="flex min-w-0 items-center gap-[8px] font-mono text-[12px] font-semibold text-[#DADADA]">
+                                      <GitBranch className="h-[13px] w-[13px] shrink-0 text-[#777777]" />
+                                      <span className="truncate">{deploy.branch || "main"}</span>
+                                    </div>
+                                    <div className="flex items-center justify-end gap-[8px] text-right text-[12px] text-[#9B9B9B]">
+                                      <span className="whitespace-nowrap">{formatRelative(deploy.deployed_at || deploy.created_at)}</span>
+                                      {authorAvatarUrl ? (
+                                        // eslint-disable-next-line @next/next/no-img-element -- GitHub avatar URLs are small external images outside the app image pipeline.
+                                        <img src={authorAvatarUrl} alt="" className="h-[20px] w-[20px] rounded-full border border-[#242424]" />
+                                      ) : (
+                                        <span className="flex h-[20px] w-[20px] items-center justify-center rounded-full border border-[#242424] bg-[#111111] text-[9px] font-bold text-[#AFAFAF]">
+                                          {deploymentAuthorInitials(deploy.commit_author)}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="flex justify-end">
+                                      <button
+                                        type="button"
+                                        onClick={() => setDeploymentMenuId((current) => current === deploy.id ? null : deploy.id)}
+                                        className="flex h-[32px] w-[34px] items-center justify-center rounded-[9px] border border-transparent text-[#9B9B9B] transition-colors hover:border-[#242424] hover:bg-[#101010] hover:text-white"
+                                        aria-label="Opcoes do deployment"
+                                      >
+                                        <MoreHorizontal className="h-[16px] w-[16px]" />
+                                      </button>
+                                    </div>
+                                    {deploymentMenuId === deploy.id ? (
+                                      <div className="absolute right-[10px] top-[42px] z-[180] w-[216px] overflow-hidden rounded-[14px] border border-[#242424] bg-[#0B0B0B] p-[6px] shadow-[0_18px_60px_rgba(0,0,0,0.48)]">
+                                        <button onClick={() => { setDeploymentMenuId(null); if (commitUrl) window.open(commitUrl, "_blank", "noopener,noreferrer"); }} className="flex h-[36px] w-full items-center gap-[9px] rounded-[9px] px-[10px] text-left text-[12px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
+                                          <GitBranch className="h-[14px] w-[14px]" /> Abrir commit
+                                        </button>
+                                        {pullRequestUrl ? (
+                                          <button onClick={() => { setDeploymentMenuId(null); window.open(pullRequestUrl, "_blank", "noopener,noreferrer"); }} className="flex h-[36px] w-full items-center gap-[9px] rounded-[9px] px-[10px] text-left text-[12px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
+                                            <GitBranch className="h-[14px] w-[14px]" /> Abrir pull request
+                                          </button>
+                                        ) : null}
+                                        <button onClick={() => { setDeploymentMenuId(null); void navigator.clipboard?.writeText(deploy.commit_sha || ""); notify("success", "SHA copiado.", "Deployments"); }} className="flex h-[36px] w-full items-center gap-[9px] rounded-[9px] px-[10px] text-left text-[12px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
+                                          <Copy className="h-[14px] w-[14px]" /> Copiar SHA
+                                        </button>
+                                        <button onClick={() => { setDeploymentMenuId(null); void syncDeployments(); }} className="flex h-[36px] w-full items-center gap-[9px] rounded-[9px] px-[10px] text-left text-[12px] font-semibold text-[#E8E8E8] hover:bg-[#191919]">
+                                          <RefreshCw className="h-[14px] w-[14px]" /> Revalidar status
+                                        </button>
+                                      </div>
+                                    ) : null}
+                                  </article>
+                                );
+                              }) : (
+                                <div className="flex min-h-[280px] items-center justify-center border-b border-[#101010] px-[18px] text-center">
+                                  <div>
+                                    <div className="mx-auto flex h-[42px] w-[42px] items-center justify-center rounded-[14px] border border-[#202020] bg-[#0B0B0B] text-[#777777]">
+                                      <GitBranch className="h-[18px] w-[18px]" />
+                                    </div>
+                                    <p className="mt-[12px] text-[13px] font-semibold text-[#DADADA]">
+                                      {snapshot.deployments.length ? "Nenhum deployment corresponde aos filtros." : "Nenhum commit/deploy sincronizado ainda."}
+                                    </p>
+                                    <p className="mt-[5px] text-[12px] text-[#777777]">Sincronize com o GitHub para carregar commits, previews e producao.</p>
+                                  </div>
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
-                    ) : null}
-                  </article>
-                );
-              }) : (
-                <div className="rounded-[18px] border border-[#151515] bg-[#0B0B0B] p-[18px] text-[13px] text-[#777777]">Nenhuma variavel cadastrada.</div>
-              )}
-            </div>
-          </section>
-        ) : null}
+                    </div>
+                  </section>
+                ) : null}
+
+                {tab === "env" ? (
+                  <section className="rounded-[24px] border border-[#171717] bg-[#080808] p-[16px]">
+                    <div className="flex flex-col gap-[12px] lg:flex-row lg:items-center lg:justify-between">
+                      <div>
+                        <h2 className="text-[20px] font-semibold text-white">Environment Variables</h2>
+                        <p className="mt-[4px] text-[13px] text-[#777777]">Variaveis injetadas no runtime da VPS e nos proximos deploys.</p>
+                      </div>
+                      <button onClick={openCreateEnvDrawer} className="inline-flex h-[42px] items-center justify-center gap-[8px] rounded-[12px] bg-[#F2F2F2] px-[14px] text-[13px] font-semibold text-[#050505] transition-colors hover:bg-white">
+                        <Plus className="h-[15px] w-[15px]" /> Adicionar Variavel
+                      </button>
+                    </div>
+                    <div className="mt-[16px] grid gap-[8px] xl:grid-cols-[minmax(220px,1fr)_250px_230px]">
+                      <div className="flex items-center gap-[10px] rounded-[14px] border border-[#202020] bg-[#080808] px-[12px]">
+                        <Search className="h-[16px] w-[16px] text-[#777777]" />
+                        <input value={envSearch} onChange={(event) => setEnvSearch(event.target.value)} placeholder="Search variables" className="h-[42px] min-w-0 flex-1 bg-transparent text-[13px] text-white outline-none" />
+                      </div>
+                      <CustomSelect value={envFilter} onChange={setEnvFilter} options={[{ value: "all", label: "All Environments" }, ...ENV_OPTIONS]} icon={<Layers className="h-[15px] w-[15px]" />} />
+                      <CustomSelect value={envSort} onChange={setEnvSort} options={[{ value: "updated", label: "Last Updated" }, { value: "name", label: "Name" }]} />
+                    </div>
+
+                    <div className="mt-[18px] space-y-[8px]">
+                      {filteredEnvVars.length ? filteredEnvVars.map((item) => {
+                        const canReveal = item.sensitive === false;
+                        const revealed = canReveal && visibleEnvValues[item.id];
+                        const displayValue = revealed ? item.visible_value || item.value_preview || "" : "************";
+                        return (
+                          <article key={`${item.environment}-${item.key}-${item.id}`} className={`relative rounded-[16px] border border-[#202020] bg-[#090909] ${envMenuId === item.id ? "z-[170]" : "z-0"}`}>
+                            <div className="grid min-h-[86px] items-center gap-[12px] px-[18px] py-[14px] lg:grid-cols-[minmax(220px,1fr)_minmax(180px,360px)_220px_82px]">
+                              <div className="flex min-w-0 items-center gap-[14px]">
+                                <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full border border-[#242424] bg-[#050505] text-[#9B9B9B]">
+                                  <Code2 className="h-[17px] w-[17px]" />
+                                </span>
+                                <div className="min-w-0">
+                                  <p className="truncate font-mono text-[15px] font-semibold text-white">{item.key}</p>
+                                  <p className="mt-[3px] text-[13px] text-[#9B9B9B]">{item.environment === "production" ? "Production" : item.environment === "preview" ? "Preview" : "Development"}</p>
+                                </div>
+                              </div>
+                              <div className="flex min-w-0 items-center gap-[10px] font-mono text-[13px] text-[#DADADA]">
+                                {canReveal ? (
+                                  <button type="button" onClick={() => setVisibleEnvValues((current) => ({ ...current, [item.id]: !current[item.id] }))} className="text-[#8E8E8E] hover:text-white">
+                                    <Eye className="h-[16px] w-[16px]" />
+                                  </button>
+                                ) : null}
+                                <span className="truncate">{displayValue}</span>
+                              </div>
+                              <div className="whitespace-nowrap text-[13px] text-[#9B9B9B]">{formatRelative(item.updated_at)}</div>
+                              <div className="flex justify-end">
+                                <button type="button" onClick={() => setEnvMenuId((current) => current === item.id ? null : item.id)} className="flex h-[36px] w-[42px] items-center justify-center rounded-[10px] bg-[#151515] text-[#DADADA] hover:bg-[#1C1C1C]">
+                                  <MoreHorizontal className="h-[18px] w-[18px]" />
+                                </button>
+                              </div>
+                            </div>
+                            {envMenuId === item.id ? (
+                              <div className="absolute right-[14px] top-[64px] z-[180] w-[220px] overflow-hidden rounded-[16px] border border-[#242424] bg-[#0B0B0B] p-[6px] shadow-[0_18px_60px_rgba(0,0,0,0.48)]">
+                                <button onClick={() => openEditEnvDrawer(item)} className="flex h-[40px] w-full items-center gap-[10px] rounded-[10px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]"><Code2 className="h-[15px] w-[15px]" /> Edit</button>
+                                <button onClick={() => void copyEnvValue(item)} className="flex h-[40px] w-full items-center gap-[10px] rounded-[10px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]"><Copy className="h-[15px] w-[15px]" /> Copy to Clipboard</button>
+                                <button onClick={() => { setEnvMenuId(null); notify("info", `Versao atual: v${item.version || 1}.`, "Historico"); }} className="flex h-[40px] w-full items-center gap-[10px] rounded-[10px] px-[10px] text-left text-[13px] font-semibold text-[#E8E8E8] hover:bg-[#191919]"><History className="h-[15px] w-[15px]" /> View History</button>
+                                <button onClick={() => void deleteEnvVar(item)} className="flex h-[40px] w-full items-center gap-[10px] rounded-[10px] px-[10px] text-left text-[13px] font-semibold text-[#FF5252] hover:bg-[#191919]"><Trash2 className="h-[15px] w-[15px]" /> Delete</button>
+                              </div>
+                            ) : null}
+                          </article>
+                        );
+                      }) : (
+                        <div className="rounded-[18px] border border-[#151515] bg-[#0B0B0B] p-[18px] text-[13px] text-[#777777]">Nenhuma variavel cadastrada.</div>
+                      )}
+                    </div>
+                  </section>
+                ) : null}
+
+                {tab === "settings" ? (
+                  <section className="grid gap-[18px] pb-[48px] lg:grid-cols-[230px_minmax(0,1fr)]">
+                    <aside className="lg:sticky lg:top-[18px] lg:self-start">
+                      <div className="flex gap-[6px] overflow-auto rounded-[18px] border border-[#171717] bg-[#080808] p-[6px] lg:flex-col">
+                        {([
+                          ["general", "General", Cog],
+                          ["domains", "Domains", Globe2],
+                          ["git", "Git", GitBranch],
+                          ["members", "Members", Users],
+                          ["security", "Security", Lock],
+                          ["danger", "Danger", AlertTriangle],
+                        ] as Array<[string, string, typeof Cog]>).map(([id, label, Icon]) => (
+                          <button
+                            key={String(id)}
+                            type="button"
+                            onClick={() => setSettingsSection(String(id))}
+                            className={`flex h-[38px] shrink-0 items-center gap-[9px] rounded-[12px] px-[10px] text-left text-[13px] font-semibold ${settingsSection === id
+                                ? id === "danger"
+                                  ? "bg-[rgba(255,82,82,0.1)] text-[#FF9B9B]"
+                                  : "bg-[#151515] text-white"
+                                : id === "danger"
+                                  ? "text-[#C77A7A] hover:bg-[#111111]"
+                                  : "text-[#9B9B9B] hover:bg-[#111111] hover:text-white"
+                              }`}
+                          >
+                            <Icon className="h-[15px] w-[15px]" />
+                            {String(label)}
+                          </button>
+                        ))}
+                      </div>
+                    </aside>
+
+                    <div className="grid gap-[14px]">
+                      {(settingsSection === "general" || settingsSection === "domains") ? (
+                        <section className="overflow-hidden rounded-[22px] border border-[#171717] bg-[#080808]">
+                          <div className="border-b border-[#171717] p-[18px]">
+                            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#606060]">Project</p>
+                            <h2 className="mt-[8px] text-[22px] font-semibold tracking-[-0.04em] text-white">Host name</h2>
+                            <div className="mt-[16px] flex flex-col gap-[10px] sm:flex-row">
+                              <input
+                                value={settingsHostName}
+                                onChange={(event) => setSettingsHostName(event.target.value)}
+                                maxLength={64}
+                                className="h-[42px] min-w-0 flex-1 rounded-[12px] border border-[#242424] bg-[#050505] px-[13px] text-[13px] font-semibold text-white outline-none focus:border-[#3A3A3A]"
+                              />
+                              <button
+                                type="button"
+                                disabled={settingsSaving === "hostname" || settingsHostName.trim() === snapshot.settings.hostName}
+                                onClick={() => void saveProjectSettings("hostname", { hostName: settingsHostName })}
+                                className="inline-flex h-[42px] items-center justify-center gap-[8px] rounded-[12px] bg-[#F2F2F2] px-[14px] text-[13px] font-semibold text-[#050505] hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {settingsSaving === "hostname" ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <Save className="h-[14px] w-[14px]" />}
+                                Save
+                              </button>
+                            </div>
+                          </div>
+                          <div className="grid gap-[10px] p-[18px] md:grid-cols-3">
+                            {[
+                              ["Primary domain", primaryDomain?.hostname || "n/d"],
+                              ["Runtime", snapshot.project.runtime],
+                              ["Billing", snapshot.project.paymentAmount],
+                            ].map(([label, value]) => (
+                              <div key={label} className="rounded-[14px] border border-[#151515] bg-[#0B0B0B] p-[12px]">
+                                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#555555]">{label}</p>
+                                <p className="mt-[7px] truncate text-[13px] font-semibold text-[#E7E7E7]" title={value}>{value}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </section>
+                      ) : null}
+
+                      {settingsSection === "domains" ? (
+                        <section className="overflow-hidden rounded-[22px] border border-[#171717] bg-[#080808]">
+                          <div className="flex flex-col gap-[12px] border-b border-[#171717] p-[18px] lg:flex-row lg:items-end lg:justify-between">
+                            <div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#606060]">Domains</p>
+                              <h2 className="mt-[8px] text-[22px] font-semibold tracking-[-0.04em] text-white">Production domains</h2>
+                            </div>
+                            <div className="flex min-w-0 flex-col gap-[8px] sm:flex-row">
+                              <input
+                                value={settingsDomainInput}
+                                onChange={(event) => setSettingsDomainInput(event.target.value.toLowerCase())}
+                                placeholder="meusite.flwdesk.com"
+                                className="h-[42px] min-w-0 rounded-[12px] border border-[#242424] bg-[#050505] px-[13px] font-mono text-[13px] text-white outline-none focus:border-[#3A3A3A] sm:w-[280px]"
+                              />
+                              <button
+                                type="button"
+                                disabled={settingsSaving === "add_domain" || !settingsDomainInput.trim()}
+                                onClick={() => void saveProjectSettings("add_domain", { hostname: settingsDomainInput }).then((saved) => { if (saved) setSettingsDomainInput(""); })}
+                                className="inline-flex h-[42px] items-center justify-center gap-[8px] rounded-[12px] bg-[#F2F2F2] px-[14px] text-[13px] font-semibold text-[#050505] hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {settingsSaving === "add_domain" ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <Plus className="h-[14px] w-[14px]" />}
+                                Add
+                              </button>
+                            </div>
+                          </div>
+                          <div className="divide-y divide-[#121212]">
+                            {snapshot.settings.domains.map((domain) => (
+                              <div key={domain.id} className="grid gap-[12px] px-[18px] py-[14px] md:grid-cols-[minmax(0,1fr)_130px_170px] md:items-center">
+                                <div className="min-w-0">
+                                  <div className="flex min-w-0 items-center gap-[9px]">
+                                    <Globe2 className="h-[16px] w-[16px] shrink-0 text-[#9BC2FF]" />
+                                    <p className="truncate font-mono text-[14px] font-semibold text-white">{domain.hostname}</p>
+                                    {domain.primary ? <span className="rounded-full border border-[#263926] bg-[#07140B] px-[7px] py-[3px] text-[10px] font-bold uppercase tracking-[0.12em] text-[#9BE7AC]">Primary</span> : null}
+                                  </div>
+                                  <p className="mt-[5px] text-[12px] text-[#777777]">{domain.source === "flowdesk_subdomain" ? "Flowdesk subdomain" : "Custom domain"} / {domain.status}</p>
+                                </div>
+                                <span className={`w-fit rounded-full border px-[9px] py-[5px] text-[11px] font-semibold ${domain.status === "active" ? "border-[#1E3425] bg-[#07140B] text-[#9BE7AC]" : "border-[#3B2E16] bg-[#120D04] text-[#FFD28A]"
+                                  }`}>
+                                  {domain.status === "active" ? "Valid" : "Pending DNS"}
+                                </span>
+                                <div className="flex justify-start gap-[8px] md:justify-end">
+                                  {!domain.primary ? (
+                                    <button type="button" onClick={() => void saveProjectSettings("primary_domain", { hostname: domain.hostname })} className="h-[34px] rounded-[10px] border border-[#242424] bg-[#0B0B0B] px-[10px] text-[12px] font-semibold text-[#DADADA] hover:bg-[#111111]">Primary</button>
+                                  ) : null}
+                                  <button type="button" onClick={() => void saveProjectSettings("remove_domain", { hostname: domain.hostname })} disabled={!isMinecraftProject && snapshot.settings.domains.length <= 1} className="flex h-[34px] w-[34px] items-center justify-center rounded-[10px] border border-[#242424] bg-[#0B0B0B] text-[#DADADA] hover:bg-[#111111] hover:text-[#FF9B9B] disabled:cursor-not-allowed disabled:opacity-45">
+                                    <Trash2 className="h-[14px] w-[14px]" />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </section>
+                      ) : null}
+
+                      {settingsSection === "git" ? (
+                        <section className="overflow-hidden rounded-[22px] border border-[#171717] bg-[#080808]">
+                          <div className="border-b border-[#171717] p-[18px]">
+                            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#606060]">Connected Git Repository</p>
+                            <div className="mt-[12px] flex flex-col gap-[12px] lg:flex-row lg:items-center lg:justify-between">
+                              <div className="min-w-0">
+                                <h2 className="truncate text-[20px] font-semibold tracking-[-0.035em] text-white">
+                                  {snapshot.settings.repository.connected ? snapshot.settings.repository.fullName : "No repository connected"}
+                                </h2>
+                                <p className="mt-[5px] truncate text-[12px] text-[#777777]">Branch {snapshot.settings.repository.branch || "main"}</p>
+                              </div>
+                              <div className="flex gap-[8px]">
+                                {snapshot.settings.repository.htmlUrl && snapshot.settings.repository.connected ? (
+                                  <button type="button" onClick={() => window.open(snapshot.settings.repository.htmlUrl || "", "_blank", "noopener,noreferrer")} className="inline-flex h-[38px] items-center gap-[8px] rounded-[11px] border border-[#242424] bg-[#0B0B0B] px-[12px] text-[12px] font-semibold text-[#DADADA] hover:bg-[#111111]">
+                                    <Link2 className="h-[14px] w-[14px]" />
+                                    Open
+                                  </button>
+                                ) : null}
+                                <button type="button" onClick={() => void saveProjectSettings("repository_remove")} disabled={!snapshot.settings.repository.connected || settingsSaving === "repository_remove"} className="inline-flex h-[38px] items-center gap-[8px] rounded-[11px] border border-[#3A1F1F] bg-[#120707] px-[12px] text-[12px] font-semibold text-[#FF9B9B] hover:bg-[#180909] disabled:cursor-not-allowed disabled:opacity-45">
+                                  {settingsSaving === "repository_remove" ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <X className="h-[14px] w-[14px]" />}
+                                  Disconnect
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="p-[18px]">
+                            <div className="flex flex-col gap-[8px] sm:flex-row">
+                              <div className="flex min-w-0 flex-1 items-center gap-[10px] rounded-[12px] border border-[#242424] bg-[#050505] px-[12px]">
+                                <Search className="h-[15px] w-[15px] text-[#777777]" />
+                                <input value={settingsRepoQuery} onChange={(event) => setSettingsRepoQuery(event.target.value)} placeholder="Search repositories" className="h-[42px] min-w-0 flex-1 bg-transparent text-[13px] text-white outline-none" />
+                              </div>
+                              <button type="button" onClick={() => void loadAvailableRepositories()} disabled={settingsReposLoading} className="inline-flex h-[42px] items-center justify-center gap-[8px] rounded-[12px] border border-[#242424] bg-[#0B0B0B] px-[13px] text-[13px] font-semibold text-[#DADADA] hover:bg-[#111111] disabled:cursor-not-allowed disabled:opacity-60">
+                                {settingsReposLoading ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <RefreshCw className="h-[14px] w-[14px]" />}
+                                Refresh
+                              </button>
+                            </div>
+                            <div className="mt-[12px] grid gap-[8px]">
+                              {settingsRepos.slice(0, 8).map((repo) => {
+                                const fullName = repo.fullName || `${repo.owner}/${repo.name}`;
+                                return (
+                                  <button
+                                    key={repo.id || fullName}
+                                    type="button"
+                                    disabled={settingsSaving === "repository_update"}
+                                    onClick={() => void saveProjectSettings("repository_update", { repository: { ...repo, fullName, htmlUrl: repo.htmlUrl || `https://github.com/${fullName}` } })}
+                                    className="grid gap-[10px] rounded-[14px] border border-[#171717] bg-[#0B0B0B] p-[12px] text-left hover:border-[#2A2A2A] disabled:cursor-not-allowed disabled:opacity-60 sm:grid-cols-[minmax(0,1fr)_120px]"
+                                  >
+                                    <span className="min-w-0">
+                                      <span className="block truncate text-[13px] font-semibold text-white">{fullName}</span>
+                                      <span className="mt-[4px] block truncate text-[12px] text-[#777777]">{repo.description || repo.language || "GitHub repository"}</span>
+                                    </span>
+                                    <span className="flex items-center justify-start gap-[7px] font-mono text-[12px] font-semibold text-[#DADADA] sm:justify-end">
+                                      <GitBranch className="h-[13px] w-[13px] text-[#777777]" />
+                                      {repo.branch || "main"}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                              {!settingsRepos.length ? (
+                                <div className="rounded-[14px] border border-[#171717] bg-[#0B0B0B] p-[14px] text-[13px] text-[#777777]">
+                                  Nenhum repositorio disponivel para troca agora.
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
+                        </section>
+                      ) : null}
+
+                      {settingsSection === "members" ? (
+                        <section className="overflow-hidden rounded-[22px] border border-[#171717] bg-[#080808]">
+                          <div className="border-b border-[#171717] p-[18px]">
+                            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#606060]">Project Members</p>
+                            <div className="mt-[14px] grid gap-[8px] lg:grid-cols-[minmax(0,1fr)_180px_110px]">
+                              <input value={settingsMemberEmail} onChange={(event) => setSettingsMemberEmail(event.target.value)} placeholder="email@empresa.com" className="h-[42px] min-w-0 rounded-[12px] border border-[#242424] bg-[#050505] px-[13px] text-[13px] text-white outline-none focus:border-[#3A3A3A]" />
+                              <CustomSelect value={settingsMemberRole} onChange={(value) => setSettingsMemberRole(value as VpsMemberRole)} options={[{ value: "viewer", label: "Viewer" }, { value: "developer", label: "Developer" }, { value: "admin", label: "Admin" }]} />
+                              <button type="button" disabled={!settingsMemberEmail.trim() || settingsSaving === "add_member"} onClick={() => void saveProjectSettings("add_member", { email: settingsMemberEmail, role: settingsMemberRole }).then((saved) => { if (saved) setSettingsMemberEmail(""); })} className="inline-flex h-[42px] items-center justify-center gap-[8px] rounded-[12px] bg-[#F2F2F2] px-[13px] text-[13px] font-semibold text-[#050505] hover:bg-white disabled:cursor-not-allowed disabled:opacity-50">
+                                {settingsSaving === "add_member" ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <Plus className="h-[14px] w-[14px]" />}
+                                Add
+                              </button>
+                            </div>
+                          </div>
+                          <div className="divide-y divide-[#121212]">
+                            {snapshot.settings.members.map((member) => (
+                              <div key={member.id} className="grid gap-[10px] px-[18px] py-[14px] md:grid-cols-[minmax(0,1fr)_160px_120px_42px] md:items-center">
+                                <div className="min-w-0">
+                                  <p className="truncate text-[14px] font-semibold text-white">{member.email}</p>
+                                  <p className="mt-[4px] text-[12px] text-[#777777]">{member.status}</p>
+                                </div>
+                                <CustomSelect value={member.role} onChange={(role) => void saveProjectSettings("member_role", { id: member.id, role })} options={[{ value: "owner", label: "Owner" }, { value: "admin", label: "Admin" }, { value: "developer", label: "Developer" }, { value: "viewer", label: "Viewer" }]} />
+                                <span className="font-mono text-[12px] text-[#777777]">{formatRelative(member.addedAt)}</span>
+                                <button type="button" disabled={member.role === "owner"} onClick={() => void saveProjectSettings("remove_member", { id: member.id })} className="flex h-[36px] w-[36px] items-center justify-center rounded-[10px] border border-[#242424] bg-[#0B0B0B] text-[#DADADA] hover:bg-[#111111] hover:text-[#FF9B9B] disabled:cursor-not-allowed disabled:opacity-45">
+                                  <Trash2 className="h-[14px] w-[14px]" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </section>
+                      ) : null}
+
+                      {settingsSection === "security" ? (
+                        <section className="grid gap-[14px]">
+                          <div className="overflow-hidden rounded-[22px] border border-[#171717] bg-[#080808]">
+                            <div className="border-b border-[#171717] p-[18px]">
+                              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#606060]">Network & Security</p>
+                              <h2 className="mt-[8px] text-[22px] font-semibold tracking-[-0.04em] text-white">Firewall rules</h2>
+                              <div className="mt-[14px] grid gap-[8px] lg:grid-cols-[minmax(0,1fr)_150px_110px]">
+                                <input value={settingsIpInput} onChange={(event) => setSettingsIpInput(event.target.value)} placeholder="203.0.113.10 ou 10.0.0.0/24" className="h-[42px] min-w-0 rounded-[12px] border border-[#242424] bg-[#050505] px-[13px] font-mono text-[13px] text-white outline-none focus:border-[#3A3A3A]" />
+                                <CustomSelect value={settingsIpMode} onChange={(value) => setSettingsIpMode(value as VpsFirewallMode)} options={[{ value: "allow", label: "Allowlist" }, { value: "block", label: "Blocklist" }]} />
+                                <button type="button" disabled={!settingsIpInput.trim() || settingsSaving === "add_firewall"} onClick={() => void saveProjectSettings("add_firewall", { value: settingsIpInput, mode: settingsIpMode }).then((saved) => { if (saved) setSettingsIpInput(""); })} className="inline-flex h-[42px] items-center justify-center gap-[8px] rounded-[12px] bg-[#F2F2F2] px-[13px] text-[13px] font-semibold text-[#050505] hover:bg-white disabled:cursor-not-allowed disabled:opacity-50">
+                                  {settingsSaving === "add_firewall" ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <Plus className="h-[14px] w-[14px]" />}
+                                  Add
+                                </button>
+                              </div>
+                            </div>
+                            <div className="divide-y divide-[#121212]">
+                              {snapshot.settings.firewall.length ? snapshot.settings.firewall.map((rule) => (
+                                <div key={rule.id} className="grid gap-[10px] px-[18px] py-[14px] md:grid-cols-[minmax(0,1fr)_130px_42px] md:items-center">
+                                  <p className="truncate font-mono text-[13px] font-semibold text-white">{rule.value}</p>
+                                  <span className={`w-fit rounded-full border px-[9px] py-[5px] text-[11px] font-semibold ${rule.mode === "allow" ? "border-[#1E3425] bg-[#07140B] text-[#9BE7AC]" : "border-[#3A1F1F] bg-[#120707] text-[#FF9B9B]"}`}>{rule.mode}</span>
+                                  <button type="button" onClick={() => void saveProjectSettings("remove_firewall", { id: rule.id })} className="flex h-[36px] w-[36px] items-center justify-center rounded-[10px] border border-[#242424] bg-[#0B0B0B] text-[#DADADA] hover:bg-[#111111] hover:text-[#FF9B9B]">
+                                    <Trash2 className="h-[14px] w-[14px]" />
+                                  </button>
+                                </div>
+                              )) : (
+                                <div className="p-[18px] text-[13px] text-[#777777]">Nenhuma regra manual. O agente interno assinado continua restrito ao backend Flowdesk.</div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="grid gap-[10px] md:grid-cols-2">
+                            {[
+                              ["Env secrets", snapshot.settings.security.envSecretsLocked],
+                              ["Signed agent requests", snapshot.settings.security.signedAgentRequests],
+                              ["Internal agent only", snapshot.settings.security.internalAgentOnly],
+                              ["2FA for danger zone", snapshot.settings.security.twoFactorRequiredForDanger],
+                            ].map(([label, enabled]) => (
+                              <div key={String(label)} className="flex items-center justify-between gap-[14px] rounded-[16px] border border-[#171717] bg-[#080808] p-[14px]">
+                                <div className="min-w-0">
+                                  <p className="truncate text-[13px] font-semibold text-white">{String(label)}</p>
+                                  <p className="mt-[4px] text-[12px] text-[#777777]">{enabled ? "Enabled" : "Disabled"}</p>
+                                </div>
+                                <span className={`h-[10px] w-[10px] rounded-full ${enabled ? "bg-[#34A853]" : "bg-[#555555]"}`} />
+                              </div>
+                            ))}
+                          </div>
+                        </section>
+                      ) : null}
+
+                      {settingsSection === "danger" ? (
+                        <section className="overflow-hidden rounded-[22px] border border-[rgba(255,82,82,0.32)] bg-[#080505]">
+                          <div className="p-[18px]">
+                            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#C77A7A]">Danger Zone</p>
+                            <h2 className="mt-[8px] text-[22px] font-semibold tracking-[-0.04em] text-[#FFB3B3]">Delete Project and VPS</h2>
+                            <p className="mt-[8px] max-w-[760px] text-[13px] leading-[1.6] text-[#A77A7A]">
+                              Remove runtime, env vars, deploys, logs e arquivos da VPS. O pedido pago fica livre para criar outra VPS enquanto o periodo de acesso ainda estiver ativo.
+                            </p>
+                            <div className="mt-[16px] max-w-[520px]">
+                              <label className="text-[12px] font-semibold text-[#D8A0A0]">Digite {snapshot.settings.hostName}</label>
+                              <input value={deleteConfirmText} onChange={(event) => setDeleteConfirmText(event.target.value)} className="mt-[8px] h-[42px] w-full rounded-[12px] border border-[#3A1F1F] bg-[#090303] px-[13px] text-[13px] text-white outline-none focus:border-[#6A2A2A]" />
+                            </div>
+                          </div>
+                          <div className="flex flex-col gap-[10px] border-t border-[rgba(255,82,82,0.25)] bg-[#110606] px-[18px] py-[14px] sm:flex-row sm:items-center sm:justify-between">
+                            <p className="text-[12px] text-[#A77A7A]">Aciona confirmacao sensivel se a conta tiver 2FA/passkey ativo.</p>
+                            <button
+                              type="button"
+                              disabled={deleteConfirmText !== snapshot.settings.hostName || settingsSaving === "delete_project"}
+                              onClick={() => setDeleteModalOpen(true)}
+                              className="inline-flex h-[42px] items-center justify-center gap-[8px] rounded-[12px] bg-[#E5484D] px-[14px] text-[13px] font-semibold text-white hover:bg-[#F2555A] disabled:cursor-not-allowed disabled:opacity-45"
+                            >
+                              {settingsSaving === "delete_project" ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <Trash2 className="h-[14px] w-[14px]" />}
+                              Delete Project
+                            </button>
+                          </div>
+                        </section>
+                      ) : null}
+                    </div>
+                  </section>
+                ) : null}
               </div>
             )}
           </div>
@@ -4472,6 +6356,88 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
         </div>
       ) : null}
 
+      {domainDrawerOpen && domainDrawerMode === "add" ? (
+        <div className="fixed inset-0 z-[240] flex items-center justify-center bg-[rgba(0,0,0,0.72)] p-[18px] backdrop-blur-sm" onClick={() => setDomainDrawerOpen(false)}>
+          <div className="w-full max-w-[680px] overflow-hidden rounded-[18px] border border-[#2A2A2A] bg-[#050505] shadow-[0_30px_100px_rgba(0,0,0,0.62)]" onClick={(event) => event.stopPropagation()}>
+            <div className="p-[28px]">
+              <h2 className="text-[28px] font-semibold tracking-[-0.055em] text-white">Add Domains</h2>
+              <p className="mt-[18px] max-w-[620px] text-[15px] leading-[1.55] text-[#A0A0A0]">
+                Adicione um dominio a este projeto. Subdominios <span className="font-mono text-white">*.flwdesk.com</span> sao gratuitos quando o slug estiver disponivel.
+              </p>
+              <div className="mt-[26px] flex h-[58px] items-center gap-[12px] rounded-[12px] border border-[#5A5A5A] bg-[#0B0B0B] px-[14px] shadow-[0_0_0_3px_rgba(255,255,255,0.12)]">
+                <Search className="h-[20px] w-[20px] text-[#A0A0A0]" />
+                <input
+                  autoFocus
+                  value={domainInput}
+                  onChange={(event) => setDomainInput(
+                    isMinecraftProject
+                      ? minecraftDomainInputValue(event.target.value).replace(/[^a-z0-9-]/g, "")
+                      : event.target.value.toLowerCase(),
+                  )}
+                  placeholder={isMinecraftProject ? "nome-do-servidor" : "example.flwdesk.com"}
+                  className="min-w-0 flex-1 bg-transparent text-[18px] text-white outline-none placeholder:text-[#777777]"
+                />
+                {isMinecraftProject ? <span className="shrink-0 font-mono text-[14px] font-semibold text-[#A0A0A0]">.mine.flwdesk.com</span> : null}
+                <ChevronDown className="h-[18px] w-[18px] text-[#A0A0A0]" />
+              </div>
+              <p className="mt-[10px] text-[13px] text-[#8A8A8A]">
+                {isMinecraftProject
+                  ? "Use somente o primeiro nome, sem ponto. O sufixo .mine.flwdesk.com e automatico."
+                  : "Use letras, numeros e hifen no slug. Exemplo: minha-loja.flwdesk.com."}
+              </p>
+
+              <div className="mt-[22px] overflow-hidden rounded-[12px] border border-[#242424]">
+                <button
+                  type="button"
+                  onClick={() => setDomainDestination("production")}
+                  className="flex w-full items-start gap-[12px] border-b border-[#242424] bg-[#070707] px-[20px] py-[18px] text-left"
+                >
+                  <span className={`mt-[3px] h-[18px] w-[18px] rounded-full border ${domainDestination === "production" ? "border-white bg-white shadow-[inset_0_0_0_5px_#070707]" : "border-[#777777]"}`} />
+                  <div>
+                    <p className="text-[15px] font-semibold text-white">Connect to an environment</p>
+                    <div className="mt-[12px] w-[270px]">
+                      <CustomSelect value="production" onChange={() => undefined} options={[{ value: "production", label: "Production" }]} icon={<Upload className="h-[14px] w-[14px] rotate-180" />} />
+                    </div>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDomainDestination("redirect")}
+                  className="grid w-full gap-[12px] bg-[#070707] px-[20px] py-[18px] text-left lg:grid-cols-[260px_1fr_1fr]"
+                >
+                  <span className="flex items-center gap-[12px] text-[15px] font-semibold text-[#AFAFAF]">
+                    <span className={`h-[18px] w-[18px] rounded-full border ${domainDestination === "redirect" ? "border-white bg-white shadow-[inset_0_0_0_5px_#070707]" : "border-[#777777]"}`} />
+                    Redirect to Another Domain
+                  </span>
+                  <CustomSelect value={domainRedirectStatus} onChange={setDomainRedirectStatus} options={[
+                    { value: "307", label: "307 Temporary Redirect" },
+                    { value: "308", label: "308 Permanent Redirect" },
+                    { value: "302", label: "302 Found" },
+                    { value: "301", label: "301 Moved Permanently" },
+                  ]} />
+                  <div className="flex h-[42px] items-center gap-[10px] rounded-[12px] border border-[#242424] bg-[#101010] px-[12px]">
+                    <Search className="h-[15px] w-[15px] text-[#777777]" />
+                    <input value={domainRedirectTo} onChange={(event) => setDomainRedirectTo(event.target.value.toLowerCase())} placeholder="No Redirect" className="min-w-0 flex-1 bg-transparent text-[13px] text-white outline-none" />
+                  </div>
+                </button>
+              </div>
+            </div>
+            <div className="flex items-center justify-between border-t border-[#242424] px-[20px] py-[20px]">
+              <button type="button" onClick={() => setDomainDrawerOpen(false)} className="h-[48px] rounded-[10px] border border-[#2A2A2A] bg-[#080808] px-[20px] text-[15px] font-semibold text-white hover:bg-[#101010]">Cancel</button>
+              <button
+                type="button"
+                onClick={() => void submitDomainDrawer()}
+                disabled={!domainInput.trim() || Boolean(settingsSaving)}
+                className="inline-flex h-[48px] min-w-[150px] items-center justify-center gap-[8px] rounded-[10px] bg-[#F2F2F2] px-[20px] text-[15px] font-semibold text-[#050505] hover:bg-white disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                {settingsSaving ? <Loader2 className="h-[16px] w-[16px] animate-spin" /> : null}
+                Add {domainInput.trim() ? 1 : 0} Domain
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {envDrawerOpen ? (
         <div className="fixed inset-0 z-40 bg-black/55 backdrop-blur-[2px]">
           <aside className="absolute bottom-[12px] right-[12px] top-[12px] flex w-[min(960px,calc(100vw-24px))] animate-[flowdeskSlideIn_220ms_ease-out] flex-col overflow-hidden rounded-[22px] border border-[#242424] bg-[#080808] shadow-[0_24px_90px_rgba(0,0,0,0.55)]">
@@ -4488,11 +6454,10 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                       type="button"
                       disabled={envSaving}
                       onClick={() => setEnvEnvironment(option.value)}
-                      className={`h-[36px] rounded-[10px] border px-[12px] text-[12px] font-semibold transition-all ${
-                        envEnvironment === option.value
+                      className={`h-[36px] rounded-[10px] border px-[12px] text-[12px] font-semibold transition-all ${envEnvironment === option.value
                           ? "border-[#3A3A3A] bg-[#F2F2F2] text-[#050505]"
                           : "border-[#242424] bg-[#0B0B0B] text-[#BDBDBD] hover:bg-[#111111] hover:text-white"
-                      }`}
+                        }`}
                     >
                       {option.label}
                     </button>
@@ -4566,16 +6531,14 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                         role="switch"
                         aria-checked={row.sensitive}
                         onClick={() => setEnvRows((current) => current.map((item) => item.id === row.id ? { ...item, sensitive: !item.sensitive, showValue: false } : item))}
-                        className={`relative h-[30px] w-[52px] shrink-0 rounded-full border transition-colors ${
-                          row.sensitive
+                        className={`relative h-[30px] w-[52px] shrink-0 rounded-full border transition-colors ${row.sensitive
                             ? "border-[rgba(15,98,254,0.45)] bg-[#0F62FE]"
                             : "border-[#303030] bg-[#202020]"
-                        }`}
+                          }`}
                       >
                         <span
-                          className={`absolute left-[3px] top-[3px] h-[22px] w-[22px] rounded-full bg-white shadow-[0_2px_10px_rgba(0,0,0,0.35)] transition-transform ${
-                            row.sensitive ? "translate-x-[22px]" : "translate-x-0"
-                          }`}
+                          className={`absolute left-[3px] top-[3px] h-[22px] w-[22px] rounded-full bg-white shadow-[0_2px_10px_rgba(0,0,0,0.35)] transition-transform ${row.sensitive ? "translate-x-[22px]" : "translate-x-0"
+                            }`}
                         />
                       </button>
                     </div>
@@ -4598,6 +6561,17 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
             </div>
           </aside>
         </div>
+      ) : null}
+      {deleteModalOpen ? (
+        <SensitiveActionModal
+          isOpen={deleteModalOpen}
+          action="vps_delete"
+          target={snapshot.project.vpsCode}
+          title="Confirmar exclusao da VPS"
+          description="Esta acao remove o projeto, limpa os segredos e desativa o runtime da VPS."
+          onClose={() => setDeleteModalOpen(false)}
+          onVerified={deleteProjectWithProof}
+        />
       ) : null}
       <style jsx global>{`
         @keyframes flowdeskSlideIn {
@@ -4738,9 +6712,8 @@ function FileTreeNode({
           onContextMenu(event, node);
         }}
         onClick={() => isDirectory ? onToggle(node.path) : onSelect(node)}
-        className={`flex h-[32px] w-full items-center gap-[8px] rounded-[10px] px-[8px] text-left text-[13px] transition-colors ${
-          activePath === node.path ? "bg-[#0F62FE] text-white" : isDropTarget ? "bg-[rgba(15,98,254,0.13)] text-white" : "text-[#BDBDBD] hover:bg-[#111111] hover:text-white"
-        }`}
+        className={`flex h-[32px] w-full items-center gap-[8px] rounded-[10px] px-[8px] text-left text-[13px] transition-colors ${activePath === node.path ? "bg-[#0F62FE] text-white" : isDropTarget ? "bg-[rgba(15,98,254,0.13)] text-white" : "text-[#BDBDBD] hover:bg-[#111111] hover:text-white"
+          }`}
         style={{ paddingLeft: 8 + level * 12 }}
       >
         {isDirectory ? (

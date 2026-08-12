@@ -10,6 +10,7 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: appRoot,
   poweredByHeader: false,
   productionBrowserSourceMaps: false,
+  compress: true,
   images: {
     loader: "custom",
     loaderFile: "./lib/images/flowSecureLoader.ts",
@@ -54,6 +55,28 @@ const nextConfig: NextConfig = {
         source: "/rules/",
         destination: "/privacy/",
         permanent: true,
+      },
+    ];
+  },
+  async headers() {
+    return [
+      {
+        source: "/cdn/:path*",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=31536000, immutable",
+          },
+        ],
+      },
+      {
+        source: "/:path*",
+        headers: [
+          {
+            key: "X-DNS-Prefetch-Control",
+            value: "on",
+          },
+        ],
       },
     ];
   },

@@ -15,6 +15,7 @@ import { parseUtcTimestampMs } from "@/lib/time/utcTimestamp";
 import {
   buildRefundOutcome,
   finalizePaymentRefundOutcome,
+  logLedgerEvent,
 } from "@/lib/payments/refunds";
 import { finalizePaidDomainOrder } from "@/lib/domains/domainService";
 
@@ -255,13 +256,14 @@ async function createPaymentOrderEventSafe(
   paymentOrderId: number,
   eventType: string,
   eventPayload: PaymentOrderEventPayload,
+  orderRecord?: PaymentSettlementOrderRecord,
 ) {
   try {
-    const supabase = getSupabaseAdminClientOrThrow();
-    await supabase.from("payment_order_events").insert({
-      payment_order_id: paymentOrderId,
-      event_type: eventType,
-      event_payload: eventPayload,
+    await logLedgerEvent({
+      paymentOrderId,
+      order: orderRecord || {},
+      eventType,
+      payload: eventPayload,
     });
   } catch {
     // telemetria nao pode quebrar o fluxo
@@ -520,11 +522,23 @@ export async function settleApprovedPaymentOrder<
 }) : Promise<PaymentSettlementResult<TOrder>> {
   if (isDomainPurchaseOrder(input.order)) {
     try {
+      await logLedgerEvent({
+        paymentOrderId: input.order.id,
+        order: input.order,
+        eventType: "provisioning_started",
+        payload: { source: input.source, detail: "Iniciando provisionamento do dominio." }
+      });
       await finalizePaidDomainOrder(input.order);
       const settledOrder = await markSettlementAsSettled({
         order: input.order,
         selectColumns: input.selectColumns,
         source: input.source,
+      });
+      await logLedgerEvent({
+        paymentOrderId: input.order.id,
+        order: settledOrder,
+        eventType: "provisioning_completed",
+        payload: { source: input.source, detail: "Dominio provisionado com sucesso." }
       });
       return {
         order: settledOrder,
@@ -541,6 +555,16 @@ export async function settleApprovedPaymentOrder<
           error instanceof Error
             ? error.message
             : "Falha ao provisionar o dominio apos o pagamento.",
+      });
+      await logLedgerEvent({
+        paymentOrderId: input.order.id,
+        order: pending.order,
+        eventType: "provisioning_failed",
+        payload: {
+          source: input.source,
+          error: error instanceof Error ? error.message : "Falha desconhecida no provisionamento",
+          attempt: pending.failureCount,
+        }
       });
       if (!input.allowAutoRefundOnFailure) {
         return {
@@ -646,6 +670,12 @@ export async function settleApprovedPaymentOrder<
   }
 
   try {
+    await logLedgerEvent({
+      paymentOrderId: input.order.id,
+      order: input.order,
+      eventType: "provisioning_started",
+      payload: { source: input.source, detail: "Iniciando provisionamento da assinatura." }
+    });
     await syncUserPlanStateFromOrder(input.order);
     clearPlanStateCacheForUser(input.order.user_id);
     invalidateGuildLicenseCaches(input.order.guild_id || undefined);
@@ -653,6 +683,12 @@ export async function settleApprovedPaymentOrder<
       order: input.order,
       selectColumns: input.selectColumns,
       source: input.source,
+    });
+    await logLedgerEvent({
+      paymentOrderId: input.order.id,
+      order: settledOrder,
+      eventType: "provisioning_completed",
+      payload: { source: input.source, detail: "Assinatura provisionada com sucesso." }
     });
     return {
       order: settledOrder,
@@ -673,6 +709,17 @@ export async function settleApprovedPaymentOrder<
       message: errorMessage,
     });
     const pendingOrder = pendingSettlement.order;
+
+    await logLedgerEvent({
+      paymentOrderId: input.order.id,
+      order: pendingOrder,
+      eventType: "provisioning_failed",
+      payload: {
+        source: input.source,
+        error: errorMessage,
+        attempt: pendingSettlement.failureCount,
+      }
+    });
 
     if (!input.allowAutoRefundOnFailure) {
       return {

@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import sharp from "sharp";
+import sharp, { type Metadata as SharpMetadata } from "sharp";
 import { NextResponse } from "next/server";
 import { getServerEnv, getServerEnvList } from "@/lib/serverEnv";
 import { applyStandardSecurityHeaders } from "@/lib/security/http";
@@ -487,7 +487,7 @@ function buildCacheKey(input: {
 function shouldBypassOptimization(input: {
   source: SourceAsset;
   format: string;
-  metadata: sharp.Metadata;
+  metadata: SharpMetadata;
 }) {
   if (input.format === "svg") {
     return true;
@@ -509,7 +509,7 @@ function shouldBypassOptimization(input: {
 
 function resolveAutoMode(input: {
   sourceFormat: string;
-  metadata: sharp.Metadata;
+  metadata: SharpMetadata;
   sourceBytes: number;
 }) {
   const area = (input.metadata.width || 0) * (input.metadata.height || 0);
@@ -531,7 +531,7 @@ function resolveAutoMode(input: {
 
 function normalizeOutputFormatName(
   format: string,
-  metadata: sharp.Metadata,
+  metadata: SharpMetadata,
 ): "avif" | "jpeg" | "png" | "webp" {
   const normalized = format.trim().toLowerCase();
   if (normalized === "avif") return "avif";
@@ -549,7 +549,7 @@ function resolveOutputFormat(input: {
   requestedFormat: FlowSecurePolishFormat;
   effectiveMode: Exclude<FlowSecurePolishMode, "auto">;
   sourceFormat: string;
-  metadata: sharp.Metadata;
+  metadata: SharpMetadata;
   wantsAvif: boolean;
   wantsWebp: boolean;
 }) {
@@ -590,7 +590,7 @@ function optimizeWithSharp(input: {
   request: FlowSecurePolishRequest;
   source: SourceAsset;
   sourceFormat: string;
-  metadata: sharp.Metadata;
+  metadata: SharpMetadata;
   wantsAvif: boolean;
   wantsWebp: boolean;
 }) {
