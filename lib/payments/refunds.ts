@@ -916,7 +916,7 @@ async function createPaymentOrderEventSafe(
   paymentOrderId: number,
   eventType: string,
   eventPayload: Record<string, unknown>,
-  orderRecord?: any,
+  orderRecord?: PaymentRefundOrderRecord,
 ) {
   try {
     const supabase = getSupabaseAdminClientOrThrow();

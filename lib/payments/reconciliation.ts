@@ -81,8 +81,6 @@ export type PaymentOrderReconciliationRecord = {
   updated_at: string;
 };
 
-type PaymentOrderEventPayload = Record<string, unknown>;
-
 type ReconcileResult = {
   order: PaymentOrderReconciliationRecord;
   changed: boolean;
@@ -162,12 +160,12 @@ async function createPaymentOrderEventSafe(
   paymentOrderId: number,
   eventType: string,
   eventPayload: Record<string, unknown>,
-  orderRecord?: any,
+  orderRecord?: PaymentOrderReconciliationRecord,
 ) {
   try {
     await logLedgerEvent({
       paymentOrderId,
-      order: orderRecord || { id: paymentOrderId },
+      order: orderRecord || {},
       eventType,
       payload: eventPayload,
     });

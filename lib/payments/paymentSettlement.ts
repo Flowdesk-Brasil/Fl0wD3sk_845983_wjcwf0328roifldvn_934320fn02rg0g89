@@ -15,7 +15,6 @@ import { parseUtcTimestampMs } from "@/lib/time/utcTimestamp";
 import {
   buildRefundOutcome,
   finalizePaymentRefundOutcome,
-  resolveFinancialCategory,
   logLedgerEvent,
 } from "@/lib/payments/refunds";
 import { finalizePaidDomainOrder } from "@/lib/domains/domainService";
@@ -257,12 +256,12 @@ async function createPaymentOrderEventSafe(
   paymentOrderId: number,
   eventType: string,
   eventPayload: PaymentOrderEventPayload,
-  orderRecord?: any,
+  orderRecord?: PaymentSettlementOrderRecord,
 ) {
   try {
     await logLedgerEvent({
       paymentOrderId,
-      order: orderRecord || { id: paymentOrderId },
+      order: orderRecord || {},
       eventType,
       payload: eventPayload,
     });

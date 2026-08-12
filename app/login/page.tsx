@@ -10,7 +10,7 @@ import {
   isMicrosoftAuthConfigured,
   normalizeInternalNextPath,
 } from "@/lib/auth/config";
-import { getCurrentUserFromSessionCookie } from "@/lib/auth/session";
+import { getCurrentUserFromSessionCookieSafe } from "@/lib/auth/session";
 import { buildFlowCwvMetadata } from "@/lib/seo/flowCwv";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
@@ -159,7 +159,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const googleEnabled = isGoogleAuthConfigured();
   const microsoftEnabled = isMicrosoftAuthConfigured();
   const emailOtpLength = getConfiguredEmailOtpLength();
-  const currentUser = await getCurrentUserFromSessionCookie();
+  const { user: currentUser } = await getCurrentUserFromSessionCookieSafe();
 
   if (loginMode === "link" && currentUser?.discord_user_id) {
     redirect(nextPath || "/dashboard");
