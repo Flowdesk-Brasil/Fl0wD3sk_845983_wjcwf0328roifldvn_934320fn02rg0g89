@@ -69,6 +69,16 @@ function resolveDiscordAuthErrorCode(error: unknown) {
     error instanceof Error ? error.message.toLowerCase() : "";
 
   if (
+    message.includes("schema cache") ||
+    message.includes("could not find") ||
+    message.includes("does not exist") ||
+    message.includes("column") ||
+    message.includes("relation")
+  ) {
+    return "auth_schema_outdated";
+  }
+
+  if (
     message.includes("ja esta vinculada a outra conta") ||
     message.includes("ja esta vinculado a outro discord") ||
     message.includes("email desta conta ja esta vinculado")

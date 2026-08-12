@@ -15,7 +15,11 @@ import {
   validateOAuthTransactionFromRequest,
   validateOidcIdTokenClaims,
 } from "@/lib/auth/oauthIdentity";
-import { exchangeMicrosoftCodeForToken, fetchMicrosoftUser } from "@/lib/auth/microsoft";
+import {
+  exchangeMicrosoftCodeForToken,
+  fetchMicrosoftUser,
+  syncMicrosoftProfilePhotoForAuthUser,
+} from "@/lib/auth/microsoft";
 import {
   buildLoginOtpRedirectLocation,
   buildLoginRedirectResponse,
@@ -73,6 +77,16 @@ function readTrustedDeviceCookies(request: NextRequest) {
 
 function resolveMicrosoftAuthErrorCode(error: unknown) {
   const message = error instanceof Error ? error.message.toLowerCase() : "";
+
+  if (
+    message.includes("schema cache") ||
+    message.includes("could not find") ||
+    message.includes("does not exist") ||
+    message.includes("column") ||
+    message.includes("relation")
+  ) {
+    return "auth_schema_outdated";
+  }
 
   if (
     message.includes("ja esta vinculada a outra conta flowdesk") ||
@@ -198,6 +212,15 @@ export async function handleMicrosoftAuthCallback(request: NextRequest) {
     const microsoftUser = await fetchMicrosoftUser(tokenPayload.access_token!);
     const user = await resolveAuthUserForMicrosoftLogin(microsoftUser, {
       currentUserId: currentSession?.user.id ?? null,
+    });
+    await syncMicrosoftProfilePhotoForAuthUser(
+      user.id,
+      tokenPayload.access_token!,
+    ).catch((error) => {
+      console.warn(
+        "[auth_microsoft_callback] failed to sync profile photo",
+        error,
+      );
     });
 
     const successLocation = buildCanonicalUrlFromInternalPath(
