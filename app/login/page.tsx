@@ -70,6 +70,8 @@ function resolveLoginErrorMessage(
   switch (errorCode) {
     case "auth_schema_outdated":
       return "O ambiente de autenticacao precisa ser atualizado no Supabase. Rode o sql/140_final.sql e tente entrar novamente.";
+    case "auth_user_persistence_failed":
+      return "A conta foi autenticada, mas o Supabase nao confirmou o usuario criado. Tente novamente e confira os logs de auth_user_persistence_failed.";
     case "slow_down":
       return "Muitas tentativas seguidas. Aguarde alguns segundos e tente novamente.";
     case "discord_invalid_state":

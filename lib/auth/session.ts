@@ -164,6 +164,17 @@ function normalizeAuthUserRecord(user: Partial<AuthUserRecord> | null | undefine
     profile_avatar_source: user.profile_avatar_source || null,
   } as AuthUserRecord;
 }
+
+function ensureAuthUserRecord(
+  user: Partial<AuthUserRecord> | null | undefined,
+  context: string,
+) {
+  const normalized = normalizeAuthUserRecord(user);
+  if (!normalized?.id) {
+    throw new Error(`Supabase nao retornou auth_users valido em ${context}.`);
+  }
+  return normalized;
+}
 const authSessionInflight = new Map<string, Promise<CurrentAuthSession | null>>();
 let authSessionCircuitOpenUntilMs = 0;
 
@@ -518,6 +529,38 @@ export async function findAuthUserByEmail(email: string) {
   return selectAuthUserBy("email_normalized", normalizedEmail);
 }
 
+async function findAuthUserByMutationPayload(
+  payload: AuthUserMutationPayload,
+  username?: string,
+) {
+  if (payload.discord_user_id) {
+    const byDiscord = await findAuthUserByDiscordUserId(payload.discord_user_id);
+    if (byDiscord) return byDiscord;
+  }
+
+  if (payload.google_user_id) {
+    const byGoogle = await findAuthUserByGoogleUserId(payload.google_user_id);
+    if (byGoogle) return byGoogle;
+  }
+
+  if (payload.microsoft_user_id) {
+    const byMicrosoft = await findAuthUserByMicrosoftUserId(payload.microsoft_user_id);
+    if (byMicrosoft) return byMicrosoft;
+  }
+
+  if (payload.email_normalized) {
+    const byEmail = await findAuthUserByEmail(payload.email_normalized);
+    if (byEmail) return byEmail;
+  }
+
+  if (username) {
+    const byUsername = await findAuthUserByUsername(username);
+    if (byUsername) return byUsername;
+  }
+
+  return null;
+}
+
 function sanitizeAuthUsername(value: string | null | undefined) {
   if (typeof value !== "string") return "flowdesk-user";
 
@@ -631,10 +674,22 @@ async function insertAuthUserWithResolvedUsername(
     }
 
     if (!result.error) {
-      if (!options?.skipAccountCreatedEmail) {
-        void sendAccountCreatedEmailSafe(result.data);
+      const inserted =
+        normalizeAuthUserRecord(result.data) ||
+        (await findAuthUserByMutationPayload(payload, username));
+      if (!inserted) {
+        lastError = new Error("Supabase nao retornou o usuario criado.");
+        break;
       }
-      return normalizeAuthUserRecord(result.data) as AuthUserRecord;
+      const authUser = ensureAuthUserRecord(
+        inserted,
+        "insertAuthUserWithResolvedUsername",
+      );
+
+      if (!options?.skipAccountCreatedEmail) {
+        void sendAccountCreatedEmailSafe(authUser);
+      }
+      return authUser;
     }
 
     lastError = new Error(result.error.message);
@@ -670,8 +725,15 @@ async function updateAuthUserWithSchemaFallback(
       .single<AuthUserRecord>();
   }
 
+  let data = normalizeAuthUserRecord(result.data);
+  if (!result.error && !data) {
+    data = await findAuthUserById(userId);
+  }
+
   return {
-    data: normalizeAuthUserRecord(result.data),
+    data: data
+      ? ensureAuthUserRecord(data, "updateAuthUserWithSchemaFallback")
+      : null,
     error: result.error,
   };
 }

@@ -70,6 +70,14 @@ function resolveGoogleAuthErrorCode(error: unknown) {
   }
 
   if (
+    message.includes("auth_user_resolve_empty") ||
+    message.includes("supabase nao retornou auth_users") ||
+    message.includes("supabase nao retornou o usuario criado")
+  ) {
+    return "auth_user_persistence_failed";
+  }
+
+  if (
     message.includes("redirect_uri_mismatch") ||
     (message.includes("invalid_grant") && message.includes("redirect"))
   ) {
@@ -210,8 +218,11 @@ export async function handleGoogleAuthCallback(request: NextRequest) {
     }
     const googleUser = await fetchGoogleUser(tokenPayload.access_token);
     const user = await resolveAuthUserForGoogleLogin(googleUser, {
-      currentUserId: currentSession?.user.id ?? null,
+      currentUserId: currentSession?.user?.id ?? null,
     });
+    if (!user?.id) {
+      throw new Error("auth_user_resolve_empty_google");
+    }
     const successLocation = buildCanonicalUrlFromInternalPath(
       request,
       nextPathCookie || fallbackNextPath,
