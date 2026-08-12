@@ -19,6 +19,7 @@ import {
   buildEmailUsername,
   normalizeAuthEmail,
 } from "@/lib/auth/email";
+import { resolveNextAuthUserProfileAvatar } from "@/lib/auth/avatar";
 import {
   decryptFlowSecureValue,
   encryptFlowSecureValue,
@@ -762,6 +763,11 @@ async function saveDiscordUserToAuthUser(
     discordUser.avatar
       ? `https://cdn.discordapp.com/avatars/${discordUser.id}/${discordUser.avatar}.${discordUser.avatar.startsWith("a_") ? "gif" : "png"}?size=512`
       : null;
+  const nextAvatar = resolveNextAuthUserProfileAvatar(
+    existingLinkedUser,
+    "discord",
+    discordAvatarUrl,
+  );
 
   const payload = {
     discord_user_id: discordUser.id,
@@ -777,13 +783,8 @@ async function saveDiscordUserToAuthUser(
         ? existingLinkedUser?.display_name || buildDisplayName(discordUser)
         : buildDisplayName(discordUser),
     avatar: discordUser.avatar,
-    profile_avatar_url: existingLinkedUser?.profile_avatar_url || discordAvatarUrl,
-    profile_avatar_source:
-      existingLinkedUser?.profile_avatar_url
-        ? existingLinkedUser.profile_avatar_source || "existing"
-        : discordAvatarUrl
-          ? "discord"
-          : null,
+    profile_avatar_url: nextAvatar.profileAvatarUrl,
+    profile_avatar_source: nextAvatar.profileAvatarSource,
     email: existingLinkedUser?.email || normalizedEmail || null,
     email_normalized: existingLinkedUser?.email_normalized || normalizedEmail || null,
     email_verified_at:
@@ -1124,6 +1125,11 @@ async function saveGoogleUserToAuthUser(
   const existingLinkedUser =
     typeof linkToUserId === "number" ? await findAuthUserById(linkToUserId) : null;
   const preserveExistingIdentity = Boolean(existingLinkedUser);
+  const nextAvatar = resolveNextAuthUserProfileAvatar(
+    existingLinkedUser,
+    "google",
+    googleUser.picture,
+  );
 
   const payload = {
     discord_user_id: existingLinkedUser?.discord_user_id || null,
@@ -1141,13 +1147,8 @@ async function saveGoogleUserToAuthUser(
           existingLinkedUser?.display_name ||
           buildEmailDisplayName(normalizedEmail),
     avatar: existingLinkedUser?.avatar || null,
-    profile_avatar_url: existingLinkedUser?.profile_avatar_url || googleUser.picture || null,
-    profile_avatar_source:
-      existingLinkedUser?.profile_avatar_url
-        ? existingLinkedUser.profile_avatar_source || "existing"
-        : googleUser.picture
-          ? "google"
-          : null,
+    profile_avatar_url: nextAvatar.profileAvatarUrl,
+    profile_avatar_source: nextAvatar.profileAvatarSource,
     email: existingLinkedUser?.email || normalizedEmail,
     email_normalized: existingLinkedUser?.email_normalized || normalizedEmail,
     email_verified_at:
@@ -1273,6 +1274,11 @@ async function saveMicrosoftUserToAuthUser(
   const existingLinkedUser =
     typeof linkToUserId === "number" ? await findAuthUserById(linkToUserId) : null;
   const preserveExistingIdentity = Boolean(existingLinkedUser);
+  const nextAvatar = resolveNextAuthUserProfileAvatar(
+    existingLinkedUser,
+    "microsoft",
+    microsoftUser.avatarUrl,
+  );
 
   const payload = {
     discord_user_id: existingLinkedUser?.discord_user_id || null,
@@ -1293,8 +1299,8 @@ async function saveMicrosoftUserToAuthUser(
           existingLinkedUser?.display_name ||
           buildEmailDisplayName(normalizedEmail),
     avatar: existingLinkedUser?.avatar || null,
-    profile_avatar_url: existingLinkedUser?.profile_avatar_url || null,
-    profile_avatar_source: existingLinkedUser?.profile_avatar_source || null,
+    profile_avatar_url: nextAvatar.profileAvatarUrl,
+    profile_avatar_source: nextAvatar.profileAvatarSource,
     email: existingLinkedUser?.email || normalizedEmail,
     email_normalized: existingLinkedUser?.email_normalized || normalizedEmail,
     email_verified_at:
@@ -1324,7 +1330,7 @@ async function saveMicrosoftUserToAuthUser(
       providerUserId: microsoftUser.id,
       email: normalizedEmail,
       displayName: microsoftUser.displayName,
-      avatarUrl: null,
+      avatarUrl: microsoftUser.avatarUrl || null,
     }).catch(() => null);
     return result.data;
   }
@@ -1337,7 +1343,7 @@ async function saveMicrosoftUserToAuthUser(
       providerUserId: microsoftUser.id,
       email: normalizedEmail,
       displayName: microsoftUser.displayName,
-      avatarUrl: null,
+      avatarUrl: microsoftUser.avatarUrl || null,
     }).catch(() => null);
     return inserted;
   } catch (error) {

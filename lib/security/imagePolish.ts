@@ -79,6 +79,7 @@ const DEFAULT_ALLOWED_REMOTE_HOSTS = [
   "images-ext-1.discordapp.net",
   "images-ext-2.discordapp.net",
   "cdn.flwdesk.com",
+  "lh3.googleusercontent.com",
 ] as const;
 
 const MIME_BY_EXTENSION: Record<string, string> = {
@@ -142,8 +143,25 @@ function resolveIntegerEnv(name: string, fallback: number) {
 }
 
 function resolveAllowedRemoteHosts() {
+  const configuredSupabaseHosts = [
+    getServerEnv("NEXT_PUBLIC_SUPABASE_URL"),
+    getServerEnv("SUPABASE_URL"),
+  ]
+    .map((value) => {
+      try {
+        return value ? new URL(value).hostname : "";
+      } catch {
+        return "";
+      }
+    })
+    .filter(Boolean);
+
   return new Set(
-    [...DEFAULT_ALLOWED_REMOTE_HOSTS, ...getServerEnvList("FLOWSECURE_IMAGE_POLISH_ALLOWED_REMOTE_HOSTS")]
+    [
+      ...DEFAULT_ALLOWED_REMOTE_HOSTS,
+      ...configuredSupabaseHosts,
+      ...getServerEnvList("FLOWSECURE_IMAGE_POLISH_ALLOWED_REMOTE_HOSTS"),
+    ]
       .map((value) => value.trim().toLowerCase())
       .filter(Boolean),
   );

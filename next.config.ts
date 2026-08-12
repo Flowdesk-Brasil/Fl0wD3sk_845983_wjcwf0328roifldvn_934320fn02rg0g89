@@ -39,6 +39,14 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "cdn.flwdesk.com",
       },
+      {
+        protocol: "https",
+        hostname: "lh3.googleusercontent.com",
+      },
+      {
+        protocol: "https",
+        hostname: "*.supabase.co",
+      },
     ],
   },
   turbopack: {

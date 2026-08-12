@@ -1,4 +1,4 @@
-import { buildDiscordUserAvatarUrl } from "@/lib/auth/avatar";
+import { resolveAuthUserAvatarUrl } from "@/lib/auth/avatar";
 import {
   fetchHostingGitHubProfile,
   readHostingGitHubToken,
@@ -166,9 +166,7 @@ export async function getAccountPersonalData(userId: number) {
       username: user.username,
       email: user.email,
       emailVerified: Boolean(user.email_verified_at),
-      avatarUrl:
-        user.profile_avatar_url ||
-        buildDiscordUserAvatarUrl(user.discord_user_id, user.avatar),
+      avatarUrl: resolveAuthUserAvatarUrl(user),
       avatarSource: user.profile_avatar_source,
     },
     nativeConnected,

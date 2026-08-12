@@ -68,6 +68,8 @@ function resolveLoginErrorMessage(
   if (!errorCode) return null;
 
   switch (errorCode) {
+    case "auth_schema_outdated":
+      return "O ambiente de autenticacao precisa ser atualizado no Supabase. Rode o sql/140_final.sql e tente entrar novamente.";
     case "slow_down":
       return "Muitas tentativas seguidas. Aguarde alguns segundos e tente novamente.";
     case "discord_invalid_state":
