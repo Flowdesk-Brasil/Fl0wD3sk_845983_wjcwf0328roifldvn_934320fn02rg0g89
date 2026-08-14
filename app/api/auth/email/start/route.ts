@@ -6,6 +6,10 @@ import {
   FlowSecureDtoError,
   parseFlowSecureDto,
 } from "@/lib/security/flowSecure";
+import {
+  extractAuditErrorMessage,
+  sanitizePublicErrorMessage,
+} from "@/lib/security/errors";
 import { applyNoStoreHeaders, ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -93,15 +97,16 @@ export async function POST(request: NextRequest) {
     const message =
       error instanceof FlowSecureDtoError
         ? error.issues[0] || error.message
-        : error instanceof Error
-          ? error.message
-          : "Nao foi possivel preparar o login por email.";
+        : sanitizePublicErrorMessage(
+            error,
+            "Nao foi possivel preparar o login por email agora.",
+          );
 
     await logSecurityAuditEventSafe(requestContext, {
       action: "auth_email_start",
       outcome: "failed",
       metadata: {
-        reason: message,
+        reason: extractAuditErrorMessage(error),
       },
     });
 
@@ -111,6 +116,7 @@ export async function POST(request: NextRequest) {
           {
             ok: false,
             message,
+            requestId: requestContext.requestId,
           },
           { status: 400 },
         ),

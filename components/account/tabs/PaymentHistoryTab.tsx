@@ -62,6 +62,7 @@ type Order = {
   providerStatus?: string | null;
   providerStatusDetail?: string | null;
   providerPaymentId?: string | null;
+  returnPaymentHref?: string | null;
   technicalLabels?: string[];
   refund?: RefundSummary | null;
   financialSummary?: {
@@ -610,7 +611,16 @@ export function PaymentHistoryTab({ onNavigateTickets: _onNavigateTickets }: { o
                               </div>
                             </div>
 
-                             <div className="flex flex-col justify-end">
+                             <div className="flex flex-wrap items-center gap-[10px] md:col-span-2 lg:col-span-3">
+                              {effectiveStatus === "pending" && order.returnPaymentHref ? (
+                                <a
+                                  href={order.returnPaymentHref}
+                                  className="flex w-fit items-center gap-[10px] rounded-[12px] border border-[rgba(242,200,35,0.24)] bg-[rgba(242,200,35,0.10)] px-[18px] py-[12px] text-[14px] font-bold text-[#FFE177] transition-all hover:border-[rgba(242,200,35,0.36)] hover:bg-[rgba(242,200,35,0.14)]"
+                                >
+                                  <CreditCard className="h-[18px] w-[18px] text-[#F2C823]" />
+                                  Retornar ao pagamento
+                                </a>
+                              ) : null}
                                <a 
                                  href="/support"
                                  className="flex items-center gap-[10px] rounded-[12px] bg-[rgba(255,255,255,0.05)] border border-[#222] px-[18px] py-[12px] text-[14px] font-bold text-white transition-all hover:bg-[rgba(255,255,255,0.08)] w-fit"

@@ -8,6 +8,7 @@ import {
   flowSecureDto,
   parseFlowSecureDto,
 } from "@/lib/security/flowSecure";
+import { extractAuditErrorMessage } from "@/lib/security/errors";
 import { applyNoStoreHeaders, ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -43,7 +44,7 @@ function schedulePasswordResetEmail(input: {
       await logSecurityAuditEventSafe(input.requestContext, {
         action: "auth_password_reset_email_delivery",
         outcome: "failed",
-        metadata: { reason: error instanceof Error ? error.message : "unknown" },
+        metadata: { reason: extractAuditErrorMessage(error) },
       });
     }
   });
@@ -122,7 +123,7 @@ export async function POST(request: NextRequest) {
     await logSecurityAuditEventSafe(requestContext, {
       action: "auth_password_reset_request",
       outcome: "failed",
-      metadata: { reason: error instanceof Error ? error.message : "unknown" },
+      metadata: { reason: extractAuditErrorMessage(error) },
     });
   }
 

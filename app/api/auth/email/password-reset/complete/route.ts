@@ -8,6 +8,10 @@ import {
   flowSecureDto,
   parseFlowSecureDto,
 } from "@/lib/security/flowSecure";
+import {
+  extractAuditErrorMessage,
+  sanitizePublicErrorMessage,
+} from "@/lib/security/errors";
 import { applyNoStoreHeaders, ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -101,19 +105,22 @@ export async function POST(request: Request) {
       requestContext.requestId,
     );
   } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Nao foi possivel redefinir sua senha.";
+    const message = sanitizePublicErrorMessage(
+      error,
+      "Nao foi possivel redefinir sua senha agora.",
+    );
     await logSecurityAuditEventSafe(requestContext, {
       action: "auth_password_reset_complete",
       outcome: "failed",
-      metadata: { reason: message },
+      metadata: { reason: extractAuditErrorMessage(error) },
     });
 
     return attachRequestId(
       applyNoStoreHeaders(
-        NextResponse.json({ ok: false, message }, { status: 400 }),
+        NextResponse.json(
+          { ok: false, message, requestId: requestContext.requestId },
+          { status: 400 },
+        ),
       ),
       requestContext.requestId,
     );

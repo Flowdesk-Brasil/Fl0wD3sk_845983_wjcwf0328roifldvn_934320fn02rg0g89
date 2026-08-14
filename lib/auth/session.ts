@@ -175,6 +175,51 @@ function ensureAuthUserRecord(
   }
   return normalized;
 }
+
+function getPersistedAuthUserId(
+  user: Partial<AuthUserRecord> | null | undefined,
+) {
+  return typeof user?.id === "number" && Number.isFinite(user.id)
+    ? user.id
+    : null;
+}
+
+function buildAuthUserPersistenceError(context: string, detail?: string | null) {
+  return new Error(
+    `auth_user_persistence_failed:${context}${detail ? `: ${detail}` : ""}`,
+  );
+}
+
+function isNullIdDereferenceError(error: unknown) {
+  return (
+    error instanceof TypeError &&
+    error.message.toLowerCase().includes("cannot read properties of null") &&
+    error.message.toLowerCase().includes("id")
+  );
+}
+
+function sanitizeAuthPersistenceStack(error: unknown) {
+  if (!(error instanceof Error) || !error.stack) return null;
+
+  return error.stack
+    .split("\n")
+    .slice(0, 8)
+    .join("\n");
+}
+
+function logAuthUserPersistenceFailure(
+  context: string,
+  error: unknown,
+  metadata?: Record<string, unknown>,
+) {
+  console.warn("[auth_user_persistence] failed", {
+    context,
+    errorName: error instanceof Error ? error.name : typeof error,
+    detail: error instanceof Error ? error.message : "erro_desconhecido",
+    stack: sanitizeAuthPersistenceStack(error),
+    ...metadata,
+  });
+}
 const authSessionInflight = new Map<string, Promise<CurrentAuthSession | null>>();
 let authSessionCircuitOpenUntilMs = 0;
 
@@ -639,6 +684,35 @@ function isDuplicateUsernameInsertError(message: string) {
   );
 }
 
+type AuthUserMutationResult = {
+  data: Partial<AuthUserRecord> | null;
+  error: { message: string } | null;
+};
+
+function isAuthUserCompatibleWithMutationPayload(
+  user: Partial<AuthUserRecord> | null | undefined,
+  payload: AuthUserMutationPayload,
+) {
+  if (!user?.id) return false;
+
+  if (payload.google_user_id) {
+    return user.google_user_id === payload.google_user_id;
+  }
+
+  if (payload.discord_user_id) {
+    return user.discord_user_id === payload.discord_user_id;
+  }
+
+  if (payload.microsoft_user_id) {
+    return user.microsoft_user_id === payload.microsoft_user_id;
+  }
+
+  return Boolean(
+    payload.email_normalized &&
+      user.email_normalized === payload.email_normalized,
+  );
+}
+
 async function insertAuthUserWithResolvedUsername(
   payload: AuthUserMutationPayload,
   options?: {
@@ -650,14 +724,42 @@ async function insertAuthUserWithResolvedUsername(
 
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const username = await resolveAvailableAuthUsername(payload.username);
-    let result = await supabase
-      .from("auth_users")
-      .insert({
-        ...payload,
-        username,
-      })
-      .select(AUTH_USER_SELECT_COLUMNS)
-      .single<AuthUserRecord>();
+    let result: AuthUserMutationResult;
+
+    try {
+      result = await supabase
+        .from("auth_users")
+        .insert({
+          ...payload,
+          username,
+        })
+        .select(AUTH_USER_SELECT_COLUMNS)
+        .single<AuthUserRecord>();
+    } catch (error) {
+      const recovered = await findAuthUserByMutationPayload(payload, username)
+        .catch(() => null);
+      if (isAuthUserCompatibleWithMutationPayload(recovered, payload)) {
+        const authUser = ensureAuthUserRecord(
+          recovered,
+          "insertAuthUserWithResolvedUsername.recovered_after_exception",
+        );
+        if (!options?.skipAccountCreatedEmail) {
+          void sendAccountCreatedEmailSafe(authUser);
+        }
+        return authUser;
+      }
+
+      lastError = buildAuthUserPersistenceError(
+        isNullIdDereferenceError(error)
+          ? "insert_null_id_dereference"
+          : "insert_exception",
+        error instanceof Error ? error.message : "erro_desconhecido",
+      );
+      if (isNullIdDereferenceError(error)) {
+        continue;
+      }
+      break;
+    }
 
     if (result.error && isMissingProfileAvatarSchemaError(result.error)) {
       const legacyPayload = { ...payload } as Record<string, unknown>;
@@ -674,11 +776,20 @@ async function insertAuthUserWithResolvedUsername(
     }
 
     if (!result.error) {
-      const inserted =
+      const insertedCandidate =
         normalizeAuthUserRecord(result.data) ||
         (await findAuthUserByMutationPayload(payload, username));
+      const inserted = isAuthUserCompatibleWithMutationPayload(
+        insertedCandidate,
+        payload,
+      )
+        ? insertedCandidate
+        : null;
       if (!inserted) {
-        lastError = new Error("Supabase nao retornou o usuario criado.");
+        lastError = buildAuthUserPersistenceError(
+          "insert_empty_result",
+          "Supabase nao retornou o usuario criado.",
+        );
         break;
       }
       const authUser = ensureAuthUserRecord(
@@ -692,13 +803,16 @@ async function insertAuthUserWithResolvedUsername(
       return authUser;
     }
 
-    lastError = new Error(result.error.message);
+    lastError = buildAuthUserPersistenceError(
+      "insert_failed",
+      result.error.message,
+    );
     if (!isDuplicateUsernameInsertError(result.error.message)) {
       break;
     }
   }
 
-  throw lastError || new Error("Erro desconhecido ao criar usuario.");
+  throw lastError || buildAuthUserPersistenceError("insert_unknown");
 }
 
 async function updateAuthUserWithSchemaFallback(
@@ -706,12 +820,34 @@ async function updateAuthUserWithSchemaFallback(
   payload: AuthUserMutationPayload,
 ) {
   const supabase = getSupabaseAdminClientOrThrow();
-  let result = await supabase
-    .from("auth_users")
-    .update(payload)
-    .eq("id", userId)
-    .select(AUTH_USER_SELECT_COLUMNS)
-    .single<AuthUserRecord>();
+  let result: AuthUserMutationResult;
+
+  try {
+    result = await supabase
+      .from("auth_users")
+      .update(payload)
+      .eq("id", userId)
+      .select(AUTH_USER_SELECT_COLUMNS)
+      .single<AuthUserRecord>();
+  } catch (error) {
+    const recovered = await findAuthUserById(userId).catch(() => null);
+    if (isAuthUserCompatibleWithMutationPayload(recovered, payload)) {
+      return {
+        data: ensureAuthUserRecord(
+          recovered,
+          "updateAuthUserWithSchemaFallback.recovered_after_exception",
+        ),
+        error: null,
+      };
+    }
+
+    throw buildAuthUserPersistenceError(
+      isNullIdDereferenceError(error)
+        ? "update_null_id_dereference"
+        : "update_exception",
+      error instanceof Error ? error.message : "erro_desconhecido",
+    );
+  }
 
   if (result.error && isMissingProfileAvatarSchemaError(result.error)) {
     const legacyPayload = { ...payload } as Record<string, unknown>;
@@ -728,6 +864,14 @@ async function updateAuthUserWithSchemaFallback(
   let data = normalizeAuthUserRecord(result.data);
   if (!result.error && !data) {
     data = await findAuthUserById(userId);
+  }
+  if (data && !isAuthUserCompatibleWithMutationPayload(data, payload)) {
+    return {
+      data: null,
+      error: {
+        message: "auth_users retornou usuario sem confirmar a identidade OAuth gravada.",
+      },
+    };
   }
 
   return {
@@ -897,14 +1041,19 @@ async function saveDiscordUserToAuthUser(
     return inserted;
   } catch (error) {
     const existingByDiscord = await findAuthUserByDiscordUserId(discordUser.id);
-    if (existingByDiscord) {
-      return saveDiscordUserToAuthUser(discordUser, existingByDiscord.id, options);
+    const existingByDiscordId = getPersistedAuthUserId(existingByDiscord);
+    if (existingByDiscordId !== null) {
+      return saveDiscordUserToAuthUser(discordUser, existingByDiscordId, options);
     }
 
     if (normalizedEmail) {
       const byEmail = await findAuthUserByEmail(normalizedEmail);
-      if (byEmail && (!byEmail.discord_user_id || byEmail.discord_user_id === discordUser.id)) {
-        return saveDiscordUserToAuthUser(discordUser, byEmail.id, options);
+      const byEmailId = getPersistedAuthUserId(byEmail);
+      if (
+        byEmailId !== null &&
+        (!byEmail?.discord_user_id || byEmail.discord_user_id === discordUser.id)
+      ) {
+        return saveDiscordUserToAuthUser(discordUser, byEmailId, options);
       }
     }
 
@@ -924,34 +1073,36 @@ export async function resolveAuthUserForDiscordLogin(
   },
 ) {
   const existingByDiscord = await findAuthUserByDiscordUserId(discordUser.id);
+  const existingByDiscordId = getPersistedAuthUserId(existingByDiscord);
   const normalizedDiscordEmail = discordUser.verified
     ? normalizeAuthEmail(discordUser.email)
     : null;
 
   if (typeof input?.currentUserId === "number") {
     const currentUser = await findAuthUserById(input.currentUserId);
-    if (!currentUser) {
+    const currentUserId = getPersistedAuthUserId(currentUser);
+    if (currentUserId === null) {
       throw new Error("Sua sessao atual nao foi encontrada para concluir a vinculacao.");
     }
 
-    if (existingByDiscord && existingByDiscord.id !== currentUser.id) {
+    if (existingByDiscordId !== null && existingByDiscordId !== currentUserId) {
       throw new Error("Esta conta do Discord ja esta vinculada a outra conta Flowdesk.");
     }
 
     if (
-      currentUser.discord_user_id &&
+      currentUser?.discord_user_id &&
       currentUser.discord_user_id !== discordUser.id
     ) {
       throw new Error("Sua conta Flowdesk ja esta vinculada a outro Discord.");
     }
 
-    return saveDiscordUserToAuthUser(discordUser, currentUser.id, {
+    return saveDiscordUserToAuthUser(discordUser, currentUserId, {
       skipAccountCreatedEmail: input?.skipAccountCreatedEmail,
     });
   }
 
-  if (existingByDiscord) {
-    return saveDiscordUserToAuthUser(discordUser, existingByDiscord.id, {
+  if (existingByDiscordId !== null) {
+    return saveDiscordUserToAuthUser(discordUser, existingByDiscordId, {
       skipAccountCreatedEmail: input?.skipAccountCreatedEmail,
     });
   }
@@ -961,15 +1112,16 @@ export async function resolveAuthUserForDiscordLogin(
   }
 
   const existingByEmail = await findAuthUserByEmail(normalizedDiscordEmail);
-  if (existingByEmail) {
+  const existingByEmailId = getPersistedAuthUserId(existingByEmail);
+  if (existingByEmailId !== null) {
     if (
-      existingByEmail.discord_user_id &&
+      existingByEmail?.discord_user_id &&
       existingByEmail.discord_user_id !== discordUser.id
     ) {
       throw new Error("O email desta conta ja esta vinculado a outro Discord.");
     }
 
-    return saveDiscordUserToAuthUser(discordUser, existingByEmail.id, {
+    return saveDiscordUserToAuthUser(discordUser, existingByEmailId, {
       skipAccountCreatedEmail: input?.skipAccountCreatedEmail,
     });
   }
@@ -1228,10 +1380,28 @@ async function saveGoogleUserToAuthUser(
   };
 
   if (typeof linkToUserId === "number") {
-    const result = await updateAuthUserWithSchemaFallback(linkToUserId, payload);
+    let result: Awaited<ReturnType<typeof updateAuthUserWithSchemaFallback>>;
+    try {
+      result = await updateAuthUserWithSchemaFallback(linkToUserId, payload);
+    } catch (error) {
+      const recovered = await findAuthUserById(linkToUserId);
+      if (recovered?.id && recovered.google_user_id === googleUser.sub) {
+        return recovered;
+      }
+
+      throw buildAuthUserPersistenceError(
+        isNullIdDereferenceError(error)
+          ? "google_link_null_id_dereference"
+          : "google_link_exception",
+        error instanceof Error ? error.message : "erro_desconhecido",
+      );
+    }
 
     if (result.error || !result.data) {
-      throw new Error(`Erro ao vincular usuario Google: ${result.error?.message || "usuario_nao_encontrado"}`);
+      throw buildAuthUserPersistenceError(
+        "google_link_failed",
+        result.error?.message || "usuario_nao_encontrado",
+      );
     }
 
     await upsertAuthProviderProfile({
@@ -1258,19 +1428,35 @@ async function saveGoogleUserToAuthUser(
     return inserted;
   } catch (error) {
     const byGoogle = await findAuthUserByGoogleUserId(googleUser.sub);
-    if (byGoogle) {
-      return saveGoogleUserToAuthUser(googleUser, byGoogle.id);
+    const byGoogleId = getPersistedAuthUserId(byGoogle);
+    if (byGoogleId !== null) {
+      return saveGoogleUserToAuthUser(googleUser, byGoogleId);
     }
 
     const byEmail = await findAuthUserByEmail(normalizedEmail);
-    if (byEmail && (!byEmail.google_user_id || byEmail.google_user_id === googleUser.sub)) {
-      return saveGoogleUserToAuthUser(googleUser, byEmail.id);
+    const byEmailId = getPersistedAuthUserId(byEmail);
+    if (
+      byEmailId !== null &&
+      (!byEmail?.google_user_id || byEmail.google_user_id === googleUser.sub)
+    ) {
+      return saveGoogleUserToAuthUser(googleUser, byEmailId);
     }
 
-    throw new Error(
-      `Erro ao salvar usuario Google no Supabase: ${
-        error instanceof Error ? error.message : "erro_desconhecido"
-      }`,
+    const recovered =
+      (await findAuthUserByMutationPayload(payload)) ||
+      (normalizedEmail ? await findAuthUserByEmail(normalizedEmail) : null);
+    if (
+      recovered?.id &&
+      recovered.google_user_id === googleUser.sub
+    ) {
+      return ensureAuthUserRecord(recovered, "saveGoogleUserToAuthUser.recovered");
+    }
+
+    throw buildAuthUserPersistenceError(
+      isNullIdDereferenceError(error)
+        ? "google_save_null_id_dereference"
+        : "google_save_failed",
+      error instanceof Error ? error.message : "erro_desconhecido",
     );
   }
 }
@@ -1286,42 +1472,63 @@ export async function resolveAuthUserForGoogleLogin(
     throw new Error("Sua conta Google nao retornou um email verificado.");
   }
 
-  const existingByGoogle = await findAuthUserByGoogleUserId(googleUser.sub);
+  try {
+    const existingByGoogle = await findAuthUserByGoogleUserId(googleUser.sub);
+    const existingByGoogleId = getPersistedAuthUserId(existingByGoogle);
 
-  if (typeof input?.currentUserId === "number") {
-    const currentUser = await findAuthUserById(input.currentUserId);
-    if (!currentUser) {
-      throw new Error("Sua sessao atual nao foi encontrada para concluir a vinculacao.");
+    if (typeof input?.currentUserId === "number") {
+      const currentUser = await findAuthUserById(input.currentUserId);
+      const currentUserId = getPersistedAuthUserId(currentUser);
+      if (currentUserId === null) {
+        throw new Error("Sua sessao atual nao foi encontrada para concluir a vinculacao.");
+      }
+
+      if (existingByGoogleId !== null && existingByGoogleId !== currentUserId) {
+        throw new Error("Esta conta Google ja esta vinculada a outra conta Flowdesk.");
+      }
+
+      if (currentUser?.google_user_id && currentUser.google_user_id !== googleUser.sub) {
+        throw new Error("Sua conta Flowdesk ja esta vinculada a outra conta Google.");
+      }
+
+      return saveGoogleUserToAuthUser(googleUser, currentUserId);
     }
 
-    if (existingByGoogle && existingByGoogle.id !== currentUser.id) {
-      throw new Error("Esta conta Google ja esta vinculada a outra conta Flowdesk.");
+    if (existingByGoogleId !== null) {
+      return saveGoogleUserToAuthUser(googleUser, existingByGoogleId);
     }
 
-    if (currentUser.google_user_id && currentUser.google_user_id !== googleUser.sub) {
-      throw new Error("Sua conta Flowdesk ja esta vinculada a outra conta Google.");
+    const existingByEmail = await findAuthUserByEmail(normalizedEmail);
+    const existingByEmailId = getPersistedAuthUserId(existingByEmail);
+    if (existingByEmailId !== null) {
+      if (
+        existingByEmail?.google_user_id &&
+        existingByEmail.google_user_id !== googleUser.sub
+      ) {
+        throw new Error("O email desta conta ja esta vinculado a outra conta Google.");
+      }
+
+      return saveGoogleUserToAuthUser(googleUser, existingByEmailId);
     }
 
-    return saveGoogleUserToAuthUser(googleUser, currentUser.id);
-  }
-
-  if (existingByGoogle) {
-    return saveGoogleUserToAuthUser(googleUser, existingByGoogle.id);
-  }
-
-  const existingByEmail = await findAuthUserByEmail(normalizedEmail);
-  if (existingByEmail) {
+    return saveGoogleUserToAuthUser(googleUser);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "erro_desconhecido";
     if (
-      existingByEmail.google_user_id &&
-      existingByEmail.google_user_id !== googleUser.sub
+      message.includes("auth_user_persistence_failed") ||
+      message.includes("vinculada a outra conta") ||
+      message.includes("vinculado a outra conta") ||
+      message.includes("sessao atual nao foi encontrada")
     ) {
-      throw new Error("O email desta conta ja esta vinculado a outra conta Google.");
+      throw error;
     }
 
-    return saveGoogleUserToAuthUser(googleUser, existingByEmail.id);
+    logAuthUserPersistenceFailure("google_resolve_failed", error, {
+      provider: "google",
+      hasCurrentUser: typeof input?.currentUserId === "number",
+    });
+    throw buildAuthUserPersistenceError("google_resolve_failed", message);
   }
-
-  return saveGoogleUserToAuthUser(googleUser);
 }
 
 async function saveMicrosoftUserToAuthUser(
@@ -1410,16 +1617,19 @@ async function saveMicrosoftUserToAuthUser(
     return inserted;
   } catch (error) {
     const byMicrosoft = await findAuthUserByMicrosoftUserId(microsoftUser.id);
-    if (byMicrosoft) {
-      return saveMicrosoftUserToAuthUser(microsoftUser, byMicrosoft.id);
+    const byMicrosoftId = getPersistedAuthUserId(byMicrosoft);
+    if (byMicrosoftId !== null) {
+      return saveMicrosoftUserToAuthUser(microsoftUser, byMicrosoftId);
     }
 
     const byEmail = await findAuthUserByEmail(normalizedEmail);
+    const byEmailId = getPersistedAuthUserId(byEmail);
     if (
-      byEmail &&
-      (!byEmail.microsoft_user_id || byEmail.microsoft_user_id === microsoftUser.id)
+      byEmailId !== null &&
+      (!byEmail?.microsoft_user_id ||
+        byEmail.microsoft_user_id === microsoftUser.id)
     ) {
-      return saveMicrosoftUserToAuthUser(microsoftUser, byEmail.id);
+      return saveMicrosoftUserToAuthUser(microsoftUser, byEmailId);
     }
 
     throw new Error(
@@ -1442,41 +1652,47 @@ export async function resolveAuthUserForMicrosoftLogin(
   }
 
   const existingByMicrosoft = await findAuthUserByMicrosoftUserId(microsoftUser.id);
+  const existingByMicrosoftId = getPersistedAuthUserId(existingByMicrosoft);
 
   if (typeof input?.currentUserId === "number") {
     const currentUser = await findAuthUserById(input.currentUserId);
-    if (!currentUser) {
+    const currentUserId = getPersistedAuthUserId(currentUser);
+    if (currentUserId === null) {
       throw new Error("Sua sessao atual nao foi encontrada para concluir a vinculacao.");
     }
 
-    if (existingByMicrosoft && existingByMicrosoft.id !== currentUser.id) {
+    if (
+      existingByMicrosoftId !== null &&
+      existingByMicrosoftId !== currentUserId
+    ) {
       throw new Error("Esta conta Microsoft ja esta vinculada a outra conta Flowdesk.");
     }
 
     if (
-      currentUser.microsoft_user_id &&
+      currentUser?.microsoft_user_id &&
       currentUser.microsoft_user_id !== microsoftUser.id
     ) {
       throw new Error("Sua conta Flowdesk ja esta vinculada a outra conta Microsoft.");
     }
 
-    return saveMicrosoftUserToAuthUser(microsoftUser, currentUser.id);
+    return saveMicrosoftUserToAuthUser(microsoftUser, currentUserId);
   }
 
-  if (existingByMicrosoft) {
-    return saveMicrosoftUserToAuthUser(microsoftUser, existingByMicrosoft.id);
+  if (existingByMicrosoftId !== null) {
+    return saveMicrosoftUserToAuthUser(microsoftUser, existingByMicrosoftId);
   }
 
   const existingByEmail = await findAuthUserByEmail(normalizedEmail);
-  if (existingByEmail) {
+  const existingByEmailId = getPersistedAuthUserId(existingByEmail);
+  if (existingByEmailId !== null) {
     if (
-      existingByEmail.microsoft_user_id &&
+      existingByEmail?.microsoft_user_id &&
       existingByEmail.microsoft_user_id !== microsoftUser.id
     ) {
       throw new Error("O email desta conta ja esta vinculado a outra conta Microsoft.");
     }
 
-    return saveMicrosoftUserToAuthUser(microsoftUser, existingByEmail.id);
+    return saveMicrosoftUserToAuthUser(microsoftUser, existingByEmailId);
   }
 
   return saveMicrosoftUserToAuthUser(microsoftUser);
