@@ -73,6 +73,14 @@ function resolveDiscordAuthErrorCode(error: unknown) {
   }
 
   if (
+    message.includes("auth_user_resolve_empty") ||
+    message.includes("supabase nao retornou auth_users") ||
+    message.includes("supabase nao retornou o usuario criado")
+  ) {
+    return "auth_user_persistence_failed";
+  }
+
+  if (
     message.includes("redirect_uri_mismatch") ||
     (message.includes("invalid_grant") && message.includes("redirect"))
   ) {
@@ -193,9 +201,12 @@ export async function handleDiscordAuthCallback(request: NextRequest) {
     ).toISOString();
     const localDiscordAuth = isLocalDiscordAuthRequest(request);
     const user = await resolveAuthUserForDiscordLogin(discordUser, {
-      currentUserId: currentSession?.user.id ?? null,
+      currentUserId: currentSession?.user?.id ?? null,
       skipAccountCreatedEmail: localDiscordAuth,
     });
+    if (!user?.id) {
+      throw new Error("auth_user_resolve_empty_discord");
+    }
     const successLocation = buildCanonicalUrlFromInternalPath(
       request,
       nextPathCookie || fallbackNextPath,

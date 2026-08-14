@@ -24,6 +24,10 @@ import {
 } from "@/lib/routing/subdomains";
 import { applyNoStoreHeaders, ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import {
+  extractAuditErrorMessage,
+  sanitizePublicErrorMessage,
+} from "@/lib/security/errors";
+import {
   attachRequestId,
   createSecurityRequestContext,
   enforceRequestRateLimit,
@@ -170,6 +174,7 @@ export async function POST(request: NextRequest) {
           {
             ok: false,
             message,
+            requestId: requestContext.requestId,
           },
           { status: 400 },
         ),
@@ -302,16 +307,16 @@ export async function POST(request: NextRequest) {
 
     return attachRequestId(response, requestContext.requestId);
   } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Nao foi possivel validar a senha agora.";
+    const message = sanitizePublicErrorMessage(
+      error,
+      "Nao foi possivel validar a senha agora.",
+    );
 
     await logSecurityAuditEventSafe(requestContext, {
       action: "auth_email_password",
       outcome: "failed",
       metadata: {
-        reason: message,
+        reason: extractAuditErrorMessage(error),
       },
     });
 

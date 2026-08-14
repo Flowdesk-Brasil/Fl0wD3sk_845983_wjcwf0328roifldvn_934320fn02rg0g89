@@ -44,19 +44,18 @@ export function LandingRuntimeShell() {
 
         if (!isMounted) return;
 
+        const runtimeAvailable = response.ok && payload?.ok === true;
         const databaseAvailable =
-          response.ok &&
-          payload?.ok === true &&
-          payload.databaseAvailable === true;
+          runtimeAvailable && payload.databaseAvailable === true;
 
         setAuthenticatedUser(
           databaseAvailable ? payload?.authenticatedUser || null : null,
         );
-        setServiceState(databaseAvailable ? "ready" : "degraded");
+        setServiceState("ready");
       } catch {
         if (!isMounted) return;
         setAuthenticatedUser(null);
-        setServiceState("degraded");
+        setServiceState("ready");
       } finally {
         window.clearTimeout(timeoutId);
       }

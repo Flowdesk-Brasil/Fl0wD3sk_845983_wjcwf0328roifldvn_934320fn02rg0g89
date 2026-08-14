@@ -16,6 +16,10 @@ import {
   FlowSecureDtoError,
   parseFlowSecureDto,
 } from "@/lib/security/flowSecure";
+import {
+  extractAuditErrorMessage,
+  sanitizePublicErrorMessage,
+} from "@/lib/security/errors";
 import { applyNoStoreHeaders, ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -194,9 +198,12 @@ export async function POST(request: NextRequest) {
     const message =
       error instanceof FlowSecureDtoError
         ? error.issues[0] || error.message
-        : error instanceof Error
+        : error instanceof EmailOtpError
           ? error.message
-          : "Nao foi possivel validar o codigo.";
+          : sanitizePublicErrorMessage(
+              error,
+              "Nao foi possivel validar o codigo agora.",
+            );
     const statusCode =
       error instanceof FlowSecureDtoError
         ? error.statusCode
@@ -210,7 +217,7 @@ export async function POST(request: NextRequest) {
       action: "auth_email_otp_verify",
       outcome: statusCode === 429 ? "blocked" : "failed",
       metadata: {
-        reason: message,
+        reason: extractAuditErrorMessage(error),
       },
     });
 
@@ -219,6 +226,7 @@ export async function POST(request: NextRequest) {
         {
           ok: false,
           message,
+          requestId: requestContext.requestId,
         },
         { status: statusCode },
       ),

@@ -77,15 +77,6 @@ const nextConfig: NextConfig = {
           },
         ],
       },
-      {
-        source: "/:path*",
-        headers: [
-          {
-            key: "X-DNS-Prefetch-Control",
-            value: "on",
-          },
-        ],
-      },
     ];
   },
 };

@@ -55,6 +55,7 @@ import type {
   ManagedServer,
   ManagedServersSyncState,
 } from "@/lib/servers/managedServersShared";
+import { resolveDashboardWorkspaceAlertMessage } from "@/lib/servers/workspaceAlerts";
 import { buildBrowserRoutingTargetFromInternalPath } from "@/lib/routing/subdomains";
 import {
   scheduleWarmBrowserRoutes,
@@ -722,6 +723,19 @@ function SidebarLogoutIcon() {
   return <LogOut className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />;
 }
 
+function isLocalWorkspaceFeatureHost() {
+  if (typeof window === "undefined") return false;
+  const hostname = window.location.hostname.toLowerCase();
+  return (
+    hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname === "127.0.0.1" ||
+    hostname === "0.0.0.0" ||
+    hostname === "::1" ||
+    hostname === "[::1]"
+  );
+}
+
 function DashboardNavButton({
   item,
   active,
@@ -869,6 +883,7 @@ export function DashboardWorkspace({
   const [teamActionError, setTeamActionError] = useState<string | null>(null);
   const [isCreatingTeam, setIsCreatingTeam] = useState(false);
   const [acceptingTeamId, setAcceptingTeamId] = useState<number | null>(null);
+  const [canShowLocalOnlyWorkspaceItems, setCanShowLocalOnlyWorkspaceItems] = useState(false);
   const [premiumStats, setPremiumStats] = useState<PremiumDashboardStats>({
     activeVpsCount: 0,
     registeredDomainsCount: 0,
@@ -897,7 +912,9 @@ export function DashboardWorkspace({
     [currentView, latchedPendingViewId],
   );
   const highlightedViewId = pendingViewId ?? currentView.id;
-  const hasWorkspaceAlert = Boolean(workspaceAlertMessage);
+  const resolvedWorkspaceAlertMessage =
+    workspaceAlertMessage ?? resolveDashboardWorkspaceAlertMessage(servers);
+  const hasWorkspaceAlert = Boolean(resolvedWorkspaceAlertMessage);
   const hasResolvedContent = children !== null && children !== undefined;
   const isHostingOnboardingRoute =
     hasResolvedContent &&
@@ -940,6 +957,10 @@ export function DashboardWorkspace({
     tone: "success",
     title: "Equipes",
   });
+
+  useEffect(() => {
+    setCanShowLocalOnlyWorkspaceItems(isLocalWorkspaceFeatureHost());
+  }, []);
 
   const isDomainsActive = currentView.id.startsWith("domains_");
   const isBillingActive = currentView.id.startsWith("billing_");
@@ -999,10 +1020,18 @@ export function DashboardWorkspace({
   const filteredPrimaryItems = PRIMARY_ITEMS.filter((item) =>
     !normalizedSidebarSearch || normalizeSearchText(item.label).includes(normalizedSidebarSearch),
   );
-  const filteredSecondaryItems = SECONDARY_ITEMS.filter((item) =>
+  const visibleSecondaryItems = useMemo(
+    () => (canShowLocalOnlyWorkspaceItems ? SECONDARY_ITEMS : []),
+    [canShowLocalOnlyWorkspaceItems],
+  );
+  const visibleDomainItems = useMemo(
+    () => (canShowLocalOnlyWorkspaceItems ? DOMAIN_ITEMS : []),
+    [canShowLocalOnlyWorkspaceItems],
+  );
+  const filteredSecondaryItems = visibleSecondaryItems.filter((item) =>
     !normalizedSidebarSearch || normalizeSearchText(item.label).includes(normalizedSidebarSearch),
   );
-  const filteredDomainItems = DOMAIN_ITEMS.filter((item) =>
+  const filteredDomainItems = visibleDomainItems.filter((item) =>
     !normalizedSidebarSearch ||
     normalizeSearchText(`Dominios ${item.label}`).includes(normalizedSidebarSearch),
   );
@@ -1697,8 +1726,8 @@ export function DashboardWorkspace({
     return scheduleWarmBrowserRoutes(
       [
         ...PRIMARY_ITEMS.map((item) => item.href),
-        ...SECONDARY_ITEMS.map((item) => item.href),
-        ...DOMAIN_ITEMS.map((item) => item.href),
+        ...visibleSecondaryItems.map((item) => item.href),
+        ...visibleDomainItems.map((item) => item.href),
         ...BILLING_ITEMS.map((item) => item.href),
         "/servers",
         "/servers/plans",
@@ -1709,7 +1738,7 @@ export function DashboardWorkspace({
         delayMs: 80,
       },
     );
-  }, [router]);
+  }, [router, visibleDomainItems, visibleSecondaryItems]);
 
   useEffect(() => {
     try {
@@ -2678,7 +2707,7 @@ export function DashboardWorkspace({
         className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05)_0%,rgba(255,255,255,0.012)_28%,transparent_68%)]"
       />
 
-      {workspaceAlertMessage ? (
+      {resolvedWorkspaceAlertMessage ? (
           <button
             type="button"
             onMouseEnter={() => prefetchRoute("/servers/plans")}
@@ -2688,7 +2717,7 @@ export function DashboardWorkspace({
               navigateToHref("/servers/plans");
             }}
           className="fixed inset-x-0 top-0 z-[1400] h-[42px] overflow-hidden bg-[linear-gradient(90deg,#731015_0%,#971D22_10%,#BC2D32_24%,#D94141_40%,#E45555_50%,#D94141_60%,#BC2D32_76%,#971D22_90%,#731015_100%)] text-white transition-opacity hover:opacity-95 md:h-[46px]"
-          aria-label={`${workspaceAlertMessage} Abrir pagina de planos.`}
+          aria-label={`${resolvedWorkspaceAlertMessage} Abrir pagina de planos.`}
         >
           <span className="pointer-events-none absolute inset-x-0 top-0 h-[1px] bg-[linear-gradient(90deg,transparent_0%,rgba(255,214,214,0.24)_14%,rgba(255,214,214,0.12)_50%,rgba(255,214,214,0.24)_86%,transparent_100%)]" />
           <span className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,rgba(255,240,240,0.18)_0%,rgba(255,240,240,0.06)_34%,transparent_62%)] opacity-[0.14]" />
@@ -2699,7 +2728,7 @@ export function DashboardWorkspace({
           <div className="relative mx-auto flex h-full w-full max-w-[1280px] items-center justify-center px-[16px] md:px-[22px]">
             <span className="inline-flex min-w-0 max-w-full items-center justify-center gap-[8px] text-center md:gap-[12px]">
               <span className="text-[12px] font-medium tracking-[-0.02em] text-white md:text-[13px]">
-                {workspaceAlertMessage}
+                {resolvedWorkspaceAlertMessage}
               </span>
               <span className="hidden items-center gap-[6px] rounded-full border border-[rgba(255,255,255,0.18)] bg-[rgba(22,0,0,0.16)] px-[11px] py-[5px] text-[11px] leading-none font-semibold text-[rgba(255,255,255,0.94)] md:inline-flex">
                 Ver planos

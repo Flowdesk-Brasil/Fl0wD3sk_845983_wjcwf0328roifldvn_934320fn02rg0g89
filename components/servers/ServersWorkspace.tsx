@@ -2555,7 +2555,6 @@ export function ServersWorkspace({
   useEffect(() => {
     return scheduleWarmBrowserRoutes(
       [
-        "/dashboard",
         "/account",
         "/servers",
         "/servers/plans",
@@ -2742,12 +2741,11 @@ export function ServersWorkspace({
     });
   }, [applySelectedServerRouteState, navigateToUrl, startOpenServerTransition]);
 
-  const prefetchDashboardRoute = useCallback(() => {
-    warmBrowserRoute("/dashboard", {
-      router,
-      prefetchDocument: true,
-    });
-  }, [router]);
+  const redirectToDashboardRoot = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const target = buildBrowserRoutingTargetFromInternalPath("/dashboard");
+    window.location.assign(target.href);
+  }, []);
 
   const prefetchWorkspaceSections = useCallback((guildId: string) => {
     void prefetchServerDashboardSettings(guildId);
@@ -3592,24 +3590,9 @@ export function ServersWorkspace({
                       <button
                         key={item.label}
                         type="button"
-                        onMouseEnter={() => {
-                          if (item.kind === "dashboard") {
-                            prefetchDashboardRoute();
-                          }
-                        }}
-                        onFocus={() => {
-                          if (item.kind === "dashboard") {
-                            prefetchDashboardRoute();
-                          }
-                        }}
-                        onPointerDown={() => {
-                          if (item.kind === "dashboard") {
-                            prefetchDashboardRoute();
-                          }
-                        }}
                         onClick={() => {
                           if (item.kind === "dashboard") {
-                            navigateToUrl("/dashboard");
+                            redirectToDashboardRoot();
                           } else {
                             openProjectsOverview("push");
                           }

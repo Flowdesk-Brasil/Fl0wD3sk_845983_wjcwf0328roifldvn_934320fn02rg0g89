@@ -7,7 +7,9 @@ import {
   type LoginErrorFlashPayload,
 } from "@/lib/auth/loginFlash";
 import {
+  applyStrictApiCorsHeaders,
   applyStandardSecurityHeaders,
+  buildStrictApiPreflightResponse,
   buildContentSecurityPolicy,
   isSameOriginRequest,
 } from "@/lib/security/http";
@@ -48,6 +50,17 @@ function isSensitiveApiPath(pathname: string) {
     pathname.startsWith("/api/transcripts/") ||
     pathname.startsWith("/api/tickets/")
   );
+}
+
+function applyApiCorsHeadersIfNeeded<T extends NextResponse>(
+  response: T,
+  request: NextRequest,
+) {
+  if (request.nextUrl.pathname.startsWith("/api/")) {
+    applyStrictApiCorsHeaders(response, request);
+  }
+
+  return response;
 }
 
 function isOAuthHandshakePath(pathname: string) {
@@ -94,13 +107,19 @@ function requiresSameOriginProtection(pathname: string, method: string) {
 }
 
 function applySensitiveApiHeaders<T extends NextResponse>(response: T) {
+  const existingVary = (response.headers.get("Vary") || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const vary = new Set([...existingVary, "Origin", "Cookie", "Authorization"]);
+
   response.headers.set(
     "Cache-Control",
     "private, no-store, no-cache, must-revalidate, proxy-revalidate",
   );
   response.headers.set("Pragma", "no-cache");
   response.headers.set("Expires", "0");
-  response.headers.set("Vary", "Origin, Cookie, Authorization");
+  response.headers.set("Vary", Array.from(vary).join(", "));
   return response;
 }
 
@@ -534,6 +553,24 @@ export async function proxy(request: NextRequest) {
     isDevelopment: process.env.NODE_ENV !== "production",
   });
 
+  if (
+    request.method.toUpperCase() === "OPTIONS" &&
+    request.nextUrl.pathname.startsWith("/api/")
+  ) {
+    const response = buildStrictApiPreflightResponse(request, {
+      contentSecurityPolicy: csp,
+      requestId,
+      noIndex: true,
+    });
+
+    if (isSensitiveApiPath(request.nextUrl.pathname)) {
+      applySensitiveApiHeaders(response);
+    }
+
+    applyFlowSecureTransportPriority(response, request);
+    return response;
+  }
+
   if (isNextInternalAssetRequest) {
     const response = NextResponse.next({
       request: {
@@ -559,6 +596,7 @@ export async function proxy(request: NextRequest) {
       applySensitiveApiHeaders(response);
     }
 
+    applyApiCorsHeadersIfNeeded(response, request);
     applyFlowSecureTransportPriority(response, request);
 
     return response;
@@ -659,6 +697,8 @@ export async function proxy(request: NextRequest) {
   if (isSensitiveApiPath(request.nextUrl.pathname)) {
     applySensitiveApiHeaders(response);
   }
+
+  applyApiCorsHeadersIfNeeded(response, request);
 
   if (loginErrorFlash) {
     response.cookies.delete(LOGIN_ERROR_FLASH_COOKIE_NAME);

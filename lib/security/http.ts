@@ -4,6 +4,27 @@ import {
   detectCanonicalHostFromHostname,
 } from "@/lib/routing/subdomains";
 
+const CORS_ALLOWED_METHODS = [
+  "GET",
+  "HEAD",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "OPTIONS",
+] as const;
+const CORS_ALLOWED_REQUEST_HEADERS = new Set([
+  "accept",
+  "authorization",
+  "content-type",
+  "idempotency-key",
+  "x-csrf-token",
+  "x-flowdesk-csrf",
+  "x-flowdesk-idempotency-key",
+  "x-request-id",
+  "x-supabase-api-version",
+]);
+const HTTP_TOKEN_PATTERN = /^[!#$%&'*+\-.^_`|~0-9a-z]+$/i;
 const FIRST_PARTY_CONNECT_SOURCES = [
   "https://www.flwdesk.com",
   "https://pay.flwdesk.com",
@@ -33,6 +54,40 @@ function isLoopbackHost(host: string) {
 
 function isTrustedFirstPartyMutationHost(host: string) {
   return isLoopbackHost(host) || Boolean(detectCanonicalHostFromHostname(host));
+}
+
+function mergeVaryHeader(response: Response, values: string[]) {
+  const existing = (response.headers.get("Vary") || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const merged = new Set([...existing, ...values]);
+  response.headers.set("Vary", Array.from(merged).join(", "));
+}
+
+function normalizeRequestedCorsHeaders(value: string | null) {
+  if (!value) {
+    return "Content-Type, X-Request-Id, X-Flowdesk-Idempotency-Key";
+  }
+
+  const allowed = value
+    .split(",")
+    .map((header) => header.trim().toLowerCase())
+    .filter((header) => HTTP_TOKEN_PATTERN.test(header))
+    .filter((header) => CORS_ALLOWED_REQUEST_HEADERS.has(header));
+
+  if (!allowed.length) {
+    return "Content-Type, X-Request-Id, X-Flowdesk-Idempotency-Key";
+  }
+
+  return allowed
+    .map((header) =>
+      header
+        .split("-")
+        .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+        .join("-"),
+    )
+    .join(", ");
 }
 
 export function isSameOriginRequest(request: Request) {
@@ -211,6 +266,70 @@ export function applyStandardSecurityHeaders<T extends NextResponse>(
     );
   }
 
+  return response;
+}
+
+export function buildStrictApiPreflightResponse(
+  request: Request,
+  input?: {
+    contentSecurityPolicy?: string | null;
+    requestId?: string | null;
+    noIndex?: boolean;
+  },
+) {
+  const originHeader = request.headers.get("origin")?.trim() || "";
+  const requestedMethod =
+    request.headers.get("access-control-request-method")?.trim().toUpperCase() ||
+    "";
+  const methodAllowed =
+    !requestedMethod ||
+    CORS_ALLOWED_METHODS.includes(
+      requestedMethod as (typeof CORS_ALLOWED_METHODS)[number],
+    );
+  const originAllowed = originHeader ? isSameOriginRequest(request) : true;
+  const response = new NextResponse(null, {
+    status: !methodAllowed ? 405 : originAllowed ? 204 : 403,
+  });
+
+  applyStandardSecurityHeaders(response, input);
+  response.headers.set("Allow", CORS_ALLOWED_METHODS.join(", "));
+  mergeVaryHeader(response, [
+    "Origin",
+    "Access-Control-Request-Method",
+    "Access-Control-Request-Headers",
+  ]);
+
+  if (methodAllowed && originAllowed && originHeader) {
+    response.headers.set("Access-Control-Allow-Origin", originHeader);
+    response.headers.set("Access-Control-Allow-Credentials", "true");
+    response.headers.set(
+      "Access-Control-Allow-Methods",
+      CORS_ALLOWED_METHODS.join(", "),
+    );
+    response.headers.set(
+      "Access-Control-Allow-Headers",
+      normalizeRequestedCorsHeaders(
+        request.headers.get("access-control-request-headers"),
+      ),
+    );
+    response.headers.set("Access-Control-Max-Age", "600");
+  }
+
+  return response;
+}
+
+export function applyStrictApiCorsHeaders<T extends Response>(
+  response: T,
+  request: Request,
+) {
+  const originHeader = request.headers.get("origin")?.trim() || "";
+  if (!originHeader || !isSameOriginRequest(request)) {
+    return response;
+  }
+
+  response.headers.set("Access-Control-Allow-Origin", originHeader);
+  response.headers.set("Access-Control-Allow-Credentials", "true");
+  mergeVaryHeader(response, ["Origin"]);
   return response;
 }
 

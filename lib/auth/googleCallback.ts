@@ -20,12 +20,15 @@ import {
 import { buildAuthOriginRedirectResponse } from "@/lib/auth/requestOrigin";
 import {
   createSessionForUser,
+  findAuthUserByEmail,
+  findAuthUserByGoogleUserId,
   getCurrentAuthSessionFromCookie,
   markAuthUserLastLogin,
   resolveAuthUserForGoogleLogin,
 } from "@/lib/auth/session";
 import { createPendingTwoFactorLoginIfNeeded } from "@/lib/auth/twoFactor";
 import { buildCanonicalUrlFromInternalPath } from "@/lib/routing/subdomains";
+import { extractAuditErrorMessage } from "@/lib/security/errors";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -70,6 +73,18 @@ function resolveGoogleAuthErrorCode(error: unknown) {
   }
 
   if (
+    message.includes("auth_user_persistence_failed") ||
+    message.includes("auth_user_resolve_empty") ||
+    message.includes("supabase nao retornou auth_users") ||
+    message.includes("supabase nao retornou o usuario criado") ||
+    (message.includes("auth_user_resolve") &&
+      message.includes("cannot read properties of null") &&
+      message.includes("id"))
+  ) {
+    return "auth_user_persistence_failed";
+  }
+
+  if (
     message.includes("redirect_uri_mismatch") ||
     (message.includes("invalid_grant") && message.includes("redirect"))
   ) {
@@ -109,6 +124,104 @@ function resolveGoogleAuthErrorCode(error: unknown) {
   }
 
   return "google_auth_failed";
+}
+
+function wrapGoogleCallbackError(phase: string, error: unknown) {
+  if (error instanceof Error) {
+    error.message = `google_callback_phase:${phase}: ${error.message}`;
+    return error;
+  }
+
+  return new Error(`google_callback_phase:${phase}: ${String(error)}`);
+}
+
+function sanitizeGoogleCallbackStack(error: unknown) {
+  if (!(error instanceof Error) || !error.stack) return null;
+
+  return error.stack
+    .split("\n")
+    .slice(0, 8)
+    .map((line) =>
+      extractAuditErrorMessage(
+        line
+          .replace(/code=[^&\s)]+/gi, "code=[redacted]")
+          .replace(/state=[^&\s)]+/gi, "state=[redacted]")
+          .replace(/access_token=[^&\s)]+/gi, "access_token=[redacted]")
+          .replace(/id_token=[^&\s)]+/gi, "id_token=[redacted]")
+          .replace(/refresh_token=[^&\s)]+/gi, "refresh_token=[redacted]"),
+      ),
+    )
+    .join("\n");
+}
+
+async function runGoogleCallbackStep<TValue>(
+  phase: string,
+  requestId: string,
+  callback: () => Promise<TValue>,
+) {
+  console.info("[auth_google_callback] phase", {
+    requestId,
+    phase,
+    outcome: "started",
+  });
+
+  try {
+    const value = await callback();
+    console.info("[auth_google_callback] phase", {
+      requestId,
+      phase,
+      outcome: "succeeded",
+    });
+    return value;
+  } catch (error) {
+    console.warn("[auth_google_callback] phase", {
+      requestId,
+      phase,
+      outcome: "failed",
+      errorName: error instanceof Error ? error.name : typeof error,
+      detail: extractAuditErrorMessage(error),
+      stack: sanitizeGoogleCallbackStack(error),
+    });
+    throw wrapGoogleCallbackError(phase, error);
+  }
+}
+
+function isNullIdDereference(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  return (
+    message.includes("cannot read properties of null") &&
+    message.includes("id")
+  );
+}
+
+async function resolveGoogleUserWithPersistenceRecovery(
+  googleUser: Awaited<ReturnType<typeof fetchGoogleUser>>,
+  currentUserId: number | null,
+) {
+  try {
+    return await resolveAuthUserForGoogleLogin(googleUser, {
+      currentUserId,
+    });
+  } catch (error) {
+    if (!isNullIdDereference(error)) {
+      throw error;
+    }
+
+    const recoveredByGoogle = await findAuthUserByGoogleUserId(googleUser.sub);
+    if (recoveredByGoogle?.id) {
+      return recoveredByGoogle;
+    }
+
+    const recoveredByEmail = await findAuthUserByEmail(googleUser.email);
+    if (
+      recoveredByEmail?.id &&
+      recoveredByEmail.google_user_id === googleUser.sub
+    ) {
+      return recoveredByEmail;
+    }
+
+    throw error;
+  }
 }
 
 export async function handleGoogleAuthCallback(request: NextRequest) {
@@ -190,35 +303,66 @@ export async function handleGoogleAuthCallback(request: NextRequest) {
 
   try {
     const fallbackNextPath = oauthModeCookie === "link" ? "/servers" : "/dashboard";
-    const currentSession =
-      oauthModeCookie === "link"
-        ? await getCurrentAuthSessionFromCookie()
-        : null;
-    const tokenPayload = await exchangeGoogleCodeForToken({
-      code,
-      redirectUri: oauthTransaction.redirectUri,
-      codeVerifier: oauthTransaction.pkceVerifier,
-    });
-    const oidcValidation = validateOidcIdTokenClaims({
-      provider: "google",
-      idToken: tokenPayload.id_token,
-      expectedAudience: authConfig.googleClientId || "",
-      expectedNonce: oauthTransaction.nonce,
-    });
+    const currentSession = await runGoogleCallbackStep(
+      "current_session",
+      initialRequestContext.requestId,
+      async () =>
+        oauthModeCookie === "link"
+          ? await getCurrentAuthSessionFromCookie()
+          : null,
+    );
+    const tokenPayload = await runGoogleCallbackStep(
+      "token_exchange",
+      initialRequestContext.requestId,
+      () =>
+        exchangeGoogleCodeForToken({
+          code,
+          redirectUri: oauthTransaction.redirectUri,
+          codeVerifier: oauthTransaction.pkceVerifier,
+        }),
+    );
+    const oidcValidation = await runGoogleCallbackStep(
+      "oidc_validation",
+      initialRequestContext.requestId,
+      async () =>
+        validateOidcIdTokenClaims({
+          provider: "google",
+          idToken: tokenPayload.id_token,
+          expectedAudience: authConfig.googleClientId || "",
+          expectedNonce: oauthTransaction.nonce,
+        }),
+    );
     if (!oidcValidation.ok) {
       throw new Error(`OIDC Google invalido: ${oidcValidation.reason || "unknown_reason"}`);
     }
-    const googleUser = await fetchGoogleUser(tokenPayload.access_token);
-    const user = await resolveAuthUserForGoogleLogin(googleUser, {
-      currentUserId: currentSession?.user.id ?? null,
-    });
+    const googleUser = await runGoogleCallbackStep(
+      "google_userinfo",
+      initialRequestContext.requestId,
+      () => fetchGoogleUser(tokenPayload.access_token),
+    );
+    const user = await runGoogleCallbackStep(
+      "auth_user_resolve",
+      initialRequestContext.requestId,
+      () =>
+        resolveGoogleUserWithPersistenceRecovery(
+          googleUser,
+          currentSession?.user?.id ?? null,
+        ),
+    );
+    if (!user?.id) {
+      throw new Error("auth_user_resolve_empty_google");
+    }
     const successLocation = buildCanonicalUrlFromInternalPath(
       request,
       nextPathCookie || fallbackNextPath,
     );
 
     if (oauthModeCookie === "link" && currentSession) {
-      await markAuthUserLastLogin(user.id, "google");
+      await runGoogleCallbackStep(
+        "mark_last_login",
+        initialRequestContext.requestId,
+        () => markAuthUserLastLogin(user.id, "google"),
+      );
 
       const response = redirectWithLocation(successLocation);
       clearOAuthCookies(request, response);
@@ -245,20 +389,25 @@ export async function handleGoogleAuthCallback(request: NextRequest) {
       return attachRequestId(response, initialRequestContext.requestId);
     }
 
-    const pendingTwoFactor = await createPendingTwoFactorLoginIfNeeded({
-      userId: user.id,
-      redirectTo: nextPathCookie || fallbackNextPath,
-      rememberSession: false,
-      ipAddress: extractClientIp(request),
-      userAgent: request.headers.get("user-agent"),
-      sessionContext: {
-        authMethod: "google",
-        nextPath: nextPathCookie || fallbackNextPath,
-        discordAccessToken: null,
-        discordRefreshToken: null,
-        discordTokenExpiresAt: null,
-      },
-    });
+    const pendingTwoFactor = await runGoogleCallbackStep(
+      "two_factor_prepare",
+      initialRequestContext.requestId,
+      () =>
+        createPendingTwoFactorLoginIfNeeded({
+          userId: user.id,
+          redirectTo: nextPathCookie || fallbackNextPath,
+          rememberSession: false,
+          ipAddress: extractClientIp(request),
+          userAgent: request.headers.get("user-agent"),
+          sessionContext: {
+            authMethod: "google",
+            nextPath: nextPathCookie || fallbackNextPath,
+            discordAccessToken: null,
+            discordRefreshToken: null,
+            discordTokenExpiresAt: null,
+          },
+        }),
+    );
     if (pendingTwoFactor) {
       const twoFactorLocation = buildLoginTwoFactorRedirectLocation(request, {
         challengeId: pendingTwoFactor.challengeId,
@@ -287,18 +436,23 @@ export async function handleGoogleAuthCallback(request: NextRequest) {
       return attachRequestId(response, initialRequestContext.requestId);
     }
 
-    const session = await createSessionForUser(
-      user.id,
-      {
-        ipAddress: extractClientIp(request),
-        userAgent: request.headers.get("user-agent"),
-      },
-      {
-        authMethod: "google",
-        discordAccessToken: null,
-        discordRefreshToken: null,
-        discordTokenExpiresAt: null,
-      },
+    const session = await runGoogleCallbackStep(
+      "session_create",
+      initialRequestContext.requestId,
+      () =>
+        createSessionForUser(
+          user.id,
+          {
+            ipAddress: extractClientIp(request),
+            userAgent: request.headers.get("user-agent"),
+          },
+          {
+            authMethod: "google",
+            discordAccessToken: null,
+            discordRefreshToken: null,
+            discordTokenExpiresAt: null,
+          },
+        ),
     );
     const response = redirectWithLocation(successLocation);
     setSharedSessionCookie(request, response, session.sessionToken, {
@@ -331,7 +485,7 @@ export async function handleGoogleAuthCallback(request: NextRequest) {
       requestId: initialRequestContext.requestId,
       errorCode,
       errorName: error instanceof Error ? error.name : typeof error,
-      detail: error instanceof Error ? error.message : "unknown_error",
+      detail: extractAuditErrorMessage(error),
     });
     const response = buildLoginRedirectResponse(request, {
       nextPath: nextPathCookie,
@@ -344,7 +498,7 @@ export async function handleGoogleAuthCallback(request: NextRequest) {
       outcome: "failed",
       metadata: {
         reason: "oauth_exchange_failed",
-        detail: error instanceof Error ? error.message : "unknown_error",
+        detail: extractAuditErrorMessage(error),
       },
     });
     return attachRequestId(response, initialRequestContext.requestId);

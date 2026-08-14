@@ -15,6 +15,18 @@ import {
   toSavedMethodFromStoredRecord,
   type StoredPaymentMethodRecord,
 } from "@/lib/payments/userPaymentMethods";
+import {
+  buildCheckoutAccessToken,
+  ensureCheckoutAccessTokenForOrder,
+  PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS,
+} from "@/lib/payments/checkoutLinkSecurity";
+import {
+  buildPaymentCheckoutEntryHref,
+  normalizePaymentProductSlug,
+  resolvePaymentBillingPeriodCodeFromCycleDays,
+} from "@/lib/payments/paymentRouting";
+import { createDomainCheckoutToken, type DomainCheckoutOperation } from "@/lib/domains/checkout";
+import type { HostingKind } from "@/lib/hosting/catalog";
 
 const historyCache = new Map<number, { data: ManagedHistory; timestamp: number }>();
 const refreshingUserIds = new Set<number>();
@@ -45,12 +57,16 @@ export type PaymentOrderRecord = {
   currency: string;
   plan_code: string | null;
   plan_name: string | null;
+  plan_billing_cycle_days: number | null;
   provider_payment_id: string | null;
   provider_status: string | null;
   provider_status_detail: string | null;
   provider_payload: unknown;
   paid_at: string | null;
   expires_at: string | null;
+  checkout_link_nonce: string | null;
+  checkout_link_expires_at: string | null;
+  checkout_link_invalidated_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -75,6 +91,7 @@ export type HistoryOrder = {
   providerStatus: string | null;
   providerStatusDetail: string | null;
   providerPaymentId: string | null;
+  returnPaymentHref: string | null;
   card: unknown;
   paidAt: string | null;
   expiresAt: string | null;
@@ -102,7 +119,7 @@ export type ManagedHistory = {
 };
 
 const PAYMENT_HISTORY_SELECT_COLUMNS =
-  "id, order_number, user_id, guild_id, payment_method, status, amount, currency, plan_code, plan_name, provider_payment_id, provider_status, provider_status_detail, provider_payload, paid_at, expires_at, created_at, updated_at";
+  `id, order_number, user_id, guild_id, payment_method, status, amount, currency, plan_code, plan_name, plan_billing_cycle_days, provider_payment_id, provider_status, provider_status_detail, provider_payload, paid_at, expires_at, created_at, updated_at, ${PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS}`;
 
 const PAYMENT_HISTORY_EVENT_SELECT_COLUMNS =
   "payment_order_id, event_type, event_payload, created_at";
@@ -145,6 +162,179 @@ function roundMoney(value: number) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeOptionalText(value: unknown, maxLength = 220) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().replace(/\s+/g, " ");
+  return normalized ? normalized.slice(0, maxLength) : null;
+}
+
+function normalizeHostingKind(value: unknown): HostingKind | null {
+  return value === "site" || value === "bot" || value === "minecraft"
+    ? value
+    : null;
+}
+
+function readProviderPurchaseContext(providerPayload: unknown) {
+  if (!isRecord(providerPayload) || !isRecord(providerPayload.purchase_context)) {
+    return null;
+  }
+
+  return providerPayload.purchase_context;
+}
+
+function isPendingOrderStillReturnable(order: PaymentOrderRecord) {
+  if (order.status !== "pending") return false;
+  if (order.payment_method !== "pix" && order.payment_method !== "card") return false;
+  if (!order.expires_at) return true;
+  const expiresAt = new Date(order.expires_at).getTime();
+  return !Number.isFinite(expiresAt) || expiresAt > Date.now();
+}
+
+function buildPendingPaymentSearchParams(
+  order: PaymentOrderRecord,
+  checkoutAccessToken: string,
+) {
+  const params: Record<string, string | number | null> = {
+    source: "account-payment-history",
+    guild: order.guild_id || null,
+    code: order.order_number,
+    cartId: order.id,
+    method: order.payment_method,
+    checkoutToken: checkoutAccessToken,
+    return: "account",
+    returnPath: "/account/payment_history",
+  };
+  const context = readProviderPurchaseContext(order.provider_payload);
+
+  if (context?.type === "domain") {
+    const operation =
+      context.operation === "register" || context.operation === "transfer"
+        ? context.operation
+        : null;
+    const authUserId =
+      typeof context.authUserId === "number" && Number.isInteger(context.authUserId)
+        ? context.authUserId
+        : null;
+    const fqdn = normalizeOptionalText(context.fqdn, 253);
+    const quoteId = normalizeOptionalText(context.quoteId, 120);
+    const contactId = normalizeOptionalText(context.contactId, 120);
+    const amount = toFiniteAmount(context.amount as string | number);
+    const currency = context.currency === "BRL" ? "BRL" : null;
+    const expiresAt = normalizeOptionalText(context.expiresAt, 80);
+
+    if (!operation || authUserId !== order.user_id || !fqdn || !quoteId || !contactId || amount <= 0 || !currency || !expiresAt) {
+      return null;
+    }
+
+    const domainToken = createDomainCheckoutToken({
+      version: 1,
+      authUserId,
+      operation: operation as DomainCheckoutOperation,
+      fqdn,
+      quoteId,
+      contactId,
+      domainId: normalizeOptionalText(context.domainId, 120),
+      transferId: normalizeOptionalText(context.transferId, 120),
+      amount,
+      currency,
+      expiresAt,
+    });
+
+    return {
+      productSlug: normalizePaymentProductSlug(
+        `${operation === "transfer" ? "transferir" : "registrar"}-${fqdn}`,
+      ),
+      searchParams: {
+        ...params,
+        source: "dashboard-domains",
+        purchaseType: "domain",
+        domainToken,
+        return: "account",
+        returnPath: "/account/payment_history",
+      },
+    };
+  }
+
+  if (context?.type === "hosting") {
+    const hostingKind = normalizeHostingKind(context.hostingKind);
+    const hostingPlan = normalizeOptionalText(context.hostingPlanId, 80);
+    const hostingRegion = normalizeOptionalText(context.hostingRegionId, 80);
+
+    if (!hostingKind || !hostingPlan || !hostingRegion) {
+      return null;
+    }
+
+    return {
+      productSlug: normalizePaymentProductSlug(`vps-${hostingKind}-${hostingPlan}`),
+      searchParams: {
+        ...params,
+        source: "dashboard-hosting",
+        purchaseType: "hosting",
+        hostingKind,
+        hostingPlan,
+        hostingRegion,
+        repository: normalizeOptionalText(context.repository, 220),
+        minecraftServerName: normalizeOptionalText(context.minecraftServerName, 80),
+        minecraftVersion: normalizeOptionalText(context.minecraftVersion, 24),
+        minecraftServerType: normalizeOptionalText(context.minecraftServerType, 40),
+        minecraftSubdomain: normalizeOptionalText(context.minecraftSubdomain, 64),
+        minecraftFirstWorldName: normalizeOptionalText(context.minecraftFirstWorldName, 80),
+        return: "account",
+        returnPath: "/account/payment_history",
+      },
+    };
+  }
+
+  return {
+    productSlug: order.plan_code || undefined,
+    searchParams: params,
+  };
+}
+
+async function buildPendingPaymentReturnHref(order: PaymentOrderRecord) {
+  if (!isPendingOrderStillReturnable(order)) return null;
+
+  try {
+    const existingToken = buildCheckoutAccessToken(order);
+    const securedOrder = existingToken
+      ? { order, checkoutAccessToken: existingToken }
+      : await ensureCheckoutAccessTokenForOrder({
+          order,
+          forceRotate: false,
+          invalidateOtherOrders: false,
+        });
+    const checkoutAccessToken = securedOrder.checkoutAccessToken;
+    if (!checkoutAccessToken) return null;
+
+    const paymentTarget = buildPendingPaymentSearchParams(
+      securedOrder.order,
+      checkoutAccessToken,
+    );
+    if (!paymentTarget) return null;
+
+    return buildPaymentCheckoutEntryHref({
+      productSlug: paymentTarget.productSlug,
+      planCode: securedOrder.order.plan_code || undefined,
+      billingPeriodCode: resolvePaymentBillingPeriodCodeFromCycleDays(
+        securedOrder.order.plan_billing_cycle_days,
+      ),
+      orderNumber: securedOrder.order.order_number,
+      orderId: securedOrder.order.id,
+      searchParams: paymentTarget.searchParams,
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function buildPendingPaymentReturnHrefMap(orders: PaymentOrderRecord[]) {
+  const entries = await Promise.all(
+    orders.map(async (order) => [order.id, await buildPendingPaymentReturnHref(order)] as const),
+  );
+
+  return new Map(entries);
 }
 
 function parseProviderPricingSummary(providerPayload: unknown) {
@@ -264,6 +454,7 @@ function buildTechnicalHistoryLabels(
 function toHistoryOrder(
   order: PaymentOrderRecord,
   events: PaymentOrderEventRecord[],
+  returnPaymentHref: string | null,
 ): HistoryOrder {
   const card = order.payment_method === "card" ? extractCardSnapshot(order.provider_payload) : null;
 
@@ -280,6 +471,7 @@ function toHistoryOrder(
     providerStatus: order.provider_status,
     providerStatusDetail: order.provider_status_detail,
     providerPaymentId: order.provider_payment_id,
+    returnPaymentHref,
     card,
     paidAt: order.paid_at,
     expiresAt: order.expires_at,
@@ -427,6 +619,8 @@ async function fetchHistoryFresh(userId: number): Promise<ManagedHistory> {
   }
 
   // 4. Build final objects
+  const returnPaymentHrefByOrderId = await buildPendingPaymentReturnHrefMap(rawOrders);
+
   const orders = rawOrders
       .filter((order) => {
         if (order.status !== "pending") return true;
@@ -437,7 +631,11 @@ async function fetchHistoryFresh(userId: number): Promise<ManagedHistory> {
         return !(payload && payload.precreated === true);
       })
     .map((order) =>
-      toHistoryOrder(order, paymentEventsByOrderId.get(order.id) || []),
+      toHistoryOrder(
+        order,
+        paymentEventsByOrderId.get(order.id) || [],
+        returnPaymentHrefByOrderId.get(order.id) || null,
+      ),
     );
 
   const allMethods = buildSavedMethods(

@@ -74,6 +74,14 @@ function resolveMicrosoftAuthErrorCode(error: unknown) {
   }
 
   if (
+    message.includes("auth_user_resolve_empty") ||
+    message.includes("supabase nao retornou auth_users") ||
+    message.includes("supabase nao retornou o usuario criado")
+  ) {
+    return "auth_user_persistence_failed";
+  }
+
+  if (
     message.includes("redirect_uri_mismatch") ||
     (message.includes("invalid_grant") && message.includes("redirect"))
   ) {
@@ -216,8 +224,11 @@ export async function handleMicrosoftAuthCallback(request: NextRequest) {
     }
     const microsoftUser = await fetchMicrosoftUser(tokenPayload.access_token!);
     const user = await resolveAuthUserForMicrosoftLogin(microsoftUser, {
-      currentUserId: currentSession?.user.id ?? null,
+      currentUserId: currentSession?.user?.id ?? null,
     });
+    if (!user?.id) {
+      throw new Error("auth_user_resolve_empty_microsoft");
+    }
     await syncMicrosoftProfilePhotoForAuthUser(
       user.id,
       tokenPayload.access_token!,
