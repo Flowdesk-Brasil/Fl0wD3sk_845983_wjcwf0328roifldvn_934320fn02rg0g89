@@ -7,6 +7,10 @@ import {
   type LoginErrorFlashPayload,
 } from "@/lib/auth/loginFlash";
 import {
+  buildApiGatewayRejectionResponse,
+  evaluateApiGatewayRequest,
+} from "@/lib/security/apiGateway";
+import {
   applyStrictApiCorsHeaders,
   applyStandardSecurityHeaders,
   buildStrictApiPreflightResponse,
@@ -40,6 +44,7 @@ import {
 
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const DEFAULT_PAYMENT_CHECKOUT_PATH = "/payment";
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{8,80}$/;
 
 function isSensitiveApiPath(pathname: string) {
   return (
@@ -123,13 +128,23 @@ function applySensitiveApiHeaders<T extends NextResponse>(response: T) {
   return response;
 }
 
+function resolveRequestId(request: NextRequest) {
+  const requestedId = request.headers.get("x-request-id")?.trim() || "";
+  return REQUEST_ID_PATTERN.test(requestedId) ? requestedId : crypto.randomUUID();
+}
+
 function buildProtectedErrorResponse(
   request: NextRequest,
   requestId: string,
   csp: string,
 ) {
   const response = NextResponse.json(
-    { ok: false, message: "Origem da requisicao invalida." },
+    {
+      ok: false,
+      code: "invalid_origin",
+      message: "Origem da requisicao invalida.",
+      requestId,
+    },
     { status: 403 },
   );
 
@@ -530,8 +545,7 @@ function maybeBuildCanonicalWorkspaceRedirect(
 }
 
 export async function proxy(request: NextRequest) {
-  const requestId =
-    request.headers.get("x-request-id")?.trim() || crypto.randomUUID();
+  const requestId = resolveRequestId(request);
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-request-id", requestId);
   const isNextInternalAssetRequest = isNextInternalAssetPath(
@@ -562,6 +576,25 @@ export async function proxy(request: NextRequest) {
       requestId,
       noIndex: true,
     });
+
+    if (isSensitiveApiPath(request.nextUrl.pathname)) {
+      applySensitiveApiHeaders(response);
+    }
+
+    applyFlowSecureTransportPriority(response, request);
+    return response;
+  }
+
+  const apiGatewayEvaluation = evaluateApiGatewayRequest(request);
+  if (!apiGatewayEvaluation.ok) {
+    const response = buildApiGatewayRejectionResponse(
+      request,
+      apiGatewayEvaluation,
+      {
+        contentSecurityPolicy: csp,
+        requestId,
+      },
+    );
 
     if (isSensitiveApiPath(request.nextUrl.pathname)) {
       applySensitiveApiHeaders(response);

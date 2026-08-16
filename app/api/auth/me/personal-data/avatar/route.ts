@@ -6,6 +6,8 @@ import {
   applyNoStoreHeaders,
   isSameOriginRequest,
 } from "@/lib/security/http";
+import { buildPublicApiErrorResponse } from "@/lib/security/apiResponses";
+import { createSecurityRequestContext } from "@/lib/security/requestSecurity";
 
 const AVATAR_BUCKET = "account-avatars";
 const MAX_AVATAR_SIZE = 5 * 1024 * 1024;
@@ -17,11 +19,13 @@ const ALLOWED_MIME_TYPES = new Set([
 ]);
 
 export async function POST(request: NextRequest) {
+  const requestContext = createSecurityRequestContext(request);
   if (!isSameOriginRequest(request)) {
-    return NextResponse.json(
-      { ok: false, message: "Origem da requisicao invalida." },
-      { status: 403 },
-    );
+    return buildPublicApiErrorResponse(requestContext, {
+      fallbackMessage: "Origem da requisicao invalida.",
+      status: 403,
+      code: "invalid_origin",
+    });
   }
 
   const session = await getCurrentAuthSessionFromCookie();
@@ -92,27 +96,22 @@ export async function POST(request: NextRequest) {
       }),
     );
   } catch (error) {
-    return applyNoStoreHeaders(
-      NextResponse.json(
-        {
-          ok: false,
-          message:
-            error instanceof Error
-              ? error.message
-              : "Nao foi possivel atualizar o avatar.",
-        },
-        { status: 500 },
-      ),
-    );
+    return buildPublicApiErrorResponse(requestContext, {
+      error,
+      fallbackMessage: "Nao foi possivel atualizar o avatar agora.",
+      status: 500,
+    });
   }
 }
 
 export async function DELETE(request: NextRequest) {
+  const requestContext = createSecurityRequestContext(request);
   if (!isSameOriginRequest(request)) {
-    return NextResponse.json(
-      { ok: false, message: "Origem da requisicao invalida." },
-      { status: 403 },
-    );
+    return buildPublicApiErrorResponse(requestContext, {
+      fallbackMessage: "Origem da requisicao invalida.",
+      status: 403,
+      code: "invalid_origin",
+    });
   }
 
   const session = await getCurrentAuthSessionFromCookie();
@@ -158,15 +157,10 @@ export async function DELETE(request: NextRequest) {
       }),
     );
   } catch (error) {
-    return applyNoStoreHeaders(
-      NextResponse.json(
-        {
-          ok: false,
-          message:
-            error instanceof Error ? error.message : "Nao foi possivel remover o avatar.",
-        },
-        { status: 500 },
-      ),
-    );
+    return buildPublicApiErrorResponse(requestContext, {
+      error,
+      fallbackMessage: "Nao foi possivel remover o avatar agora.",
+      status: 500,
+    });
   }
 }

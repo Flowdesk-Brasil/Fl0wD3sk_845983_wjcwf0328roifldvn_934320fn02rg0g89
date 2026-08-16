@@ -15,6 +15,9 @@ import { resolveHostingRegion } from "@/lib/hosting/catalog";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import { flowSecureDto, parseFlowSecureDto } from "@/lib/security/flowSecure";
+import { buildPublicApiErrorResponse } from "@/lib/security/apiResponses";
+import { extractAuditErrorMessage } from "@/lib/security/errors";
+import { createSecurityRequestContext } from "@/lib/security/requestSecurity";
 
 type RouteProps = {
   params: Promise<{ code: string }>;
@@ -92,6 +95,7 @@ async function buildEnvFileContent(projectId: number): Promise<string> {
 }
 
 export async function POST(request: NextRequest, { params }: RouteProps) {
+  const requestContext = createSecurityRequestContext(request);
   const session = await getCurrentAuthSessionFromCookie();
   if (!session) {
     return applyNoStoreHeaders(
@@ -118,12 +122,11 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
       { rejectUnknown: true },
     );
   } catch (error) {
-    return applyNoStoreHeaders(
-      NextResponse.json(
-        { ok: false, message: error instanceof Error ? error.message : "Acao invalida." },
-        { status: 400 },
-      ),
-    );
+    return buildPublicApiErrorResponse(requestContext, {
+      error,
+      fallbackMessage: "Acao invalida.",
+      status: 400,
+    });
   }
   const action = normalizeAction(body.action);
   if (!action) {
@@ -223,7 +226,7 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
         }),
       );
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Falha ao verificar status.";
+      const message = extractAuditErrorMessage(error, "Falha ao verificar status.");
       await appendVpsEvent({
         projectId: project.id,
         userId: session.user.id,
@@ -231,9 +234,11 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
         status: "failed",
         message,
       });
-      return applyNoStoreHeaders(
-        NextResponse.json({ ok: false, message }, { status: 503 }),
-      );
+      return buildPublicApiErrorResponse(requestContext, {
+        error,
+        fallbackMessage: "Nao foi possivel verificar o status da VPS agora.",
+        status: 503,
+      });
     }
   }
 
@@ -284,7 +289,7 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
       });
       return applyNoStoreHeaders(NextResponse.json({ ok: true, status: runtimeStatus, payload }));
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Falha ao executar acao Minecraft.";
+      const message = extractAuditErrorMessage(error, "Falha ao executar acao Minecraft.");
       await appendVpsEvent({
         projectId: project.id,
         userId: session.user.id,
@@ -292,9 +297,11 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
         status: "failed",
         message,
       });
-      return applyNoStoreHeaders(
-        NextResponse.json({ ok: false, message }, { status: 503 }),
-      );
+      return buildPublicApiErrorResponse(requestContext, {
+        error,
+        fallbackMessage: "Nao foi possivel executar a acao Minecraft agora.",
+        status: 503,
+      });
     }
   }
 
@@ -381,7 +388,7 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
     return applyNoStoreHeaders(NextResponse.json({ ok: true, status: runtimeStatus, payload }));
 
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Falha ao executar acao.";
+    const message = extractAuditErrorMessage(error, "Falha ao executar acao.");
     await appendVpsEvent({
       projectId: project.id,
       userId: session.user.id,
@@ -410,8 +417,10 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
       })
       .eq("id", project.id);
 
-    return applyNoStoreHeaders(
-      NextResponse.json({ ok: false, message }, { status: 503 }),
-    );
+    return buildPublicApiErrorResponse(requestContext, {
+      error,
+      fallbackMessage: "Nao foi possivel executar a acao da VPS agora.",
+      status: 503,
+    });
   }
 }

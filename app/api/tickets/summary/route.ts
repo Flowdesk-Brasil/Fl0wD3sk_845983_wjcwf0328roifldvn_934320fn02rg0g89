@@ -1,14 +1,13 @@
 import { NextResponse } from "next/server";
-import { sanitizeErrorMessage } from "@/lib/security/errors";
+import { buildPublicApiErrorResponse } from "@/lib/security/apiResponses";
+import { createSecurityRequestContext } from "@/lib/security/requestSecurity";
 import { createSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 async function getCount(status: "open" | "closed", guildId?: string) {
   const supabase = createSupabaseAdminClient();
 
   if (!supabase) {
-    throw new Error(
-      "Defina SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no ambiente do site.",
-    );
+    throw new Error("tickets_summary_database_unavailable");
   }
 
   let query = supabase
@@ -29,7 +28,8 @@ async function getCount(status: "open" | "closed", guildId?: string) {
   return result.count || 0;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const requestContext = createSecurityRequestContext(request);
   try {
     const guildId = process.env.DISCORD_GUILD_ID;
     const [open, closed] = await Promise.all([
@@ -43,15 +43,11 @@ export async function GET() {
       totals: { open, closed },
     });
   } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message: sanitizeErrorMessage(
-          error,
-          "Erro ao consultar resumo de tickets.",
-        ),
-      },
-      { status: 500 },
-    );
+    return buildPublicApiErrorResponse(requestContext, {
+      error,
+      fallbackMessage: "Erro ao consultar resumo de tickets.",
+      status: 500,
+      code: "tickets_summary_unavailable",
+    });
   }
 }
