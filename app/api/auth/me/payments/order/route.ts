@@ -181,6 +181,26 @@ function normalizeHostedCheckoutReturnStatus(value: string | null) {
   return null;
 }
 
+function isAccountPaymentHistoryRecoverySource(value: string | null) {
+  return value?.trim() === "account-payment-history";
+}
+
+function canRecoverAccountHistoryCheckoutLink(input: {
+  order: PaymentOrderRecord;
+  source: string | null;
+  failureReason: string;
+}) {
+  if (!isAccountPaymentHistoryRecoverySource(input.source)) return false;
+  if (input.order.status !== "pending") return false;
+  if (input.order.payment_method !== "pix" && input.order.payment_method !== "card") {
+    return false;
+  }
+  if (input.failureReason === "missing") return false;
+  if (!input.order.expires_at) return true;
+  const expiresAt = new Date(input.order.expires_at).getTime();
+  return !Number.isFinite(expiresAt) || expiresAt > Date.now();
+}
+
 function parseAmount(amount: string | number) {
   if (typeof amount === "number") return amount;
   const numeric = Number(amount);
@@ -674,6 +694,9 @@ export async function GET(request: Request) {
     const checkoutToken = normalizeCheckoutToken(
       url.searchParams.get("checkoutToken"),
     );
+    const checkoutSource = normalizeNullableProviderQueryValue(
+      url.searchParams.get("source"),
+    );
     const returnStatus = normalizeHostedCheckoutReturnStatus(
       url.searchParams.get("status"),
     );
@@ -771,16 +794,31 @@ export async function GET(request: Request) {
     if (orderCode) {
       const tokenValidation = verifyCheckoutAccessToken(order, checkoutToken);
       if (!tokenValidation.ok) {
-        return respond(
-          {
-            ok: false,
-            message: resolveCheckoutLinkFailureMessage(tokenValidation.reason),
-          },
-          {
-            status:
-              tokenValidation.reason === "expired" ? 410 : 403,
-          },
-        );
+        if (
+          canRecoverAccountHistoryCheckoutLink({
+            order,
+            source: checkoutSource,
+            failureReason: tokenValidation.reason,
+          })
+        ) {
+          const recoveredOrder = await ensureCheckoutAccessTokenForOrder({
+            order,
+            forceRotate: true,
+            invalidateOtherOrders: false,
+          });
+          order = recoveredOrder.order;
+        } else {
+          return respond(
+            {
+              ok: false,
+              message: resolveCheckoutLinkFailureMessage(tokenValidation.reason),
+            },
+            {
+              status:
+                tokenValidation.reason === "expired" ? 410 : 403,
+            },
+          );
+        }
       }
     }
 

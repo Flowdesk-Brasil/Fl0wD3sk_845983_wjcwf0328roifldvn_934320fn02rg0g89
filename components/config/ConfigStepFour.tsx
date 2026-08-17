@@ -1273,6 +1273,7 @@ function readCheckoutStatusQuery() {
       checkoutToken: null as string | null,
       paymentId: null as string | null,
       paymentRef: null as string | null,
+      source: null as string | null,
     };
   }
 
@@ -1306,6 +1307,7 @@ function readCheckoutStatusQuery() {
     normalizeNullableCheckoutQueryValue(params.get("collection_id")) ||
     null;
   const paymentRef = normalizeNullableCheckoutQueryValue(params.get("paymentRef"));
+  const source = normalizeNullableCheckoutQueryValue(params.get("source"));
 
   return {
     code,
@@ -1315,6 +1317,7 @@ function readCheckoutStatusQuery() {
     checkoutToken,
     paymentId,
     paymentRef,
+    source,
   };
 }
 
@@ -1575,6 +1578,7 @@ function buildPaymentOrderLookupUrl(input: {
   paymentId?: string | null;
   paymentRef?: string | null;
   status?: string | null;
+  source?: string | null;
 }) {
   const params = new URLSearchParams();
 
@@ -1604,6 +1608,10 @@ function buildPaymentOrderLookupUrl(input: {
 
   if (input.status) {
     params.set("status", input.status);
+  }
+
+  if (input.source) {
+    params.set("source", input.source);
   }
 
   return `/api/auth/me/payments/order?${params.toString()}`;
@@ -4231,6 +4239,7 @@ export function ConfigStepFour({
                 paymentId: checkoutQuery.paymentId,
                 paymentRef: checkoutQuery.paymentRef,
                 status: checkoutQuery.status,
+                source: checkoutQuery.source,
               })
             : (() => {
                 const params = new URLSearchParams({

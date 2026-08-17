@@ -494,7 +494,7 @@ function isMissingSalesPaymentMethodsRuntimeSchema(error: {
   );
 }
 
-async function resolveActiveMercadoPagoConfig(guildId: string) {
+export async function resolveActiveMercadoPagoConfig(guildId: string) {
   const secure = await loadSalesMercadoPagoSecureSnapshot(guildId);
   const supabase = getSupabaseAdminClientOrThrow();
   const result = await supabase
