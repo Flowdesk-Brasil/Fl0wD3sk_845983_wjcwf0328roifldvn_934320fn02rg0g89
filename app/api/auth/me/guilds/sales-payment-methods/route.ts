@@ -32,6 +32,7 @@ import {
   getSalesPaymentMethodDefinitions,
   normalizeSalesPaymentEnvironment,
   normalizeSalesPaymentMethodKey,
+  resolveSalesMercadoPagoEnvironment,
   type SalesPaymentMethodRow,
   type SalesPaymentMethodsSecureSnapshot,
 } from "@/lib/sales/paymentMethods";
@@ -626,7 +627,7 @@ export async function POST(request: Request) {
         moduleKey: "sales_payment_methods",
       });
     const currentMercadoPago = secureSnapshot?.payload?.mercadoPago || {};
-    const environment = normalizeSalesPaymentEnvironment(
+    const requestedEnvironment = normalizeSalesPaymentEnvironment(
       rawBody.environment || currentMercadoPago.environment,
     );
     const accessToken = resolveCredentialField(
@@ -653,6 +654,10 @@ export async function POST(request: Request) {
       currentMercadoPago.statementDescriptor,
       22,
     );
+    const environment = resolveSalesMercadoPagoEnvironment({
+      accessToken,
+      selectedEnvironment: requestedEnvironment,
+    });
 
     if (!accessToken) {
       return applyNoStoreHeaders(

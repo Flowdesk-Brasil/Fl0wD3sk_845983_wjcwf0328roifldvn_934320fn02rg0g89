@@ -32,6 +32,7 @@ export type SalesMercadoPagoPayment = {
 
 type CreateSalesPixPaymentInput = {
   accessToken: string;
+  environment?: "production" | "test" | null;
   amount: number;
   description: string;
   payerEmail: string;
@@ -56,6 +57,28 @@ function splitName(value: string) {
 
 function normalizeAccessToken(value: string) {
   return value.trim();
+}
+
+function normalizeMercadoPagoEnvValue(value: string | null | undefined) {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  return normalized || null;
+}
+
+export function resolveSalesMercadoPagoPixPayerEmail(
+  preferredEmail: string | null | undefined,
+  environment: "production" | "test" | null | undefined,
+) {
+  const normalizedPreferredEmail = normalizeMercadoPagoEnvValue(preferredEmail);
+  if (environment !== "test") {
+    return normalizedPreferredEmail;
+  }
+
+  return (
+    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_SALES_TEST_PAYER_EMAIL) ||
+    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_PIX_TEST_PAYER_EMAIL) ||
+    normalizeMercadoPagoEnvValue(process.env.MERCADO_PAGO_TEST_PAYER_EMAIL) ||
+    normalizedPreferredEmail
+  );
 }
 
 async function readJsonSafely(response: Response) {
@@ -169,6 +192,13 @@ export async function createSalesMercadoPagoPixPayment(
   input: CreateSalesPixPaymentInput,
 ) {
   const payerName = splitName(input.payerName);
+  const payerEmail = resolveSalesMercadoPagoPixPayerEmail(
+    input.payerEmail,
+    input.environment,
+  );
+  if (!payerEmail) {
+    throw new Error("Email do pagador do Mercado Pago nao configurado.");
+  }
   const idempotencyKey =
     input.idempotencyKey?.trim() ||
     crypto
@@ -178,7 +208,7 @@ export async function createSalesMercadoPagoPixPayment(
           "flowdesk-sales-pix",
           input.externalReference,
           input.amount.toFixed(2),
-          input.payerEmail,
+          payerEmail,
         ].join(":"),
       )
       .digest("hex");
@@ -194,7 +224,7 @@ export async function createSalesMercadoPagoPixPayment(
       description: input.description,
       payment_method_id: "pix",
       payer: {
-        email: input.payerEmail,
+        email: payerEmail,
         first_name: payerName.firstName,
         last_name: payerName.lastName,
       },

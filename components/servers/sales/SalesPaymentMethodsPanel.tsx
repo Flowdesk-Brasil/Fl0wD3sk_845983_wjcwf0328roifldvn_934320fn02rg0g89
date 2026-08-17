@@ -113,6 +113,15 @@ function formatUpdatedAt(value: string | null) {
   }).format(date);
 }
 
+function inferMercadoPagoEnvironmentFromAccessToken(
+  value: string,
+): "production" | "test" | null {
+  const normalized = value.trim().toUpperCase();
+  if (normalized.startsWith("TEST-")) return "test";
+  if (normalized.startsWith("APP_USR-")) return "production";
+  return null;
+}
+
 function SelectMenu<T extends string>({
   value,
   options,
@@ -307,7 +316,15 @@ function PaymentMethodModal({
                     <ServerTextInput
                       type="password"
                       value={accessToken}
-                      onChange={(event) => setAccessToken(event.currentTarget.value)}
+                      onChange={(event) => {
+                        const nextAccessToken = event.currentTarget.value;
+                        setAccessToken(nextAccessToken);
+                        const inferredEnvironment =
+                          inferMercadoPagoEnvironmentFromAccessToken(nextAccessToken);
+                        if (inferredEnvironment) {
+                          setEnvironment(inferredEnvironment);
+                        }
+                      }}
                       placeholder={
                         method.credentialsConfigured
                           ? "Manter credencial atual"
@@ -657,7 +674,11 @@ export function SalesPaymentMethodsPanel({
       </ServerSurface>
 
       <PaymentMethodModal
-        key={editingMethod?.methodKey || "closed"}
+        key={
+          editingMethod
+            ? `${editingMethod.methodKey}:${editingMethod.environment}:${editingMethod.updatedAt || "new"}`
+            : "closed"
+        }
         method={editingMethod}
         readOnly={readOnly}
         saving={Boolean(editingMethod && savingMethodKey === editingMethod.methodKey)}
