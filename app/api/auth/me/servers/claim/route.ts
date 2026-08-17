@@ -132,11 +132,10 @@ export async function POST(request: Request) {
     ]);
 
     const usage = buildAccountPlanUsageSnapshot(userPlanState, licensedServersCount);
-    const hasUsablePlan =
-      (userPlanState?.status === "active" || userPlanState?.status === "trial") &&
-      usage.canAddMoreServers;
+    const hasActivePlan =
+      userPlanState?.status === "active" || userPlanState?.status === "trial";
 
-    if (!hasUsablePlan || !userPlanState) {
+    if (!hasActivePlan || !userPlanState) {
       clearPlanStateCacheForUser(userId);
       return applyNoStoreHeaders(
         NextResponse.json(
@@ -144,7 +143,7 @@ export async function POST(request: Request) {
             ok: false,
             reason: "payment_required",
             message:
-              "Seu plano atual nao possui capacidade disponivel para liberar outro servidor agora.",
+              "Ative um plano antes de liberar este servidor.",
             usage,
           },
           { status: 409 },
@@ -176,7 +175,13 @@ export async function POST(request: Request) {
             message,
             usage,
           },
-          { status: result.reason === "owned_by_other" ? 409 : 400 },
+          {
+            status:
+              result.reason === "owned_by_other" ||
+              result.reason === "limit_reached"
+                ? 409
+                : 400,
+          },
         ),
       );
     }
@@ -184,6 +189,7 @@ export async function POST(request: Request) {
     if (sessionData.authSession.activeGuildId !== guildId) {
       await updateSessionActiveGuild(sessionData.authSession.id, guildId);
     }
+    clearPlanStateCacheForUser(userId);
     invalidateManagedServersCacheForUser(userId);
 
     return applyNoStoreHeaders(

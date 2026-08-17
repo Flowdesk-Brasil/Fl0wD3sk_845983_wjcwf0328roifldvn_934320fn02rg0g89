@@ -67,7 +67,7 @@ export function shouldBlockConfigServerSelection(input: {
     targetPlanMaxLicensedServers: input.targetPlanMaxLicensedServers,
   });
 
-  return licensedServersCount >= maxLicensedServers;
+  return licensedServersCount > maxLicensedServers;
 }
 
 function readSearchParam(

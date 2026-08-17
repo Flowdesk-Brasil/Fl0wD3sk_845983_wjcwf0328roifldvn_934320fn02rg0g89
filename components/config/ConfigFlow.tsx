@@ -1081,13 +1081,12 @@ export function ConfigFlow({
             return { ok: true as const, target: "payment" as const };
           }
 
-          const hasCapacityInCurrentPlan =
+          const hasConfigurableCurrentPlan =
             response.ok &&
             payload?.ok &&
-            (payload.plan?.status === "active" || payload.plan?.status === "trial") &&
-            !payload.usage?.hasReachedLicensedServersLimit;
+            (payload.plan?.status === "active" || payload.plan?.status === "trial");
 
-          if (hasCapacityInCurrentPlan) {
+          if (hasConfigurableCurrentPlan) {
             const claimResponse = await fetch("/api/auth/me/servers/claim", {
               method: "POST",
               headers: {
