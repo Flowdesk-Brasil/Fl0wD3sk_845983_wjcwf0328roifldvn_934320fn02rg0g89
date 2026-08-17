@@ -537,10 +537,15 @@ export async function verifyLoginOtpChallenge(input: {
       attempts: challenge.attempts + 1,
     })
     .eq("id", challenge.id)
-    .is("consumed_at", null);
+    .is("consumed_at", null)
+    .select("id")
+    .maybeSingle<{ id: string }>();
 
   if (consumeResult.error) {
     throw new Error(consumeResult.error.message);
+  }
+  if (!consumeResult.data?.id) {
+    throw new EmailOtpError("Este codigo ja foi utilizado.", 409, "otp_already_used");
   }
 
   const afterConsumeResult = input.afterConsume

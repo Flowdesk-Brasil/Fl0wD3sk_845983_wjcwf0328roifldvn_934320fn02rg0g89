@@ -12,11 +12,18 @@ import {
 } from "@/lib/auth/oauthIdentity";
 import {
   buildLoginRedirectResponse,
+  buildLoginOtpRedirectLocation,
   buildLoginTwoFactorRedirectLocation,
 } from "@/lib/auth/loginFlash";
+import {
+  createPendingOAuthEmailOtpChallenge,
+  shouldRequireInitialOAuthEmailOtp,
+} from "@/lib/auth/oauthOtp";
 import { buildAuthOriginRedirectResponse } from "@/lib/auth/requestOrigin";
 import {
   createSessionForUser,
+  findAuthUserByDiscordUserId,
+  findAuthUserByEmail,
   getCurrentAuthSessionFromCookie,
   markAuthUserLastLogin,
   resolveAuthUserForDiscordLogin,
@@ -199,6 +206,63 @@ export async function handleDiscordAuthCallback(request: NextRequest) {
     const discordTokenExpiresAt = new Date(
       Date.now() + tokenPayload.expires_in * 1000,
     ).toISOString();
+    const existingByDiscord = await findAuthUserByDiscordUserId(discordUser.id);
+    const existingByDiscordId =
+      typeof existingByDiscord?.id === "number" ? existingByDiscord.id : null;
+
+    if (
+      shouldRequireInitialOAuthEmailOtp({
+        mode: oauthModeCookie,
+        existingProviderUserId: existingByDiscordId,
+      })
+    ) {
+      const existingByEmail =
+        discordUser.verified && discordUser.email
+          ? await findAuthUserByEmail(discordUser.email)
+          : null;
+      if (
+        existingByEmail?.discord_user_id &&
+        existingByEmail.discord_user_id !== discordUser.id
+      ) {
+        throw new Error("O email desta conta ja esta vinculado a outro Discord.");
+      }
+
+      const otpChallenge = await createPendingOAuthEmailOtpChallenge({
+        provider: "discord",
+        discordUser,
+        nextPath: nextPathCookie || fallbackNextPath,
+        ipAddress: extractClientIp(request),
+        userAgent: request.headers.get("user-agent"),
+        discordAccessToken: tokenPayload.access_token,
+        discordRefreshToken: tokenPayload.refresh_token || null,
+        discordTokenExpiresAt,
+      });
+      const otpLocation = buildLoginOtpRedirectLocation(request, {
+        challengeId: otpChallenge.challengeId,
+        maskedEmail: otpChallenge.maskedEmail,
+        expiresAt: otpChallenge.expiresAt,
+        resendAvailableAt: otpChallenge.resendAvailableAt,
+        provider: "discord",
+        nextPath: nextPathCookie || fallbackNextPath,
+      });
+      const response = redirectWithLocation(otpLocation);
+      clearOAuthCookies(request, response);
+
+      await logSecurityAuditEventSafe(initialRequestContext, {
+        action: "auth_discord_callback",
+        outcome: "succeeded",
+        metadata: {
+          redirectTo: otpLocation,
+          oauthMode: oauthModeCookie,
+          otpRequired: true,
+          socialSession: false,
+          accountPersisted: false,
+        },
+      });
+
+      return attachRequestId(response, initialRequestContext.requestId);
+    }
+
     const localDiscordAuth = isLocalDiscordAuthRequest(request);
     const user = await resolveAuthUserForDiscordLogin(discordUser, {
       currentUserId: currentSession?.user?.id ?? null,

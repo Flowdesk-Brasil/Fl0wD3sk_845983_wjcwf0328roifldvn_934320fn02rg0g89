@@ -6,6 +6,7 @@ import {
 } from "@/lib/auth/session";
 import { normalizeAuthEmail } from "@/lib/auth/email";
 import { createLoginOtpChallenge, resendLoginOtpChallenge, verifyLoginOtpChallenge } from "@/lib/auth/emailOtp";
+import { completePendingOAuthEmailOtpChallenge } from "@/lib/auth/oauthOtp";
 import {
   hashPassword,
   shouldUpgradePasswordHash,
@@ -248,6 +249,11 @@ export async function verifyEmailLoginOtp(challengeId: string, code: string) {
   const verification = await verifyLoginOtpChallenge({
     challengeId,
     code,
+    expectedPurposes: ["login", "email_registration"],
+    afterConsume: async (challenge) => {
+      const oauthResult = await completePendingOAuthEmailOtpChallenge(challenge);
+      return oauthResult ? { userId: oauthResult.userId } : undefined;
+    },
   });
 
   if (typeof verification.userId !== "number") {

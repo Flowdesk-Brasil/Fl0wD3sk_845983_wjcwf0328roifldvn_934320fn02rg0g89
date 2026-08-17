@@ -1,4 +1,4 @@
-const MIN_PASSWORD_LENGTH = 12;
+const MIN_PASSWORD_LENGTH = 6;
 const MAX_PASSWORD_LENGTH = 128;
 
 export type PasswordPolicyFeedback = {
@@ -21,10 +21,9 @@ export function evaluatePasswordPolicy(password: string): PasswordPolicyFeedback
   const hasControlCharacters = /[\u0000-\u001F\u007F]/.test(value);
   const score = [
     value.length >= MIN_PASSWORD_LENGTH,
-    hasLowercase,
-    hasUppercase,
-    hasNumber,
-    hasSymbol,
+    value.length >= Math.min(10, MAX_PASSWORD_LENGTH),
+    value.length >= Math.min(16, MAX_PASSWORD_LENGTH),
+    !hasControlCharacters,
   ].filter(Boolean).length;
 
   return {
@@ -58,17 +57,6 @@ export function validatePasswordPolicy(
     return "A senha contem caracteres invalidos. Remova caracteres de controle e tente novamente.";
   }
 
-  const complexitySignals = [
-    feedback.hasLowercase,
-    feedback.hasUppercase,
-    feedback.hasNumber,
-    feedback.hasSymbol,
-  ].filter(Boolean).length;
-
-  if (complexitySignals < 3) {
-    return "Use pelo menos tres destes grupos: letra minuscula, letra maiuscula, numero e simbolo.";
-  }
-
   if (typeof confirmPassword === "string" && value !== confirmPassword) {
     return "A confirmacao da senha nao confere.";
   }
@@ -86,19 +74,9 @@ export function getPasswordPolicyChecklist(password: string) {
       valid: feedback.minLengthMet,
     },
     {
-      id: "password-lower-upper",
-      label: "Misture letras minusculas e maiusculas",
-      valid: feedback.hasLowercase && feedback.hasUppercase,
-    },
-    {
-      id: "password-number",
-      label: "Inclua pelo menos um numero",
-      valid: feedback.hasNumber,
-    },
-    {
-      id: "password-symbol",
-      label: "Inclua pelo menos um simbolo",
-      valid: feedback.hasSymbol,
+      id: "password-max-length",
+      label: `Ate ${MAX_PASSWORD_LENGTH} caracteres`,
+      valid: feedback.maxLengthMet,
     },
   ];
 }

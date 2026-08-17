@@ -15,6 +15,7 @@ import {
 } from "@/lib/payments/checkoutConsistency";
 import {
   getApprovedOrdersForGuild,
+  invalidateGuildLicenseCaches,
   resolveLatestLicenseCoverageFromApprovedOrders,
   resolveRenewalPaymentDecision,
 } from "@/lib/payments/licenseStatus";
@@ -24,9 +25,10 @@ import {
 import { sendPaymentApprovedEmailForOrderSafe } from "@/lib/mail/transactional";
 import {
   getBasicPlanAvailability,
-  resolveEffectivePlanSelection,
+  resolveEffectivePlanSelectionForCheckoutContext,
   syncUserPlanStateFromOrder,
 } from "@/lib/plans/state";
+import { licenseGuildForUser } from "@/lib/plans/planGuilds";
 import { resolvePlanCycleExpirationIso } from "@/lib/plans/cycle";
 import {
   resolveDatabaseFailureMessage,
@@ -55,7 +57,7 @@ import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 type PaymentOrderRecord = {
   id: number;
   order_number: number;
-  guild_id: string;
+  guild_id: string | null;
   user_id: number;
   payment_method: "pix" | "card" | "trial";
   status: string;
@@ -126,6 +128,15 @@ async function ensureGuildAccess(guildId: string | null) {
     };
   }
 
+  if (!guildId) {
+    return {
+      ok: true as const,
+      context: {
+        sessionData,
+      },
+    };
+  }
+
   if (!sessionData.accessToken) {
     return {
       ok: false as const,
@@ -133,15 +144,6 @@ async function ensureGuildAccess(guildId: string | null) {
         { ok: false, message: "Token OAuth ausente na sessao." },
         { status: 401 },
       ),
-    };
-  }
-
-  if (!guildId) {
-    return {
-      ok: true as const,
-      context: {
-        sessionData,
-      },
     };
   }
 
@@ -222,6 +224,32 @@ async function getLatestUserOrderForGuild(userId: number, guildId: string | null
   return result.data || null;
 }
 
+async function getLatestApprovedBasicOrderForGuild(userId: number, guildId: string | null) {
+  const supabase = getSupabaseAdminClientOrThrow();
+  const result = await supabase
+    .from("payment_orders")
+    .select(withApprovedPaymentTrustSelectColumns(PAYMENT_ORDER_SELECT_COLUMNS))
+    .eq("user_id", userId)
+    .filter("guild_id", guildId === null ? "is" : "eq", guildId)
+    .in("status", ["approved", "refunded", "partially_refunded"])
+    .order("paid_at", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false })
+    .limit(20)
+    .returns<PaymentOrderRecord[]>();
+
+  if (result.error) {
+    throw new Error(`Erro ao carregar trial existente: ${result.error.message}`);
+  }
+
+  return (
+    (result.data || []).find(
+      (order) =>
+        isTrustedApprovedPaymentRecord(order) &&
+        (order.payment_method === "trial" || order.plan_code === "basic"),
+    ) || null
+  );
+}
+
 async function createPaymentOrderEvent(
   paymentOrderId: number,
   eventType: string,
@@ -237,6 +265,43 @@ async function createPaymentOrderEvent(
   if (result.error) {
     throw new Error(`Erro ao salvar evento do trial: ${result.error.message}`);
   }
+}
+
+async function ensureGuildLicenseForSyncedPlan(input: {
+  userId: number;
+  guildId: string | null;
+  planState: Awaited<ReturnType<typeof syncUserPlanStateFromOrder>>;
+}) {
+  if (!input.guildId) return null;
+
+  const licenseResult = await licenseGuildForUser({
+    userId: input.userId,
+    guildId: input.guildId,
+    maxLicensedServers: input.planState.max_licensed_servers,
+    currentPlanCode: input.planState.plan_code,
+    currentPlanState: input.planState,
+  });
+
+  if (!licenseResult.ok) {
+    if (licenseResult.reason === "owned_by_other") {
+      throw new Error(
+        "Este servidor ja possui uma licenca ativa em outra conta Flowdesk.",
+      );
+    }
+    if (licenseResult.reason === "limit_reached") {
+      throw new Error(
+        "O limite de servidores licenciados deste plano ja foi atingido.",
+      );
+    }
+    throw new Error(
+      "message" in licenseResult
+        ? licenseResult.message
+        : "Nao foi possivel liberar os recursos deste servidor.",
+    );
+  }
+
+  invalidateGuildLicenseCaches(input.guildId);
+  return licenseResult;
 }
 
 export async function POST(request: Request) {
@@ -258,7 +323,7 @@ export async function POST(request: Request) {
     }
 
     let payload: {
-      guildId: string;
+      guildId?: string | null;
       planCode?: string | null;
       billingPeriodCode?: string | null;
     };
@@ -266,7 +331,9 @@ export async function POST(request: Request) {
       payload = parseFlowSecureDto(
         await request.json().catch(() => ({})),
         {
-          guildId: flowSecureDto.discordSnowflake(),
+          guildId: flowSecureDto.optional(
+            flowSecureDto.nullable(flowSecureDto.discordSnowflake()),
+          ),
           planCode: flowSecureDto.optional(
             flowSecureDto.nullable(
               flowSecureDto.string({
@@ -301,7 +368,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const guildId = payload.guildId;
+    const guildId = payload.guildId || null;
 
     const access = await ensureGuildAccess(guildId);
     if (!access.ok) {
@@ -372,6 +439,40 @@ export async function POST(request: Request) {
           });
         }
 
+        const existingBasicOrder = await getLatestApprovedBasicOrderForGuild(
+          user.id,
+          guildId,
+        );
+        if (existingBasicOrder) {
+          const securedExistingOrder = await ensureCheckoutAccessTokenForOrder({
+            order: existingBasicOrder,
+            forceRotate: false,
+            invalidateOtherOrders: false,
+          });
+          const syncedPlanState = await syncUserPlanStateFromOrder(
+            securedExistingOrder.order,
+          );
+          await ensureGuildLicenseForSyncedPlan({
+            userId: user.id,
+            guildId,
+            planState: syncedPlanState,
+          });
+          clearPlanStateCacheForUser(user.id);
+
+          return respond({
+            ok: true,
+            reused: true,
+            trialActivated: true,
+            licenseActive: true,
+            licenseExpiresAt:
+              syncedPlanState.expires_at || securedExistingOrder.order.expires_at,
+            order: toApiOrder(
+              securedExistingOrder.order,
+              securedExistingOrder.checkoutAccessToken,
+            ),
+          });
+        }
+
         const basicPlanAvailability = await getBasicPlanAvailability(user.id);
         if (!basicPlanAvailability.isAvailable) {
           return respond(
@@ -385,7 +486,7 @@ export async function POST(request: Request) {
           );
         }
 
-        const checkoutPlan = await resolveEffectivePlanSelection({
+        const checkoutPlan = await resolveEffectivePlanSelectionForCheckoutContext({
           userId: user.id,
           guildId,
           preferredPlanCode: payload.planCode,
@@ -534,7 +635,12 @@ export async function POST(request: Request) {
           invalidateOtherOrders: true,
         });
 
-        await syncUserPlanStateFromOrder(securedOrder.order);
+        const syncedPlanState = await syncUserPlanStateFromOrder(securedOrder.order);
+        await ensureGuildLicenseForSyncedPlan({
+          userId: user.id,
+          guildId,
+          planState: syncedPlanState,
+        });
         void sendPaymentApprovedEmailForOrderSafe(securedOrder.order);
         clearPlanStateCacheForUser(user.id);
 
