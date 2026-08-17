@@ -14,6 +14,7 @@ import {
   buildLoginRedirectResponse,
   buildLoginOtpRedirectLocation,
   buildLoginTwoFactorRedirectLocation,
+  setLoginErrorFlashCookie,
 } from "@/lib/auth/loginFlash";
 import {
   createPendingOAuthEmailOtpChallenge,
@@ -65,9 +66,23 @@ function redirectWithLocation(location: string) {
   );
 }
 
-function resolveDiscordAuthErrorCode(error: unknown) {
+export function resolveDiscordAuthErrorCode(error: unknown) {
   const message =
     error instanceof Error ? error.message.toLowerCase() : "";
+
+  if (
+    message.includes("autenticacao smtp falhou") ||
+    message.includes("autenticação smtp falhou") ||
+    message.includes("nao foi possivel enviar o email") ||
+    message.includes("não foi possível enviar o email") ||
+    message.includes("auth_smtp_host") ||
+    message.includes("auth_smtp_user") ||
+    message.includes("auth_smtp_pass") ||
+    message.includes("auth_smtp_from_email") ||
+    message.includes("auth_smtp_envelope_from")
+  ) {
+    return "auth_email_delivery_failed";
+  }
 
   if (
     message.includes("schema cache") ||
@@ -118,6 +133,25 @@ function resolveDiscordAuthErrorCode(error: unknown) {
   }
 
   return "discord_auth_failed";
+}
+
+export function resolveDiscordAuditFailureReason(errorCode: string) {
+  if (errorCode === "auth_email_delivery_failed") {
+    return "email_otp_delivery_failed";
+  }
+  if (errorCode === "discord_oauth_exchange_failed") {
+    return "oauth_token_exchange_failed";
+  }
+  if (errorCode === "discord_redirect_mismatch") {
+    return "oauth_redirect_mismatch";
+  }
+  if (errorCode === "auth_schema_outdated") {
+    return "auth_schema_outdated";
+  }
+  if (errorCode === "auth_user_persistence_failed") {
+    return "auth_user_persistence_failed";
+  }
+  return "oauth_exchange_failed";
 }
 
 function isLocalDiscordAuthRequest(request: NextRequest) {
@@ -236,6 +270,7 @@ export async function handleDiscordAuthCallback(request: NextRequest) {
         discordAccessToken: tokenPayload.access_token,
         discordRefreshToken: tokenPayload.refresh_token || null,
         discordTokenExpiresAt,
+        preserveChallengeOnEmailFailure: true,
       });
       const otpLocation = buildLoginOtpRedirectLocation(request, {
         challengeId: otpChallenge.challengeId,
@@ -246,6 +281,9 @@ export async function handleDiscordAuthCallback(request: NextRequest) {
         nextPath: nextPathCookie || fallbackNextPath,
       });
       const response = redirectWithLocation(otpLocation);
+      if (otpChallenge.emailDeliveryFailed) {
+        setLoginErrorFlashCookie(response, "auth_email_delivery_failed");
+      }
       clearOAuthCookies(request, response);
 
       await logSecurityAuditEventSafe(initialRequestContext, {
@@ -255,6 +293,7 @@ export async function handleDiscordAuthCallback(request: NextRequest) {
           redirectTo: otpLocation,
           oauthMode: oauthModeCookie,
           otpRequired: true,
+          emailDeliveryFailed: otpChallenge.emailDeliveryFailed,
           socialSession: false,
           accountPersisted: false,
         },
@@ -412,7 +451,8 @@ export async function handleDiscordAuthCallback(request: NextRequest) {
       action: "auth_discord_callback",
       outcome: "failed",
       metadata: {
-        reason: "oauth_exchange_failed",
+        reason: resolveDiscordAuditFailureReason(errorCode),
+        errorCode,
         detail: error instanceof Error ? error.message : "unknown_error",
       },
     });

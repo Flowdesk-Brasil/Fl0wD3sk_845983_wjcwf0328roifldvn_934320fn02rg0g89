@@ -17,6 +17,7 @@ import {
   buildLoginRedirectResponse,
   buildLoginOtpRedirectLocation,
   buildLoginTwoFactorRedirectLocation,
+  setLoginErrorFlashCookie,
 } from "@/lib/auth/loginFlash";
 import {
   createPendingOAuthEmailOtpChallenge,
@@ -64,8 +65,32 @@ function redirectWithLocation(location: string) {
   );
 }
 
-function resolveGoogleAuthErrorCode(error: unknown) {
+export function resolveGoogleAuthErrorCode(error: unknown) {
   const message = error instanceof Error ? error.message.toLowerCase() : "";
+
+  if (
+    message.includes("email_otp_prepare") &&
+    (message.includes("smtp") ||
+      message.includes("auth_smtp") ||
+      message.includes("email de verificacao") ||
+      message.includes("email de verificação"))
+  ) {
+    return "auth_email_delivery_failed";
+  }
+
+  if (
+    message.includes("autenticacao smtp falhou") ||
+    message.includes("autenticação smtp falhou") ||
+    message.includes("nao foi possivel enviar o email") ||
+    message.includes("não foi possível enviar o email") ||
+    message.includes("auth_smtp_host") ||
+    message.includes("auth_smtp_user") ||
+    message.includes("auth_smtp_pass") ||
+    message.includes("auth_smtp_from_email") ||
+    message.includes("auth_smtp_envelope_from")
+  ) {
+    return "auth_email_delivery_failed";
+  }
 
   if (
     message.includes("schema cache") ||
@@ -129,6 +154,25 @@ function resolveGoogleAuthErrorCode(error: unknown) {
   }
 
   return "google_auth_failed";
+}
+
+export function resolveGoogleAuditFailureReason(errorCode: string) {
+  if (errorCode === "auth_email_delivery_failed") {
+    return "email_otp_delivery_failed";
+  }
+  if (errorCode === "google_oauth_exchange_failed") {
+    return "oauth_token_exchange_failed";
+  }
+  if (errorCode === "google_redirect_mismatch") {
+    return "oauth_redirect_mismatch";
+  }
+  if (errorCode === "auth_schema_outdated") {
+    return "auth_schema_outdated";
+  }
+  if (errorCode === "auth_user_persistence_failed") {
+    return "auth_user_persistence_failed";
+  }
+  return "oauth_exchange_failed";
 }
 
 function wrapGoogleCallbackError(phase: string, error: unknown) {
@@ -381,6 +425,7 @@ export async function handleGoogleAuthCallback(request: NextRequest) {
             nextPath: nextPathCookie || fallbackNextPath,
             ipAddress: extractClientIp(request),
             userAgent: request.headers.get("user-agent"),
+            preserveChallengeOnEmailFailure: true,
           }),
       );
       const otpLocation = buildLoginOtpRedirectLocation(request, {
@@ -392,6 +437,9 @@ export async function handleGoogleAuthCallback(request: NextRequest) {
         nextPath: nextPathCookie || fallbackNextPath,
       });
       const response = redirectWithLocation(otpLocation);
+      if (otpChallenge.emailDeliveryFailed) {
+        setLoginErrorFlashCookie(response, "auth_email_delivery_failed");
+      }
       clearOAuthCookies(request, response);
 
       await logSecurityAuditEventSafe(initialRequestContext, {
@@ -401,6 +449,7 @@ export async function handleGoogleAuthCallback(request: NextRequest) {
           redirectTo: otpLocation,
           oauthMode: oauthModeCookie,
           otpRequired: true,
+          emailDeliveryFailed: otpChallenge.emailDeliveryFailed,
           socialSession: false,
           accountPersisted: false,
         },
@@ -566,7 +615,8 @@ export async function handleGoogleAuthCallback(request: NextRequest) {
       action: "auth_google_callback",
       outcome: "failed",
       metadata: {
-        reason: "oauth_exchange_failed",
+        reason: resolveGoogleAuditFailureReason(errorCode),
+        errorCode,
         detail: extractAuditErrorMessage(error),
       },
     });
