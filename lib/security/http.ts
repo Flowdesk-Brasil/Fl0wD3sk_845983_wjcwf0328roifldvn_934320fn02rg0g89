@@ -34,6 +34,8 @@ const FIRST_PARTY_CONNECT_SOURCES = [
   "https://fdesk.flwdesk.com",
   "https://*.flwdesk.com",
   "wss://*.flwdesk.com",
+  "https://*.supabase.co",
+  "wss://*.supabase.co",
 ] as const;
 
 function isExplicitlyEnabled(value: string | undefined) {

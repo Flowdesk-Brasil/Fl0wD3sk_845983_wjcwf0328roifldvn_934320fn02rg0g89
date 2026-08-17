@@ -20,6 +20,7 @@ export type ServerSaveOutcome =
   | "cleanup_expired"
   | "bot_access_missing"
   | "validation_failed"
+  | "normalized"
   | "saved"
   | "failed";
 

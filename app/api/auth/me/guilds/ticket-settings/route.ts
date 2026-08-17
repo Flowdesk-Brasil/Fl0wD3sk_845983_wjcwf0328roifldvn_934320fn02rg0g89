@@ -22,7 +22,7 @@ import { invalidateDashboardSettingsCache } from "@/lib/servers/serverDashboardS
 import {
   readServerSettingsVaultSnapshot,
   rewriteUnreadableServerSettingsVaultSnapshot,
-  writeServerSettingsVaultSnapshot,
+  writeServerSettingsVaultSnapshotSafe,
 } from "@/lib/servers/serverSettingsVault";
 import {
   extractAuditErrorMessage,
@@ -787,7 +787,11 @@ export async function POST(request: Request) {
         ? body.refundSettings
         : {};
     const rawRefundAutoProcessEnabled = rawRefundSettings.refundAutoProcessEnabled === true;
-    const rawRefundManualApprovalRequired = rawRefundSettings.refundManualApprovalRequired !== false;
+    const rawRefundApprovalChannelId = getTrimmedId(rawRefundSettings.refundApprovalChannelId);
+    const rawRefundManualApprovalRequired =
+      rawRefundSettings.refundManualApprovalRequired === true ||
+      (rawRefundSettings.refundManualApprovalRequired !== false &&
+        isGuildId(rawRefundApprovalChannelId));
 
     const refundAutoProcessEnabled = rawRefundAutoProcessEnabled;
     let refundManualApprovalRequired = rawRefundManualApprovalRequired;
@@ -795,12 +799,18 @@ export async function POST(request: Request) {
     if (refundAutoProcessEnabled && refundManualApprovalRequired) {
       // Se ambos vierem true, processar automaticamente ganha prioridade ou garantimos que um anula o outro
       refundManualApprovalRequired = false;
-    } else if (!refundAutoProcessEnabled && !refundManualApprovalRequired) {
-      // Se ambos vierem false, garantimos que fiquem coerentes
-      refundManualApprovalRequired = true;
     }
 
-    const refundSettings = {
+    const refundSettings: {
+      refundLimitDays: number;
+      refundRules: string;
+      refundAutoProcessEnabled: boolean;
+      refundManualApprovalRequired: boolean;
+      refundApprovalChannelId: string | null;
+      refundApproverRoleIds: string[];
+      refundSuccessMessage: string;
+      refundErrorMessage: string;
+    } = {
       refundLimitDays: Math.max(
         0,
         Math.min(365, Number(rawRefundSettings.refundLimitDays ?? 7) || 7),
@@ -811,7 +821,7 @@ export async function POST(request: Request) {
           : "",
       refundAutoProcessEnabled,
       refundManualApprovalRequired,
-      refundApprovalChannelId: getTrimmedId(rawRefundSettings.refundApprovalChannelId),
+      refundApprovalChannelId: rawRefundApprovalChannelId,
       refundApproverRoleIds: Array.isArray(rawRefundSettings.refundApproverRoleIds)
         ? Array.from(
             new Set(
@@ -1128,7 +1138,7 @@ export async function POST(request: Request) {
         aiTone: existingSettingsResponse?.aiTone || "formal",
         refundSettings,
       };
-      const secureUpdated = await writeServerSettingsVaultSnapshot({
+      const secureUpdated = await writeServerSettingsVaultSnapshotSafe({
         guildId,
         moduleKey: "ticket_settings",
         configuredByUserId: authUserId,
@@ -1280,16 +1290,12 @@ export async function POST(request: Request) {
             authUserId,
             accessMode,
             licenseStatus,
-            outcome: "validation_failed",
-            httpStatus: 400,
+            outcome: "normalized",
+            httpStatus: 200,
             detail: "Canal de aprovacao manual de reembolso invalido ou inacessivel.",
           });
-          return applyNoStoreHeaders(
-            NextResponse.json(
-              { ok: false, message: "Canal de aprovacao manual de reembolso invalido ou inacessivel." },
-              { status: 400 },
-            ),
-          );
+          refundSettings.refundManualApprovalRequired = false;
+          refundSettings.refundApprovalChannelId = null;
         }
       }
     }
@@ -1317,7 +1323,7 @@ export async function POST(request: Request) {
       refundSettings,
       configuredByUserId: authUserId,
     });
-    const secureUpdated = await writeServerSettingsVaultSnapshot({
+    const secureUpdated = await writeServerSettingsVaultSnapshotSafe({
       guildId,
       moduleKey: "ticket_settings",
       configuredByUserId: authUserId,
