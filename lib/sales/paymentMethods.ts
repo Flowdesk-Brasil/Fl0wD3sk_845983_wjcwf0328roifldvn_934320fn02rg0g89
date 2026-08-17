@@ -136,6 +136,17 @@ export function inferSalesMercadoPagoAccessTokenEnvironment(
   return "unknown";
 }
 
+export function resolveSalesMercadoPagoEnvironment(input: {
+  accessToken: string | null | undefined;
+  selectedEnvironment: unknown;
+}): SalesPaymentEnvironment {
+  const tokenEnvironment = inferSalesMercadoPagoAccessTokenEnvironment(
+    input.accessToken,
+  );
+  if (tokenEnvironment !== "unknown") return tokenEnvironment;
+  return normalizeSalesPaymentEnvironment(input.selectedEnvironment);
+}
+
 export function getSalesMercadoPagoEnvironmentMismatchMessage(input: {
   accessToken: string | null | undefined;
   environment: SalesPaymentEnvironment;

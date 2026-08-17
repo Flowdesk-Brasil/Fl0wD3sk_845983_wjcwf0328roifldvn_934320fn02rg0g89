@@ -22,6 +22,8 @@ import {
 import {
   createSecretFingerprint,
   getSalesMercadoPagoEnvironmentMismatchMessage,
+  normalizeSalesPaymentEnvironment,
+  resolveSalesMercadoPagoEnvironment,
   type SalesPaymentMethodsSecureSnapshot,
 } from "@/lib/sales/paymentMethods";
 
@@ -454,7 +456,12 @@ async function loadSalesMercadoPagoSecureSnapshot(guildId: string) {
     }
     throw new Error("Mercado Pago nao esta configurado para este servidor.");
   }
-  const environment = snapshot?.payload?.mercadoPago?.environment || "production";
+  const environment = resolveSalesMercadoPagoEnvironment({
+    accessToken,
+    selectedEnvironment: normalizeSalesPaymentEnvironment(
+      snapshot?.payload?.mercadoPago?.environment,
+    ),
+  });
   const environmentMismatchMessage =
     getSalesMercadoPagoEnvironmentMismatchMessage({
       accessToken,
@@ -487,7 +494,7 @@ function isMissingSalesPaymentMethodsRuntimeSchema(error: {
   );
 }
 
-async function resolveActiveMercadoPagoConfig(guildId: string) {
+export async function resolveActiveMercadoPagoConfig(guildId: string) {
   const secure = await loadSalesMercadoPagoSecureSnapshot(guildId);
   const supabase = getSupabaseAdminClientOrThrow();
   const result = await supabase
@@ -1221,6 +1228,7 @@ export async function createSalesCartPixPayment(cartId: string): Promise<SalesCa
     const externalReference = `flowdesk-sales:${cart.id}`;
     const providerPayment = await createSalesMercadoPagoPixPayment({
       accessToken: mercadoPagoConfig.accessToken,
+      environment: mercadoPagoConfig.environment,
       amount,
       description: `Compra Flowdesk ${cart.id.slice(0, 8)}`,
       payerEmail: email,
