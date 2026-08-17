@@ -6491,7 +6491,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                     <div className="grid gap-[12px] lg:grid-cols-[minmax(180px,0.7fr)_minmax(220px,1fr)]">
                       <div>
                         <label className="text-[13px] font-medium text-[#BDBDBD]">Key</label>
-                        <input value={row.key} onChange={(event) => updateEnvKey(row.id, event.target.value)} placeholder="DATABASE_URL" className="mt-[8px] h-[50px] w-full rounded-[12px] border border-[#2A2A2A] bg-[#070707] px-[14px] font-mono text-[14px] text-white outline-none transition-colors focus:border-[#3A3A3A]" />
+                        <input value={row.key} onChange={(event) => updateEnvKey(row.id, event.target.value)} placeholder="APP_CONFIG_KEY" className="mt-[8px] h-[50px] w-full rounded-[12px] border border-[#2A2A2A] bg-[#070707] px-[14px] font-mono text-[14px] text-white outline-none transition-colors focus:border-[#3A3A3A]" />
                       </div>
                       <div>
                         <label className="text-[13px] font-medium text-[#BDBDBD]">Value</label>

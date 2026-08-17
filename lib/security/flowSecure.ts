@@ -7,11 +7,18 @@ const FLOWSECURE_DEV_FALLBACK_SECRET = "flowsecure-dev-only-secret";
 const REDACTED_VALUE = "[REDACTED]";
 const SENSITIVE_KEY_PATTERN =
   /(pass(word)?|secret|token|authorization|cookie|session|refresh|access|document|cpf|cnpj|card|payer|email|phone|pix|api[-_]?key|key|credential|provider_payload)/i;
+const DANGEROUS_OBJECT_KEY_PATTERN = /^(?:__proto__|prototype|constructor)$/i;
+const MAX_DTO_DEPTH = 24;
+const MAX_DTO_OBJECT_KEYS = 800;
+const MAX_DTO_ARRAY_LENGTH = 1_000;
+const MAX_DTO_TOTAL_NODES = 8_000;
+const MAX_DTO_STRING_LENGTH = 2_100_000;
 
 export type FlowSecurePurpose =
   | "auth_password_pepper"
   | "auth_email_otp_code"
   | "auth_email_pending_registration"
+  | "auth_oauth_registration"
   | "auth_email_otp_session"
   | "auth_session_oauth"
   | "auth_totp_secret"
@@ -488,7 +495,88 @@ function parsePlainDtoObject(payload: unknown) {
     ]);
   }
 
+  const shapeIssues = inspectFlowSecureDtoShape(payload);
+  if (shapeIssues.length) {
+    throw new FlowSecureDtoError("Payload invalido.", shapeIssues);
+  }
+
   return payload;
+}
+
+function isPlainDtoRecord(value: Record<string, unknown>) {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function formatDtoPath(path: string) {
+  return path.length > 160 ? `${path.slice(0, 157)}...` : path;
+}
+
+function inspectFlowSecureDtoShape(payload: unknown) {
+  const issues: string[] = [];
+  const seen = new WeakSet<object>();
+  let totalNodes = 0;
+
+  function visit(value: unknown, path: string, depth: number) {
+    if (issues.length >= 20) return;
+    totalNodes += 1;
+    if (totalNodes > MAX_DTO_TOTAL_NODES) {
+      issues.push("Payload excede o limite de complexidade.");
+      return;
+    }
+
+    if (typeof value === "string" && value.length > MAX_DTO_STRING_LENGTH) {
+      issues.push(`Campo ${formatDtoPath(path)} excede o limite de tamanho.`);
+      return;
+    }
+
+    if (!value || typeof value !== "object") {
+      return;
+    }
+
+    if (seen.has(value)) {
+      issues.push(`Campo ${formatDtoPath(path)} contem referencia circular.`);
+      return;
+    }
+    seen.add(value);
+
+    if (depth > MAX_DTO_DEPTH) {
+      issues.push(`Campo ${formatDtoPath(path)} excede a profundidade permitida.`);
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      if (value.length > MAX_DTO_ARRAY_LENGTH) {
+        issues.push(`Campo ${formatDtoPath(path)} excede o limite de itens.`);
+        return;
+      }
+      value.forEach((item, index) => visit(item, `${path}[${index}]`, depth + 1));
+      return;
+    }
+
+    if (!isRecord(value) || !isPlainDtoRecord(value)) {
+      issues.push(`Campo ${formatDtoPath(path)} precisa ser um objeto simples.`);
+      return;
+    }
+
+    const entries = Object.entries(value);
+    if (entries.length > MAX_DTO_OBJECT_KEYS) {
+      issues.push(`Campo ${formatDtoPath(path)} excede o limite de propriedades.`);
+      return;
+    }
+
+    for (const [key, fieldValue] of entries) {
+      if (DANGEROUS_OBJECT_KEY_PATTERN.test(key)) {
+        issues.push(`Campo ${formatDtoPath(`${path}.${key}`)} nao permitido.`);
+        continue;
+      }
+
+      visit(fieldValue, `${path}.${key}`, depth + 1);
+    }
+  }
+
+  visit(payload, "$", 0);
+  return issues;
 }
 
 export function parseFlowSecureDto<T extends Record<string, unknown>>(

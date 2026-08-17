@@ -12,6 +12,8 @@ import {
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import { flowSecureDto, parseFlowSecureDto } from "@/lib/security/flowSecure";
+import { buildPublicApiErrorResponse } from "@/lib/security/apiResponses";
+import { createSecurityRequestContext } from "@/lib/security/requestSecurity";
 
 type RouteProps = {
   params: Promise<{ code: string }>;
@@ -91,6 +93,7 @@ async function load(code: string) {
 }
 
 export async function GET(_request: NextRequest, { params }: RouteProps) {
+  const requestContext = createSecurityRequestContext(_request);
   const { code } = await params;
   const loaded = await load(code);
   if (!loaded) {
@@ -107,14 +110,17 @@ export async function GET(_request: NextRequest, { params }: RouteProps) {
     .order("key", { ascending: true });
 
   if (error) {
-    return applyNoStoreHeaders(
-      NextResponse.json({ ok: false, message: error.message }, { status: 500 }),
-    );
+    return buildPublicApiErrorResponse(requestContext, {
+      error,
+      fallbackMessage: "Nao foi possivel carregar variaveis da VPS agora.",
+      status: 500,
+    });
   }
   return applyNoStoreHeaders(NextResponse.json({ ok: true, envVars: data || [] }));
 }
 
 export async function POST(request: NextRequest, { params }: RouteProps) {
+  const requestContext = createSecurityRequestContext(request);
   const { code } = await params;
   const loaded = await load(code);
   if (!loaded) {
@@ -137,12 +143,11 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
       { rejectUnknown: true },
     );
   } catch (error) {
-    return applyNoStoreHeaders(
-      NextResponse.json(
-        { ok: false, message: error instanceof Error ? error.message : "Payload invalido." },
-        { status: 400 },
-      ),
-    );
+    return buildPublicApiErrorResponse(requestContext, {
+      error,
+      fallbackMessage: "Payload invalido.",
+      status: 400,
+    });
   }
   const variables = Array.isArray(body.variables)
     ? body.variables.map((item) => normalizeEnvVariableInput(item, body.environment))
@@ -185,12 +190,11 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
       updated_by_user_id: loaded.session.user.id,
     }));
   } catch (error) {
-    return applyNoStoreHeaders(
-      NextResponse.json({
-        ok: false,
-        message: error instanceof Error ? error.message : "Falha ao criptografar.",
-      }, { status: 500 }),
-    );
+    return buildPublicApiErrorResponse(requestContext, {
+      error,
+      fallbackMessage: "Nao foi possivel proteger as variaveis agora.",
+      status: 500,
+    });
   }
 
   const supabase = getSupabaseAdminClientOrThrow();
@@ -232,9 +236,11 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
     }>>();
 
   if (error) {
-    return applyNoStoreHeaders(
-      NextResponse.json({ ok: false, message: error.message }, { status: 500 }),
-    );
+    return buildPublicApiErrorResponse(requestContext, {
+      error,
+      fallbackMessage: "Nao foi possivel salvar variaveis da VPS agora.",
+      status: 500,
+    });
   }
 
   await appendVpsEvent({
@@ -283,6 +289,7 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
 }
 
 export async function DELETE(request: NextRequest, { params }: RouteProps) {
+  const requestContext = createSecurityRequestContext(request);
   const { code } = await params;
   const loaded = await load(code);
   if (!loaded) {
@@ -303,12 +310,11 @@ export async function DELETE(request: NextRequest, { params }: RouteProps) {
       { rejectUnknown: true },
     );
   } catch (error) {
-    return applyNoStoreHeaders(
-      NextResponse.json(
-        { ok: false, message: error instanceof Error ? error.message : "Payload invalido." },
-        { status: 400 },
-      ),
-    );
+    return buildPublicApiErrorResponse(requestContext, {
+      error,
+      fallbackMessage: "Payload invalido.",
+      status: 400,
+    });
   }
   const id = typeof body.id === "number" && Number.isFinite(body.id) ? body.id : null;
   const environment = normalizeEnvironment(body.environment);
@@ -329,9 +335,11 @@ export async function DELETE(request: NextRequest, { params }: RouteProps) {
 
   const { error } = await query;
   if (error) {
-    return applyNoStoreHeaders(
-      NextResponse.json({ ok: false, message: error.message }, { status: 500 }),
-    );
+    return buildPublicApiErrorResponse(requestContext, {
+      error,
+      fallbackMessage: "Nao foi possivel remover a variavel agora.",
+      status: 500,
+    });
   }
 
   await appendVpsEvent({

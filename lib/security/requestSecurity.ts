@@ -40,6 +40,7 @@ type LocalRateLimitBucket = {
 const localRateLimitBuckets = new Map<string, LocalRateLimitBucket>();
 let localRateLimitLastCleanupAt = 0;
 const LOCAL_RATE_LIMIT_CLEANUP_INTERVAL_MS = 60_000;
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{8,80}$/;
 
 function extractClientIp(request: Request) {
   const forwardedFor = request.headers.get("x-forwarded-for");
@@ -93,9 +94,13 @@ export function createSecurityRequestContext(
   },
 ): SecurityRequestContext {
   const url = new URL(request.url);
+  const headerRequestId = request.headers.get("x-request-id")?.trim() || "";
+  const inputRequestId =
+    typeof input?.requestId === "string" ? input.requestId.trim() : "";
   return {
     requestId:
-      (typeof input?.requestId === "string" && input.requestId.trim()) ||
+      (REQUEST_ID_PATTERN.test(inputRequestId) && inputRequestId) ||
+      (REQUEST_ID_PATTERN.test(headerRequestId) && headerRequestId) ||
       crypto.randomUUID(),
     method: request.method.toUpperCase(),
     path: url.pathname,

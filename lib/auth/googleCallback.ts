@@ -15,8 +15,13 @@ import {
 import { exchangeGoogleCodeForToken, fetchGoogleUser } from "@/lib/auth/google";
 import {
   buildLoginRedirectResponse,
+  buildLoginOtpRedirectLocation,
   buildLoginTwoFactorRedirectLocation,
 } from "@/lib/auth/loginFlash";
+import {
+  createPendingOAuthEmailOtpChallenge,
+  shouldRequireInitialOAuthEmailOtp,
+} from "@/lib/auth/oauthOtp";
 import { buildAuthOriginRedirectResponse } from "@/lib/auth/requestOrigin";
 import {
   createSessionForUser,
@@ -340,6 +345,70 @@ export async function handleGoogleAuthCallback(request: NextRequest) {
       initialRequestContext.requestId,
       () => fetchGoogleUser(tokenPayload.access_token),
     );
+    const existingByGoogle = await runGoogleCallbackStep(
+      "auth_user_existing_google",
+      initialRequestContext.requestId,
+      () => findAuthUserByGoogleUserId(googleUser.sub),
+    );
+    const existingByGoogleId =
+      typeof existingByGoogle?.id === "number" ? existingByGoogle.id : null;
+
+    if (
+      shouldRequireInitialOAuthEmailOtp({
+        mode: oauthModeCookie,
+        existingProviderUserId: existingByGoogleId,
+      })
+    ) {
+      const existingByEmail = await runGoogleCallbackStep(
+        "auth_user_existing_email",
+        initialRequestContext.requestId,
+        () => findAuthUserByEmail(googleUser.email),
+      );
+      if (
+        existingByEmail?.google_user_id &&
+        existingByEmail.google_user_id !== googleUser.sub
+      ) {
+        throw new Error("O email desta conta ja esta vinculado a outra conta Google.");
+      }
+
+      const otpChallenge = await runGoogleCallbackStep(
+        "email_otp_prepare",
+        initialRequestContext.requestId,
+        () =>
+          createPendingOAuthEmailOtpChallenge({
+            provider: "google",
+            googleUser,
+            nextPath: nextPathCookie || fallbackNextPath,
+            ipAddress: extractClientIp(request),
+            userAgent: request.headers.get("user-agent"),
+          }),
+      );
+      const otpLocation = buildLoginOtpRedirectLocation(request, {
+        challengeId: otpChallenge.challengeId,
+        maskedEmail: otpChallenge.maskedEmail,
+        expiresAt: otpChallenge.expiresAt,
+        resendAvailableAt: otpChallenge.resendAvailableAt,
+        provider: "google",
+        nextPath: nextPathCookie || fallbackNextPath,
+      });
+      const response = redirectWithLocation(otpLocation);
+      clearOAuthCookies(request, response);
+
+      await logSecurityAuditEventSafe(initialRequestContext, {
+        action: "auth_google_callback",
+        outcome: "succeeded",
+        metadata: {
+          redirectTo: otpLocation,
+          oauthMode: oauthModeCookie,
+          otpRequired: true,
+          socialSession: false,
+          accountPersisted: false,
+        },
+      });
+
+      return attachRequestId(response, initialRequestContext.requestId);
+    }
+
     const user = await runGoogleCallbackStep(
       "auth_user_resolve",
       initialRequestContext.requestId,

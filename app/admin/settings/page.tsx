@@ -3,43 +3,18 @@ import { AdminDataTable } from "@/components/admin/AdminDataTable";
 import { AdminPageHeader } from "@/components/admin/AdminPageHeader";
 import { AdminStatCard } from "@/components/admin/AdminStatCard";
 import { AdminStatusBadge } from "@/components/admin/AdminStatusBadge";
+import {
+  getAdminEnvironmentReadiness,
+  isBootstrapAdminConfigured,
+  isFlowSecureConfigured,
+} from "@/lib/admin/environmentReadiness";
 import { requirePermission } from "@/lib/admin/auth";
-
-function envStatus(name: string) {
-  return process.env[name] ? "active" : "pending";
-}
 
 export default async function AdminSettingsPage() {
   await requirePermission("settings.read");
 
-  const settingsRows = [
-    {
-      key: "FLOWDESK_BOOTSTRAP_ADMIN_EMAIL",
-      label: "Bootstrap do primeiro CEO",
-      description:
-        "Usado apenas para promover com seguranca o primeiro admin institucional.",
-    },
-    {
-      key: "FLOWSECURE_MASTER_KEY",
-      label: "Criptografia principal",
-      description:
-        "Base usada pelo FlowSecure para proteger segredos, tokens e test variables.",
-    },
-    {
-      key: "NEXT_PUBLIC_SITE_URL",
-      label: "Host canonico publico",
-      description:
-        "Mantem coerencia de links, callbacks e roteamento cross-subdomain.",
-    },
-    {
-      key: "NEXT_PUBLIC_STATUS_URL",
-      label: "Host do status",
-      description:
-        "Consumido pelo ecossistema publico e pelo monitoramento institucional.",
-    },
-  ];
-
-  const configuredCount = settingsRows.filter((row) => process.env[row.key]).length;
+  const settingsRows = getAdminEnvironmentReadiness();
+  const configuredCount = settingsRows.filter((row) => row.configured).length;
 
   return (
     <section className="min-w-0">
@@ -64,17 +39,13 @@ export default async function AdminSettingsPage() {
         />
         <AdminStatCard
           label="Fluxo bootstrap"
-          value={process.env.FLOWDESK_BOOTSTRAP_ADMIN_EMAIL ? "Pronto" : "Pendente"}
+          value={isBootstrapAdminConfigured() ? "Pronto" : "Pendente"}
           description="Status do mecanismo seguro de promocao inicial."
           icon={<KeyRound className="h-[20px] w-[20px]" strokeWidth={1.9} />}
         />
         <AdminStatCard
           label="FlowSecure"
-          value={
-            process.env.FLOWSECURE_MASTER_KEY || process.env.FLOWSECURE_MASTER_SECRET
-              ? "Pronto"
-              : "Pendente"
-          }
+          value={isFlowSecureConfigured() ? "Pronto" : "Pendente"}
           description="Disponibilidade do segredo principal para criptografia institucional."
           icon={<LockKeyhole className="h-[20px] w-[20px]" strokeWidth={1.9} />}
         />
@@ -86,17 +57,17 @@ export default async function AdminSettingsPage() {
           description="A tabela valida somente a presenca das configuracoes. Valores completos nunca sao exibidos no painel."
           headers={["Variavel", "Papel", "Status"]}
           rows={settingsRows.map((row) => [
-            <div key={row.key} className="space-y-[6px]">
-              <p className="font-medium text-[#EFEFEF]">{row.key}</p>
+            <div key={row.id} className="space-y-[6px]">
+              <p className="font-medium text-[#EFEFEF]">{row.displayKey}</p>
               <p className="text-[12px] text-[#6D6D6D]">{row.label}</p>
             </div>,
-            <p key={`${row.key}-description`} className="max-w-[420px] text-[13px] leading-[1.6] text-[#CFCFCF]">
+            <p key={`${row.id}-description`} className="max-w-[420px] text-[13px] leading-[1.6] text-[#CFCFCF]">
               {row.description}
             </p>,
             <AdminStatusBadge
-              key={`${row.key}-status`}
-              status={envStatus(row.key)}
-              label={process.env[row.key] ? "Configurado" : "Nao configurado"}
+              key={`${row.id}-status`}
+              status={row.configured ? "active" : "pending"}
+              label={row.configured ? "Configurado" : "Nao configurado"}
             />,
           ])}
         />

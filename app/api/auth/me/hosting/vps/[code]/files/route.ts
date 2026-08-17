@@ -24,6 +24,8 @@ import {
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import { flowSecureDto, parseFlowSecureDto } from "@/lib/security/flowSecure";
+import { buildPublicApiErrorResponse } from "@/lib/security/apiResponses";
+import { createSecurityRequestContext } from "@/lib/security/requestSecurity";
 
 type RouteProps = {
   params: Promise<{ code: string }>;
@@ -583,6 +585,7 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
 }
 
 export async function POST(request: NextRequest, { params }: RouteProps) {
+  const requestContext = createSecurityRequestContext(request);
   const { code } = await params;
   const loaded = await load(code);
   if (!loaded) {
@@ -604,12 +607,11 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
       { rejectUnknown: true },
     );
   } catch (error) {
-    return applyNoStoreHeaders(
-      NextResponse.json(
-        { ok: false, message: error instanceof Error ? error.message : "Payload invalido." },
-        { status: 400 },
-      ),
-    );
+    return buildPublicApiErrorResponse(requestContext, {
+      error,
+      fallbackMessage: "Payload invalido.",
+      status: 400,
+    });
   }
   const action = readString(body.action) || "";
   const path = normalizeFilePath(body.path);
@@ -712,18 +714,11 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
         agentTree = agentPayload.tree as FileTreeNode[];
       }
     } catch (error) {
-      return applyNoStoreHeaders(
-        NextResponse.json(
-          {
-            ok: false,
-            message:
-              error instanceof Error
-                ? error.message
-                : "Nao foi possivel salvar o arquivo na pasta Minecraft.",
-          },
-          { status: 502 },
-        ),
-      );
+      return buildPublicApiErrorResponse(requestContext, {
+        error,
+        fallbackMessage: "Nao foi possivel salvar o arquivo na pasta Minecraft agora.",
+        status: 502,
+      });
     }
 
     fileContents[path] = content;
@@ -863,12 +858,11 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
         }
       }
       if (!githubCommit) {
-        return applyNoStoreHeaders(
-          NextResponse.json(
-            { ok: false, message: error instanceof Error ? error.message : "Nao consegui criar commit no GitHub." },
-            { status: 502 },
-          ),
-        );
+        return buildPublicApiErrorResponse(requestContext, {
+          error,
+          fallbackMessage: "Nao foi possivel criar commit no GitHub agora.",
+          status: 502,
+        });
       }
     }
   } else {

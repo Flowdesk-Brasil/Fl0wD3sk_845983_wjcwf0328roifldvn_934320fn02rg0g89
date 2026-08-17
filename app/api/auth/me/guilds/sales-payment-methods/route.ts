@@ -724,7 +724,7 @@ export async function POST(request: Request) {
           {
             ok: false,
             message:
-              "Nao foi possivel salvar as credenciais no cofre seguro. Aplique a migration 101 antes de ativar PIX em producao.",
+              "Nao foi possivel salvar as credenciais no cofre seguro. Atualize o esquema privado do cofre antes de ativar PIX em producao.",
           },
           { status: 500 },
         ),
@@ -746,7 +746,7 @@ export async function POST(request: Request) {
           {
             ok: false,
             message:
-              "Nao foi possivel confirmar as credenciais no cofre seguro agora. Tente salvar novamente em alguns instantes; se persistir, revise FLOWSECURE_MASTER_KEY em producao.",
+              "Nao foi possivel confirmar as credenciais no cofre seguro agora. Tente salvar novamente em alguns instantes; se persistir, revise a configuracao privada de criptografia em producao.",
           },
           { status: 500 },
         ),

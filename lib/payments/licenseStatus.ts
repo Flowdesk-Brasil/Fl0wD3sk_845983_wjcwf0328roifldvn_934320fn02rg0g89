@@ -77,7 +77,7 @@ type AccountBackedGuildStatusRecord = {
 export type LicenseApprovedOrderRecord = ApprovedOrderRecord & {
   id?: number;
   order_number?: number;
-  guild_id?: string;
+  guild_id?: string | null;
   user_id?: number;
   status?: string | null;
   plan_code?: string | null;
@@ -653,15 +653,17 @@ export async function getApprovedOrdersForGuild<
 
   const loadPromise = (async () => {
     const supabase = getSupabaseAdminClientOrThrow();
-    const result = await supabase
+    const query = supabase
       .from("payment_orders")
       .select(trustedSelectColumns)
-      .eq("guild_id", guildId)
       .in("status", ["approved", "refunded", "partially_refunded"])
       .order("paid_at", { ascending: false, nullsFirst: false })
       .order("created_at", { ascending: false })
-      .limit(limit)
-      .returns<TOrder[]>();
+      .limit(limit);
+    const result = await (guildId === null
+      ? query.is("guild_id", null)
+      : query.eq("guild_id", guildId)
+    ).returns<TOrder[]>();
 
     if (result.error) {
       throw new Error(result.error.message);
