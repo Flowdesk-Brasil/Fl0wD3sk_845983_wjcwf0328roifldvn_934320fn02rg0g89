@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   applyStrictApiCorsHeaders,
+  buildContentSecurityPolicy,
   buildStrictApiPreflightResponse,
 } from "../lib/security/http.ts";
 
@@ -108,4 +109,16 @@ test("api preflight rejects unsupported requested methods", () => {
   assert.equal(response.status, 405);
   assert.equal(response.headers.get("Access-Control-Allow-Origin"), null);
   assert.match(response.headers.get("Allow") || "", /\bOPTIONS\b/);
+});
+
+test("content security policy allows Supabase browser and realtime connections", () => {
+  const policy = buildContentSecurityPolicy();
+  const connectSrc =
+    policy
+      .split(";")
+      .map((directive) => directive.trim())
+      .find((directive) => directive.startsWith("connect-src ")) || "";
+
+  assert.match(connectSrc, /\bhttps:\/\/\*\.supabase\.co\b/);
+  assert.match(connectSrc, /\bwss:\/\/\*\.supabase\.co\b/);
 });
