@@ -20,7 +20,7 @@ import {
 import { invalidateDashboardSettingsCache } from "@/lib/servers/serverDashboardSettingsCache";
 import {
   readServerSettingsVaultSnapshot,
-  writeServerSettingsVaultSnapshot,
+  writeServerSettingsVaultSnapshotSafe,
 } from "@/lib/servers/serverSettingsVault";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
 import {
@@ -699,7 +699,7 @@ export async function POST(request: Request) {
       syncExistingMembers,
       configuredByUserId: authUserId,
     });
-    await writeServerSettingsVaultSnapshot({
+    await writeServerSettingsVaultSnapshotSafe({
       guildId,
       moduleKey: "autorole_settings",
       configuredByUserId: authUserId,

@@ -23,7 +23,7 @@ import { invalidateDashboardSettingsCache } from "@/lib/servers/serverDashboardS
 import {
   readServerSettingsVaultSnapshot,
   rewriteUnreadableServerSettingsVaultSnapshot,
-  writeServerSettingsVaultSnapshot,
+  writeServerSettingsVaultSnapshotSafe,
 } from "@/lib/servers/serverSettingsVault";
 import {
   extractAuditErrorMessage,
@@ -577,7 +577,7 @@ export async function POST(request: Request) {
       notifyRoleIds,
       configuredByUserId: authUserId,
     });
-    const secureUpdated = await writeServerSettingsVaultSnapshot({
+    const secureUpdated = await writeServerSettingsVaultSnapshotSafe({
       guildId,
       moduleKey: "ticket_staff_settings",
       configuredByUserId: authUserId,

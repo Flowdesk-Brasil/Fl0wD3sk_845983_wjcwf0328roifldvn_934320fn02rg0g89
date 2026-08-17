@@ -2,6 +2,7 @@ import {
   decryptFlowSecureValue,
   encryptFlowSecureValue,
 } from "@/lib/security/flowSecure";
+import { extractAuditErrorMessage } from "@/lib/security/errors";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 export type ServerSettingsVaultModule =
@@ -322,6 +323,24 @@ export async function writeServerSettingsVaultSnapshot(input: {
     updatedAt:
       typeof result.data?.updated_at === "string" ? result.data.updated_at : null,
   };
+}
+
+export async function writeServerSettingsVaultSnapshotSafe(input: {
+  guildId: string;
+  moduleKey: ServerSettingsVaultModule;
+  payload: unknown;
+  configuredByUserId: number;
+}) {
+  try {
+    return await writeServerSettingsVaultSnapshot(input);
+  } catch (error) {
+    console.warn("[serverSettingsVault] secure snapshot write skipped", {
+      guildId: input.guildId,
+      moduleKey: input.moduleKey,
+      reason: extractAuditErrorMessage(error, "unknown snapshot write failure"),
+    });
+    return null;
+  }
 }
 
 export async function deleteServerSettingsVaultSnapshot(input: {

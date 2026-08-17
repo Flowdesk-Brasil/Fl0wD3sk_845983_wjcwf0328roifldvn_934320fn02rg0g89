@@ -21,7 +21,7 @@ import { invalidateDashboardSettingsCache } from "@/lib/servers/serverDashboardS
 import {
   readServerSettingsVaultSnapshot,
   rewriteUnreadableServerSettingsVaultSnapshot,
-  writeServerSettingsVaultSnapshot,
+  writeServerSettingsVaultSnapshotSafe,
 } from "@/lib/servers/serverSettingsVault";
 import {
   extractAuditErrorMessage,
@@ -681,7 +681,7 @@ export async function POST(request: Request) {
         blockObfuscatedLinks,
         configuredByUserId: authUserId,
       });
-      await writeServerSettingsVaultSnapshot({
+      await writeServerSettingsVaultSnapshotSafe({
         guildId,
         moduleKey: "antilink_settings",
         configuredByUserId: authUserId,

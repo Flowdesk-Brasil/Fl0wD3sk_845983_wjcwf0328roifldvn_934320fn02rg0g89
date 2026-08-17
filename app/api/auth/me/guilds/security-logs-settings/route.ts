@@ -19,7 +19,7 @@ import {
 import { invalidateDashboardSettingsCache } from "@/lib/servers/serverDashboardSettingsCache";
 import {
   readServerSettingsVaultSnapshot,
-  writeServerSettingsVaultSnapshot,
+  writeServerSettingsVaultSnapshotSafe,
 } from "@/lib/servers/serverSettingsVault";
 import {
   extractAuditErrorMessage,
@@ -784,7 +784,7 @@ export async function POST(request: Request) {
         settings,
         configuredByUserId: authUserId,
       });
-      await writeServerSettingsVaultSnapshot({
+      await writeServerSettingsVaultSnapshotSafe({
         guildId,
         moduleKey: "security_logs_settings",
         configuredByUserId: authUserId,
