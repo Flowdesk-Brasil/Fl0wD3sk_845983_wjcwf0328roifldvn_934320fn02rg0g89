@@ -130,6 +130,7 @@ export async function createPendingOAuthEmailOtpChallenge(input:
       nextPath: string | null;
       ipAddress: string | null;
       userAgent: string | null;
+      preserveChallengeOnEmailFailure?: boolean;
     }
   | {
       provider: "discord";
@@ -137,6 +138,7 @@ export async function createPendingOAuthEmailOtpChallenge(input:
       nextPath: string | null;
       ipAddress: string | null;
       userAgent: string | null;
+      preserveChallengeOnEmailFailure?: boolean;
       discordAccessToken: string | null;
       discordRefreshToken: string | null;
       discordTokenExpiresAt: string | null;
@@ -173,6 +175,8 @@ export async function createPendingOAuthEmailOtpChallenge(input:
     email: emailNormalized,
     ipAddress: input.ipAddress,
     userAgent: input.userAgent,
+    preserveChallengeOnEmailFailure:
+      input.preserveChallengeOnEmailFailure ?? false,
     metadata: {
       [OAUTH_REGISTRATION_METADATA_KEY]:
         encryptPendingOAuthRegistration(oauthPayload),

@@ -276,6 +276,7 @@ async function createOtpChallenge(input: {
     | "email_change_current"
     | "email_change_new";
   metadata?: Record<string, unknown> | null;
+  preserveChallengeOnEmailFailure?: boolean;
 }) {
   const normalizedEmail = normalizeAuthEmail(input.email);
   if (!normalizedEmail) {
@@ -306,19 +307,24 @@ async function createOtpChallenge(input: {
     throw new Error(result.error?.message || "Nao foi possivel criar o desafio OTP.");
   }
 
+  let emailDeliveryFailed = false;
   try {
     await sendOtpEmailForChallenge(normalizedEmail, code, input.purpose);
   } catch (error) {
-    try {
-      await supabase
-        .from("auth_email_otp_challenges")
-        .delete()
-        .eq("id", result.data.id)
-        .is("consumed_at", null);
-    } catch {
-      // O erro original de SMTP/configuracao e mais util para quem chamou.
+    if (input.preserveChallengeOnEmailFailure) {
+      emailDeliveryFailed = true;
+    } else {
+      try {
+        await supabase
+          .from("auth_email_otp_challenges")
+          .delete()
+          .eq("id", result.data.id)
+          .is("consumed_at", null);
+      } catch {
+        // O erro original de SMTP/configuracao e mais util para quem chamou.
+      }
+      throw error;
     }
-    throw error;
   }
 
   return {
@@ -326,6 +332,7 @@ async function createOtpChallenge(input: {
     maskedEmail: maskAuthEmail(normalizedEmail),
     expiresAt,
     resendAvailableAt: new Date(Date.now() + getOtpResendCooldownMs()).toISOString(),
+    emailDeliveryFailed,
   };
 }
 
@@ -347,6 +354,7 @@ export async function createEmailRegistrationOtpChallenge(input: {
   ipAddress: string | null;
   userAgent: string | null;
   metadata?: Record<string, unknown> | null;
+  preserveChallengeOnEmailFailure?: boolean;
 }) {
   return createOtpChallenge({
     ...input,
