@@ -21,7 +21,7 @@ import {
   flowSecureDto,
   parseFlowSecureDto,
 } from "@/lib/security/flowSecure";
-import { hasActivePaidConfigPlan } from "@/lib/plans/configAccess";
+import { hasActiveConfigPlan } from "@/lib/plans/configAccess";
 import { getUserPlanState } from "@/lib/plans/state";
 import {
   applyNoStoreHeaders,
@@ -55,7 +55,7 @@ export async function GET(request: Request) {
     }
 
     const userPlanState = await getUserPlanState(session.user.id);
-    if (!hasActivePaidConfigPlan(userPlanState)) {
+    if (!hasActiveConfigPlan(userPlanState)) {
       return attachRequestId(
         applyNoStoreHeaders(
           NextResponse.json(
@@ -119,7 +119,7 @@ export async function PUT(request: Request) {
     }
 
     const userPlanState = await getUserPlanState(session.user.id);
-    if (!hasActivePaidConfigPlan(userPlanState)) {
+    if (!hasActiveConfigPlan(userPlanState)) {
       return attachRequestId(
         applyNoStoreHeaders(
           NextResponse.json(
@@ -354,4 +354,3 @@ export async function PUT(request: Request) {
     )), baseRequestContext.requestId);
   }
 }
-

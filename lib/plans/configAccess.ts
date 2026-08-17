@@ -17,18 +17,23 @@ type ConfigSearchParams =
   | URLSearchParams
   | Record<string, QueryValueInput>;
 
-type ConfigAccessPlanState = Pick<UserPlanStateRecord, "plan_code" | "status"> | null | undefined;
+type ConfigAccessPlanState =
+  Pick<UserPlanStateRecord, "plan_code" | "status"> | null | undefined;
+
+export function hasActiveConfigPlan(
+  userPlanState: ConfigAccessPlanState,
+) {
+  if (!userPlanState) {
+    return false;
+  }
+
+  return userPlanState.status === "active" || userPlanState.status === "trial";
+}
 
 export function hasActivePaidConfigPlan(
   userPlanState: ConfigAccessPlanState,
 ) {
-  if (!userPlanState || userPlanState.status !== "active") {
-    return false;
-  }
-
-  return !resolvePlanDefinition(
-    userPlanState.plan_code || DEFAULT_PLAN_CODE,
-  ).isTrial;
+  return hasActiveConfigPlan(userPlanState);
 }
 
 export function normalizeConfigReturnPath(value: string | null | undefined) {

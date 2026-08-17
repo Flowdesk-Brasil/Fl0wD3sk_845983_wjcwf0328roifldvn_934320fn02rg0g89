@@ -24,7 +24,7 @@ import {
 } from "@/lib/plans/configRouting";
 import {
   buildConfigPaymentRequiredHref,
-  hasActivePaidConfigPlan,
+  hasActiveConfigPlan,
 } from "@/lib/plans/configAccess";
 import { countPlanGuildsForUser } from "@/lib/plans/planGuilds";
 import { getUserPlanState } from "@/lib/plans/state";
@@ -78,7 +78,7 @@ export default async function ConfigPage({ searchParams }: ConfigPageProps) {
 
   try {
     const userPlanState = await getUserPlanState(user.id);
-    if (!hasActivePaidConfigPlan(userPlanState)) {
+    if (!hasActiveConfigPlan(userPlanState)) {
       redirect(
         buildConfigPaymentRequiredHref({
           planCode: requestedPlan || "pro",

@@ -28,6 +28,10 @@ import {
   resolveEffectivePlanSelectionForCheckoutContext,
   syncUserPlanStateFromOrder,
 } from "@/lib/plans/state";
+import {
+  resolveBasicTrialReuseDecision,
+  resolveBasicTrialOrderExpiresAt,
+} from "@/lib/plans/basicTrialRecovery";
 import { licenseGuildForUser } from "@/lib/plans/planGuilds";
 import { resolvePlanCycleExpirationIso } from "@/lib/plans/cycle";
 import {
@@ -45,6 +49,7 @@ import {
   createCoalescedRouteKey,
   runCoalescedRouteResponse,
 } from "@/lib/security/routeCoalescing";
+import { invalidateManagedServersCacheForUser } from "@/lib/servers/managedServers";
 import {
   attachRequestId,
   createSecurityRequestContext,
@@ -224,21 +229,20 @@ async function getLatestUserOrderForGuild(userId: number, guildId: string | null
   return result.data || null;
 }
 
-async function getLatestApprovedBasicOrderForGuild(userId: number, guildId: string | null) {
+async function getLatestApprovedBasicOrderForUser(userId: number) {
   const supabase = getSupabaseAdminClientOrThrow();
   const result = await supabase
     .from("payment_orders")
     .select(withApprovedPaymentTrustSelectColumns(PAYMENT_ORDER_SELECT_COLUMNS))
     .eq("user_id", userId)
-    .filter("guild_id", guildId === null ? "is" : "eq", guildId)
     .in("status", ["approved", "refunded", "partially_refunded"])
     .order("paid_at", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false })
-    .limit(20)
+    .limit(40)
     .returns<PaymentOrderRecord[]>();
 
   if (result.error) {
-    throw new Error(`Erro ao carregar trial existente: ${result.error.message}`);
+    throw new Error(`Erro ao carregar trial existente da conta: ${result.error.message}`);
   }
 
   return (
@@ -248,6 +252,33 @@ async function getLatestApprovedBasicOrderForGuild(userId: number, guildId: stri
         (order.payment_method === "trial" || order.plan_code === "basic"),
     ) || null
   );
+}
+
+async function attachAccountTrialOrderToGuild(
+  order: PaymentOrderRecord,
+  guildId: string | null,
+) {
+  if (!guildId || order.guild_id) return order;
+
+  const supabase = getSupabaseAdminClientOrThrow();
+  const result = await supabase
+    .from("payment_orders")
+    .update({
+      guild_id: guildId,
+      provider_status_detail:
+        order.provider_status_detail || "free_trial_activated",
+    })
+    .eq("id", order.id)
+    .eq("user_id", order.user_id)
+    .is("guild_id", null)
+    .select(PAYMENT_ORDER_SELECT_COLUMNS)
+    .maybeSingle<PaymentOrderRecord>();
+
+  if (result.error) {
+    throw new Error(`Erro ao vincular trial ao servidor: ${result.error.message}`);
+  }
+
+  return result.data || order;
 }
 
 async function createPaymentOrderEvent(
@@ -439,13 +470,60 @@ export async function POST(request: Request) {
           });
         }
 
-        const existingBasicOrder = await getLatestApprovedBasicOrderForGuild(
-          user.id,
-          guildId,
-        );
+        const existingBasicOrder = await getLatestApprovedBasicOrderForUser(user.id);
         if (existingBasicOrder) {
+          const reuseDecision = resolveBasicTrialReuseDecision(
+            existingBasicOrder,
+            guildId,
+          );
+
+          if (reuseDecision.kind === "different_guild") {
+            const securedExistingOrder = await ensureCheckoutAccessTokenForOrder({
+              order: existingBasicOrder,
+              forceRotate: false,
+              invalidateOtherOrders: false,
+            });
+            return respond(
+              {
+                ok: false,
+                reason: "trial_already_linked",
+                trialActivated: true,
+                trialRecovered: false,
+                licenseActive: false,
+                existingGuildId: reuseDecision.existingGuildId,
+                requestedGuildId: reuseDecision.requestedGuildId,
+                message:
+                  "O Flow Basic de 7 dias ja esta vinculado a outro servidor nesta conta. Abra o servidor ja licenciado ou escolha um plano com mais servidores.",
+                order: toApiOrder(
+                  securedExistingOrder.order,
+                  securedExistingOrder.checkoutAccessToken,
+                ),
+              },
+              { status: 409 },
+            );
+          }
+
+          if (!reuseDecision.canReuse) {
+            return respond(
+              {
+                ok: false,
+                reason: "trial_expired_or_consumed",
+                trialActivated: false,
+                licenseActive: false,
+                licenseExpiresAt: reuseDecision.expiresAt,
+                message:
+                  "O Flow Basic de 7 dias desta conta ja foi usado e nao esta mais ativo.",
+              },
+              { status: 403 },
+            );
+          }
+
+          const reusableOrder = await attachAccountTrialOrderToGuild(
+            existingBasicOrder,
+            reuseDecision.licenseGuildId,
+          );
           const securedExistingOrder = await ensureCheckoutAccessTokenForOrder({
-            order: existingBasicOrder,
+            order: reusableOrder,
             forceRotate: false,
             invalidateOtherOrders: false,
           });
@@ -454,18 +532,39 @@ export async function POST(request: Request) {
           );
           await ensureGuildLicenseForSyncedPlan({
             userId: user.id,
-            guildId,
+            guildId: reuseDecision.licenseGuildId,
             planState: syncedPlanState,
           });
+          await createPaymentOrderEvent(
+            securedExistingOrder.order.id,
+            reuseDecision.shouldRecordGuildRepair
+              ? "trial_account_order_licensed_guild"
+              : "trial_order_reused",
+            {
+              orderNumber: securedExistingOrder.order.order_number,
+              guildId: reuseDecision.licenseGuildId,
+              userId: user.id,
+              reuseKind: reuseDecision.kind,
+              source: "flowdesk_trial_checkout",
+            },
+          );
           clearPlanStateCacheForUser(user.id);
+          invalidateManagedServersCacheForUser(user.id);
+          if (reuseDecision.licenseGuildId) {
+            invalidateGuildLicenseCaches(reuseDecision.licenseGuildId);
+          }
 
           return respond({
             ok: true,
             reused: true,
             trialActivated: true,
+            trialRecovered: reuseDecision.shouldRecordGuildRepair,
+            trialReuseKind: reuseDecision.kind,
             licenseActive: true,
             licenseExpiresAt:
-              syncedPlanState.expires_at || securedExistingOrder.order.expires_at,
+              syncedPlanState.expires_at ||
+              securedExistingOrder.order.expires_at ||
+              resolveBasicTrialOrderExpiresAt(securedExistingOrder.order),
             order: toApiOrder(
               securedExistingOrder.order,
               securedExistingOrder.checkoutAccessToken,
@@ -643,6 +742,7 @@ export async function POST(request: Request) {
         });
         void sendPaymentApprovedEmailForOrderSafe(securedOrder.order);
         clearPlanStateCacheForUser(user.id);
+        invalidateManagedServersCacheForUser(user.id);
 
         await logSecurityAuditEventSafe(auditContext, {
           action: "payment_trial_post",
@@ -657,6 +757,8 @@ export async function POST(request: Request) {
           ok: true,
           reused: false,
           trialActivated: true,
+          trialRecovered: false,
+          trialReuseKind: "created",
           licenseActive: true,
           licenseExpiresAt: expiresAt,
           order: toApiOrder(

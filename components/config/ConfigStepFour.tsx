@@ -164,6 +164,9 @@ type PixPaymentApiResponse = {
   blockedByActiveLicense?: boolean;
   licenseActive?: boolean;
   licenseExpiresAt?: string | null;
+  trialActivated?: boolean;
+  trialRecovered?: boolean;
+  trialReuseKind?: string | null;
   fromOrderCode?: boolean;
   checkoutAmountChanged?: boolean;
   expectedTotalAmount?: number | null;
@@ -3236,10 +3239,17 @@ function ApprovedPaymentPanel({
   }, [initialSeconds, isRedirectReady]);
 
   const methodLabel = resolveCompletedPaymentMethodLabel(order?.method);
+  const isTrialOrder = order?.method === "trial";
   const successHeadline =
-    order?.method === "trial"
+    isTrialOrder
       ? "Sistema ativado com sucesso"
       : "Pagamento efetuado com sucesso";
+  const bodyMessage = isTrialOrder
+    ? "Seu pedido gratuito foi validado. Aguarde nesta pagina enquanto a Flowdesk sincroniza a assinatura, grava a validade de 7 dias e libera este servidor automaticamente."
+    : "Sua confirmacao ja foi recebida. Aguarde nesta pagina enquanto a Flowdesk finaliza a liberacao do sistema, sincroniza a conta e libera este servidor automaticamente.";
+  const fallbackStatusMessage = isTrialOrder
+    ? "Estamos liberando o Flow Basic e atualizando as permissoes da conta agora. Nao feche esta tela ate a sincronizacao terminar."
+    : "Estamos validando o pagamento e liberando o sistema da conta agora. Nao feche esta tela ate a sincronizacao terminar.";
 
   return (
     <div className={`${className} flowdesk-stage-fade`}>
@@ -3268,8 +3278,7 @@ function ApprovedPaymentPanel({
         {successHeadline}
       </h2>
       <p className="mt-[8px] max-w-[720px] text-[14px] leading-[1.75] text-[#A1A1A1] sm:text-[15px]">
-        Sua confirmacao ja foi recebida. Aguarde nesta pagina enquanto a Flowdesk
-        finaliza a liberacao do sistema, sincroniza a conta e libera este servidor automaticamente.
+        {bodyMessage}
       </p>
 
       <div className="mt-[22px] grid gap-[12px] sm:grid-cols-3">
@@ -3306,8 +3315,7 @@ function ApprovedPaymentPanel({
           Proxima etapa
         </p>
         <p className="mt-[10px] text-[15px] leading-[1.7] text-[#E3F6EF]">
-          {statusMessage ||
-            "Estamos validando o pagamento e liberando o sistema da conta agora. Nao feche esta tela ate a sincronizacao terminar."}
+          {statusMessage || fallbackStatusMessage}
         </p>
       </div>
 
@@ -6191,9 +6199,7 @@ export function ConfigStepFour({
         }),
       });
       const requestId = resolveResponseRequestId(response);
-      const payload = (await response.json()) as PixPaymentApiResponse & {
-        trialActivated?: boolean;
-      };
+      const payload = (await response.json()) as PixPaymentApiResponse;
 
       if (!response.ok || !payload.ok || !payload.order) {
         throw new Error(
@@ -6207,26 +6213,26 @@ export function ConfigStepFour({
       setPixOrder(payload.order);
       setLastKnownOrderNumber(payload.order.orderNumber);
       writeCachedOrderByGuild(guildId, payload.order);
+      setPhase("checkout");
+      setView("methods");
+      setSelectedRail(null);
+      setCheckoutStatusQuery({ order: payload.order, guildId });
       setMethodMessage(
-        payload.licenseActive
-          ? buildActiveLicenseMessage(payload.licenseExpiresAt)
+        payload.trialRecovered
+          ? "Pedido gratuito validado. Corrigimos o vinculo do Flow Basic e liberamos este servidor."
           : payload.reused
-            ? "Plano gratuito ja estava ativo nesta conta."
-            : "Plano gratuito ativado com sucesso. Redirecionando...",
+            ? "Pedido gratuito ja validado. Sincronizamos novamente o Flow Basic desta conta."
+            : payload.trialActivated
+              ? "Pedido gratuito validado. Liberando o Flow Basic e este servidor agora."
+              : payload.licenseActive
+                ? buildActiveLicenseMessage(payload.licenseExpiresAt)
+                : "Pedido gratuito validado. Liberando o Flow Basic agora.",
       );
 
       if (isApprovedPaymentBenefitDelivered(payload.order) && onApproved) {
         onApproved(payload.order);
       }
 
-      const redirectConfig = resolveApprovedRedirectConfig(
-        guildId,
-        payload.order,
-        hasAccountLastPaymentGuild,
-      );
-      trialActivationRedirectTimeoutRef.current = window.setTimeout(() => {
-        window.location.assign(redirectConfig.targetUrl);
-      }, 1200);
     } catch (error) {
       setMethodMessage(
         parseUnknownErrorMessage(error) ||
@@ -6237,7 +6243,6 @@ export function ConfigStepFour({
     }
   }, [
     guildId,
-    hasAccountLastPaymentGuild,
     isSubmittingTrial,
     selectedBillingPeriodCode,
     selectedPlanCode,
@@ -7456,7 +7461,9 @@ export function ConfigStepFour({
         ? "Dados do pagador"
         : "Pagamento";
   const checkoutPanelDescription = shouldShowApprovedConfirmationPanel
-    ? "O pagamento ja foi validado. Aguarde alguns instantes enquanto terminamos a liberacao do sistema da conta."
+    ? pixOrder?.method === "trial"
+      ? "O pedido gratuito ja foi validado. Aguarde alguns instantes enquanto terminamos a liberacao do sistema da conta."
+      : "O pagamento ja foi validado. Aguarde alguns instantes enquanto terminamos a liberacao do sistema da conta."
     : view === "pix_checkout"
       ? "Pague pelo app do seu banco ou use o copia e cola logo abaixo."
       : view === "pix_form"
