@@ -799,9 +799,14 @@ export function PersonalDataTab() {
         await refresh();
         return;
       }
-      setEmailStage(payload.nextStage === "new" ? "new" : "new");
+      setEmailStage(payload.nextStage === "current" ? "current" : "new");
       setEmailCode("");
-      notifications.success("Email atual confirmado.", { title: "Alterar email" });
+      notifications.success(
+        typeof payload.message === "string"
+          ? payload.message
+          : "Etapa de email confirmada.",
+        { title: "Alterar email" },
+      );
     } catch (emailError) {
       const message = emailError instanceof Error ? emailError.message : "Codigo invalido.";
       setEmailFieldErrors({ code: message });
@@ -826,10 +831,10 @@ export function PersonalDataTab() {
       });
       notifications.success("Novo codigo enviado.", { title: "Alterar email" });
     } catch (emailError) {
-      notifications.error(
-        emailError instanceof Error ? emailError.message : "Falha ao reenviar.",
-        { title: "Alterar email" },
-      );
+      const message =
+        emailError instanceof Error ? emailError.message : "Falha ao reenviar.";
+      setEmailFieldErrors({ code: message });
+      notifications.error(message, { title: "Alterar email" });
     } finally {
       setBusyAction(null);
     }

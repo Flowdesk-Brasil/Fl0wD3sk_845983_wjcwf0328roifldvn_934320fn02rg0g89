@@ -17,6 +17,9 @@ import {
 
 const inputShellClassName =
   "group relative flex h-[58px] w-full items-center rounded-[18px] border border-[rgba(255,255,255,0.06)] bg-[#090909] px-[18px] transition-[border-color,background-color,box-shadow] duration-200 focus-within:border-[rgba(255,255,255,0.13)] focus-within:bg-[#0C0C0C] focus-within:shadow-[0_0_0_4px_rgba(255,255,255,0.04)]";
+const inputErrorShellClassName =
+  "border-[rgba(219,70,70,0.72)] bg-[rgba(45,12,12,0.68)] focus-within:border-[rgba(219,70,70,0.92)] focus-within:shadow-[0_0_0_4px_rgba(219,70,70,0.10)]";
+const fieldErrorClassName = "mt-[8px] text-[12px] font-medium text-[#E19A9A]";
 
 type TokenStatus = "checking" | "valid" | "expired" | "invalid";
 
@@ -52,6 +55,10 @@ export function PasswordResetPanel({ token }: { token: string }) {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{
+    password?: string;
+    confirmPassword?: string;
+  }>({});
   const checklist = useMemo(() => getPasswordPolicyChecklist(password), [password]);
   const passwordError = useMemo(
     () => validatePasswordPolicy(password, confirmPassword),
@@ -99,12 +106,18 @@ export function PasswordResetPanel({ token }: { token: string }) {
   async function handleSubmit() {
     if (isSubmitting) return;
     if (passwordError) {
+      setFieldErrors(
+        passwordError.includes("confirmacao")
+          ? { confirmPassword: passwordError }
+          : { password: passwordError },
+      );
       setErrorMessage(passwordError);
       return;
     }
 
     setIsSubmitting(true);
     setErrorMessage(null);
+    setFieldErrors({});
 
     try {
       const response = await fetch("/api/auth/email/password-reset/complete", {
@@ -139,9 +152,10 @@ export function PasswordResetPanel({ token }: { token: string }) {
         );
       }, 700);
     } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "Nao foi possivel trocar sua senha.",
-      );
+      const message =
+        error instanceof Error ? error.message : "Nao foi possivel trocar sua senha.";
+      setFieldErrors({ password: message });
+      setErrorMessage(message);
     } finally {
       setIsSubmitting(false);
     }
@@ -197,14 +211,22 @@ export function PasswordResetPanel({ token }: { token: string }) {
                   </div>
                 ) : null}
 
-                <div className={inputShellClassName}>
+                <div
+                  className={`${inputShellClassName} ${
+                    fieldErrors.password ? inputErrorShellClassName : ""
+                  }`}
+                >
                   <input
                     type={showPassword ? "text" : "password"}
                     value={password}
-                    onChange={(event) => setPassword(event.currentTarget.value)}
+                    onChange={(event) => {
+                      setPassword(event.currentTarget.value);
+                      setFieldErrors((current) => ({ ...current, password: undefined }));
+                    }}
                     placeholder="Nova senha"
                     autoComplete="new-password"
                     maxLength={128}
+                    aria-invalid={Boolean(fieldErrors.password)}
                     className="min-w-0 flex-1 bg-transparent text-[15px] text-[#F1F1F1] outline-none placeholder:text-[#5A5A5A]"
                   />
                   <PasswordVisibilityButton
@@ -213,15 +235,29 @@ export function PasswordResetPanel({ token }: { token: string }) {
                     label={showPassword ? "Ocultar senha" : "Mostrar senha"}
                   />
                 </div>
+                {fieldErrors.password ? (
+                  <p className={fieldErrorClassName}>{fieldErrors.password}</p>
+                ) : null}
 
-                <div className={inputShellClassName}>
+                <div
+                  className={`${inputShellClassName} ${
+                    fieldErrors.confirmPassword ? inputErrorShellClassName : ""
+                  }`}
+                >
                   <input
                     type={showConfirmPassword ? "text" : "password"}
                     value={confirmPassword}
-                    onChange={(event) => setConfirmPassword(event.currentTarget.value)}
+                    onChange={(event) => {
+                      setConfirmPassword(event.currentTarget.value);
+                      setFieldErrors((current) => ({
+                        ...current,
+                        confirmPassword: undefined,
+                      }));
+                    }}
                     placeholder="Confirmar senha"
                     autoComplete="new-password"
                     maxLength={128}
+                    aria-invalid={Boolean(fieldErrors.confirmPassword)}
                     className="min-w-0 flex-1 bg-transparent text-[15px] text-[#F1F1F1] outline-none placeholder:text-[#5A5A5A]"
                   />
                   <PasswordVisibilityButton
@@ -230,6 +266,9 @@ export function PasswordResetPanel({ token }: { token: string }) {
                     label={showConfirmPassword ? "Ocultar confirmacao" : "Mostrar confirmacao"}
                   />
                 </div>
+                {fieldErrors.confirmPassword ? (
+                  <p className={fieldErrorClassName}>{fieldErrors.confirmPassword}</p>
+                ) : null}
 
                 <div className="rounded-[20px] border border-[rgba(255,255,255,0.06)] bg-[#080808] px-[16px] py-[14px]">
                   <p className="text-[12px] font-semibold tracking-[0.12em] text-[#6E6E6E] uppercase">
@@ -247,10 +286,10 @@ export function PasswordResetPanel({ token }: { token: string }) {
 
                 <button
                   type="submit"
-                  disabled={isSubmitting || Boolean(passwordError)}
+                  disabled={isSubmitting || !password || !confirmPassword}
                   className="group relative inline-flex h-[52px] w-full items-center justify-center overflow-visible rounded-[14px] px-6 text-[16px] font-semibold text-[#101010] disabled:cursor-not-allowed disabled:text-[#B7B7B7]"
                 >
-                  <span aria-hidden="true" className={`absolute inset-0 rounded-[14px] ${isSubmitting || passwordError ? "bg-[#111111]" : "bg-[linear-gradient(180deg,#FFFFFF_0%,#D8D8D8_100%)] group-hover:scale-[1.015]"}`} />
+                  <span aria-hidden="true" className={`absolute inset-0 rounded-[14px] ${isSubmitting || !password || !confirmPassword ? "bg-[#111111]" : "bg-[linear-gradient(180deg,#FFFFFF_0%,#D8D8D8_100%)] group-hover:scale-[1.015]"}`} />
                   <span className="relative z-10">
                     {isSubmitting ? <ButtonLoader size={18} colorClassName="text-[#101010]" /> : "Alterar senha"}
                   </span>

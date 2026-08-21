@@ -2,6 +2,7 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { PUBLIC_LANDING_CACHE_HEADER } from "@/lib/http/publicCache";
+import { ensureFirstPartyPublicReadRequest } from "@/lib/security/http";
 
 const LOOP_DIRECTORY = path.join(process.cwd(), "public", "cdn", "loop");
 const ALLOWED_EXTENSIONS = new Set([
@@ -13,7 +14,10 @@ const ALLOWED_EXTENSIONS = new Set([
   ".avif",
 ]);
 
-export async function GET() {
+export async function GET(request: Request) {
+  const originGuard = ensureFirstPartyPublicReadRequest(request);
+  if (originGuard) return originGuard;
+
   try {
     const entries = await readdir(LOOP_DIRECTORY, { withFileTypes: true });
 

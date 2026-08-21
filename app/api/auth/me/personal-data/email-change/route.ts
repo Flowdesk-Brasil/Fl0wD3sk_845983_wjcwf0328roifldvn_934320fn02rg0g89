@@ -234,12 +234,24 @@ export async function POST(request: NextRequest) {
             "email_change_wrong_user",
           );
         }
+        const expectedEmail =
+          stage === "current"
+            ? normalizeAuthEmail(change.current_email || null)
+            : normalizeAuthEmail(change.new_email);
+        if (!expectedEmail || challenge.emailNormalized !== expectedEmail) {
+          throw new EmailOtpError(
+            "Este codigo nao pertence ao email desta etapa.",
+            400,
+            "email_change_wrong_email",
+          );
+        }
       },
     });
 
     const verifiedAt = new Date().toISOString();
     const currentVerified = stage === "current" || Boolean(change.current_verified_at);
     const newVerified = stage === "new" || Boolean(change.new_verified_at);
+    const nextStage = !currentVerified ? "current" : !newVerified ? "new" : null;
     const changeUpdate: Record<string, unknown> = {
       [stage === "current" ? "current_verified_at" : "new_verified_at"]: verifiedAt,
     };
@@ -274,12 +286,14 @@ export async function POST(request: NextRequest) {
         currentVerified,
         newVerified,
         verifiedEmail: verification.email,
-        nextStage: currentVerified && !newVerified ? "new" : null,
+        nextStage,
         email: currentVerified && newVerified ? change.new_email : session.user.email,
         message:
           currentVerified && newVerified
             ? "Email alterado com sucesso."
-            : `Email ${stage === "current" ? "atual" : "novo"} confirmado.`,
+            : nextStage === "current"
+              ? "Email novo confirmado. Confirme tambem o email atual."
+              : "Email atual confirmado. Confirme tambem o novo email.",
       }),
     );
   } catch (error) {
@@ -288,6 +302,7 @@ export async function POST(request: NextRequest) {
       NextResponse.json(
         {
           ok: false,
+          code: error instanceof EmailOtpError ? error.errorCode : "email_change_error",
           message:
             error instanceof Error
               ? error.message

@@ -136,6 +136,74 @@ export function isSameOriginRequest(request: Request) {
   return true;
 }
 
+export function isFirstPartyPublicReadRequest(request: Request) {
+  const method = request.method.toUpperCase();
+  if (method !== "GET" && method !== "HEAD") {
+    return false;
+  }
+
+  const requestUrl = new URL(request.url);
+  const secFetchSite = request.headers.get("sec-fetch-site");
+  if (
+    secFetchSite &&
+    secFetchSite !== "same-origin" &&
+    secFetchSite !== "same-site" &&
+    secFetchSite !== "none"
+  ) {
+    return false;
+  }
+
+  const originHeader = request.headers.get("origin");
+  if (originHeader && !isSameOriginRequest(request)) {
+    return false;
+  }
+
+  const refererHeader = request.headers.get("referer");
+  if (refererHeader) {
+    try {
+      const refererUrl = new URL(refererHeader);
+      if (refererUrl.origin === requestUrl.origin) {
+        return true;
+      }
+
+      if (refererUrl.protocol !== requestUrl.protocol) {
+        return false;
+      }
+
+      if (!areHostsWithinSameFirstPartySite(refererUrl.host, requestUrl.host)) {
+        return false;
+      }
+
+      return (
+        isTrustedFirstPartyMutationHost(refererUrl.host) &&
+        isTrustedFirstPartyMutationHost(requestUrl.host)
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+export function ensureFirstPartyPublicReadRequest(request: Request) {
+  if (isFirstPartyPublicReadRequest(request)) {
+    return null;
+  }
+
+  const response = NextResponse.json(
+    {
+      ok: false,
+      code: "invalid_public_origin",
+      message: "Origem da requisicao invalida.",
+    },
+    { status: 403 },
+  );
+  applyStandardSecurityHeaders(response, { noIndex: true });
+  response.headers.set("Cache-Control", "private, no-store");
+  return response;
+}
+
 export function buildContentSecurityPolicy(input?: { isDevelopment?: boolean }) {
   const isDevelopment = input?.isDevelopment === true;
   const adsenseEnabled = isExplicitlyEnabled(

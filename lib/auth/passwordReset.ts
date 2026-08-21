@@ -119,6 +119,22 @@ export async function createPasswordResetRequest(input: {
   };
 }
 
+export async function revokePasswordResetToken(token: string) {
+  const normalizedToken = normalizePasswordResetToken(token);
+  if (!normalizedToken) return;
+
+  const supabase = getSupabaseAdminClientOrThrow();
+  const result = await supabase
+    .from("auth_password_reset_tokens")
+    .update({ consumed_at: new Date().toISOString() })
+    .eq("token_hash", hashResetToken(normalizedToken))
+    .is("consumed_at", null);
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+}
+
 export async function resolvePasswordResetToken(token: string) {
   const normalizedToken = normalizePasswordResetToken(token);
   if (!normalizedToken) {

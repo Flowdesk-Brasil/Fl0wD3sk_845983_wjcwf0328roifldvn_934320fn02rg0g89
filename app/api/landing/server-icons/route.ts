@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { PUBLIC_LANDING_CACHE_HEADER } from "@/lib/http/publicCache";
 import { FEATURED_SERVER_IDS } from "@/lib/landing/featuredServers";
+import { ensureFirstPartyPublicReadRequest } from "@/lib/security/http";
 import { createSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 export const dynamic = "force-dynamic";
@@ -363,7 +364,10 @@ async function resolveIconsFromDb() {
   }));
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const originGuard = ensureFirstPartyPublicReadRequest(request);
+  if (originGuard) return originGuard;
+
   const now = Date.now();
   const botToken = resolveBotToken();
   const CACHE_STALE_THRESHOLD = 3600_000 * 6; // 6 hours
