@@ -59,6 +59,7 @@ export type PaymentOrderRecord = {
   plan_name: string | null;
   plan_billing_cycle_days: number | null;
   provider_payment_id: string | null;
+  provider_ticket_url: string | null;
   provider_status: string | null;
   provider_status_detail: string | null;
   provider_payload: unknown;
@@ -91,6 +92,7 @@ export type HistoryOrder = {
   providerStatus: string | null;
   providerStatusDetail: string | null;
   providerPaymentId: string | null;
+  receiptHref: string | null;
   returnPaymentHref: string | null;
   card: unknown;
   paidAt: string | null;
@@ -119,7 +121,7 @@ export type ManagedHistory = {
 };
 
 const PAYMENT_HISTORY_SELECT_COLUMNS =
-  `id, order_number, user_id, guild_id, payment_method, status, amount, currency, plan_code, plan_name, plan_billing_cycle_days, provider_payment_id, provider_status, provider_status_detail, provider_payload, paid_at, expires_at, created_at, updated_at, ${PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS}`;
+  `id, order_number, user_id, guild_id, payment_method, status, amount, currency, plan_code, plan_name, plan_billing_cycle_days, provider_payment_id, provider_ticket_url, provider_status, provider_status_detail, provider_payload, paid_at, expires_at, created_at, updated_at, ${PAYMENT_ORDER_CHECKOUT_LINK_SELECT_COLUMNS}`;
 
 const PAYMENT_HISTORY_EVENT_SELECT_COLUMNS =
   "payment_order_id, event_type, event_payload, created_at";
@@ -471,6 +473,10 @@ function toHistoryOrder(
     providerStatus: order.provider_status,
     providerStatusDetail: order.provider_status_detail,
     providerPaymentId: order.provider_payment_id,
+    receiptHref:
+      order.provider_payment_id || order.provider_ticket_url
+        ? `/api/auth/me/payments/history/${encodeURIComponent(String(order.id))}/receipt`
+        : null,
     returnPaymentHref,
     card,
     paidAt: order.paid_at,

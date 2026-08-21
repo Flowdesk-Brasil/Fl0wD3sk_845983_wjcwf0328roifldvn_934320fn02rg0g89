@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { RefObject } from "react";
 import Image from "next/image";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowUpRight,
   ArrowRightLeft,
@@ -1457,6 +1457,7 @@ export function ServersWorkspace({
 }: ServersWorkspaceProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const currentAccount = useLiveAccountProfile(initialCurrentAccount);
   const workspaceCacheKey = `${currentAccount.authUserId}:${currentAccount.discordUserId ?? "no-discord"}`;
   const initialServersSnapshot =
@@ -2978,6 +2979,17 @@ export function ServersWorkspace({
     setIsTeamMenuOpen(false);
     setIsCreateTeamModalOpen(true);
   }, [resetCreateTeamForm]);
+
+  useEffect(() => {
+    if (searchParams.get("createTeam") !== "1") return;
+    openCreateTeamModal();
+
+    const nextParams = new URLSearchParams(searchParams.toString());
+    nextParams.delete("createTeam");
+    const nextQuery = nextParams.toString();
+    const nextUrl = `${pathname}${nextQuery ? `?${nextQuery}` : ""}`;
+    window.history.replaceState(null, "", nextUrl);
+  }, [openCreateTeamModal, pathname, searchParams]);
 
   useEffect(() => {
     setCreateTeamServerIds((current) => {

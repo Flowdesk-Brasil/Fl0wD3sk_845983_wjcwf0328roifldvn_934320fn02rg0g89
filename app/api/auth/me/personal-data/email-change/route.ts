@@ -32,6 +32,10 @@ type EmailChangeRow = {
   expires_at: string;
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 function extractClientIp(request: NextRequest) {
   return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || null;
 }
@@ -208,12 +212,29 @@ export async function POST(request: NextRequest) {
 
     if (action !== "verify") throw new Error("Acao invalida.");
     const code = body.code || "";
-    await verifyLoginOtpChallenge({
+    const verification = await verifyLoginOtpChallenge({
       challengeId,
       code,
       expectedPurposes: [
         stage === "current" ? "email_change_current" : "email_change_new",
       ],
+      beforeConsume: async (challenge) => {
+        const metadata = isRecord(challenge.metadata) ? challenge.metadata : {};
+        if (metadata.emailChangeId !== change.id) {
+          throw new EmailOtpError(
+            "Este codigo nao pertence a esta alteracao de email.",
+            400,
+            "email_change_mismatch",
+          );
+        }
+        if (challenge.userId !== session.user.id) {
+          throw new EmailOtpError(
+            "Este codigo nao pertence a esta conta.",
+            403,
+            "email_change_wrong_user",
+          );
+        }
+      },
     });
 
     const verifiedAt = new Date().toISOString();
@@ -252,6 +273,8 @@ export async function POST(request: NextRequest) {
         completed: currentVerified && newVerified,
         currentVerified,
         newVerified,
+        verifiedEmail: verification.email,
+        nextStage: currentVerified && !newVerified ? "new" : null,
         email: currentVerified && newVerified ? change.new_email : session.user.email,
         message:
           currentVerified && newVerified

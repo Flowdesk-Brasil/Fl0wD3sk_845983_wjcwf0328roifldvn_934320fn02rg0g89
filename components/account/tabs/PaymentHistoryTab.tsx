@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from "react";
 import { History, CheckCircle2, XCircle, AlertCircle, QrCode, CreditCard, Search, ChevronDown, MessageSquare, RotateCcw, ShieldAlert, ReceiptText } from "lucide-react";
 import { usePaymentHistory } from "@/hooks/useAccountData";
+import { buildOfficialDiscordChannelUrl } from "@/lib/discordLink/config";
 
 type OrderMethod = "pix" | "card" | "trial" | string;
 type OrderStatus = "approved" | "pending" | "rejected" | "cancelled" | "expired" | "failed" | "refunded" | "partially_refunded" | "charged_back" | string;
@@ -62,6 +63,7 @@ type Order = {
   providerStatus?: string | null;
   providerStatusDetail?: string | null;
   providerPaymentId?: string | null;
+  receiptHref?: string | null;
   returnPaymentHref?: string | null;
   technicalLabels?: string[];
   refund?: RefundSummary | null;
@@ -343,6 +345,7 @@ export function PaymentHistoryTab({ onNavigateTickets: _onNavigateTickets }: { o
 
   const groups = groupOrdersByMonth(paginatedOrders);
   const paginationItems = buildPaginationItems(totalPages, currentPage);
+  const officialDiscordHref = buildOfficialDiscordChannelUrl();
 
   return (
     <div className="mt-[32px] space-y-[24px]">
@@ -621,8 +624,21 @@ export function PaymentHistoryTab({ onNavigateTickets: _onNavigateTickets }: { o
                                   Retornar ao pagamento
                                 </a>
                               ) : null}
+                              {order.receiptHref ? (
+                                <a
+                                  href={order.receiptHref}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="flex w-fit items-center gap-[10px] rounded-[12px] border border-[rgba(138,180,248,0.22)] bg-[rgba(138,180,248,0.08)] px-[18px] py-[12px] text-[14px] font-bold text-[#CFE0FF] transition-all hover:border-[rgba(138,180,248,0.34)] hover:bg-[rgba(138,180,248,0.12)]"
+                                >
+                                  <ReceiptText className="h-[18px] w-[18px] text-[#8AB4F8]" />
+                                  Baixar comprovante
+                                </a>
+                              ) : null}
                                <a 
-                                 href="/support"
+                                 href={officialDiscordHref}
+                                 target="_blank"
+                                 rel="noopener noreferrer"
                                  className="flex items-center gap-[10px] rounded-[12px] bg-[rgba(255,255,255,0.05)] border border-[#222] px-[18px] py-[12px] text-[14px] font-bold text-white transition-all hover:bg-[rgba(255,255,255,0.08)] w-fit"
                                >
                                  <MessageSquare className="h-[18px] w-[18px] text-[#A0A0A0]" />

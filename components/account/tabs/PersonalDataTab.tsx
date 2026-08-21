@@ -125,6 +125,9 @@ const primaryButtonClassName =
   "inline-flex h-[40px] items-center justify-center gap-[8px] rounded-[12px] border border-[rgba(0,98,255,0.45)] bg-[#0062FF] px-[14px] text-[13px] font-semibold text-white transition-colors hover:bg-[#146FFF] disabled:cursor-not-allowed disabled:opacity-50";
 const inputClassName =
   "h-[44px] w-full rounded-[12px] border border-[#1A1A1A] bg-[#0D0D0D] px-[14px] text-[14px] text-[#E7E7E7] outline-none transition-colors placeholder:text-[#555555] focus:border-[#333333]";
+const inputErrorClassName =
+  "border-[rgba(219,70,70,0.72)] bg-[rgba(45,12,12,0.68)] focus:border-[rgba(219,70,70,0.92)]";
+const fieldErrorClassName = "mt-[7px] text-[12px] font-medium text-[#E19A9A]";
 const GITHUB_HANDOFF_STORAGE_KEY = "flowdesk_hosting_github_handoff_v1";
 const providerBrandAssets: Record<
   ProviderId,
@@ -305,16 +308,26 @@ export function PersonalDataTab() {
   const [emailChange, setEmailChange] = useState<EmailChangeState | null>(null);
   const [emailStage, setEmailStage] = useState<"start" | "current" | "new">("start");
   const [emailCode, setEmailCode] = useState("");
+  const [emailFieldErrors, setEmailFieldErrors] = useState<{
+    newEmail?: string;
+    code?: string;
+  }>({});
   const [passwordModalOpen, setPasswordModalOpen] = useState(false);
   const [passwordSecurityProof, setPasswordSecurityProof] = useState<string | null>(null);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPasswordValue, setNewPasswordValue] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [passwordVisible, setPasswordVisible] = useState(false);
+  const [passwordFieldErrors, setPasswordFieldErrors] = useState<{
+    currentPassword?: string;
+    newPassword?: string;
+    confirmPassword?: string;
+  }>({});
   const [totpModalOpen, setTotpModalOpen] = useState(false);
   const [totpQrCode, setTotpQrCode] = useState<string | null>(null);
   const [totpSecret, setTotpSecret] = useState<string | null>(null);
   const [totpCode, setTotpCode] = useState("");
+  const [totpFieldError, setTotpFieldError] = useState<string | null>(null);
   const liveProfileAuthUserId = data?.profile?.authUserId ?? null;
   const liveProfileAvatarUrl = data?.profile?.avatarUrl ?? null;
   const liveProfileDisplayName = data?.profile?.displayName ?? "";
@@ -727,6 +740,12 @@ export function PersonalDataTab() {
   }
 
   async function startEmailChange() {
+    const normalizedNewEmail = newEmail.trim();
+    if (!normalizedNewEmail) {
+      setEmailFieldErrors({ newEmail: "Informe o novo email." });
+      return;
+    }
+    setEmailFieldErrors({});
     setBusyAction("email");
     try {
       const payload = await jsonMutation(
@@ -743,8 +762,11 @@ export function PersonalDataTab() {
       setEmailCode("");
       notifications.success("Codigos enviados para confirmacao.", { title: "Alterar email" });
     } catch (emailError) {
+      const message =
+        emailError instanceof Error ? emailError.message : "Falha ao iniciar a alteracao.";
+      setEmailFieldErrors({ newEmail: message });
       notifications.error(
-        emailError instanceof Error ? emailError.message : "Falha ao iniciar a alteracao.",
+        message,
         { title: "Alterar email" },
       );
     } finally {
@@ -754,6 +776,11 @@ export function PersonalDataTab() {
 
   async function verifyEmailStage() {
     if (!emailChange || emailStage === "start") return;
+    if (emailCode.trim().length < 6) {
+      setEmailFieldErrors({ code: "Digite o codigo recebido por email." });
+      return;
+    }
+    setEmailFieldErrors({});
     setBusyAction("email");
     try {
       const payload = await jsonMutation(
@@ -772,12 +799,14 @@ export function PersonalDataTab() {
         await refresh();
         return;
       }
-      setEmailStage("new");
+      setEmailStage(payload.nextStage === "new" ? "new" : "new");
       setEmailCode("");
       notifications.success("Email atual confirmado.", { title: "Alterar email" });
     } catch (emailError) {
+      const message = emailError instanceof Error ? emailError.message : "Codigo invalido.";
+      setEmailFieldErrors({ code: message });
       notifications.error(
-        emailError instanceof Error ? emailError.message : "Codigo invalido.",
+        message,
         { title: "Alterar email" },
       );
     } finally {
@@ -787,6 +816,7 @@ export function PersonalDataTab() {
 
   async function resendEmailCode() {
     if (!emailChange || emailStage === "start") return;
+    setEmailFieldErrors({});
     setBusyAction("email-resend");
     try {
       await jsonMutation("/api/auth/me/personal-data/email-change", "POST", {
@@ -811,6 +841,7 @@ export function PersonalDataTab() {
     setEmailChange(null);
     setNewEmail("");
     setEmailCode("");
+    setEmailFieldErrors({});
     setEmailSecurityProof(null);
   }
 
@@ -833,6 +864,7 @@ export function PersonalDataTab() {
     setNewPasswordValue("");
     setConfirmPassword("");
     setPasswordVisible(false);
+    setPasswordFieldErrors({});
   }
 
   function openPasswordModal() {
@@ -848,6 +880,25 @@ export function PersonalDataTab() {
   }
 
   async function submitPassword() {
+    const nextErrors: typeof passwordFieldErrors = {};
+    if (data?.nativeConnected && !currentPassword) {
+      nextErrors.currentPassword = "Informe sua senha atual.";
+    }
+    if (!newPasswordValue) {
+      nextErrors.newPassword = "Informe a nova senha.";
+    } else if (!passwordChecklist.every((item) => item.valid)) {
+      nextErrors.newPassword = "A nova senha ainda nao cumpre todos os requisitos.";
+    }
+    if (!confirmPassword) {
+      nextErrors.confirmPassword = "Confirme a nova senha.";
+    } else if (newPasswordValue !== confirmPassword) {
+      nextErrors.confirmPassword = "As senhas nao conferem.";
+    }
+    if (Object.keys(nextErrors).length) {
+      setPasswordFieldErrors(nextErrors);
+      return;
+    }
+    setPasswordFieldErrors({});
     setBusyAction("password");
     try {
       const payload = await jsonMutation("/api/auth/me/personal-data/password", "POST", {
@@ -862,10 +913,17 @@ export function PersonalDataTab() {
       closePasswordModal();
       await refresh();
     } catch (passwordError) {
-      notifications.error(
+      const message =
         passwordError instanceof Error
           ? passwordError.message
-          : "Nao foi possivel atualizar a senha.",
+          : "Nao foi possivel atualizar a senha.";
+      setPasswordFieldErrors(
+        data?.nativeConnected
+          ? { currentPassword: message }
+          : { newPassword: message },
+      );
+      notifications.error(
+        message,
         { title: "Senha da conta" },
       );
     } finally {
@@ -954,6 +1012,7 @@ export function PersonalDataTab() {
   async function openTotpSetup(securityProof: string | null) {
     setTotpModalOpen(true);
     setTotpCode("");
+    setTotpFieldError(null);
     setBusyAction("totp-start");
     try {
       const payload = await jsonMutation("/api/auth/me/personal-data/totp", "POST", {
@@ -974,6 +1033,11 @@ export function PersonalDataTab() {
   }
 
   async function submitTotp() {
+    if (totpCode.length !== 6) {
+      setTotpFieldError("Digite os 6 digitos do autenticador.");
+      return;
+    }
+    setTotpFieldError(null);
     setBusyAction("totp");
     try {
       await jsonMutation("/api/auth/me/personal-data/totp", "POST", {
@@ -987,8 +1051,10 @@ export function PersonalDataTab() {
       setTotpCode("");
       await refresh();
     } catch (totpError) {
+      const message = totpError instanceof Error ? totpError.message : "Codigo invalido.";
+      setTotpFieldError(message);
       notifications.error(
-        totpError instanceof Error ? totpError.message : "Codigo invalido.",
+        message,
         { title: "Autenticacao em duas etapas" },
       );
     } finally {
@@ -1442,10 +1508,17 @@ export function PersonalDataTab() {
               <input
                 type="email"
                 value={newEmail}
-                onChange={(event) => setNewEmail(event.target.value)}
+                onChange={(event) => {
+                  setNewEmail(event.target.value);
+                  setEmailFieldErrors((current) => ({ ...current, newEmail: undefined }));
+                }}
                 placeholder="novo@email.com"
-                className={`${inputClassName} mt-[8px]`}
+                aria-invalid={Boolean(emailFieldErrors.newEmail)}
+                className={`${inputClassName} mt-[8px] ${emailFieldErrors.newEmail ? inputErrorClassName : ""}`}
               />
+              {emailFieldErrors.newEmail ? (
+                <p className={fieldErrorClassName}>{emailFieldErrors.newEmail}</p>
+              ) : null}
               <button
                 type="button"
                 onClick={() => void startEmailChange()}
@@ -1472,12 +1545,19 @@ export function PersonalDataTab() {
                 autoComplete="one-time-code"
                 value={emailCode}
                 onChange={(event) =>
-                  setEmailCode(event.target.value.toUpperCase().replace(/\s+/g, ""))
+                  {
+                    setEmailCode(event.target.value.toUpperCase().replace(/\s+/g, ""));
+                    setEmailFieldErrors((current) => ({ ...current, code: undefined }));
+                  }
                 }
                 placeholder="CODIGO"
                 maxLength={8}
-                className={`${inputClassName} mt-[16px] text-center font-mono text-[18px]`}
+                aria-invalid={Boolean(emailFieldErrors.code)}
+                className={`${inputClassName} mt-[16px] text-center font-mono text-[18px] ${emailFieldErrors.code ? inputErrorClassName : ""}`}
               />
+              {emailFieldErrors.code ? (
+                <p className={`${fieldErrorClassName} text-center`}>{emailFieldErrors.code}</p>
+              ) : null}
               <button
                 type="button"
                 onClick={() => void verifyEmailStage()}
@@ -1517,9 +1597,16 @@ export function PersonalDataTab() {
                   type={passwordVisible ? "text" : "password"}
                   autoComplete="current-password"
                   value={currentPassword}
-                  onChange={(event) => setCurrentPassword(event.target.value)}
-                  className={`${inputClassName} mt-[7px]`}
+                  onChange={(event) => {
+                    setCurrentPassword(event.target.value);
+                    setPasswordFieldErrors((current) => ({ ...current, currentPassword: undefined }));
+                  }}
+                  aria-invalid={Boolean(passwordFieldErrors.currentPassword)}
+                  className={`${inputClassName} mt-[7px] ${passwordFieldErrors.currentPassword ? inputErrorClassName : ""}`}
                 />
+                {passwordFieldErrors.currentPassword ? (
+                  <p className={fieldErrorClassName}>{passwordFieldErrors.currentPassword}</p>
+                ) : null}
               </label>
             ) : null}
             <label className="block">
@@ -1529,8 +1616,12 @@ export function PersonalDataTab() {
                   type={passwordVisible ? "text" : "password"}
                   autoComplete="new-password"
                   value={newPasswordValue}
-                  onChange={(event) => setNewPasswordValue(event.target.value)}
-                  className={`${inputClassName} pr-[46px]`}
+                  onChange={(event) => {
+                    setNewPasswordValue(event.target.value);
+                    setPasswordFieldErrors((current) => ({ ...current, newPassword: undefined }));
+                  }}
+                  aria-invalid={Boolean(passwordFieldErrors.newPassword)}
+                  className={`${inputClassName} pr-[46px] ${passwordFieldErrors.newPassword ? inputErrorClassName : ""}`}
                 />
                 <button
                   type="button"
@@ -1545,6 +1636,9 @@ export function PersonalDataTab() {
                   )}
                 </button>
               </div>
+              {passwordFieldErrors.newPassword ? (
+                <p className={fieldErrorClassName}>{passwordFieldErrors.newPassword}</p>
+              ) : null}
             </label>
             <label className="block">
               <span className="text-[12px] font-medium text-[#8A8A8A]">Confirmar nova senha</span>
@@ -1552,9 +1646,16 @@ export function PersonalDataTab() {
                 type={passwordVisible ? "text" : "password"}
                 autoComplete="new-password"
                 value={confirmPassword}
-                onChange={(event) => setConfirmPassword(event.target.value)}
-                className={`${inputClassName} mt-[7px]`}
+                onChange={(event) => {
+                  setConfirmPassword(event.target.value);
+                  setPasswordFieldErrors((current) => ({ ...current, confirmPassword: undefined }));
+                }}
+                aria-invalid={Boolean(passwordFieldErrors.confirmPassword)}
+                className={`${inputClassName} mt-[7px] ${passwordFieldErrors.confirmPassword ? inputErrorClassName : ""}`}
               />
+              {passwordFieldErrors.confirmPassword ? (
+                <p className={fieldErrorClassName}>{passwordFieldErrors.confirmPassword}</p>
+              ) : null}
             </label>
             <div className="grid gap-[6px] rounded-[12px] border border-[#171717] bg-[#0C0C0C] p-[12px] sm:grid-cols-2">
               {passwordChecklist.map((item) => (
@@ -1617,10 +1718,17 @@ export function PersonalDataTab() {
             inputMode="numeric"
             autoComplete="one-time-code"
             value={totpCode}
-            onChange={(event) => setTotpCode(event.target.value.replace(/\D+/g, "").slice(0, 6))}
+            onChange={(event) => {
+              setTotpCode(event.target.value.replace(/\D+/g, "").slice(0, 6));
+              setTotpFieldError(null);
+            }}
             placeholder="000000"
-            className={`${inputClassName} mt-[16px] text-center font-mono text-[18px]`}
+            aria-invalid={Boolean(totpFieldError)}
+            className={`${inputClassName} mt-[16px] text-center font-mono text-[18px] ${totpFieldError ? inputErrorClassName : ""}`}
           />
+          {totpFieldError ? (
+            <p className={`${fieldErrorClassName} text-center`}>{totpFieldError}</p>
+          ) : null}
           <button
             type="button"
             onClick={() => void submitTotp()}
