@@ -11,7 +11,6 @@ import {
   Clock3,
   History,
   Loader2,
-  Save,
   Send,
   ShieldCheck,
   UserRound,
@@ -295,13 +294,58 @@ function SectionTitle({
   );
 }
 
-const VIEW_ITEMS: Array<{ id: TimeclockView; label: string; icon: typeof Activity }> = [
-  { id: "config", label: "Configuracao", icon: CalendarClock },
-  { id: "live", label: "Acompanhamento", icon: Activity },
-  { id: "history", label: "Historico", icon: History },
-  { id: "ranking", label: "Ranking", icon: BarChart3 },
-  { id: "audit", label: "Auditoria", icon: ClipboardList },
-];
+function TimeclockInlineSwitch({
+  checked,
+  onChange,
+  disabled = false,
+  ariaLabel,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  disabled?: boolean;
+  ariaLabel: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onChange}
+      disabled={disabled}
+      aria-pressed={checked}
+      aria-label={ariaLabel}
+      className={`group relative inline-flex h-[30px] w-[54px] shrink-0 items-center rounded-full border p-[3px] transition-all duration-200 ease-out disabled:cursor-not-allowed disabled:opacity-50 ${
+        checked
+          ? "border-[rgba(255,255,255,0.14)] bg-[linear-gradient(180deg,#F3F3F3_0%,#D8D8D8_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.36),0_12px_26px_rgba(0,0,0,0.16)]"
+          : "border-[#1F1F1F] bg-[linear-gradient(180deg,#141414_0%,#0D0D0D_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.035)] hover:border-[#292929]"
+      }`}
+    >
+      <span
+        aria-hidden="true"
+        className={`pointer-events-none absolute inset-[3px] rounded-full transition-opacity duration-200 ${
+          checked
+            ? "bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.24)_0%,rgba(255,255,255,0.05)_58%,transparent_100%)]"
+            : "bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05)_0%,transparent_72%)]"
+        }`}
+      />
+      <span
+        aria-hidden="true"
+        className={`relative z-10 h-[24px] w-[24px] rounded-full border transition-all duration-200 ease-out ${
+          checked
+            ? "translate-x-[24px] border-[#0B0B0B] bg-[linear-gradient(180deg,#111111_0%,#050505_100%)] shadow-[0_8px_18px_rgba(0,0,0,0.34)]"
+            : "translate-x-0 border-[#252525] bg-[linear-gradient(180deg,#7D7D7D_0%,#5A5A5A_100%)] shadow-[0_8px_18px_rgba(0,0,0,0.26)]"
+        }`}
+      />
+    </button>
+  );
+}
+
+function normalizeTimeclockDraftForCompare(draft: TimeclockSettingsPayload | null) {
+  if (!draft) return null;
+  return {
+    ...draft,
+    panelLayout: normalizeTicketPanelLayout(draft.panelLayout || DEFAULT_PANEL_LAYOUT),
+    scheduleDays: [...draft.scheduleDays].map(normalizeScheduleDay).sort((a, b) => a.weekday - b.weekday),
+  };
+}
 
 export function TimeclockPanel({
   guildId,
@@ -313,6 +357,7 @@ export function TimeclockPanel({
 }: Props) {
   const [activeView, setActiveView] = useState<TimeclockView>(view);
   const [draft, setDraft] = useState<TimeclockSettingsPayload | null>(null);
+  const [savedDraft, setSavedDraft] = useState<TimeclockSettingsPayload | null>(null);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [feedback, setFeedback] = useState<{ tone: "success" | "error"; text: string } | null>(null);
@@ -349,7 +394,7 @@ export function TimeclockPanel({
 
   useEffect(() => {
     if (!settingsPayload?.settings) return;
-    setDraft({
+    const normalizedSettings = {
       ...settingsPayload.settings,
       panelLayout: normalizeTicketPanelLayout(
         settingsPayload.settings.panelLayout || DEFAULT_PANEL_LAYOUT,
@@ -358,10 +403,24 @@ export function TimeclockPanel({
         ? settingsPayload.settings.scheduleDays
         : createDefaultScheduleDays()
       ).map(normalizeScheduleDay),
-    });
+    };
+    setDraft(normalizedSettings);
+    setSavedDraft(normalizedSettings);
   }, [settingsPayload]);
 
-  const controlsDisabled = Boolean(disabled || saving || settingsLoading || !draft);
+  const moduleControlsDisabled = Boolean(disabled || saving || settingsLoading || !draft);
+  const controlsDisabled = Boolean(moduleControlsDisabled || !draft?.enabled);
+  const draftFingerprint = useMemo(
+    () => JSON.stringify(normalizeTimeclockDraftForCompare(draft)),
+    [draft],
+  );
+  const savedDraftFingerprint = useMemo(
+    () => JSON.stringify(normalizeTimeclockDraftForCompare(savedDraft)),
+    [savedDraft],
+  );
+  const hasUnsavedChanges = Boolean(draft && savedDraft && draftFingerprint !== savedDraftFingerprint);
+  const canSave = Boolean(draft && hasUnsavedChanges && !saving && !disabled);
+  const canReset = Boolean(savedDraft && hasUnsavedChanges && !saving && !disabled);
   const selectedMainChannelMissing = Boolean(
     draft?.mainChannelId &&
       !textChannelOptions.some((channel) => channel.id === draft.mainChannelId),
@@ -372,6 +431,7 @@ export function TimeclockPanel({
   );
 
   const setScheduleDay = useCallback((weekday: number, patch: Partial<TimeclockScheduleDay>) => {
+    setFeedback(null);
     setDraft((current) => {
       if (!current) return current;
       const scheduleDays = current.scheduleDays.map((day) =>
@@ -385,8 +445,15 @@ export function TimeclockPanel({
     key: K,
     value: TimeclockSettingsPayload[K],
   ) => {
+    setFeedback(null);
     setDraft((current) => current ? { ...current, [key]: value } : current);
   }, []);
+
+  const handleReset = useCallback(() => {
+    if (!savedDraft || saving) return;
+    setDraft(savedDraft);
+    setFeedback(null);
+  }, [savedDraft, saving]);
 
   const handleSave = useCallback(async () => {
     if (!draft) return;
@@ -402,7 +469,16 @@ export function TimeclockPanel({
       if (!response.ok || payload.ok === false) {
         throw new Error(payload.message || "Nao foi possivel salvar Bate Ponto.");
       }
-      setDraft(payload.settings);
+      const savedSettings = {
+        ...payload.settings,
+        panelLayout: normalizeTicketPanelLayout(payload.settings.panelLayout || DEFAULT_PANEL_LAYOUT),
+        scheduleDays: (payload.settings.scheduleDays?.length
+          ? payload.settings.scheduleDays
+          : createDefaultScheduleDays()
+        ).map(normalizeScheduleDay),
+      };
+      setDraft(savedSettings);
+      setSavedDraft(savedSettings);
       setFeedback({ tone: "success", text: "Configuracoes do Bate Ponto salvas." });
       await mutateSettings(payload, { revalidate: false });
       await mutateSummary();
@@ -462,6 +538,18 @@ export function TimeclockPanel({
       day: byWeekday.get(weekday) || normalizeScheduleDay({ weekday }),
     }));
   }, [draft?.scheduleDays]);
+  const showFloatingSaveBar = Boolean(draft && !disabled && (hasUnsavedChanges || saving));
+  const saveBarHasError = feedback?.tone === "error" && hasUnsavedChanges;
+  const saveBarTitle = saveBarHasError
+    ? "Nao foi possivel salvar agora"
+    : saving
+      ? "Salvando alteracoes do Bate Ponto..."
+      : "Cuidado - voce tem alteracoes que nao foram salvas!";
+  const saveBarDescription = saveBarHasError
+    ? feedback.text
+    : saving
+      ? "Estamos sincronizando canais, cargos, escala e regras deste modulo."
+      : "Revise as configuracoes abaixo e confirme para manter o ponto do servidor atualizado.";
 
   if (settingsLoading && !draft) {
     return (
@@ -485,84 +573,45 @@ export function TimeclockPanel({
   if (!draft) return null;
 
   return (
-    <section className="space-y-[14px]">
+    <section className={`space-y-[14px] ${showFloatingSaveBar ? "pb-[112px]" : ""}`}>
       <div className="rounded-[22px] border border-[#151515] bg-[#080808] px-[18px] py-[18px] shadow-[0_22px_60px_rgba(0,0,0,0.28)]">
-        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-end lg:justify-between">
-          <SectionTitle
-            icon={Clock3}
-            title="Bate Ponto"
-            description="Controle jornada, pausas, banco de horas, ranking e auditoria usando Discord e painel como interfaces da mesma fonte de verdade."
-          />
-          <div className="flex flex-wrap items-center gap-[8px]">
-            <button
-              type="button"
-              onClick={() => updateDraft("enabled", !draft.enabled)}
-              disabled={controlsDisabled}
-              className={`inline-flex h-[40px] items-center gap-[9px] rounded-[13px] border px-[13px] text-[13px] font-medium transition-colors ${
-                draft.enabled
-                  ? "border-[#244D30] bg-[#0C1B10] text-[#9DE6AE]"
-                  : "border-[#1A1A1A] bg-[#0D0D0D] text-[#9A9A9A]"
-              } ${controlsDisabled ? "cursor-not-allowed opacity-60" : "hover:border-[#2A2A2A]"}`}
-            >
-              <span className={`h-[8px] w-[8px] rounded-full ${draft.enabled ? "bg-[#55D875]" : "bg-[#666]"}`} />
-              {draft.enabled ? "Ativado" : "Desativado"}
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={controlsDisabled}
-              className="inline-flex h-[40px] items-center gap-[8px] rounded-[13px] border border-[#1A1A1A] bg-[#0D0D0D] px-[13px] text-[13px] font-medium text-[#D8D8D8] transition-colors hover:border-[#282828] disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {saving ? <Loader2 className="h-[15px] w-[15px] animate-spin" /> : <Save className="h-[15px] w-[15px]" />}
-              Salvar
-            </button>
-            <button
-              type="button"
-              onClick={handlePublish}
-              disabled={controlsDisabled || publishing || !draft.enabled}
-              className="inline-flex h-[40px] items-center gap-[8px] rounded-[13px] bg-[#E8E8E8] px-[13px] text-[13px] font-semibold text-[#111] transition-transform hover:scale-[1.015] disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:scale-100"
-            >
-              {publishing ? <Loader2 className="h-[15px] w-[15px] animate-spin" /> : <Send className="h-[15px] w-[15px]" />}
-              Publicar
-            </button>
-          </div>
-        </div>
-
-        {feedback ? (
-          <div className={`mt-[18px] rounded-[18px] border px-[14px] py-[12px] text-[13px] ${
-            feedback.tone === "success"
-              ? "border-[#1B3C24] bg-[#09140D] text-[#9DE6AE]"
-              : "border-[#3A1B1B] bg-[#120808] text-[#E7A5A5]"
-          }`}>
-            {feedback.text}
-          </div>
-        ) : null}
-
-        <div className="mt-[16px] flex flex-wrap gap-[7px]">
-          {VIEW_ITEMS.map((item) => {
-            const Icon = item.icon;
-            const active = activeView === item.id;
-            return (
-              <span
-                key={item.id}
-                className={`inline-flex h-[34px] items-center gap-[7px] rounded-[12px] px-[11px] text-[12px] font-medium ${
-                  active
-                    ? "bg-[#1A1A1A] text-[#F0F0F0]"
-                    : "bg-[#0B0B0B] text-[#777]"
-                }`}
-              >
-                <Icon className="h-[14px] w-[14px]" />
-                {item.label}
-              </span>
-            );
-          })}
-        </div>
+        <SectionTitle
+          icon={Clock3}
+          title="Bate Ponto"
+          description="Controle jornada, pausas, banco de horas, ranking e auditoria usando Discord e painel como interfaces da mesma fonte de verdade."
+        />
       </div>
 
       {activeView === "config" ? (
         <div className="space-y-[14px]">
-          <div className="grid gap-[14px] xl:grid-cols-[minmax(0,1fr)_340px]">
-            <div className="rounded-[22px] border border-[#151515] bg-[#080808] px-[18px] py-[18px]">
+          <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+            <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
+                  Modulo Bate Ponto
+                </p>
+                <h3 className="mt-[10px] text-[22px] leading-none font-medium text-[#D1D1D1]">
+                  Mantenha o controle de jornada em operacao
+                </h3>
+                <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                  O Flowdesk libera registro de ponto, pausas, historico e banco de horas quando o modulo estiver ativo.
+                </p>
+              </div>
+
+              <TimeclockInlineSwitch
+                checked={draft.enabled}
+                onChange={() => {
+                  if (moduleControlsDisabled) return;
+                  updateDraft("enabled", !draft.enabled);
+                }}
+                disabled={moduleControlsDisabled}
+                ariaLabel="Ativar ou desativar modulo de Bate Ponto"
+              />
+            </div>
+          </div>
+
+          <div className="grid items-start gap-[14px] xl:grid-cols-[minmax(0,1fr)_340px]">
+            <div className="h-fit rounded-[22px] border border-[#151515] bg-[#080808] px-[18px] py-[18px]">
               <SectionTitle
                 icon={Send}
                 title="Canal e mensagem"
@@ -595,7 +644,7 @@ export function TimeclockPanel({
               ) : null}
             </div>
 
-            <div className="rounded-[22px] border border-[#151515] bg-[#080808] px-[18px] py-[18px]">
+            <div className="h-fit rounded-[22px] border border-[#151515] bg-[#080808] px-[18px] py-[18px]">
               <SectionTitle
                 icon={ShieldCheck}
                 title="Regras gerais"
@@ -664,6 +713,37 @@ export function TimeclockPanel({
             description="Monte a mensagem publica do ponto. O botao funcional abre o painel privado do funcionario no Discord."
             thumbnailPreviewUrl={null}
           />
+
+          <div className="rounded-[22px] border border-[#151515] bg-[#080808] px-[18px] py-[16px]">
+            <div className="flex flex-col gap-[14px] md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-[12px] uppercase tracking-[0.16em] text-[#666]">
+                  Publicacao
+                </p>
+                <p className="mt-[8px] text-[14px] leading-[1.5] text-[#7B7B7B]">
+                  Envie ou atualize a mensagem publica de Bate Ponto no canal principal configurado.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handlePublish}
+                disabled={controlsDisabled || publishing || !draft.enabled || hasUnsavedChanges}
+                className="inline-flex h-[42px] shrink-0 items-center justify-center gap-[8px] rounded-[13px] bg-[#E8E8E8] px-[16px] text-[13px] font-semibold text-[#111] transition-transform hover:scale-[1.015] disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:scale-100"
+              >
+                {publishing ? <Loader2 className="h-[15px] w-[15px] animate-spin" /> : <Send className="h-[15px] w-[15px]" />}
+                Publicar no Discord
+              </button>
+            </div>
+            {feedback ? (
+              <div className={`mt-[12px] rounded-[16px] border px-[14px] py-[12px] text-[13px] ${
+                feedback.tone === "success"
+                  ? "border-[#1B3C24] bg-[#09140D] text-[#9DE6AE]"
+                  : "border-[#3A1B1B] bg-[#120808] text-[#E7A5A5]"
+              }`}>
+                {feedback.text}
+              </div>
+            ) : null}
+          </div>
 
           <div className="rounded-[22px] border border-[#151515] bg-[#080808] px-[18px] py-[18px]">
             <SectionTitle
@@ -887,6 +967,84 @@ export function TimeclockPanel({
                 Nenhum evento de auditoria encontrado.
               </div>
             ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {showFloatingSaveBar ? (
+        <div className="pointer-events-none fixed inset-x-0 bottom-[18px] z-[120] px-[18px]">
+          <div className="mx-auto w-full max-w-[940px] pointer-events-auto">
+            <div className="relative overflow-hidden rounded-[26px] shadow-[0_24px_90px_rgba(0,0,0,0.52)]">
+              <span
+                aria-hidden="true"
+                className={`pointer-events-none absolute inset-[-1px] rounded-[26px] ${
+                  saveBarHasError ? "flowdesk-tag-border-core-danger" : "flowdesk-tag-border-core"
+                }`}
+              />
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-[1px] rounded-[25px] bg-[#070707]"
+              />
+              <div className="relative z-10 flex flex-col gap-[16px] px-[18px] py-[16px] sm:px-[22px] sm:py-[18px] xl:flex-row xl:items-center xl:justify-between">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[16px] leading-[1.2] font-medium text-[#D8D8D8]">
+                    {saveBarTitle}
+                  </p>
+                  <p className="mt-[8px] max-w-[680px] text-[13px] leading-[1.55] text-[#7F7F7F]">
+                    {saveBarDescription}
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-col-reverse gap-[10px] sm:flex-row sm:items-center">
+                  <button
+                    type="button"
+                    onClick={handleReset}
+                    disabled={!canReset}
+                    className={`group relative inline-flex h-[46px] items-center justify-center overflow-hidden whitespace-nowrap rounded-[12px] px-6 text-[15px] leading-none font-semibold transition-colors ${
+                      canReset ? "" : "cursor-not-allowed"
+                    }`}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={`absolute inset-0 rounded-[12px] border transition-colors ${
+                        canReset
+                          ? "border-[#1B1B1B] bg-[#111111]"
+                          : "border-[#151515] bg-[#0E0E0E]"
+                      }`}
+                    />
+                    <span className={`relative z-10 ${canReset ? "text-[#D0D0D0]" : "text-[#666666]"}`}>
+                      Redefinir
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleSave();
+                    }}
+                    disabled={!canSave}
+                    className={`group relative inline-flex h-[46px] items-center justify-center overflow-hidden whitespace-nowrap rounded-[12px] px-6 text-[15px] leading-none font-semibold ${
+                      canSave ? "" : "cursor-not-allowed"
+                    }`}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={`absolute inset-0 rounded-[12px] transition-transform duration-150 ease-out ${
+                        canSave || saving
+                          ? "bg-[linear-gradient(180deg,#FFFFFF_0%,#D1D1D1_100%)] group-hover:scale-[1.02] group-active:scale-[0.985]"
+                          : "bg-[#111111]"
+                      }`}
+                    />
+                    <span className={`relative z-10 text-[#282828] transition-opacity ${saving ? "opacity-0" : "opacity-100"}`}>
+                      Salvar alteracoes
+                    </span>
+                    {saving ? (
+                      <span className="absolute inset-0 z-20 inline-flex items-center justify-center">
+                        <Loader2 className="h-[20px] w-[20px] animate-spin text-[#282828]" />
+                      </span>
+                    ) : null}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       ) : null}
