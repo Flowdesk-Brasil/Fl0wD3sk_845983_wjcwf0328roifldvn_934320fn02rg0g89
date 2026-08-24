@@ -1,6 +1,4 @@
 import { redirect } from "next/navigation";
-import { ServersWorkspace } from "@/components/servers/ServersWorkspace";
-import { getServersWorkspaceBootstrap } from "@/lib/servers/serversWorkspaceBootstrap";
 
 type ServersTicketTimeclockPageProps = {
   params: Promise<{
@@ -17,7 +15,6 @@ function normalizeGuildId(value: string | null) {
 export default async function ServersTicketTimeclockPage({
   params,
 }: ServersTicketTimeclockPageProps) {
-  const workspace = await getServersWorkspaceBootstrap();
   const routeParams = await params;
   const safeGuildId = normalizeGuildId(routeParams.guildId);
 
@@ -25,16 +22,5 @@ export default async function ServersTicketTimeclockPage({
     redirect("/servers/");
   }
 
-  return (
-    <ServersWorkspace
-      displayName={workspace.displayName}
-      currentAccount={workspace.currentAccount}
-      initialServers={workspace.initialServers}
-      initialTeams={workspace.initialTeams}
-      initialPendingInvites={workspace.initialPendingInvites}
-      initialGuildId={safeGuildId}
-      initialTab="settings"
-      initialSettingsSection="timeclock_config"
-    />
-  );
+  redirect(`/servers/${safeGuildId}/timeclock/configuracao/`);
 }

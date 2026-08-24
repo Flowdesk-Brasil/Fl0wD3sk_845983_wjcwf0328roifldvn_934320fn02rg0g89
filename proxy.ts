@@ -420,6 +420,25 @@ function maybeBuildCanonicalPaymentRedirect(
   return null;
 }
 
+function maybeBuildLegacyTimeclockRedirect(
+  request: NextRequest,
+  requestId: string,
+  csp: string,
+) {
+  const match = request.nextUrl.pathname.match(
+    /^\/servers\/(\d{10,25})\/tickets\/timeclock\/?$/,
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  const targetUrl = request.nextUrl.clone();
+  targetUrl.pathname = `/servers/${match[1]}/timeclock/configuracao`;
+
+  return buildRedirectResponse(request, requestId, csp, targetUrl.toString(), 308);
+}
+
 function maybeBuildLoginErrorFlashRedirect(
   request: NextRequest,
   requestId: string,
@@ -633,6 +652,15 @@ export async function proxy(request: NextRequest) {
     applyFlowSecureTransportPriority(response, request);
 
     return response;
+  }
+
+  const legacyTimeclockRedirectResponse = maybeBuildLegacyTimeclockRedirect(
+    request,
+    requestId,
+    csp,
+  );
+  if (legacyTimeclockRedirectResponse) {
+    return legacyTimeclockRedirectResponse;
   }
 
   const trailingSlashRedirectResponse = maybeBuildTrailingSlashRedirect(
