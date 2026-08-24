@@ -10,9 +10,6 @@ export const TIMECLOCK_CUSTOM_IDS = {
 const COMPONENT_TYPE = {
   ACTION_ROW: 1,
   BUTTON: 2,
-  TEXT_DISPLAY: 10,
-  SEPARATOR: 14,
-  CONTAINER: 17,
 } as const;
 
 const BUTTON_STYLE = {
@@ -23,7 +20,6 @@ const BUTTON_STYLE = {
 } as const;
 
 const MESSAGE_FLAG_EPHEMERAL = 64;
-const MESSAGE_FLAG_IS_COMPONENTS_V2 = 32768;
 
 type TimeclockActionResult = {
   status: string;
@@ -98,36 +94,18 @@ function buildStatusMarkdown(result: TimeclockActionResult) {
   ].filter(Boolean).join("\n");
 }
 
+function statusColor(status: string) {
+  if (status === "WORKING") return 0x2ecc71;
+  if (status === "PAUSED") return 0xffb86b;
+  if (status === "FINISHED") return 0x8ab6ff;
+  return 0x5865f2;
+}
+
 export function buildTimeclockStatusDiscordPayload(
   result: TimeclockActionResult,
   options: { ephemeral?: boolean; notice?: string } = {},
 ) {
   const components = [
-    {
-      type: COMPONENT_TYPE.CONTAINER,
-      accent_color:
-        result.status === "WORKING"
-          ? 0x2ecc71
-          : result.status === "PAUSED"
-            ? 0xffb86b
-            : result.status === "FINISHED"
-              ? 0x8ab6ff
-              : 0x5865f2,
-      components: [
-        {
-          type: COMPONENT_TYPE.TEXT_DISPLAY,
-          content: [
-            options.notice ? `**${options.notice}**` : "",
-            buildStatusMarkdown(result),
-          ].filter(Boolean).join("\n\n"),
-        },
-        {
-          type: COMPONENT_TYPE.SEPARATOR,
-          divider: true,
-          spacing: 1,
-        },
-      ],
-    },
     {
       type: COMPONENT_TYPE.ACTION_ROW,
       components: [
@@ -157,7 +135,15 @@ export function buildTimeclockStatusDiscordPayload(
   ];
 
   return {
-    flags: MESSAGE_FLAG_IS_COMPONENTS_V2 | (options.ephemeral === false ? 0 : MESSAGE_FLAG_EPHEMERAL),
+    content: options.notice ? `**${options.notice}**` : undefined,
+    embeds: [
+      {
+        title: "Seu ponto",
+        description: buildStatusMarkdown(result).replace(/^## Seu ponto\n?/, ""),
+        color: statusColor(result.status),
+      },
+    ],
+    flags: options.ephemeral === false ? 0 : MESSAGE_FLAG_EPHEMERAL,
     components,
     allowed_mentions: { parse: [] as string[] },
   };
@@ -165,19 +151,13 @@ export function buildTimeclockStatusDiscordPayload(
 
 export function buildTimeclockTextDiscordPayload(content: string) {
   return {
-    flags: MESSAGE_FLAG_IS_COMPONENTS_V2 | MESSAGE_FLAG_EPHEMERAL,
-    components: [
+    embeds: [
       {
-        type: COMPONENT_TYPE.CONTAINER,
-        accent_color: 0x8ab6ff,
-        components: [
-          {
-            type: COMPONENT_TYPE.TEXT_DISPLAY,
-            content,
-          },
-        ],
+        description: content,
+        color: 0x8ab6ff,
       },
     ],
+    flags: MESSAGE_FLAG_EPHEMERAL,
     allowed_mentions: { parse: [] as string[] },
   };
 }

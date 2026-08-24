@@ -6,7 +6,10 @@ import {
 } from "@/lib/security/flowSecure";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import { hasSecureInternalTokenAuth } from "@/lib/security/internalTokens";
-import { sanitizeErrorMessage } from "@/lib/security/errors";
+import {
+  extractAuditErrorMessage,
+  sanitizePublicErrorMessage,
+} from "@/lib/security/errors";
 import {
   applyTimeclockAction,
   getTimeclockDashboard,
@@ -79,7 +82,24 @@ function buildRankingContent(payload: Awaited<ReturnType<typeof getTimeclockDash
   ].join("\n");
 }
 
+function resolveTimeclockInternalError(error: unknown) {
+  const message = sanitizePublicErrorMessage(error, "Erro ao processar Bate Ponto.");
+  const lowered = message.toLowerCase();
+  const status =
+    lowered.includes("desativado") ||
+    lowered.includes("sem schema") ||
+    lowered.includes("migration") ||
+    lowered.includes("cargo autorizado") ||
+    lowered.includes("nao existe jornada") ||
+    lowered.includes("intervalo aberto")
+      ? 409
+      : 500;
+
+  return { message, status };
+}
+
 export async function POST(request: Request) {
+  const requestId = crypto.randomUUID();
   try {
     if (!isAuthorized(request)) {
       return applyNoStoreHeaders(
@@ -218,16 +238,22 @@ export async function POST(request: Request) {
       }),
     );
   } catch (error) {
+    const resolvedError = resolveTimeclockInternalError(error);
+    console.error("[timeclock-internal] falha ao processar acao do Discord:", {
+      requestId,
+      message: extractAuditErrorMessage(error, "unknown_timeclock_error"),
+    });
     return applyNoStoreHeaders(
       NextResponse.json(
         {
           ok: false,
-          message: sanitizeErrorMessage(error, "Erro ao processar Bate Ponto."),
+          requestId,
+          message: resolvedError.message,
           discordPayload: buildTimeclockTextDiscordPayload(
-            sanitizeErrorMessage(error, "Erro ao processar Bate Ponto."),
+            resolvedError.message,
           ),
         },
-        { status: 500 },
+        { status: resolvedError.status },
       ),
     );
   }
