@@ -140,7 +140,6 @@ function readCategoryBody(payload: unknown, input?: { requireCategoryCode?: bool
         flowSecureDto.string({
           maxLength: CATEGORY_DESCRIPTION_MAX_LENGTH,
           allowEmpty: true,
-          normalizeWhitespace: true,
         }),
       ),
       seoTitle: flowSecureDto.optional(
@@ -154,7 +153,6 @@ function readCategoryBody(payload: unknown, input?: { requireCategoryCode?: bool
         flowSecureDto.string({
           maxLength: SEO_DESCRIPTION_MAX_LENGTH,
           allowEmpty: true,
-          normalizeWhitespace: true,
         }),
       ),
       collectionType: flowSecureDto.optional(flowSecureDto.enum(["manual", "smart"] as const)),

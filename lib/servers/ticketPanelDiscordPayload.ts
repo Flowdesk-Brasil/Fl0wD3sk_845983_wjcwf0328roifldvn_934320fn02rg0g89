@@ -48,6 +48,7 @@ type JsonRecord = Record<string, unknown>;
 
 type BuildState = {
   hasInteractiveOpenAction: boolean;
+  interactiveCustomId: string;
 };
 
 type AnyPanelComponent = TicketPanelComponent | TicketPanelContainerChild;
@@ -99,7 +100,7 @@ function buildButton(
   state.hasInteractiveOpenAction = true;
   return {
     type: COMPONENT_TYPE.BUTTON,
-    custom_id: OPEN_TICKET_CUSTOM_ID,
+    custom_id: state.interactiveCustomId,
     style: resolveButtonStyle(component.style),
     label: component.label.trim() || DEFAULT_TICKET_PANEL_BUTTON_LABEL,
     disabled: Boolean(component.disabled),
@@ -310,11 +311,15 @@ function buildComponentList(
   return built;
 }
 
-export function buildTicketPanelDispatchPayload(layoutInput: TicketPanelLayout) {
+export function buildTicketPanelDispatchPayload(
+  layoutInput: TicketPanelLayout,
+  options: { interactiveCustomId?: string } = {},
+) {
   const layout = normalizeTicketPanelLayout(layoutInput);
   const derived = deriveLegacyTicketPanelFields(layout);
   const state: BuildState = {
     hasInteractiveOpenAction: false,
+    interactiveCustomId: options.interactiveCustomId || OPEN_TICKET_CUSTOM_ID,
   };
 
   const components = buildComponentList(layout, state);
@@ -325,7 +330,7 @@ export function buildTicketPanelDispatchPayload(layoutInput: TicketPanelLayout) 
       components: [
         {
           type: COMPONENT_TYPE.BUTTON,
-          custom_id: OPEN_TICKET_CUSTOM_ID,
+          custom_id: state.interactiveCustomId,
           style: BUTTON_STYLE.PRIMARY,
           label: derived.panelButtonLabel || DEFAULT_TICKET_PANEL_BUTTON_LABEL,
         },
@@ -340,7 +345,10 @@ export function buildTicketPanelDispatchPayload(layoutInput: TicketPanelLayout) 
   };
 }
 
-export function ticketPanelMessageLooksManaged(message: unknown) {
+export function ticketPanelMessageLooksManaged(
+  message: unknown,
+  options: { interactiveCustomId?: string } = {},
+) {
   if (!message || typeof message !== "object") return false;
   const record = message as Record<string, unknown>;
   const author = record.author as Record<string, unknown> | undefined;
@@ -351,7 +359,7 @@ export function ticketPanelMessageLooksManaged(message: unknown) {
     for (const component of components) {
       if (!component || typeof component !== "object") continue;
       const recordComponent = component as Record<string, unknown>;
-      if (recordComponent.custom_id === OPEN_TICKET_CUSTOM_ID) {
+      if (recordComponent.custom_id === (options.interactiveCustomId || OPEN_TICKET_CUSTOM_ID)) {
         return true;
       }
       if (walk(recordComponent.components)) {

@@ -28,13 +28,17 @@ export async function DELETE(
       );
     }
 
-    await revokeAccountSession({
+    const revoked = await revokeAccountSession({
       userId: session.user.id,
       currentSessionId: session.id,
       sessionId,
     });
     return applyNoStoreHeaders(
-      NextResponse.json({ ok: true, message: "Sessao desconectada." }),
+      NextResponse.json({
+        ok: true,
+        revoked,
+        message: revoked ? "Sessao desconectada." : "Sessao ja estava encerrada.",
+      }),
     );
   } catch (error) {
     return applyNoStoreHeaders(

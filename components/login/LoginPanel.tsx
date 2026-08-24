@@ -204,6 +204,10 @@ export function LoginPanel({
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isRequestingPasswordReset, setIsRequestingPasswordReset] = useState(false);
+  const [passwordResetFeedback, setPasswordResetFeedback] = useState<{
+    tone: "success" | "error";
+    message: string;
+  } | null>(null);
   const [passwordStep, setPasswordStep] = useState<"password" | "set_password">("password");
   const [challengeId, setChallengeId] = useState(initialOtpState?.challengeId || "");
   const [otpCode, setOtpCode] = useState("");
@@ -933,6 +937,7 @@ export function LoginPanel({
     clearPasswordSubmitCooldown();
     setErrorMessage(null);
     setInfoMessage(null);
+    setPasswordResetFeedback(null);
 
     if (stage === "otp") {
       if (otpSource === "social") {
@@ -965,11 +970,16 @@ export function LoginPanel({
   async function handleForgotPassword() {
     const targetEmail = normalizedEmail || normalizeAuthEmail(email);
     if (!targetEmail) {
+      setPasswordResetFeedback({
+        tone: "error",
+        message: "Informe seu email antes de solicitar a redefinicao.",
+      });
       showErrorNotification("Informe seu email antes de solicitar a redefinicao.", "Email necessario");
       return;
     }
 
     setIsRequestingPasswordReset(true);
+    setPasswordResetFeedback(null);
     try {
       const response = await fetch("/api/auth/email/password-reset/request", {
         method: "POST",
@@ -986,16 +996,16 @@ export function LoginPanel({
         throw new Error(payload?.message || "Nao foi possivel enviar o link agora.");
       }
 
-      showInfoNotification(
+      const message =
         payload.message ||
-          "Se este email estiver cadastrado, enviaremos um link seguro de redefinicao.",
-        "Verifique seu email",
-      );
+        "Se este email estiver cadastrado, enviaremos um link seguro de redefinicao.";
+      setPasswordResetFeedback({ tone: "success", message });
+      showInfoNotification(message, "Verifique seu email");
     } catch (error) {
-      showErrorNotification(
-        error instanceof Error ? error.message : "Nao foi possivel enviar o link agora.",
-        "Falha ao enviar",
-      );
+      const message =
+        error instanceof Error ? error.message : "Nao foi possivel enviar o link agora.";
+      setPasswordResetFeedback({ tone: "error", message });
+      showErrorNotification(message, "Falha ao enviar");
     } finally {
       setIsRequestingPasswordReset(false);
     }
@@ -1036,7 +1046,10 @@ export function LoginPanel({
           <input
             type="email"
             value={email}
-            onChange={(event) => setEmail(event.currentTarget.value)}
+            onChange={(event) => {
+              setEmail(event.currentTarget.value);
+              setPasswordResetFeedback(null);
+            }}
             onBlur={() => {
               const trimmed = email.trim().toLowerCase();
               if (trimmed && trimmed !== email) {
@@ -1171,16 +1184,29 @@ export function LoginPanel({
       </form>
 
       {passwordStep === "password" ? (
-        <button
-          type="button"
-          onClick={() => {
-            void handleForgotPassword();
-          }}
-          disabled={isRequestingPasswordReset}
-          className="mt-[14px] w-full text-center text-[13px] font-medium text-[#A9A9A9] transition-colors hover:text-[#F2F2F2] disabled:cursor-not-allowed disabled:text-[#666666]"
-        >
-          {isRequestingPasswordReset ? "Enviando link..." : "Esqueceu a senha?"}
-        </button>
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              void handleForgotPassword();
+            }}
+            disabled={isRequestingPasswordReset}
+            className="mt-[14px] w-full text-center text-[13px] font-medium text-[#A9A9A9] transition-colors hover:text-[#F2F2F2] disabled:cursor-not-allowed disabled:text-[#666666]"
+          >
+            {isRequestingPasswordReset ? "Enviando link..." : "Esqueceu a senha?"}
+          </button>
+          {passwordResetFeedback ? (
+            <p
+              className={`mt-[10px] rounded-[14px] border px-[13px] py-[10px] text-center text-[12px] leading-[1.55] ${
+                passwordResetFeedback.tone === "error"
+                  ? "border-[rgba(219,70,70,0.32)] bg-[rgba(219,70,70,0.08)] text-[#E19A9A]"
+                  : "border-[rgba(127,203,149,0.28)] bg-[rgba(127,203,149,0.08)] text-[#9BD9AD]"
+              }`}
+            >
+              {passwordResetFeedback.message}
+            </p>
+          ) : null}
+        </>
       ) : null}
     </>
   );

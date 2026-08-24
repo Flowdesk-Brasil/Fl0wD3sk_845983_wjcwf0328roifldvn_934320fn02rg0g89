@@ -153,7 +153,6 @@ function readProductMutationPayload(payload: unknown, input?: { includeProductCo
         flowSecureDto.string({
           maxLength: PRODUCT_DESCRIPTION_MAX_LENGTH,
           allowEmpty: true,
-          normalizeWhitespace: true,
         }),
       ),
       categoryId: flowSecureDto.optional(

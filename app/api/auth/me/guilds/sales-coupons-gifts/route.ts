@@ -130,7 +130,6 @@ function readDiscountPayload(payload: unknown, input?: { includeLookupFields?: b
         flowSecureDto.string({
           maxLength: 800,
           allowEmpty: true,
-          normalizeWhitespace: true,
         }),
       ),
       status: flowSecureDto.optional(

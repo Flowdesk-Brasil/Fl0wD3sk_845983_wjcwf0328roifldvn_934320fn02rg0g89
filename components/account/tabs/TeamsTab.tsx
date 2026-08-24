@@ -722,7 +722,7 @@ export function TeamsTab() {
         </p>
         <button
           onClick={() => {
-            const target = buildBrowserRoutingTargetFromInternalPath("/servers");
+            const target = buildBrowserRoutingTargetFromInternalPath("/servers?createTeam=1");
             if (!target.sameOrigin) {
               window.location.assign(target.href);
               return;
@@ -732,7 +732,7 @@ export function TeamsTab() {
           }}
           className="mt-[20px] flex h-[40px] items-center gap-[8px] rounded-[12px] bg-[#111111] px-[18px] text-[14px] font-medium text-[#D0D0D0] transition hover:bg-[#1A1A1A]"
         >
-          Ir para Servidores
+          Criar equipe
         </button>
       </div>
     );

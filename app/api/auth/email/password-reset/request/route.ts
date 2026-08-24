@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { after } from "next/server";
-import { createPasswordResetRequest } from "@/lib/auth/passwordReset";
+import {
+  createPasswordResetRequest,
+  revokePasswordResetToken,
+} from "@/lib/auth/passwordReset";
 import { sendPasswordResetEmail } from "@/lib/mail/authEmail";
 import { resolveAuthOrigin } from "@/lib/routing/subdomains";
 import {
@@ -8,7 +10,10 @@ import {
   flowSecureDto,
   parseFlowSecureDto,
 } from "@/lib/security/flowSecure";
-import { extractAuditErrorMessage } from "@/lib/security/errors";
+import {
+  extractAuditErrorMessage,
+  sanitizePublicErrorMessage,
+} from "@/lib/security/errors";
 import { applyNoStoreHeaders, ensureSameOriginJsonMutationRequest } from "@/lib/security/http";
 import {
   attachRequestId,
@@ -23,31 +28,65 @@ function extractClientIp(request: NextRequest) {
   return forwardedFor.split(",")[0]?.trim() || null;
 }
 
-function schedulePasswordResetEmail(input: {
+async function deliverPasswordResetEmail(input: {
   toEmail: string;
   resetUrl: string;
   expiresInMinutes: number;
   requestContext: ReturnType<typeof createSecurityRequestContext>;
 }) {
-  after(async () => {
-    try {
-      await sendPasswordResetEmail({
-        toEmail: input.toEmail,
-        resetUrl: input.resetUrl,
-        expiresInMinutes: input.expiresInMinutes,
-      });
-      await logSecurityAuditEventSafe(input.requestContext, {
-        action: "auth_password_reset_email_delivery",
-        outcome: "succeeded",
-      });
-    } catch (error) {
-      await logSecurityAuditEventSafe(input.requestContext, {
-        action: "auth_password_reset_email_delivery",
-        outcome: "failed",
-        metadata: { reason: extractAuditErrorMessage(error) },
-      });
-    }
-  });
+  try {
+    await sendPasswordResetEmail({
+      toEmail: input.toEmail,
+      resetUrl: input.resetUrl,
+      expiresInMinutes: input.expiresInMinutes,
+    });
+    await logSecurityAuditEventSafe(input.requestContext, {
+      action: "auth_password_reset_email_delivery",
+      outcome: "succeeded",
+    });
+  } catch (error) {
+    await logSecurityAuditEventSafe(input.requestContext, {
+      action: "auth_password_reset_email_delivery",
+      outcome: "failed",
+      metadata: { reason: extractAuditErrorMessage(error) },
+    });
+    throw error;
+  }
+}
+
+function buildPasswordResetAcceptedResponse(requestId: string) {
+  return attachRequestId(
+    applyNoStoreHeaders(
+      NextResponse.json({
+        ok: true,
+        message:
+          "Se este email estiver cadastrado, enviaremos um link seguro de redefinicao.",
+      }),
+    ),
+    requestId,
+  );
+}
+
+function buildPasswordResetDeliveryFailureResponse(
+  error: unknown,
+  requestId: string,
+) {
+  return attachRequestId(
+    applyNoStoreHeaders(
+      NextResponse.json(
+        {
+          ok: false,
+          message: sanitizePublicErrorMessage(
+            error,
+            "Nao foi possivel enviar o email de redefinicao agora. Tente novamente em instantes.",
+          ),
+          requestId,
+        },
+        { status: 503 },
+      ),
+    ),
+    requestId,
+  );
 }
 
 export async function POST(request: NextRequest) {
@@ -106,12 +145,26 @@ export async function POST(request: NextRequest) {
 
     if (reset) {
       const resetUrl = new URL(`/pass/v1/tk/${reset.token}`, resolveAuthOrigin(request)).toString();
-      schedulePasswordResetEmail({
-        toEmail: reset.user.email || payload.email,
-        resetUrl,
-        expiresInMinutes: reset.expiresInMinutes,
-        requestContext,
-      });
+      try {
+        await deliverPasswordResetEmail({
+          toEmail: reset.user.email || payload.email,
+          resetUrl,
+          expiresInMinutes: reset.expiresInMinutes,
+          requestContext,
+        });
+      } catch (deliveryError) {
+        await revokePasswordResetToken(reset.token).catch((revokeError) =>
+          logSecurityAuditEventSafe(requestContext, {
+            action: "auth_password_reset_token_revoke_after_delivery_failure",
+            outcome: "failed",
+            metadata: { reason: extractAuditErrorMessage(revokeError) },
+          }),
+        );
+        return buildPasswordResetDeliveryFailureResponse(
+          deliveryError,
+          requestContext.requestId,
+        );
+      }
     }
 
     await logSecurityAuditEventSafe(requestContext, {
@@ -127,14 +180,5 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  return attachRequestId(
-    applyNoStoreHeaders(
-      NextResponse.json({
-        ok: true,
-        message:
-          "Se este email estiver cadastrado, enviaremos um link seguro de redefinicao.",
-      }),
-    ),
-    requestContext.requestId,
-  );
+  return buildPasswordResetAcceptedResponse(requestContext.requestId);
 }

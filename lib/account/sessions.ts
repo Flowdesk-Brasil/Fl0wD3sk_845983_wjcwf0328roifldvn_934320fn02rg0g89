@@ -132,9 +132,10 @@ export async function revokeAccountSession(input: {
     .select("id")
     .maybeSingle<{ id: string }>();
   if (result.error) throw new Error(result.error.message);
-  if (!result.data) throw new Error("Esta sessao ja foi encerrada.");
+  if (!result.data) return false;
 
   invalidateAuthSessionCache();
+  return true;
 }
 
 export async function revokeOtherAccountSessions(

@@ -13,7 +13,7 @@ const PROTECTED_PATH_PREFIXES = [
   "/vps",
 ] as const;
 
-const SESSION_STATE_POLL_INTERVAL_MS = 15_000;
+const SESSION_STATE_POLL_INTERVAL_MS = 5_000;
 
 function isProtectedPath(pathname: string) {
   return PROTECTED_PATH_PREFIXES.some(
@@ -33,8 +33,13 @@ export function SessionRevocationWatcher({ enabled }: { enabled: boolean }) {
     let redirecting = false;
     let inFlight = false;
 
-    async function validateSession() {
-      if (cancelled || redirecting || inFlight || document.visibilityState === "hidden") {
+    async function validateSession(options?: { force?: boolean }) {
+      if (
+        cancelled ||
+        redirecting ||
+        inFlight ||
+        (!options?.force && document.visibilityState === "hidden")
+      ) {
         return;
       }
 
@@ -49,6 +54,16 @@ export function SessionRevocationWatcher({ enabled }: { enabled: boolean }) {
         }
 
         redirecting = true;
+        try {
+          await fetch("/api/auth/logout", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify({ forgetTrustedDevice: false }),
+          });
+        } catch {
+          // O redirecionamento abaixo encerra o uso da area protegida mesmo se o logout falhar.
+        }
         window.location.replace(
           buildLoginHref(getCurrentBrowserInternalPath("/dashboard")),
         );
@@ -64,17 +79,25 @@ export function SessionRevocationWatcher({ enabled }: { enabled: boolean }) {
     }, SESSION_STATE_POLL_INTERVAL_MS);
     const handleVisibility = () => {
       if (document.visibilityState === "visible") {
-        void validateSession();
+        void validateSession({ force: true });
       }
     };
+    const handleFocus = () => void validateSession({ force: true });
+    const handlePageShow = () => void validateSession({ force: true });
 
     document.addEventListener("visibilitychange", handleVisibility);
-    void validateSession();
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener("pageshow", handlePageShow);
+    window.addEventListener("online", handleFocus);
+    void validateSession({ force: true });
 
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
       document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("pageshow", handlePageShow);
+      window.removeEventListener("online", handleFocus);
     };
   }, [enabled, pathname]);
 
