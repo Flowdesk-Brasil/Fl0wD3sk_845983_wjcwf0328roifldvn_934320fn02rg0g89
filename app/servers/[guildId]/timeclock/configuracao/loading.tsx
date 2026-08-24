@@ -1,5 +1,5 @@
 import { ServerSettingsRouteLoading } from "@/app/servers/[guildId]/ServerSettingsRouteLoading";
 
-export default function ServersTicketTimeclockLoading() {
+export default function ServersTimeclockConfigLoading() {
   return <ServerSettingsRouteLoading settingsSection="timeclock_config" />;
 }

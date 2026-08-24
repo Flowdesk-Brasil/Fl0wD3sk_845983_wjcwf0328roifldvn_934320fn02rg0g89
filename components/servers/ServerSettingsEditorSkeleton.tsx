@@ -11,6 +11,11 @@ export type ServerSettingsSkeletonSection =
   | "overview"
   | "message"
   | "timeclock"
+  | "timeclock_config"
+  | "timeclock_live"
+  | "timeclock_history"
+  | "timeclock_ranking"
+  | "timeclock_audit"
   | "sales_overview"
   | "sales_categories"
   | "sales_category_create"
@@ -759,7 +764,14 @@ function resolveSkeletonContent(
     return renderFlowAiSkeleton();
   }
 
-  if (settingsSection === "timeclock") {
+  if (
+    settingsSection === "timeclock" ||
+    settingsSection === "timeclock_config" ||
+    settingsSection === "timeclock_live" ||
+    settingsSection === "timeclock_history" ||
+    settingsSection === "timeclock_ranking" ||
+    settingsSection === "timeclock_audit"
+  ) {
     return renderSettingsOverviewSkeleton();
   }
 

@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { ServersWorkspace } from "@/components/servers/ServersWorkspace";
 import { getServersWorkspaceBootstrap } from "@/lib/servers/serversWorkspaceBootstrap";
 
-type ServersTicketTimeclockPageProps = {
+type ServersTimeclockHistoryPageProps = {
   params: Promise<{
     guildId: string;
   }>;
@@ -14,9 +14,9 @@ function normalizeGuildId(value: string | null) {
   return /^\d{10,25}$/.test(guildId) ? guildId : null;
 }
 
-export default async function ServersTicketTimeclockPage({
+export default async function ServersTimeclockHistoryPage({
   params,
-}: ServersTicketTimeclockPageProps) {
+}: ServersTimeclockHistoryPageProps) {
   const workspace = await getServersWorkspaceBootstrap();
   const routeParams = await params;
   const safeGuildId = normalizeGuildId(routeParams.guildId);
@@ -34,7 +34,7 @@ export default async function ServersTicketTimeclockPage({
       initialPendingInvites={workspace.initialPendingInvites}
       initialGuildId={safeGuildId}
       initialTab="settings"
-      initialSettingsSection="timeclock_config"
+      initialSettingsSection="timeclock_history"
     />
   );
 }

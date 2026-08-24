@@ -134,7 +134,10 @@ type Props = {
   roleOptions: SelectOption[];
   disabled?: boolean;
   controlHeightPx?: number;
+  view?: TimeclockView;
 };
+
+type TimeclockView = "config" | "live" | "history" | "ranking" | "audit";
 
 const DEFAULT_PANEL_LAYOUT = normalizeTicketPanelLayout([
   {
@@ -251,14 +254,14 @@ function MetricCard({
   icon: typeof Activity;
 }) {
   return (
-    <div className="rounded-[22px] border border-[#141414] bg-[#080808] px-[18px] py-[17px]">
+    <div className="rounded-[18px] border border-[#161616] bg-[#090909] px-[16px] py-[14px]">
       <div className="flex items-center justify-between gap-[12px]">
-        <p className="text-[12px] font-medium uppercase tracking-[0.16em] text-[#666]">
+        <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#707070]">
           {label}
         </p>
         <Icon className="h-[17px] w-[17px] text-[#858585]" />
       </div>
-      <p className="mt-[12px] text-[24px] leading-none font-medium tracking-[-0.04em] text-[#E6E6E6]">
+      <p className="mt-[10px] text-[22px] leading-none font-medium text-[#E6E6E6]">
         {value}
       </p>
     </div>
@@ -275,16 +278,16 @@ function SectionTitle({
   description: string;
 }) {
   return (
-    <div className="flex flex-col gap-[12px] sm:flex-row sm:items-start sm:justify-between">
+    <div className="flex flex-col gap-[8px] sm:flex-row sm:items-start sm:justify-between">
       <div>
-        <div className="inline-flex items-center gap-[8px] rounded-full border border-[#161616] bg-[#090909] px-[12px] py-[6px] text-[11px] font-medium uppercase tracking-[0.16em] text-[#737373]">
+        <div className="inline-flex items-center gap-[7px] rounded-full border border-[#1A1A1A] bg-[#0B0B0B] px-[10px] py-[5px] text-[10px] font-medium uppercase tracking-[0.14em] text-[#777]">
           <Icon className="h-[13px] w-[13px]" />
           Bate Ponto
         </div>
-        <h3 className="mt-[12px] text-[24px] leading-none font-medium tracking-[-0.04em] text-[#E1E1E1]">
+        <h3 className="mt-[10px] text-[21px] leading-none font-medium text-[#E1E1E1]">
           {title}
         </h3>
-        <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.7] text-[#777]">
+        <p className="mt-[8px] max-w-[760px] text-[13px] leading-[1.55] text-[#777]">
           {description}
         </p>
       </div>
@@ -292,16 +295,23 @@ function SectionTitle({
   );
 }
 
+const VIEW_ITEMS: Array<{ id: TimeclockView; label: string; icon: typeof Activity }> = [
+  { id: "config", label: "Configuracao", icon: CalendarClock },
+  { id: "live", label: "Acompanhamento", icon: Activity },
+  { id: "history", label: "Historico", icon: History },
+  { id: "ranking", label: "Ranking", icon: BarChart3 },
+  { id: "audit", label: "Auditoria", icon: ClipboardList },
+];
+
 export function TimeclockPanel({
   guildId,
   textChannelOptions,
   roleOptions,
   disabled,
   controlHeightPx = 56,
+  view = "config",
 }: Props) {
-  const [activeView, setActiveView] = useState<
-    "config" | "live" | "history" | "ranking" | "audit"
-  >("config");
+  const [activeView, setActiveView] = useState<TimeclockView>(view);
   const [draft, setDraft] = useState<TimeclockSettingsPayload | null>(null);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -332,6 +342,10 @@ export function TimeclockPanel({
     refreshInterval: activeView === "live" ? 15000 : 30000,
     revalidateOnFocus: true,
   });
+
+  useEffect(() => {
+    setActiveView(view);
+  }, [view]);
 
   useEffect(() => {
     if (!settingsPayload?.settings) return;
@@ -451,7 +465,7 @@ export function TimeclockPanel({
 
   if (settingsLoading && !draft) {
     return (
-      <div className="flex min-h-[360px] items-center justify-center rounded-[30px] border border-[#121212] bg-[#080808]">
+      <div className="flex min-h-[260px] items-center justify-center rounded-[22px] border border-[#151515] bg-[#080808]">
         <div className="flex items-center gap-[10px] text-[14px] text-[#8A8A8A]">
           <Loader2 className="h-[17px] w-[17px] animate-spin" />
           Carregando Bate Ponto
@@ -462,7 +476,7 @@ export function TimeclockPanel({
 
   if (settingsError) {
     return (
-      <div className="rounded-[30px] border border-[#221414] bg-[#0A0606] px-[22px] py-[22px] text-[14px] leading-[1.7] text-[#E7A5A5]">
+      <div className="rounded-[22px] border border-[#221414] bg-[#0A0606] px-[18px] py-[16px] text-[13px] leading-[1.6] text-[#E7A5A5]">
         {settingsError instanceof Error ? settingsError.message : "Nao foi possivel carregar Bate Ponto."}
       </div>
     );
@@ -471,20 +485,20 @@ export function TimeclockPanel({
   if (!draft) return null;
 
   return (
-    <section className="space-y-[18px]">
-      <div className="rounded-[30px] border border-[#121212] bg-[#080808] px-[22px] py-[22px] shadow-[0_26px_70px_rgba(0,0,0,0.3)]">
-        <div className="flex flex-col gap-[18px] lg:flex-row lg:items-end lg:justify-between">
+    <section className="space-y-[14px]">
+      <div className="rounded-[22px] border border-[#151515] bg-[#080808] px-[18px] py-[18px] shadow-[0_22px_60px_rgba(0,0,0,0.28)]">
+        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-end lg:justify-between">
           <SectionTitle
             icon={Clock3}
             title="Bate Ponto"
             description="Controle jornada, pausas, banco de horas, ranking e auditoria usando Discord e painel como interfaces da mesma fonte de verdade."
           />
-          <div className="flex flex-wrap items-center gap-[10px]">
+          <div className="flex flex-wrap items-center gap-[8px]">
             <button
               type="button"
               onClick={() => updateDraft("enabled", !draft.enabled)}
               disabled={controlsDisabled}
-              className={`inline-flex h-[42px] items-center gap-[9px] rounded-[14px] border px-[14px] text-[13px] font-medium transition-colors ${
+              className={`inline-flex h-[40px] items-center gap-[9px] rounded-[13px] border px-[13px] text-[13px] font-medium transition-colors ${
                 draft.enabled
                   ? "border-[#244D30] bg-[#0C1B10] text-[#9DE6AE]"
                   : "border-[#1A1A1A] bg-[#0D0D0D] text-[#9A9A9A]"
@@ -497,7 +511,7 @@ export function TimeclockPanel({
               type="button"
               onClick={handleSave}
               disabled={controlsDisabled}
-              className="inline-flex h-[42px] items-center gap-[8px] rounded-[14px] border border-[#1A1A1A] bg-[#0D0D0D] px-[14px] text-[13px] font-medium text-[#D8D8D8] transition-colors hover:border-[#282828] disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex h-[40px] items-center gap-[8px] rounded-[13px] border border-[#1A1A1A] bg-[#0D0D0D] px-[13px] text-[13px] font-medium text-[#D8D8D8] transition-colors hover:border-[#282828] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {saving ? <Loader2 className="h-[15px] w-[15px] animate-spin" /> : <Save className="h-[15px] w-[15px]" />}
               Salvar
@@ -506,7 +520,7 @@ export function TimeclockPanel({
               type="button"
               onClick={handlePublish}
               disabled={controlsDisabled || publishing || !draft.enabled}
-              className="inline-flex h-[42px] items-center gap-[8px] rounded-[14px] bg-[#E8E8E8] px-[14px] text-[13px] font-semibold text-[#111] transition-transform hover:scale-[1.015] disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:scale-100"
+              className="inline-flex h-[40px] items-center gap-[8px] rounded-[13px] bg-[#E8E8E8] px-[13px] text-[13px] font-semibold text-[#111] transition-transform hover:scale-[1.015] disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:scale-100"
             >
               {publishing ? <Loader2 className="h-[15px] w-[15px] animate-spin" /> : <Send className="h-[15px] w-[15px]" />}
               Publicar
@@ -524,39 +538,31 @@ export function TimeclockPanel({
           </div>
         ) : null}
 
-        <div className="mt-[20px] flex flex-wrap gap-[8px]">
-          {[
-            { id: "config", label: "Configuracao", icon: CalendarClock },
-            { id: "live", label: "Acompanhamento", icon: Activity },
-            { id: "history", label: "Historico", icon: History },
-            { id: "ranking", label: "Ranking", icon: BarChart3 },
-            { id: "audit", label: "Auditoria", icon: ClipboardList },
-          ].map((view) => {
-            const Icon = view.icon;
-            const active = activeView === view.id;
+        <div className="mt-[16px] flex flex-wrap gap-[7px]">
+          {VIEW_ITEMS.map((item) => {
+            const Icon = item.icon;
+            const active = activeView === item.id;
             return (
-              <button
-                key={view.id}
-                type="button"
-                onClick={() => setActiveView(view.id as typeof activeView)}
-                className={`inline-flex h-[38px] items-center gap-[8px] rounded-[13px] px-[12px] text-[13px] font-medium transition-colors ${
+              <span
+                key={item.id}
+                className={`inline-flex h-[34px] items-center gap-[7px] rounded-[12px] px-[11px] text-[12px] font-medium ${
                   active
                     ? "bg-[#1A1A1A] text-[#F0F0F0]"
-                    : "bg-[#0B0B0B] text-[#8C8C8C] hover:bg-[#111] hover:text-[#D8D8D8]"
+                    : "bg-[#0B0B0B] text-[#777]"
                 }`}
               >
                 <Icon className="h-[14px] w-[14px]" />
-                {view.label}
-              </button>
+                {item.label}
+              </span>
             );
           })}
         </div>
       </div>
 
       {activeView === "config" ? (
-        <div className="space-y-[18px]">
-          <div className="grid gap-[18px] xl:grid-cols-[minmax(0,1fr)_360px]">
-            <div className="rounded-[30px] border border-[#121212] bg-[#080808] px-[20px] py-[20px]">
+        <div className="space-y-[14px]">
+          <div className="grid gap-[14px] xl:grid-cols-[minmax(0,1fr)_340px]">
+            <div className="rounded-[22px] border border-[#151515] bg-[#080808] px-[18px] py-[18px]">
               <SectionTitle
                 icon={Send}
                 title="Canal e mensagem"
@@ -589,7 +595,7 @@ export function TimeclockPanel({
               ) : null}
             </div>
 
-            <div className="rounded-[30px] border border-[#121212] bg-[#080808] px-[20px] py-[20px]">
+            <div className="rounded-[22px] border border-[#151515] bg-[#080808] px-[18px] py-[18px]">
               <SectionTitle
                 icon={ShieldCheck}
                 title="Regras gerais"
@@ -655,22 +661,22 @@ export function TimeclockPanel({
             hideSendButton
             eyebrow="Mensagem principal"
             headline="Embed do Bate Ponto"
-            description="Reutiliza o editor do Ticket. O botao funcional abre o ponto privado do funcionario."
+            description="Monte a mensagem publica do ponto. O botao funcional abre o painel privado do funcionario no Discord."
             thumbnailPreviewUrl={null}
           />
 
-          <div className="rounded-[30px] border border-[#121212] bg-[#080808] px-[20px] py-[20px]">
+          <div className="rounded-[22px] border border-[#151515] bg-[#080808] px-[18px] py-[18px]">
             <SectionTitle
               icon={CalendarClock}
               title="Escala semanal"
               description="Cada dia possui entrada, saida, carga, intervalo e tolerancias proprias, inclusive jornadas atravessando meia-noite."
             />
-            <div className="mt-[18px] overflow-x-auto">
+            <div className="mt-[14px] overflow-x-auto">
               <div className="min-w-[940px] space-y-[8px]">
                 {scheduleDays.map(({ label, day }) => (
                   <div
                     key={day.weekday}
-                    className="grid grid-cols-[150px_92px_repeat(6,minmax(96px,1fr))] items-center gap-[8px] rounded-[18px] border border-[#121212] bg-[#090909] px-[12px] py-[10px]"
+                    className="grid grid-cols-[140px_84px_repeat(6,minmax(92px,1fr))] items-center gap-[8px] rounded-[16px] border border-[#151515] bg-[#090909] px-[11px] py-[9px]"
                   >
                     <p className="text-[13px] font-medium text-[#DCDCDC]">{label}</p>
                     <button
@@ -724,8 +730,8 @@ export function TimeclockPanel({
             </div>
           </div>
 
-          <div className="grid gap-[18px] xl:grid-cols-2">
-            <div className="rounded-[30px] border border-[#121212] bg-[#080808] px-[20px] py-[20px]">
+          <div className="grid gap-[14px] xl:grid-cols-2">
+            <div className="rounded-[22px] border border-[#151515] bg-[#080808] px-[18px] py-[18px]">
               <SectionTitle
                 icon={ShieldCheck}
                 title="Permissoes e cargos"
@@ -740,7 +746,7 @@ export function TimeclockPanel({
               </div>
             </div>
 
-            <div className="rounded-[30px] border border-[#121212] bg-[#080808] px-[20px] py-[20px]">
+            <div className="rounded-[22px] border border-[#151515] bg-[#080808] px-[18px] py-[18px]">
               <SectionTitle
                 icon={ClipboardList}
                 title="Regras de banco"
@@ -759,19 +765,19 @@ export function TimeclockPanel({
       ) : null}
 
       {activeView === "live" ? (
-        <div className="space-y-[18px]">
+        <div className="space-y-[14px]">
           {summaryError ? (
             <div className="rounded-[22px] border border-[#3A1B1B] bg-[#120808] px-[16px] py-[14px] text-[13px] text-[#E7A5A5]">
               {summaryError instanceof Error ? summaryError.message : "Nao foi possivel carregar acompanhamento."}
             </div>
           ) : null}
-          <div className="grid gap-[14px] md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-[12px] md:grid-cols-2 xl:grid-cols-4">
             <MetricCard label="Trabalhando agora" value={String(summary?.totals.workingCount || 0)} icon={Activity} />
             <MetricCard label="Em pausa" value={String(summary?.totals.pausedCount || 0)} icon={Clock3} />
             <MetricCard label="Finalizados hoje" value={String(summary?.totals.finishedCount || 0)} icon={Check} />
             <MetricCard label="Horas hoje" value={formatDuration(summary?.totals.workedSeconds || 0)} icon={BarChart3} />
           </div>
-          <div className="rounded-[30px] border border-[#121212] bg-[#080808] px-[20px] py-[20px]">
+          <div className="rounded-[22px] border border-[#151515] bg-[#080808] px-[18px] py-[18px]">
             <SectionTitle icon={Activity} title="Acompanhamento em tempo real" description="Atualiza automaticamente enquanto o painel fica aberto." />
             <div className="mt-[18px] space-y-[8px]">
               {summaryLoading && !summary?.active.length ? (
@@ -796,7 +802,7 @@ export function TimeclockPanel({
       ) : null}
 
       {activeView === "history" ? (
-        <div className="rounded-[30px] border border-[#121212] bg-[#080808] px-[20px] py-[20px]">
+        <div className="rounded-[22px] border border-[#151515] bg-[#080808] px-[18px] py-[18px]">
           <SectionTitle icon={History} title="Historico geral" description="Tabela server-side com jornadas, pausas, saldo e status." />
           <div className="mt-[18px] overflow-x-auto">
             <table className="w-full min-w-[920px] border-separate border-spacing-y-[8px]">
@@ -837,7 +843,7 @@ export function TimeclockPanel({
       ) : null}
 
       {activeView === "ranking" ? (
-        <div className="rounded-[30px] border border-[#121212] bg-[#080808] px-[20px] py-[20px]">
+        <div className="rounded-[22px] border border-[#151515] bg-[#080808] px-[18px] py-[18px]">
           <SectionTitle icon={BarChart3} title="Ranking" description="Agregado no backend por periodo, sem trazer todas as sessoes para o navegador." />
           <div className="mt-[18px] space-y-[8px]">
             {(summary?.ranking || []).map((item) => (
@@ -859,7 +865,7 @@ export function TimeclockPanel({
       ) : null}
 
       {activeView === "audit" ? (
-        <div className="rounded-[30px] border border-[#121212] bg-[#080808] px-[20px] py-[20px]">
+        <div className="rounded-[22px] border border-[#151515] bg-[#080808] px-[18px] py-[18px]">
           <SectionTitle icon={ClipboardList} title="Auditoria" description="Timeline imutavel de eventos de ponto, ajustes, aprovacoes e configuracoes." />
           <div className="mt-[18px] space-y-[8px]">
             {(summary?.audit || []).map((event) => (

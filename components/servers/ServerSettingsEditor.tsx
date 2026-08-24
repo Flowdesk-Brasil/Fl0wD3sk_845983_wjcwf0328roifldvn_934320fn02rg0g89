@@ -90,6 +90,11 @@ type ServerSettingsSection =
   | "overview"
   | "message"
   | "timeclock"
+  | "timeclock_config"
+  | "timeclock_live"
+  | "timeclock_history"
+  | "timeclock_ranking"
+  | "timeclock_audit"
   | "sales_overview"
   | "sales_categories"
   | "sales_category_create"
@@ -2324,6 +2329,11 @@ export function ServerSettingsEditor({
         overview: "server_manage_tickets_overview",
         message: "server_manage_tickets_message",
         timeclock: "server_manage_tickets_overview",
+        timeclock_config: "server_manage_tickets_overview",
+        timeclock_live: "server_manage_tickets_overview",
+        timeclock_history: "server_manage_tickets_overview",
+        timeclock_ranking: "server_manage_tickets_overview",
+        timeclock_audit: "server_manage_tickets_overview",
         sales_overview: "server_manage_tickets_overview",
         sales_categories: "server_manage_tickets_overview",
         sales_category_create: "server_manage_tickets_overview",
@@ -3752,8 +3762,14 @@ export function ServerSettingsEditor({
   const isTicketSection =
     settingsSection === "overview" ||
     settingsSection === "message" ||
-    settingsSection === "ticket_ai" ||
-    settingsSection === "timeclock";
+    settingsSection === "ticket_ai";
+  const isTimeclockSection =
+    settingsSection === "timeclock" ||
+    settingsSection === "timeclock_config" ||
+    settingsSection === "timeclock_live" ||
+    settingsSection === "timeclock_history" ||
+    settingsSection === "timeclock_ranking" ||
+    settingsSection === "timeclock_audit";
   const isTicketAiSection = settingsSection === "ticket_ai";
   const isSalesSection =
     settingsSection === "sales_overview" ||
@@ -6186,13 +6202,24 @@ export function ServerSettingsEditor({
                         _onTabChange?.("settings");
                       }} 
                     />
-                  ) : settingsSection === "timeclock" ? (
+                  ) : isTimeclockSection ? (
                     <TimeclockPanel
                       guildId={guildId}
                       textChannelOptions={textChannelOptions}
                       roleOptions={roleOptions}
                       disabled={settingsReadOnly}
                       controlHeightPx={serverSettingsControlHeight}
+                      view={
+                        settingsSection === "timeclock_live"
+                          ? "live"
+                          : settingsSection === "timeclock_history"
+                            ? "history"
+                            : settingsSection === "timeclock_ranking"
+                              ? "ranking"
+                              : settingsSection === "timeclock_audit"
+                                ? "audit"
+                                : "config"
+                      }
                     />
                   ) : settingsSection === "sales_categories" ? (
                     <SalesCategoriesListPanel
