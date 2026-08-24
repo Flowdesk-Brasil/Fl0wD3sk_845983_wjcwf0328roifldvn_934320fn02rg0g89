@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import useSWR from "swr";
 import {
   Activity,
@@ -17,6 +18,7 @@ import {
 } from "lucide-react";
 import { ConfigStepMultiSelect } from "@/components/config/ConfigStepMultiSelect";
 import { ConfigStepSelect } from "@/components/config/ConfigStepSelect";
+import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { TicketMessageBuilder } from "@/components/servers/TicketMessageBuilder";
 import {
   createDefaultScheduleDays,
@@ -361,6 +363,10 @@ export function TimeclockPanel({
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [feedback, setFeedback] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [showSaveSuccessBar, setShowSaveSuccessBar] = useState(false);
+  const [isPortalMounted, setIsPortalMounted] = useState(false);
+  const [isSaveBarRendered, setIsSaveBarRendered] = useState(false);
+  const [isSaveBarExiting, setIsSaveBarExiting] = useState(false);
 
   const settingsKey = guildId
     ? `/api/auth/me/guilds/timeclock-settings?guildId=${encodeURIComponent(guildId)}`
@@ -391,6 +397,10 @@ export function TimeclockPanel({
   useEffect(() => {
     setActiveView(view);
   }, [view]);
+
+  useEffect(() => {
+    setIsPortalMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!settingsPayload?.settings) return;
@@ -432,6 +442,7 @@ export function TimeclockPanel({
 
   const setScheduleDay = useCallback((weekday: number, patch: Partial<TimeclockScheduleDay>) => {
     setFeedback(null);
+    setShowSaveSuccessBar(false);
     setDraft((current) => {
       if (!current) return current;
       const scheduleDays = current.scheduleDays.map((day) =>
@@ -446,6 +457,7 @@ export function TimeclockPanel({
     value: TimeclockSettingsPayload[K],
   ) => {
     setFeedback(null);
+    setShowSaveSuccessBar(false);
     setDraft((current) => current ? { ...current, [key]: value } : current);
   }, []);
 
@@ -453,6 +465,7 @@ export function TimeclockPanel({
     if (!savedDraft || saving) return;
     setDraft(savedDraft);
     setFeedback(null);
+    setShowSaveSuccessBar(false);
   }, [savedDraft, saving]);
 
   const handleSave = useCallback(async () => {
@@ -480,9 +493,11 @@ export function TimeclockPanel({
       setDraft(savedSettings);
       setSavedDraft(savedSettings);
       setFeedback({ tone: "success", text: "Configuracoes do Bate Ponto salvas." });
+      setShowSaveSuccessBar(true);
       await mutateSettings(payload, { revalidate: false });
       await mutateSummary();
     } catch (error) {
+      setShowSaveSuccessBar(false);
       setFeedback({
         tone: "error",
         text: error instanceof Error ? error.message : "Nao foi possivel salvar Bate Ponto.",
@@ -538,18 +553,67 @@ export function TimeclockPanel({
       day: byWeekday.get(weekday) || normalizeScheduleDay({ weekday }),
     }));
   }, [draft?.scheduleDays]);
-  const showFloatingSaveBar = Boolean(draft && !disabled && (hasUnsavedChanges || saving));
-  const saveBarHasError = feedback?.tone === "error" && hasUnsavedChanges;
-  const saveBarTitle = saveBarHasError
-    ? "Nao foi possivel salvar agora"
+  const showFloatingSaveBar = Boolean(
+    draft && !disabled && (hasUnsavedChanges || saving || showSaveSuccessBar),
+  );
+  const showSaveBarActions = !showSaveSuccessBar || hasUnsavedChanges || saving;
+  const showSaveBarSuccessState =
+    showSaveSuccessBar && !hasUnsavedChanges && !saving;
+  const showSaveBarErrorState =
+    feedback?.tone === "error" && hasUnsavedChanges && !showSaveSuccessBar;
+  const saveActionVisualEnabled = canSave || saving;
+  const floatingSaveBarTitle = showSaveBarSuccessState
+    ? "Configuracoes salvas com sucesso."
     : saving
       ? "Salvando alteracoes do Bate Ponto..."
-      : "Cuidado - voce tem alteracoes que nao foram salvas!";
-  const saveBarDescription = saveBarHasError
-    ? feedback.text
+      : showSaveBarErrorState
+        ? "Nao foi possivel salvar agora"
+        : "Cuidado — voce tem alteracoes que nao foram salvas!";
+  const floatingSaveBarDescription = showSaveBarSuccessState
+    ? "Tudo ficou sincronizado e o painel ja esta atualizado para a equipe."
     : saving
-      ? "Estamos sincronizando canais, cargos, escala e regras deste modulo."
-      : "Revise as configuracoes abaixo e confirme para manter o ponto do servidor atualizado.";
+      ? "Estamos sincronizando canais e cargos deste servidor com o painel."
+      : showSaveBarErrorState
+        ? feedback?.text || "Revise os campos abaixo e tente novamente."
+        : "Revise os campos abaixo e confirme para manter a operacao deste servidor atualizada.";
+
+  useEffect(() => {
+    if (hasUnsavedChanges && showSaveSuccessBar) {
+      setShowSaveSuccessBar(false);
+    }
+  }, [hasUnsavedChanges, showSaveSuccessBar]);
+
+  useEffect(() => {
+    if (!showSaveSuccessBar) return;
+
+    const timeoutId = window.setTimeout(() => {
+      setShowSaveSuccessBar(false);
+    }, 1800);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [showSaveSuccessBar]);
+
+  useEffect(() => {
+    if (showFloatingSaveBar) {
+      setIsSaveBarRendered(true);
+      setIsSaveBarExiting(false);
+      return;
+    }
+
+    if (!isSaveBarRendered) return;
+
+    setIsSaveBarExiting(true);
+    const timeoutId = window.setTimeout(() => {
+      setIsSaveBarRendered(false);
+      setIsSaveBarExiting(false);
+    }, 260);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [isSaveBarRendered, showFloatingSaveBar]);
 
   if (settingsLoading && !draft) {
     return (
@@ -971,83 +1035,134 @@ export function TimeclockPanel({
         </div>
       ) : null}
 
-      {showFloatingSaveBar ? (
-        <div className="pointer-events-none fixed inset-x-0 bottom-[18px] z-[120] px-[18px]">
-          <div className="mx-auto w-full max-w-[940px] pointer-events-auto">
-            <div className="relative overflow-hidden rounded-[26px] shadow-[0_24px_90px_rgba(0,0,0,0.52)]">
-              <span
-                aria-hidden="true"
-                className={`pointer-events-none absolute inset-[-1px] rounded-[26px] ${
-                  saveBarHasError ? "flowdesk-tag-border-core-danger" : "flowdesk-tag-border-core"
-                }`}
-              />
-              <span
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-[1px] rounded-[25px] bg-[#070707]"
-              />
-              <div className="relative z-10 flex flex-col gap-[16px] px-[18px] py-[16px] sm:px-[22px] sm:py-[18px] xl:flex-row xl:items-center xl:justify-between">
-                <div className="min-w-0 flex-1">
-                  <p className="text-[16px] leading-[1.2] font-medium text-[#D8D8D8]">
-                    {saveBarTitle}
-                  </p>
-                  <p className="mt-[8px] max-w-[680px] text-[13px] leading-[1.55] text-[#7F7F7F]">
-                    {saveBarDescription}
-                  </p>
-                </div>
-                <div className="flex shrink-0 flex-col-reverse gap-[10px] sm:flex-row sm:items-center">
-                  <button
-                    type="button"
-                    onClick={handleReset}
-                    disabled={!canReset}
-                    className={`group relative inline-flex h-[46px] items-center justify-center overflow-hidden whitespace-nowrap rounded-[12px] px-6 text-[15px] leading-none font-semibold transition-colors ${
-                      canReset ? "" : "cursor-not-allowed"
+      {isPortalMounted && isSaveBarRendered
+        ? createPortal(
+            <div className="pointer-events-none fixed inset-x-0 bottom-[22px] z-[170] flex justify-center px-4 md:px-6 lg:px-8 xl:pl-[358px] xl:pr-[42px]">
+              <div className="w-full max-w-[1220px]">
+                <div
+                  className={`pointer-events-auto relative w-full overflow-hidden rounded-[26px] shadow-[0_26px_90px_rgba(0,0,0,0.48)] backdrop-blur-[18px] ${
+                    isSaveBarExiting ? "flowdesk-sheet-down" : "flowdesk-sheet-up"
+                  } ${showSaveBarErrorState ? "flowdesk-savebar-shake-soft" : ""}`}
+                >
+                  <span
+                    aria-hidden="true"
+                    className={`pointer-events-none absolute inset-0 rounded-[26px] border ${
+                      showSaveBarErrorState
+                        ? "border-[rgba(219,70,70,0.38)]"
+                        : showSaveBarSuccessState
+                          ? "border-[rgba(106,226,90,0.34)]"
+                          : "border-[#0E0E0E]"
                     }`}
-                  >
-                    <span
-                      aria-hidden="true"
-                      className={`absolute inset-0 rounded-[12px] border transition-colors ${
-                        canReset
-                          ? "border-[#1B1B1B] bg-[#111111]"
-                          : "border-[#151515] bg-[#0E0E0E]"
-                      }`}
-                    />
-                    <span className={`relative z-10 ${canReset ? "text-[#D0D0D0]" : "text-[#666666]"}`}>
-                      Redefinir
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void handleSave();
-                    }}
-                    disabled={!canSave}
-                    className={`group relative inline-flex h-[46px] items-center justify-center overflow-hidden whitespace-nowrap rounded-[12px] px-6 text-[15px] leading-none font-semibold ${
-                      canSave ? "" : "cursor-not-allowed"
+                  />
+                  <span
+                    aria-hidden="true"
+                    className={`pointer-events-none absolute inset-[-2px] rounded-[26px] ${
+                      showSaveBarErrorState
+                        ? "flowdesk-tag-border-glow-danger"
+                        : showSaveBarSuccessState
+                          ? "flowdesk-tag-border-glow-success"
+                          : "flowdesk-tag-border-glow"
                     }`}
-                  >
-                    <span
-                      aria-hidden="true"
-                      className={`absolute inset-0 rounded-[12px] transition-transform duration-150 ease-out ${
-                        canSave || saving
-                          ? "bg-[linear-gradient(180deg,#FFFFFF_0%,#D1D1D1_100%)] group-hover:scale-[1.02] group-active:scale-[0.985]"
-                          : "bg-[#111111]"
-                      }`}
-                    />
-                    <span className={`relative z-10 text-[#282828] transition-opacity ${saving ? "opacity-0" : "opacity-100"}`}>
-                      Salvar alteracoes
-                    </span>
-                    {saving ? (
-                      <span className="absolute inset-0 z-20 inline-flex items-center justify-center">
-                        <Loader2 className="h-[20px] w-[20px] animate-spin text-[#282828]" />
-                      </span>
-                    ) : null}
-                  </button>
+                  />
+                  <span
+                    aria-hidden="true"
+                    className={`pointer-events-none absolute inset-[-1px] rounded-[26px] ${
+                      showSaveBarErrorState
+                        ? "flowdesk-tag-border-core-danger"
+                        : showSaveBarSuccessState
+                          ? "flowdesk-tag-border-core-success"
+                          : "flowdesk-tag-border-core"
+                    }`}
+                  />
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-[1px] rounded-[25px] bg-[#070707]"
+                  />
+
+                  <div className="relative z-10 flex flex-col gap-[16px] px-[18px] py-[16px] sm:px-[22px] sm:py-[18px] xl:flex-row xl:items-center xl:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[16px] leading-[1.2] font-medium tracking-[-0.03em] text-[#D8D8D8]">
+                        {floatingSaveBarTitle}
+                      </p>
+                      <p className="mt-[8px] max-w-[680px] text-[13px] leading-[1.55] text-[#7F7F7F]">
+                        {floatingSaveBarDescription}
+                      </p>
+                    </div>
+
+                    {showSaveBarActions ? (
+                      <div className="flex shrink-0 flex-col-reverse gap-[10px] sm:flex-row sm:items-center">
+                        <button
+                          type="button"
+                          onClick={handleReset}
+                          disabled={!canReset}
+                          className={`group relative inline-flex h-[46px] items-center justify-center overflow-hidden whitespace-nowrap rounded-[12px] px-6 text-[15px] leading-none font-semibold transition-colors ${
+                            canReset ? "" : "cursor-not-allowed"
+                          }`}
+                        >
+                          <span
+                            aria-hidden="true"
+                            className={`absolute inset-0 rounded-[12px] border transition-colors ${
+                              canReset
+                                ? "border-[#1B1B1B] bg-[#111111]"
+                                : "border-[#151515] bg-[#0E0E0E]"
+                            }`}
+                          />
+                          <span
+                            className={`relative z-10 inline-flex items-center justify-center whitespace-nowrap ${
+                              canReset ? "text-[#D0D0D0]" : "text-[#666666]"
+                            }`}
+                          >
+                            Redefinir
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void handleSave();
+                          }}
+                          disabled={!canSave}
+                          className={`group relative inline-flex h-[46px] items-center justify-center overflow-hidden whitespace-nowrap rounded-[12px] px-6 text-[15px] leading-none font-semibold ${
+                            canSave ? "" : "cursor-not-allowed"
+                          }`}
+                        >
+                          <span
+                            aria-hidden="true"
+                            className={`absolute inset-0 rounded-[12px] transition-transform duration-150 ease-out ${
+                              saveActionVisualEnabled
+                                ? "bg-[linear-gradient(180deg,#FFFFFF_0%,#D1D1D1_100%)] group-hover:scale-[1.02] group-active:scale-[0.985]"
+                                : "bg-[#111111]"
+                            }`}
+                          />
+                          <span
+                            className={`relative z-10 inline-flex items-center justify-center whitespace-nowrap transition-opacity ${
+                              saveActionVisualEnabled ? "text-[#282828]" : "text-[#B7B7B7]"
+                            } ${saving ? "opacity-0" : "opacity-100"}`}
+                          >
+                            Salvar alteracoes
+                          </span>
+                          {saving ? (
+                            <span className="absolute inset-0 z-20 inline-flex items-center justify-center">
+                              <ButtonLoader
+                                size={20}
+                                colorClassName={saveActionVisualEnabled ? "text-[#282828]" : "text-[#B7B7B7]"}
+                              />
+                            </span>
+                          ) : null}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="inline-flex h-[40px] shrink-0 items-center justify-center rounded-full border border-[rgba(155,214,148,0.28)] bg-[rgba(155,214,148,0.08)] px-[14px] text-[12px] font-medium text-[#9BD694]">
+                        Tudo sincronizado
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
+            </div>,
+            document.body,
+          )
+        : null}
     </section>
   );
 }
