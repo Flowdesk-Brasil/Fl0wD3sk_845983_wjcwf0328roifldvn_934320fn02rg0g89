@@ -115,6 +115,7 @@ type ServerEditorTab = "settings" | "payments" | "methods" | "plans";
 type ServerSettingsSection =
   | "overview"
   | "message"
+  | "timeclock"
   | "sales_overview"
   | "sales_categories"
   | "sales_category_create"
@@ -238,6 +239,22 @@ const TICKET_SIDEBAR_ITEMS: SidebarItem[] = [
       "descricao",
       "botao",
       "ticket",
+    ],
+  },
+  {
+    label: "Bate Ponto",
+    kind: "ticket",
+    tab: "settings",
+    settingsSection: "timeclock",
+    requiredPermission: "server_manage_tickets_overview",
+    searchAliases: [
+      "bate ponto",
+      "ponto",
+      "jornada",
+      "horas",
+      "banco de horas",
+      "ranking",
+      "auditoria",
     ],
   },
   {
@@ -525,7 +542,7 @@ function parseWorkspaceRoute(pathname: string | null): {
     }
 
     if (
-      /^\/\d{10,25}(?:\/(?:sales\/(?:overview|categories(?:\/create)?|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|security\/(?:antilink|autorole|logs))?)?$/.test(
+      /^\/\d{10,25}(?:\/(?:sales\/(?:overview|categories(?:\/create)?|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai|timeclock)|entry-exit\/(?:overview|message)|security\/(?:antilink|autorole|logs))?)?$/.test(
         comparablePathname,
       )
     ) {
@@ -545,7 +562,7 @@ function parseWorkspaceRoute(pathname: string | null): {
   }
 
   const ticketSectionMatch = normalizedPathname.match(
-    /^\/servers\/(\d{10,25})\/tickets?\/(overview|message|flowai)\/?$/,
+    /^\/servers\/(\d{10,25})\/tickets?\/(overview|message|flowai|timeclock)\/?$/,
   );
   if (ticketSectionMatch) {
     return {
@@ -554,6 +571,8 @@ function parseWorkspaceRoute(pathname: string | null): {
       settingsSection:
         ticketSectionMatch[2] === "flowai"
           ? "ticket_ai"
+          : ticketSectionMatch[2] === "timeclock"
+            ? "timeclock"
           : (ticketSectionMatch[2] as ServerSettingsSection),
     };
   }
@@ -655,7 +674,7 @@ function isServersWorkspacePath(pathname: string) {
     return true;
   }
 
-  return /^\/\d{10,25}(?:\/(?:sales\/(?:overview|categories|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|security\/(?:antilink|autorole|logs))?)?\/?$/.test(
+  return /^\/\d{10,25}(?:\/(?:sales\/(?:overview|categories|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai|timeclock)|entry-exit\/(?:overview|message)|security\/(?:antilink|autorole|logs))?)?\/?$/.test(
     pathname,
   );
 }
@@ -2465,7 +2484,8 @@ export function ServersWorkspace({
     selectedEditorTabForConfig === "settings" &&
     (selectedSettingsSectionForConfig === "overview" ||
       selectedSettingsSectionForConfig === "message" ||
-      selectedSettingsSectionForConfig === "ticket_ai");
+      selectedSettingsSectionForConfig === "ticket_ai" ||
+      selectedSettingsSectionForConfig === "timeclock");
   const isSalesGroupActive =
     isEditingServer &&
     selectedEditorTabForConfig === "settings" &&
@@ -2622,6 +2642,9 @@ export function ServersWorkspace({
     if (settingsSection === "ticket_ai") {
       return `/servers/${encodedGuildId}/tickets/flowai/`;
     }
+    if (settingsSection === "timeclock") {
+      return `/servers/${encodedGuildId}/tickets/timeclock/`;
+    }
     if (settingsSection === "entry_exit_message") {
       return `/servers/${encodedGuildId}/entry-exit/message/`;
     }
@@ -2754,6 +2777,7 @@ export function ServersWorkspace({
       buildServerConfigUrl(guildId, "settings", "overview"),
       buildServerConfigUrl(guildId, "settings", "message"),
       buildServerConfigUrl(guildId, "settings", "ticket_ai"),
+      buildServerConfigUrl(guildId, "settings", "timeclock"),
       buildServerConfigUrl(guildId, "settings", "entry_exit_overview"),
       buildServerConfigUrl(guildId, "settings", "entry_exit_message"),
       buildServerConfigUrl(guildId, "settings", "security_antilink"),
@@ -3273,6 +3297,7 @@ export function ServersWorkspace({
     if (section === "message") return perms.has("server_manage_tickets_message");
     if (
       section === "ticket_ai" ||
+      section === "timeclock" ||
       section === "sales_overview" ||
       section === "sales_categories" ||
       section === "sales_category_create" ||

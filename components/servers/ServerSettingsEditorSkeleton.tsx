@@ -10,6 +10,7 @@ export type ServerSettingsSkeletonTab =
 export type ServerSettingsSkeletonSection =
   | "overview"
   | "message"
+  | "timeclock"
   | "sales_overview"
   | "sales_categories"
   | "sales_category_create"
@@ -756,6 +757,10 @@ function resolveSkeletonContent(
 
   if (settingsSection === "ticket_ai") {
     return renderFlowAiSkeleton();
+  }
+
+  if (settingsSection === "timeclock") {
+    return renderSettingsOverviewSkeleton();
   }
 
   if (settingsSection === "entry_exit_overview") {
