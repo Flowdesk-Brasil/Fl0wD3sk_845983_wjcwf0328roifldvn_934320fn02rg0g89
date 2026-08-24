@@ -176,6 +176,10 @@ export async function POST(request: Request) {
           logChannelId: flowSecureDto.optional(
             flowSecureDto.nullable(OPTIONAL_DISCORD_SNOWFLAKE_TEXT),
           ),
+          // Read-only fields returned by GET. Accept them from cached clients and ignore on save.
+          panelMessageId: flowSecureDto.optional(
+            flowSecureDto.nullable(OPTIONAL_DISCORD_SNOWFLAKE_TEXT),
+          ),
           timezone: flowSecureDto.optional(
             flowSecureDto.string({
               maxLength: 80,
@@ -198,6 +202,15 @@ export async function POST(request: Request) {
           ),
           lateFinishPolicy: flowSecureDto.optional(
             flowSecureDto.enum(["count", "ignore", "approval", "limit"] as const),
+          ),
+          updatedAt: flowSecureDto.optional(
+            flowSecureDto.nullable(
+              flowSecureDto.string({
+                maxLength: 80,
+                pattern: /^[0-9T:Z.+-]+$/,
+                disallowAngleBrackets: true,
+              }),
+            ),
           ),
           maxSessionSeconds: flowSecureDto.optional(
             flowSecureDto.number({ integer: true, min: 3600, max: 172800 }),

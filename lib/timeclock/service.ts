@@ -918,6 +918,66 @@ function getRangePreset(value: string | null) {
   return { from, to: today };
 }
 
+type DashboardQueryResult<TData = unknown> = {
+  data: TData | null;
+  error: unknown;
+  count?: number | null;
+};
+
+const TIMECLOCK_DASHBOARD_QUERY_TIMEOUT_MS = 4500;
+
+async function runDashboardQuery<TData>(
+  label: string,
+  query: PromiseLike<DashboardQueryResult<TData>>,
+): Promise<DashboardQueryResult<TData>> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutResult = new Promise<DashboardQueryResult<TData>>((resolve) => {
+    timeoutId = setTimeout(() => {
+      resolve({
+        data: null,
+        error: new Error(`Consulta ${label} excedeu o tempo limite.`),
+        count: 0,
+      });
+    }, TIMECLOCK_DASHBOARD_QUERY_TIMEOUT_MS);
+  });
+
+  try {
+    return await Promise.race([Promise.resolve(query), timeoutResult]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+function getDashboardQueryErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message.trim()) return error.message.trim();
+  const record = error as { message?: unknown } | null;
+  return typeof record?.message === "string" && record.message.trim()
+    ? record.message.trim()
+    : "consulta indisponivel";
+}
+
+function markDashboardQueryFailure(
+  input: {
+    guildId: string;
+    label: string;
+    result: DashboardQueryResult;
+    warnings: string[];
+  },
+) {
+  if (!input.result.error) return false;
+  if (isMissingTimeclockSchema(input.result.error)) {
+    throwSchemaMissing(input.result.error);
+  }
+
+  console.warn("[timeclock-dashboard] bloco indisponivel:", {
+    guildId: input.guildId,
+    block: input.label,
+    message: getDashboardQueryErrorMessage(input.result.error),
+  });
+  input.warnings.push(`Dados de ${input.label} indisponiveis temporariamente.`);
+  return true;
+}
+
 export async function getTimeclockDashboard(input: {
   guildId: string;
   range?: string | null;
@@ -950,49 +1010,92 @@ export async function getTimeclockDashboard(input: {
 
   const [totalsResult, activeResult, historyResult, eventsResult, rankingResult] =
     await Promise.all([
-      supabase.rpc("get_timeclock_dashboard_totals", {
-        p_guild_id: input.guildId,
-        p_workday: workday,
-      }),
-      supabase
-        .from(SESSIONS_TABLE)
-        .select("*")
-        .eq("guild_id", input.guildId)
-        .eq("workday", workday)
-        .in("status", ["WORKING", "PAUSED", "FINISHED"])
-        .order("started_at", { ascending: true })
-        .limit(80),
-      historyQuery
-        .order("workday", { ascending: false })
-        .range((page - 1) * pageSize, page * pageSize - 1),
-      supabase
-        .from(EVENTS_TABLE)
-        .select("*")
-        .eq("guild_id", input.guildId)
-        .order("timestamp", { ascending: false })
-        .limit(80),
-      supabase.rpc("get_timeclock_ranking", {
-        p_guild_id: input.guildId,
-        p_from: range.from,
-        p_to: range.to,
-        p_limit: 25,
-        p_offset: 0,
-      }),
+      runDashboardQuery(
+        "totais",
+        supabase.rpc("get_timeclock_dashboard_totals", {
+          p_guild_id: input.guildId,
+          p_workday: workday,
+        }),
+      ),
+      runDashboardQuery(
+        "acompanhamento",
+        supabase
+          .from(SESSIONS_TABLE)
+          .select("*")
+          .eq("guild_id", input.guildId)
+          .eq("workday", workday)
+          .in("status", ["WORKING", "PAUSED", "FINISHED"])
+          .order("started_at", { ascending: true })
+          .limit(80),
+      ),
+      runDashboardQuery(
+        "historico",
+        historyQuery
+          .order("workday", { ascending: false })
+          .range((page - 1) * pageSize, page * pageSize - 1),
+      ),
+      runDashboardQuery(
+        "auditoria",
+        supabase
+          .from(EVENTS_TABLE)
+          .select("*")
+          .eq("guild_id", input.guildId)
+          .order("timestamp", { ascending: false })
+          .limit(80),
+      ),
+      runDashboardQuery(
+        "ranking",
+        supabase.rpc("get_timeclock_ranking", {
+          p_guild_id: input.guildId,
+          p_from: range.from,
+          p_to: range.to,
+          p_limit: 25,
+          p_offset: 0,
+        }),
+      ),
     ]);
 
-  if (totalsResult.error) throwSchemaMissing(totalsResult.error);
-  if (activeResult.error) throwSchemaMissing(activeResult.error);
-  if (historyResult.error) throwSchemaMissing(historyResult.error);
-  if (eventsResult.error) throwSchemaMissing(eventsResult.error);
-  if (rankingResult.error) throwSchemaMissing(rankingResult.error);
+  const warnings: string[] = [];
+  const totalsFailed = markDashboardQueryFailure({
+    guildId: input.guildId,
+    label: "totais",
+    result: totalsResult,
+    warnings,
+  });
+  const activeFailed = markDashboardQueryFailure({
+    guildId: input.guildId,
+    label: "acompanhamento",
+    result: activeResult,
+    warnings,
+  });
+  const historyFailed = markDashboardQueryFailure({
+    guildId: input.guildId,
+    label: "historico",
+    result: historyResult,
+    warnings,
+  });
+  const eventsFailed = markDashboardQueryFailure({
+    guildId: input.guildId,
+    label: "auditoria",
+    result: eventsResult,
+    warnings,
+  });
+  const rankingFailed = markDashboardQueryFailure({
+    guildId: input.guildId,
+    label: "ranking",
+    result: rankingResult,
+    warnings,
+  });
 
-  const totals = Array.isArray(totalsResult.data)
+  const totals = !totalsFailed && Array.isArray(totalsResult.data)
     ? totalsResult.data[0] || {}
-    : totalsResult.data || {};
-  const sessions = (activeResult.data || []) as SessionRecord[];
-  const history = (historyResult.data || []) as SessionRecord[];
-  const rankingRows = (rankingResult.data || []) as Array<Record<string, unknown>>;
-  const events = (eventsResult.data || []) as Array<Record<string, unknown>>;
+    : !totalsFailed
+      ? totalsResult.data || {}
+      : {};
+  const sessions = (!activeFailed && activeResult.data || []) as SessionRecord[];
+  const history = (!historyFailed && historyResult.data || []) as SessionRecord[];
+  const rankingRows = (!rankingFailed && rankingResult.data || []) as Array<Record<string, unknown>>;
+  const events = (!eventsFailed && eventsResult.data || []) as Array<Record<string, unknown>>;
   const userIds = [
     ...new Set([
       ...sessions.map((session) => session.user_id),
@@ -1005,6 +1108,8 @@ export async function getTimeclockDashboard(input: {
 
   return {
     ok: true,
+    degraded: warnings.length > 0,
+    warnings,
     settings,
     workday,
     range,
@@ -1021,7 +1126,7 @@ export async function getTimeclockDashboard(input: {
     history: {
       page,
       pageSize,
-      total: historyResult.count || 0,
+      total: historyFailed ? 0 : historyResult.count || 0,
       items: history.map((session) => mapSessionForApi(session, users)),
     },
     ranking: rankingRows.map((row, index) => ({

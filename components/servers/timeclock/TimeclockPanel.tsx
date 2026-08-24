@@ -44,6 +44,7 @@ type TimeclockSettingsPayload = {
   enabled: boolean;
   mainChannelId: string | null;
   logChannelId: string | null;
+  panelMessageId?: string | null;
   panelLayout: TicketPanelLayout;
   timezone: string;
   employeeRoleIds: string[];
@@ -59,10 +60,13 @@ type TimeclockSettingsPayload = {
   maxSessionSeconds: number;
   alertsEnabled: boolean;
   scheduleDays: TimeclockScheduleDay[];
+  updatedAt?: string | null;
 };
 
 type TimeclockSummaryPayload = {
   ok: boolean;
+  degraded?: boolean;
+  warnings?: string[];
   workday: string;
   totals: {
     workingCount: number;
@@ -183,6 +187,11 @@ const POLICY_OPTIONS = [
   { id: "approval", name: "Exigir aprovacao" },
   { id: "limit", name: "Limitar computavel" },
 ];
+
+type TimeclockSettingsSavePayload = Omit<
+  TimeclockSettingsPayload,
+  "panelMessageId" | "updatedAt"
+>;
 
 const fetchJson = async <T,>(url: string): Promise<T> => {
   const response = await fetch(url, { cache: "no-store" });
@@ -342,10 +351,49 @@ function TimeclockInlineSwitch({
 
 function normalizeTimeclockDraftForCompare(draft: TimeclockSettingsPayload | null) {
   if (!draft) return null;
+  return buildTimeclockSettingsSavePayload(draft);
+}
+
+function normalizeTimeclockSettingsForState(
+  settings: TimeclockSettingsPayload,
+): TimeclockSettingsPayload {
   return {
-    ...draft,
+    ...settings,
+    panelLayout: normalizeTicketPanelLayout(settings.panelLayout || DEFAULT_PANEL_LAYOUT),
+    scheduleDays: (settings.scheduleDays?.length
+      ? settings.scheduleDays
+      : createDefaultScheduleDays()
+    )
+      .map(normalizeScheduleDay)
+      .sort((a, b) => a.weekday - b.weekday),
+  };
+}
+
+function buildTimeclockSettingsSavePayload(
+  draft: TimeclockSettingsPayload,
+): TimeclockSettingsSavePayload {
+  return {
+    guildId: draft.guildId,
+    enabled: draft.enabled,
+    mainChannelId: draft.mainChannelId || null,
+    logChannelId: draft.logChannelId || null,
     panelLayout: normalizeTicketPanelLayout(draft.panelLayout || DEFAULT_PANEL_LAYOUT),
-    scheduleDays: [...draft.scheduleDays].map(normalizeScheduleDay).sort((a, b) => a.weekday - b.weekday),
+    timezone: draft.timezone || "America/Sao_Paulo",
+    employeeRoleIds: Array.isArray(draft.employeeRoleIds) ? draft.employeeRoleIds : [],
+    viewHistoryRoleIds: Array.isArray(draft.viewHistoryRoleIds) ? draft.viewHistoryRoleIds : [],
+    editTimeclockRoleIds: Array.isArray(draft.editTimeclockRoleIds) ? draft.editTimeclockRoleIds : [],
+    approveHoursRoleIds: Array.isArray(draft.approveHoursRoleIds) ? draft.approveHoursRoleIds : [],
+    adminRoleIds: Array.isArray(draft.adminRoleIds) ? draft.adminRoleIds : [],
+    hourBankEnabled: draft.hourBankEnabled === true,
+    earlyStartPolicy: draft.earlyStartPolicy || "count",
+    lateFinishPolicy: draft.lateFinishPolicy || "count",
+    overtimeApprovalEnabled: draft.overtimeApprovalEnabled === true,
+    rankingPublic: draft.rankingPublic === true,
+    maxSessionSeconds: draft.maxSessionSeconds,
+    alertsEnabled: draft.alertsEnabled === true,
+    scheduleDays: (draft.scheduleDays?.length ? draft.scheduleDays : createDefaultScheduleDays())
+      .map(normalizeScheduleDay)
+      .sort((a, b) => a.weekday - b.weekday),
   };
 }
 
@@ -404,16 +452,7 @@ export function TimeclockPanel({
 
   useEffect(() => {
     if (!settingsPayload?.settings) return;
-    const normalizedSettings = {
-      ...settingsPayload.settings,
-      panelLayout: normalizeTicketPanelLayout(
-        settingsPayload.settings.panelLayout || DEFAULT_PANEL_LAYOUT,
-      ),
-      scheduleDays: (settingsPayload.settings.scheduleDays?.length
-        ? settingsPayload.settings.scheduleDays
-        : createDefaultScheduleDays()
-      ).map(normalizeScheduleDay),
-    };
+    const normalizedSettings = normalizeTimeclockSettingsForState(settingsPayload.settings);
     setDraft(normalizedSettings);
     setSavedDraft(normalizedSettings);
   }, [settingsPayload]);
@@ -439,6 +478,9 @@ export function TimeclockPanel({
     draft?.logChannelId &&
       !textChannelOptions.some((channel) => channel.id === draft.logChannelId),
   );
+  const summaryWarning = summary?.degraded
+    ? summary.warnings?.[0] || "Alguns dados do Bate Ponto estao indisponiveis no momento."
+    : null;
 
   const setScheduleDay = useCallback((weekday: number, patch: Partial<TimeclockScheduleDay>) => {
     setFeedback(null);
@@ -476,20 +518,16 @@ export function TimeclockPanel({
       const response = await fetch("/api/auth/me/guilds/timeclock-settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(draft),
+        body: JSON.stringify(buildTimeclockSettingsSavePayload(draft)),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload.ok === false) {
         throw new Error(payload.message || "Nao foi possivel salvar Bate Ponto.");
       }
-      const savedSettings = {
-        ...payload.settings,
-        panelLayout: normalizeTicketPanelLayout(payload.settings.panelLayout || DEFAULT_PANEL_LAYOUT),
-        scheduleDays: (payload.settings.scheduleDays?.length
-          ? payload.settings.scheduleDays
-          : createDefaultScheduleDays()
-        ).map(normalizeScheduleDay),
-      };
+      if (!payload.settings) {
+        throw new Error("A API nao retornou as configuracoes atualizadas.");
+      }
+      const savedSettings = normalizeTimeclockSettingsForState(payload.settings);
       setDraft(savedSettings);
       setSavedDraft(savedSettings);
       setFeedback({ tone: "success", text: "Configuracoes do Bate Ponto salvas." });
@@ -908,13 +946,20 @@ export function TimeclockPanel({
         </div>
       ) : null}
 
+      {activeView !== "config" && summaryError ? (
+        <div className="rounded-[22px] border border-[#3A1B1B] bg-[#120808] px-[16px] py-[14px] text-[13px] text-[#E7A5A5]">
+          {summaryError instanceof Error ? summaryError.message : "Nao foi possivel carregar dados do Bate Ponto."}
+        </div>
+      ) : null}
+
+      {activeView !== "config" && !summaryError && summaryWarning ? (
+        <div className="rounded-[22px] border border-[#2F2916] bg-[#100E07] px-[16px] py-[14px] text-[13px] leading-[1.55] text-[#D8C27A]">
+          {summaryWarning}
+        </div>
+      ) : null}
+
       {activeView === "live" ? (
         <div className="space-y-[14px]">
-          {summaryError ? (
-            <div className="rounded-[22px] border border-[#3A1B1B] bg-[#120808] px-[16px] py-[14px] text-[13px] text-[#E7A5A5]">
-              {summaryError instanceof Error ? summaryError.message : "Nao foi possivel carregar acompanhamento."}
-            </div>
-          ) : null}
           <div className="grid gap-[12px] md:grid-cols-2 xl:grid-cols-4">
             <MetricCard label="Trabalhando agora" value={String(summary?.totals.workingCount || 0)} icon={Activity} />
             <MetricCard label="Em pausa" value={String(summary?.totals.pausedCount || 0)} icon={Clock3} />
