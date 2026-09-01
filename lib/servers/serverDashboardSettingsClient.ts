@@ -65,6 +65,24 @@ type ServerDashboardSettingsPayload = {
     exitThumbnailMode: WelcomeThumbnailMode;
     updatedAt: string | null;
   } | null;
+  captchaSettings: {
+    enabled: boolean;
+    panelChannelId: string | null;
+    logsChannelId: string | null;
+    verifiedRoleIds: string[];
+    bypassRoleIds: string[];
+    panelLayout: TicketPanelLayout;
+    panelTitle: string;
+    panelDescription: string;
+    panelButtonLabel: string;
+    challengeTitle: string;
+    challengeDescription: string;
+    maxAttempts: number;
+    timeoutSeconds: number;
+    kickOnFail: boolean;
+    successMessage: string;
+    updatedAt: string | null;
+  } | null;
   antiLinkSettings: {
     enabled: boolean;
     logChannelId: string | null;

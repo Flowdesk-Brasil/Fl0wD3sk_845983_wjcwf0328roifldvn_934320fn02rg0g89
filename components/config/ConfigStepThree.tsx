@@ -5,9 +5,11 @@ import { ArrowLeft, ArrowRight, Bell, Lock, Shield, Users } from "lucide-react";
 import { ConfigFieldCard, ConfigStepShell } from "@/components/config/ConfigStepShell";
 import { ConfigStepMultiSelect } from "@/components/config/ConfigStepMultiSelect";
 import { ConfigStepSelect } from "@/components/config/ConfigStepSelect";
+import { DiscordGuildResourcesRefreshProvider } from "@/components/config/discordGuildResourcesRefreshContext";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 import type { StepThreeDraft } from "@/lib/auth/configContext";
 import { hasStepThreeDraftValues } from "@/lib/auth/configContext";
+import { useLiveDiscordGuildResources } from "@/lib/servers/useLiveDiscordGuildResources";
 
 type ConfigStepThreeProps = {
   displayName: string;
@@ -22,12 +24,6 @@ type ConfigStepThreeProps = {
 type SelectOption = {
   id: string;
   name: string;
-};
-
-type GuildRolesApiResponse = {
-  ok: boolean;
-  message?: string;
-  roles?: SelectOption[];
 };
 
 type StaffSettingsApiResponse = {
@@ -135,14 +131,37 @@ export function ConfigStepThree({
 }: ConfigStepThreeProps) {
   const latestInitialDraftRef = useRef(buildStepThreeDraft(initialDraft));
   const hasInitialDraftValuesRef = useRef(hasStepThreeDraftValues(initialDraft));
-  const [roleOptions, setRoleOptions] = useState<SelectOption[]>([]);
-  const [isLoadingRoles, setIsLoadingRoles] = useState(true);
+  const hasAppliedInitialSettingsRef = useRef(false);
+  const [isLoadingSettings, setIsLoadingSettings] = useState(true);
   const [adminRoleId, setAdminRoleId] = useState<string | null>(null);
   const [claimRoleIds, setClaimRoleIds] = useState<string[]>([]);
   const [closeRoleIds, setCloseRoleIds] = useState<string[]>([]);
   const [notifyRoleIds, setNotifyRoleIds] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const preserveResourceIds = useMemo(
+    () => ({
+      roleIds: [
+        adminRoleId,
+        ...claimRoleIds,
+        ...closeRoleIds,
+        ...notifyRoleIds,
+      ],
+    }),
+    [adminRoleId, claimRoleIds, closeRoleIds, notifyRoleIds],
+  );
+
+  const {
+    roleOptions,
+    hasLoadedResourcesOnce,
+    refreshResourcesOnMenuOpen,
+  } = useLiveDiscordGuildResources(guildId, {
+    enabled: Boolean(guildId),
+    preserveResourceIds,
+  });
+
+  const isLoadingRoles = !hasLoadedResourcesOnce || isLoadingSettings;
   const isPlanLocked =
     guildLicenseStatus === "expired" ||
     guildLicenseStatus === "off" ||
@@ -154,13 +173,20 @@ export function ConfigStepThree({
   }, [initialDraft]);
 
   useEffect(() => {
+    hasAppliedInitialSettingsRef.current = false;
+  }, [guildId]);
+
+  useEffect(() => {
     if (!guildId) {
-      setRoleOptions([]);
       setAdminRoleId(null);
       setClaimRoleIds([]);
       setCloseRoleIds([]);
       setNotifyRoleIds([]);
-      setIsLoadingRoles(false);
+      setIsLoadingSettings(false);
+      return;
+    }
+
+    if (!hasLoadedResourcesOnce || hasAppliedInitialSettingsRef.current) {
       return;
     }
 
@@ -169,32 +195,22 @@ export function ConfigStepThree({
     const timeoutId = window.setTimeout(() => {
       controller.abort();
     }, 12000);
-    setIsLoadingRoles(true);
+    setIsLoadingSettings(true);
     setErrorMessage(null);
 
-    async function loadRolesAndSettings() {
+    async function loadSettings() {
       try {
-        const [rolesResponse, settingsResponse] = await Promise.all([
-          fetch(`/api/auth/me/guilds/roles?guildId=${guildId}`, {
+        const settingsResponse = await fetch(
+          `/api/auth/me/guilds/ticket-staff-settings?guildId=${guildId}`,
+          {
             cache: "no-store",
             signal: controller.signal,
-          }),
-          fetch(`/api/auth/me/guilds/ticket-staff-settings?guildId=${guildId}`, {
-            cache: "no-store",
-            signal: controller.signal,
-          }),
-        ]);
+          },
+        );
 
-        const rolesPayload = (await rolesResponse.json()) as GuildRolesApiResponse;
         const settingsPayload = (await settingsResponse.json()) as StaffSettingsApiResponse;
 
         if (!isMounted) return;
-
-        if (!rolesResponse.ok || !rolesPayload.ok || !rolesPayload.roles) {
-          throw new Error(rolesPayload.message || "Falha ao carregar cargos do servidor.");
-        }
-
-        setRoleOptions(rolesPayload.roles);
 
         const fallbackDraft =
           settingsResponse.ok && settingsPayload.ok && settingsPayload.settings
@@ -205,43 +221,43 @@ export function ConfigStepThree({
           ? latestInitialDraftRef.current
           : fallbackDraft;
 
-        const allowedRoleIds = new Set(rolesPayload.roles.map((role) => role.id));
+        const allowedRoleIds = new Set(roleOptions.map((role) => role.id));
 
         setAdminRoleId(
           sourceDraft.adminRoleId && allowedRoleIds.has(sourceDraft.adminRoleId)
             ? sourceDraft.adminRoleId
-            : null,
+            : sourceDraft.adminRoleId,
         );
         setClaimRoleIds(filterRoleIdList(sourceDraft.claimRoleIds, allowedRoleIds));
         setCloseRoleIds(filterRoleIdList(sourceDraft.closeRoleIds, allowedRoleIds));
         setNotifyRoleIds(filterRoleIdList(sourceDraft.notifyRoleIds, allowedRoleIds));
+        hasAppliedInitialSettingsRef.current = true;
       } catch (error) {
         if (!isMounted) return;
         if (error instanceof DOMException && error.name === "AbortError") {
           setErrorMessage("Tempo esgotado ao buscar cargos do servidor. Tente novamente.");
           return;
         }
-        setRoleOptions([]);
         setErrorMessage(
           error instanceof Error
             ? error.message
-            : "Erro ao carregar cargos para configuracao.",
+            : "Erro ao carregar configuracoes de staff.",
         );
       } finally {
         if (!isMounted) return;
         window.clearTimeout(timeoutId);
-        setIsLoadingRoles(false);
+        setIsLoadingSettings(false);
       }
     }
 
-    void loadRolesAndSettings();
+    void loadSettings();
 
     return () => {
       isMounted = false;
       window.clearTimeout(timeoutId);
       controller.abort();
     };
-  }, [guildId]);
+  }, [guildId, hasLoadedResourcesOnce, roleOptions]);
 
   useEffect(() => {
     if (!guildId || isLoadingRoles) return;
@@ -370,6 +386,7 @@ export function ConfigStepThree({
   }
 
   return (
+    <DiscordGuildResourcesRefreshProvider refresh={refreshResourcesOnMenuOpen}>
     <ConfigStepShell
       stepNumber={3}
       title="Defina quem opera, assume e encerra atendimentos"
@@ -510,5 +527,6 @@ export function ConfigStepThree({
 
       <span className="sr-only">{displayName}</span>
     </ConfigStepShell>
+    </DiscordGuildResourcesRefreshProvider>
   );
 }

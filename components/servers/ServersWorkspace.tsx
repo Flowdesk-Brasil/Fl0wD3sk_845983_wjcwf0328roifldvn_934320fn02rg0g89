@@ -29,6 +29,7 @@ import {
   Search as SearchLucide,
   Settings2,
   Shield,
+  ShieldCheck,
   ShoppingBag,
   SlidersHorizontal,
   Ticket,
@@ -130,6 +131,8 @@ type ServerSettingsSection =
   | "sales_coupons_gifts_edit"
   | "entry_exit_overview"
   | "entry_exit_message"
+  | "captcha_overview"
+  | "captcha_message"
   | "security_antilink"
   | "security_autorole"
   | "security_logs"
@@ -181,7 +184,7 @@ const FILTER_LABEL: Record<FilterOption, string> = {
 
 type SidebarItem = {
   label: string;
-  kind: "overview" | "settings" | "sales" | "ticket" | "entry_exit" | "security" | "dashboard";
+  kind: "overview" | "settings" | "sales" | "ticket" | "entry_exit" | "captcha" | "security" | "dashboard";
   tab?: ServerEditorTab | null;
   settingsSection?: ServerSettingsSection | null;
   disabled?: boolean;
@@ -340,6 +343,40 @@ const ENTRY_EXIT_SIDEBAR_ITEMS: SidebarItem[] = [
       "saida",
       "configurar",
       "boas vindas",
+    ],
+  },
+];
+
+const CAPTCHA_SIDEBAR_ITEMS: SidebarItem[] = [
+  {
+    label: "Configurando Captcha",
+    kind: "captcha",
+    tab: "settings",
+    settingsSection: "captcha_overview",
+    requiredPermission: "server_manage_captcha_overview",
+    searchAliases: [
+      "captcha",
+      "verificacao",
+      "config",
+      "canais",
+      "cargos",
+      "logs",
+      "painel",
+    ],
+  },
+  {
+    label: "Configurando Mensagem",
+    kind: "captcha",
+    tab: "settings",
+    settingsSection: "captcha_message",
+    requiredPermission: "server_manage_captcha_message",
+    searchAliases: [
+      "captcha",
+      "mensagem",
+      "embed",
+      "painel",
+      "botao",
+      "verificacao",
     ],
   },
 ];
@@ -525,7 +562,7 @@ function parseWorkspaceRoute(pathname: string | null): {
     }
 
     if (
-      /^\/\d{10,25}(?:\/(?:sales\/(?:overview|categories(?:\/create)?|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|security\/(?:antilink|autorole|logs))?)?$/.test(
+      /^\/\d{10,25}(?:\/(?:sales\/(?:overview|categories(?:\/create)?|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|captcha\/(?:overview|message)|security\/(?:antilink|autorole|logs))?)?$/.test(
         comparablePathname,
       )
     ) {
@@ -609,6 +646,20 @@ function parseWorkspaceRoute(pathname: string | null): {
     };
   }
 
+  const captchaSectionMatch = normalizedPathname.match(
+    /^\/servers\/(\d{10,25})\/captcha\/(overview|message)\/?$/,
+  );
+  if (captchaSectionMatch) {
+    return {
+      guildId: captchaSectionMatch[1],
+      tab: "settings",
+      settingsSection:
+        captchaSectionMatch[2] === "overview"
+          ? "captcha_overview"
+          : "captcha_message",
+    };
+  }
+
   const securitySectionMatch = normalizedPathname.match(
     /^\/servers\/(\d{10,25})\/security\/(antilink|autorole|logs)\/?$/,
   );
@@ -655,7 +706,7 @@ function isServersWorkspacePath(pathname: string) {
     return true;
   }
 
-  return /^\/\d{10,25}(?:\/(?:sales\/(?:overview|categories|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|security\/(?:antilink|autorole|logs))?)?\/?$/.test(
+  return /^\/\d{10,25}(?:\/(?:sales\/(?:overview|categories|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|captcha\/(?:overview|message)|security\/(?:antilink|autorole|logs))?)?\/?$/.test(
     pathname,
   );
 }
@@ -1047,6 +1098,7 @@ function SidebarNavIcon({
     settings: Settings2,
     ticket: Ticket,
     entry_exit: ArrowRightLeft,
+    captcha: ShieldCheck,
     security: Shield,
     sales: ShoppingBag,
     dashboard: ChevronLeft,
@@ -1533,6 +1585,7 @@ export function ServersWorkspace({
   const [isSalesSidebarOpen, setIsSalesSidebarOpen] = useState(false);
   const [isTicketSidebarOpen, setIsTicketSidebarOpen] = useState(false);
   const [isEntryExitSidebarOpen, setIsEntryExitSidebarOpen] = useState(false);
+  const [isCaptchaSidebarOpen, setIsCaptchaSidebarOpen] = useState(false);
   const [isSecuritySidebarOpen, setIsSecuritySidebarOpen] = useState(false);
   const [currentDashboardPermissions, setCurrentDashboardPermissions] = useState<string[] | "full">([]);
   const [pendingWorkspacePaneKey, setPendingWorkspacePaneKey] = useState<string | null>(null);
@@ -2435,6 +2488,26 @@ export function ServersWorkspace({
       )
       .map((entry) => entry.item);
   }, [isEditingServer, normalizedSidebarQuery]);
+  const filteredCaptchaSidebarItems = useMemo(() => {
+    if (!isEditingServer) return [];
+
+    const items = CAPTCHA_SIDEBAR_ITEMS;
+
+    if (!normalizedSidebarQuery) return items;
+
+    return items
+      .map((item) => {
+        const haystack = [item.label, ...(item.searchAliases || [])].join(" ");
+        return { item, score: getSearchScore(haystack, normalizedSidebarQuery) };
+      })
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) =>
+        a.score !== b.score
+          ? b.score - a.score
+          : a.item.label.localeCompare(b.item.label, "pt-BR"),
+      )
+      .map((entry) => entry.item);
+  }, [isEditingServer, normalizedSidebarQuery]);
   const filteredSecuritySidebarItems = useMemo(() => {
     if (!isEditingServer) return [];
 
@@ -2486,34 +2559,75 @@ export function ServersWorkspace({
     selectedEditorTabForConfig === "settings" &&
     (selectedSettingsSectionForConfig === "entry_exit_overview" ||
       selectedSettingsSectionForConfig === "entry_exit_message");
+  const isCaptchaGroupActive =
+    isEditingServer &&
+    selectedEditorTabForConfig === "settings" &&
+    (selectedSettingsSectionForConfig === "captcha_overview" ||
+      selectedSettingsSectionForConfig === "captcha_message");
   const isSecurityGroupActive =
     isEditingServer &&
     selectedEditorTabForConfig === "settings" &&
     (selectedSettingsSectionForConfig === "security_antilink" ||
       selectedSettingsSectionForConfig === "security_autorole" ||
       selectedSettingsSectionForConfig === "security_logs");
+
   useEffect(() => {
     if (normalizedSidebarQuery) {
       setIsTicketSidebarOpen(true);
       setIsSalesSidebarOpen(true);
       setIsEntryExitSidebarOpen(true);
+      setIsCaptchaSidebarOpen(true);
       setIsSecuritySidebarOpen(true);
       return;
     }
 
-    if (isSalesGroupActive) {
-      setIsSalesSidebarOpen(true);
+    if (!isEditingServer || selectedEditorTabForConfig !== "settings") {
+      return;
     }
-    if (isTicketGroupActive) {
-      setIsTicketSidebarOpen(true);
+
+    switch (selectedSettingsSectionForConfig) {
+      case "overview":
+      case "message":
+      case "ticket_ai":
+        setIsTicketSidebarOpen(true);
+        break;
+      case "sales_overview":
+      case "sales_categories":
+      case "sales_category_create":
+      case "sales_category_edit":
+      case "sales_products":
+      case "sales_product_create":
+      case "sales_product_edit":
+      case "sales_stock":
+      case "sales_stock_edit":
+      case "sales_payment_methods":
+      case "sales_coupons_gifts":
+      case "sales_coupons_gifts_create":
+      case "sales_coupons_gifts_edit":
+        setIsSalesSidebarOpen(true);
+        break;
+      case "entry_exit_overview":
+      case "entry_exit_message":
+        setIsEntryExitSidebarOpen(true);
+        break;
+      case "captcha_overview":
+      case "captcha_message":
+        setIsCaptchaSidebarOpen(true);
+        break;
+      case "security_antilink":
+      case "security_autorole":
+      case "security_logs":
+        setIsSecuritySidebarOpen(true);
+        break;
+      default:
+        break;
     }
-    if (isEntryExitGroupActive) {
-      setIsEntryExitSidebarOpen(true);
-    }
-    if (isSecurityGroupActive) {
-      setIsSecuritySidebarOpen(true);
-    }
-  }, [isEntryExitGroupActive, isSalesGroupActive, isSecurityGroupActive, isTicketGroupActive, normalizedSidebarQuery]);
+  }, [
+    isEditingServer,
+    normalizedSidebarQuery,
+    selectedEditorTabForConfig,
+    selectedSettingsSectionForConfig,
+  ]);
 
   useEffect(() => {
     if (!selectedGuildIdForConfig) {
@@ -2627,6 +2741,12 @@ export function ServersWorkspace({
     }
     if (settingsSection === "entry_exit_overview") {
       return `/servers/${encodedGuildId}/entry-exit/overview/`;
+    }
+    if (settingsSection === "captcha_message") {
+      return `/servers/${encodedGuildId}/captcha/message/`;
+    }
+    if (settingsSection === "captcha_overview") {
+      return `/servers/${encodedGuildId}/captcha/overview/`;
     }
     if (settingsSection === "security_antilink") {
       return `/servers/${encodedGuildId}/security/antilink/`;
@@ -2756,6 +2876,8 @@ export function ServersWorkspace({
       buildServerConfigUrl(guildId, "settings", "ticket_ai"),
       buildServerConfigUrl(guildId, "settings", "entry_exit_overview"),
       buildServerConfigUrl(guildId, "settings", "entry_exit_message"),
+      buildServerConfigUrl(guildId, "settings", "captcha_overview"),
+      buildServerConfigUrl(guildId, "settings", "captcha_message"),
       buildServerConfigUrl(guildId, "settings", "security_antilink"),
       buildServerConfigUrl(guildId, "settings", "security_autorole"),
       buildServerConfigUrl(guildId, "settings", "security_logs"),
@@ -3293,6 +3415,10 @@ export function ServersWorkspace({
       return perms.has("server_manage_welcome_overview");
     }
     if (section === "entry_exit_message") return perms.has("server_manage_welcome_message");
+    if (section === "captcha_overview") {
+      return perms.has("server_manage_captcha_overview");
+    }
+    if (section === "captcha_message") return perms.has("server_manage_captcha_message");
     if (section === "security_antilink") return perms.has("server_manage_antilink");
     if (section === "security_autorole") return perms.has("server_manage_autorole");
     if (section === "security_logs") return perms.has("server_view_security_logs");
@@ -3592,6 +3718,7 @@ export function ServersWorkspace({
         filteredSalesSidebarItems.length ||
         filteredTicketSidebarItems.length ||
         filteredEntryExitSidebarItems.length ||
+        filteredCaptchaSidebarItems.length ||
         filteredSecuritySidebarItems.length ? (
           <>
             {filteredProjectsSidebarItems.length ? (
@@ -3838,6 +3965,86 @@ export function ServersWorkspace({
                 {isEntryExitSidebarOpen || normalizedSidebarQuery ? (
                   <div className="mt-[6px] space-y-[4px] pl-[12px]">
                     {filteredEntryExitSidebarItems.map((item) => {
+                      const isDisabled = item.disabled || !selectedServer || !item.tab;
+                      const isActive =
+                        Boolean(
+                          item.tab &&
+                            selectedEditorTabForConfig === item.tab &&
+                            selectedSettingsSectionForConfig === item.settingsSection &&
+                            isEditingServer,
+                        );
+
+                        return (
+                          <button
+                            key={item.label}
+                            type="button"
+                            onMouseEnter={() => prefetchSelectedWorkspaceSections(item.tab)}
+                            onFocus={() => prefetchSelectedWorkspaceSections(item.tab)}
+                            onPointerDown={() => prefetchSelectedWorkspaceSections(item.tab)}
+                            onClick={() => {
+                              if (isDisabled || !selectedServer || !item.tab) return;
+                              handleSidebarSettingsSectionNavigation({
+                              guildId: selectedServer.guildId,
+                              tab: item.tab,
+                              settingsSection: item.settingsSection || "overview",
+                            });
+                          }}
+                          disabled={isDisabled}
+                          className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[10px] text-left transition-all duration-200 ${
+                            isActive
+                              ? "bg-[#1A1A1A] text-[#F0F0F0]"
+                              : isDisabled
+                                ? "text-[#585858]"
+                                : "text-[#AFAFAF] hover:bg-[#101010] hover:text-[#E3E3E3]"
+                          }`}
+                        >
+                          <span className={`inline-flex h-[20px] w-[20px] items-center justify-center ${isActive ? "text-[#F0F0F0]" : isDisabled ? "text-[#4A4A4A]" : "text-[#7F7F7F] group-hover:text-[#DADADA]"}`}>
+                            <SidebarNavIcon kind={item.kind} active={isActive} />
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-[14px] leading-none font-medium tracking-[-0.03em]">
+                            {item.label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {filteredCaptchaSidebarItems.length ? (
+              <div className="mt-[12px]">
+                <button
+                  type="button"
+                  onClick={() => setIsCaptchaSidebarOpen((current) => !current)}
+                  className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-all duration-200 ${
+                    isCaptchaGroupActive
+                      ? "bg-[#1E1E1E] text-[#F0F0F0]"
+                      : isCaptchaSidebarOpen
+                        ? "bg-[#121212] text-[#D6D6D6]"
+                        : "text-[#B5B5B5] hover:bg-[#111111] hover:text-[#E3E3E3]"
+                  }`}
+                >
+                  <span className={`inline-flex h-[22px] w-[22px] items-center justify-center ${isCaptchaGroupActive ? "text-[#F0F0F0]" : isCaptchaSidebarOpen ? "text-[#C7C7C7]" : "text-[#8A8A8A] group-hover:text-[#DADADA]"}`}>
+                    <SidebarNavIcon kind="captcha" active={isCaptchaGroupActive} />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[15px] leading-none font-medium tracking-[-0.03em]">
+                    Captcha
+                  </span>
+                  <span
+                    className={`transition-transform duration-200 ${
+                      isCaptchaSidebarOpen || normalizedSidebarQuery
+                        ? "rotate-180 text-[#C9C9C9]"
+                        : "rotate-0 text-[#6F6F6F] group-hover:text-[#BEBEBE]"
+                    }`}
+                  >
+                    <SidebarDropdownChevronIcon />
+                  </span>
+                </button>
+
+                {isCaptchaSidebarOpen || normalizedSidebarQuery ? (
+                  <div className="mt-[6px] space-y-[4px] pl-[12px]">
+                    {filteredCaptchaSidebarItems.map((item) => {
                       const isDisabled = item.disabled || !selectedServer || !item.tab;
                       const isActive =
                         Boolean(

@@ -44,6 +44,8 @@ const OWNER_TEAM_PERMISSIONS: UserTeam["currentUserPermissions"] = [
   "server_manage_tickets_message",
   "server_manage_welcome_overview",
   "server_manage_welcome_message",
+  "server_manage_captcha_overview",
+  "server_manage_captcha_message",
   "server_manage_antilink",
   "server_manage_autorole",
   "server_view_security_logs",

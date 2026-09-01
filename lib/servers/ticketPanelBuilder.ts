@@ -3,6 +3,11 @@ export const DEFAULT_TICKET_PANEL_DESCRIPTION =
   "Escolha uma opcao abaixo para falar com a equipe responsavel.";
 export const DEFAULT_TICKET_PANEL_BUTTON_LABEL = "Abrir ticket";
 
+export const DEFAULT_CAPTCHA_PANEL_TITLE = "Iniciar captcha";
+export const DEFAULT_CAPTCHA_PANEL_DESCRIPTION =
+  "Complete a verificacao abaixo para liberar o acesso aos canais.";
+export const DEFAULT_CAPTCHA_PANEL_BUTTON_LABEL = "Iniciar captcha";
+
 export type TicketPanelComponentType =
   | "content"
   | "container"
@@ -44,6 +49,7 @@ export type TicketPanelUserThumbnailAccessory = {
 export type TicketPanelButtonAccessory = {
   type: "button";
   label: string;
+  emoji?: string;
   style: TicketPanelButtonStyle;
   disabled: boolean;
 };
@@ -51,6 +57,7 @@ export type TicketPanelButtonAccessory = {
 export type TicketPanelLinkButtonAccessory = {
   type: "link_button";
   label: string;
+  emoji?: string;
   url: string;
 };
 
@@ -86,6 +93,7 @@ export type TicketPanelSeparatorComponent = TicketPanelComponentBase & {
 export type TicketPanelButtonComponent = TicketPanelComponentBase & {
   type: "button";
   label: string;
+  emoji?: string;
   style: TicketPanelButtonStyle;
   disabled: boolean;
 };
@@ -93,6 +101,7 @@ export type TicketPanelButtonComponent = TicketPanelComponentBase & {
 export type TicketPanelLinkButtonComponent = TicketPanelComponentBase & {
   type: "link_button";
   label: string;
+  emoji?: string;
   url: string;
 };
 
@@ -196,6 +205,74 @@ function sanitizeButtonStyle(value: unknown): TicketPanelButtonStyle {
   return "primary";
 }
 
+export function sanitizeButtonEmoji(value: unknown) {
+  if (typeof value !== "string") return "";
+  return value.trim().slice(0, 120);
+}
+
+export type ParsedButtonEmoji =
+  | {
+      kind: "custom";
+      id: string;
+      name: string;
+      animated: boolean;
+      raw: string;
+    }
+  | {
+      kind: "unicode";
+      name: string;
+      raw: string;
+    };
+
+export function parseButtonEmojiMarkup(value: unknown): ParsedButtonEmoji | null {
+  const normalized = sanitizeButtonEmoji(value);
+  if (!normalized) return null;
+
+  const customMatch = normalized.match(/^<(a?):([a-zA-Z0-9_]+):(\d{17,20})>$/);
+  if (customMatch) {
+    return {
+      kind: "custom",
+      animated: customMatch[1] === "a",
+      name: customMatch[2],
+      id: customMatch[3],
+      raw: normalized,
+    };
+  }
+
+  return {
+    kind: "unicode",
+    name: normalized,
+    raw: normalized,
+  };
+}
+
+export function formatButtonEmojiMarkup(emoji: {
+  id: string;
+  name: string;
+  animated: boolean;
+}) {
+  return emoji.animated
+    ? `<a:${emoji.name}:${emoji.id}>`
+    : `<:${emoji.name}:${emoji.id}>`;
+}
+
+export function buildDiscordButtonEmojiPayload(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  const parsed = parseButtonEmojiMarkup(value);
+  if (!parsed) return undefined;
+
+  if (parsed.kind === "custom") {
+    return {
+      id: parsed.id,
+      name: parsed.name,
+      animated: parsed.animated,
+    };
+  }
+
+  return { name: parsed.name };
+}
+
 function sanitizeSeparatorSpacing(
   value: unknown,
 ): TicketPanelSeparatorComponent["spacing"] {
@@ -247,6 +324,7 @@ export function createTicketPanelContentAccessoryByType(
     return {
       type,
       label: "Abrir link",
+      emoji: "",
       url: "https://flowdesk.com.br",
     };
   }
@@ -254,6 +332,7 @@ export function createTicketPanelContentAccessoryByType(
   return {
     type: "button",
     label: "Acao",
+    emoji: "",
     style: "primary",
     disabled: false,
   };
@@ -286,12 +365,93 @@ export function createDefaultTicketPanelLayout(
           id: createTicketPanelComponentId("button"),
           type: "button",
           label: buttonLabel,
+          emoji: "",
           style: "primary",
           disabled: false,
         },
       ],
     },
   ];
+}
+
+export function createDefaultCaptchaPanelLayout(
+  legacy?: Partial<LegacyTicketPanelFields>,
+): TicketPanelLayout {
+  return createDefaultTicketPanelLayout({
+    panelTitle: trimText(legacy?.panelTitle) || DEFAULT_CAPTCHA_PANEL_TITLE,
+    panelDescription:
+      trimText(legacy?.panelDescription) || DEFAULT_CAPTCHA_PANEL_DESCRIPTION,
+    panelButtonLabel:
+      trimText(legacy?.panelButtonLabel) || DEFAULT_CAPTCHA_PANEL_BUTTON_LABEL,
+  });
+}
+
+function isTicketPanelLegacyContent(
+  legacy?: Partial<LegacyTicketPanelFields>,
+) {
+  const title = trimText(legacy?.panelTitle);
+  const description = trimText(legacy?.panelDescription);
+  const buttonLabel = trimText(legacy?.panelButtonLabel);
+
+  const titleMatchesTicketDefault = !title || title === DEFAULT_TICKET_PANEL_TITLE;
+  const descriptionMatchesTicketDefault =
+    !description || description === DEFAULT_TICKET_PANEL_DESCRIPTION;
+  const buttonMatchesTicketDefault =
+    !buttonLabel || buttonLabel === DEFAULT_TICKET_PANEL_BUTTON_LABEL;
+
+  return (
+    titleMatchesTicketDefault &&
+    descriptionMatchesTicketDefault &&
+    buttonMatchesTicketDefault
+  );
+}
+
+export function isUnsetCaptchaPanelLayout(
+  value: unknown,
+  legacyFallback?: Partial<LegacyTicketPanelFields>,
+) {
+  if (value === null || value === undefined) {
+    return true;
+  }
+
+  if (!Array.isArray(value) || value.length === 0) {
+    return isTicketPanelLegacyContent(legacyFallback);
+  }
+
+  if (!isTicketPanelLegacyContent(legacyFallback)) {
+    return false;
+  }
+
+  const derivedLegacy = deriveLegacyTicketPanelFields(
+    normalizeTicketPanelLayout(value),
+  );
+
+  return (
+    derivedLegacy.panelTitle === DEFAULT_TICKET_PANEL_TITLE &&
+    derivedLegacy.panelDescription === DEFAULT_TICKET_PANEL_DESCRIPTION &&
+    derivedLegacy.panelButtonLabel === DEFAULT_TICKET_PANEL_BUTTON_LABEL
+  );
+}
+
+export function normalizeCaptchaPanelLayout(
+  value: unknown,
+  legacyFallback?: Partial<LegacyTicketPanelFields>,
+): TicketPanelLayout {
+  const resolvedLegacy = {
+    panelTitle: trimText(legacyFallback?.panelTitle) || DEFAULT_CAPTCHA_PANEL_TITLE,
+    panelDescription:
+      trimText(legacyFallback?.panelDescription) ||
+      DEFAULT_CAPTCHA_PANEL_DESCRIPTION,
+    panelButtonLabel:
+      trimText(legacyFallback?.panelButtonLabel) ||
+      DEFAULT_CAPTCHA_PANEL_BUTTON_LABEL,
+  };
+
+  if (isUnsetCaptchaPanelLayout(value, legacyFallback)) {
+    return createDefaultCaptchaPanelLayout(resolvedLegacy);
+  }
+
+  return normalizeTicketPanelLayout(value, resolvedLegacy);
 }
 
 export function createTicketPanelComponentByType(
@@ -338,6 +498,7 @@ export function createTicketPanelComponentByType(
         id: createTicketPanelComponentId("button"),
         type,
         label: "Acao principal",
+        emoji: "",
         style: "primary",
         disabled: false,
       };
@@ -346,6 +507,7 @@ export function createTicketPanelComponentByType(
         id: createTicketPanelComponentId("link"),
         type,
         label: "Abrir link",
+        emoji: "",
         url: "https://flowdesk.com.br",
       };
     case "select":
@@ -410,6 +572,7 @@ function normalizeContentAccessory(
     return {
       type: "link_button",
       label: getCandidateString(candidate, "label", "Abrir link", 80),
+      emoji: sanitizeButtonEmoji(candidate.emoji),
       url: getCandidateString(candidate, "url", "https://flowdesk.com.br", 1000),
     };
   }
@@ -418,6 +581,7 @@ function normalizeContentAccessory(
     return {
       type: "button",
       label: getCandidateString(candidate, "label", "Acao", 80),
+      emoji: sanitizeButtonEmoji(candidate.emoji),
       style: sanitizeButtonStyle(candidate.style),
       disabled: Boolean(candidate.disabled),
     };
@@ -496,6 +660,7 @@ function normalizeNonContainerComponent(
           DEFAULT_TICKET_PANEL_BUTTON_LABEL,
           80,
         ),
+        emoji: sanitizeButtonEmoji(candidate.emoji),
         style: sanitizeButtonStyle(candidate.style),
         disabled: Boolean(candidate.disabled),
       };
@@ -504,6 +669,7 @@ function normalizeNonContainerComponent(
         id,
         type,
         label: getCandidateString(candidate, "label", "Abrir link", 80),
+        emoji: sanitizeButtonEmoji(candidate.emoji),
         url: getCandidateString(candidate, "url", "https://flowdesk.com.br", 1000),
       };
     case "select":

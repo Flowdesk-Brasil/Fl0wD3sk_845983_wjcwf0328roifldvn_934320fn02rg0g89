@@ -18,6 +18,8 @@ type ServerSettingsSection =
   | "sales_coupons_gifts_edit"
   | "entry_exit_overview"
   | "entry_exit_message"
+  | "captcha_overview"
+  | "captcha_message"
   | "security_antilink"
   | "security_autorole"
   | "security_logs"

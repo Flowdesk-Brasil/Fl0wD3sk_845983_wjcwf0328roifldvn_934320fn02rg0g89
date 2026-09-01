@@ -23,6 +23,7 @@ import { ClientErrorBoundary } from "@/components/common/ClientErrorBoundary";
 import { BotMissingModal } from "@/components/config/BotMissingModal";
 import { ConfigStepMultiSelect } from "@/components/config/ConfigStepMultiSelect";
 import { ConfigStepSelect } from "@/components/config/ConfigStepSelect";
+import { DiscordGuildResourcesRefreshProvider } from "@/components/config/discordGuildResourcesRefreshContext";
 import { LandingGlowTag } from "@/components/landing/LandingGlowTag";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { useNotificationEffect } from "@/components/notifications/NotificationsProvider";
@@ -56,6 +57,8 @@ import type { ServerDashboardSettingsPayload } from "@/lib/servers/serverDashboa
 import {
   countTicketPanelFunctionButtons,
   createDefaultTicketPanelLayout,
+  createDefaultCaptchaPanelLayout,
+  normalizeCaptchaPanelLayout,
   deriveLegacyTicketPanelFields,
   normalizeTicketPanelLayout,
   ticketPanelLayoutHasAtMostOneFunctionButton,
@@ -82,6 +85,7 @@ import {
 } from "@/lib/payments/cardAvailability";
 import { isPlanCode, type PlanCode } from "@/lib/plans/catalog";
 import { useBodyScrollLock } from "@/lib/ui/useBodyScrollLock";
+import { useLiveDiscordGuildResources } from "@/lib/servers/useLiveDiscordGuildResources";
 
 type ManagedServerStatus = "paid" | "expired" | "off" | "pending_payment";
 type EditorTab = "settings" | "payments" | "methods" | "plans";
@@ -103,6 +107,8 @@ type ServerSettingsSection =
   | "sales_coupons_gifts_edit"
   | "entry_exit_overview"
   | "entry_exit_message"
+  | "captcha_overview"
+  | "captcha_message"
   | "security_antilink"
   | "security_autorole"
   | "security_logs"
@@ -216,6 +222,21 @@ type WelcomeSettingsDraft = {
   entryLogThumbnailMode: WelcomeThumbnailMode;
   exitPublicThumbnailMode: WelcomeThumbnailMode;
   exitLogThumbnailMode: WelcomeThumbnailMode;
+};
+
+type CaptchaSettingsDraft = {
+  enabled: boolean;
+  panelChannelId: string | null;
+  logsChannelId: string | null;
+  verifiedRoleIds: string[];
+  bypassRoleIds: string[];
+  panelLayout: TicketPanelLayout;
+  challengeTitle: string;
+  challengeDescription: string;
+  maxAttempts: number;
+  timeoutSeconds: number;
+  kickOnFail: boolean;
+  successMessage: string;
 };
 
 type AntiLinkEnforcementAction = "delete_only" | "timeout" | "kick" | "ban";
@@ -773,6 +794,42 @@ function areWelcomeSettingsDraftsEqual(
   if (!left || !right) return left === right;
 
   return JSON.stringify(normalizeWelcomeSettingsDraft(left)) === JSON.stringify(normalizeWelcomeSettingsDraft(right));
+}
+
+function normalizeCaptchaSettingsDraft(
+  draft: CaptchaSettingsDraft,
+): CaptchaSettingsDraft {
+  return {
+    enabled: draft.enabled,
+    panelChannelId: draft.panelChannelId,
+    logsChannelId: draft.logsChannelId,
+    verifiedRoleIds: normalizeDraftIds(draft.verifiedRoleIds),
+    bypassRoleIds: normalizeDraftIds(draft.bypassRoleIds),
+    panelLayout: normalizeTicketPanelLayout(draft.panelLayout),
+    challengeTitle:
+      typeof draft.challengeTitle === "string" ? draft.challengeTitle.trim() : "",
+    challengeDescription:
+      typeof draft.challengeDescription === "string"
+        ? draft.challengeDescription.trim()
+        : "",
+    maxAttempts: Math.max(1, Math.min(10, Number(draft.maxAttempts || 3))),
+    timeoutSeconds: Math.max(30, Math.min(600, Number(draft.timeoutSeconds || 120))),
+    kickOnFail: draft.kickOnFail === true,
+    successMessage:
+      typeof draft.successMessage === "string" ? draft.successMessage.trim() : "",
+  };
+}
+
+function areCaptchaSettingsDraftsEqual(
+  left: CaptchaSettingsDraft | null,
+  right: CaptchaSettingsDraft | null,
+) {
+  if (!left || !right) return left === right;
+
+  return (
+    JSON.stringify(normalizeCaptchaSettingsDraft(left)) ===
+    JSON.stringify(normalizeCaptchaSettingsDraft(right))
+  );
 }
 
 function normalizeAntiLinkEnforcementAction(
@@ -2071,10 +2128,6 @@ export function ServerSettingsEditor({
   const [isSaveBarExiting, setIsSaveBarExiting] = useState(false);
   const navigationBlockedFeedbackTimeoutRef = useRef<number | null>(null);
 
-  const [textChannelOptions, setTextChannelOptions] = useState<SelectOption[]>([]);
-  const [categoryOptions, setCategoryOptions] = useState<SelectOption[]>([]);
-  const [roleOptions, setRoleOptions] = useState<SelectOption[]>([]);
-
   const [menuChannelId, setMenuChannelId] = useState<string | null>(null);
   const [ticketsCategoryId, setTicketsCategoryId] = useState<string | null>(null);
   const [logsCreatedChannelId, setLogsCreatedChannelId] = useState<string | null>(null);
@@ -2108,6 +2161,26 @@ export function ServerSettingsEditor({
     createDefaultTicketPanelLayout(),
   );
   const [ticketEnabled, setTicketEnabled] = useState(false);
+  const [captchaEnabled, setCaptchaEnabled] = useState(false);
+  const [captchaPanelChannelId, setCaptchaPanelChannelId] = useState<string | null>(null);
+  const [captchaLogsChannelId, setCaptchaLogsChannelId] = useState<string | null>(null);
+  const [captchaVerifiedRoleIds, setCaptchaVerifiedRoleIds] = useState<string[]>([]);
+  const [captchaBypassRoleIds, setCaptchaBypassRoleIds] = useState<string[]>([]);
+  const [captchaPanelLayout, setCaptchaPanelLayout] = useState<TicketPanelLayout>(
+    createDefaultCaptchaPanelLayout(),
+  );
+  const [captchaChallengeTitle, setCaptchaChallengeTitle] = useState(
+    "Verificacao de seguranca",
+  );
+  const [captchaChallengeDescription, setCaptchaChallengeDescription] = useState(
+    "Selecione o codigo que aparece na imagem acima.",
+  );
+  const [captchaMaxAttempts, setCaptchaMaxAttempts] = useState(3);
+  const [captchaTimeoutSeconds, setCaptchaTimeoutSeconds] = useState(120);
+  const [captchaKickOnFail, setCaptchaKickOnFail] = useState(false);
+  const [captchaSuccessMessage, setCaptchaSuccessMessage] = useState(
+    "Verificacao concluida com sucesso. Bem-vindo ao servidor!",
+  );
   const [welcomeEnabled, setWelcomeEnabled] = useState(false);
   const [entryPublicChannelId, setEntryPublicChannelId] = useState<string | null>(null);
   const [entryLogChannelId, setEntryLogChannelId] = useState<string | null>(null);
@@ -2208,10 +2281,92 @@ export function ServerSettingsEditor({
   const [claimRoleIds, setClaimRoleIds] = useState<string[]>([]);
   const [closeRoleIds, setCloseRoleIds] = useState<string[]>([]);
   const [notifyRoleIds, setNotifyRoleIds] = useState<string[]>([]);
+
+  const preserveResourceIds = useMemo(() => {
+    const securityLogChannelIds = SECURITY_LOG_EVENT_OPTIONS.map(
+      (option) => securityLogsDraft.events[option.key].channelId,
+    );
+
+    return {
+      channelIds: [
+        menuChannelId,
+        logsCreatedChannelId,
+        logsClosedChannelId,
+        refundApprovalChannelId,
+        entryPublicChannelId,
+        entryLogChannelId,
+        exitPublicChannelId,
+        exitLogChannelId,
+        captchaPanelChannelId,
+        captchaLogsChannelId,
+        antiLinkLogChannelId,
+        salesPaymentApprovedLogChannelId,
+        salesPaymentPendingLogChannelId,
+        salesPaymentRejectedLogChannelId,
+        securityLogsDraft.defaultChannelId,
+        ...securityLogChannelIds,
+        ...antiLinkIgnoredChannelIds,
+      ],
+      categoryIds: [ticketsCategoryId, salesCartsCategoryId],
+      roleIds: [
+        adminRoleId,
+        ...claimRoleIds,
+        ...closeRoleIds,
+        ...notifyRoleIds,
+        ...refundApproverRoleIds,
+        ...captchaVerifiedRoleIds,
+        ...captchaBypassRoleIds,
+        ...antiLinkIgnoredRoleIds,
+        ...autoRoleRoleIds,
+      ],
+    };
+  }, [
+    adminRoleId,
+    antiLinkIgnoredChannelIds,
+    antiLinkIgnoredRoleIds,
+    antiLinkLogChannelId,
+    autoRoleRoleIds,
+    captchaBypassRoleIds,
+    captchaLogsChannelId,
+    captchaPanelChannelId,
+    captchaVerifiedRoleIds,
+    claimRoleIds,
+    closeRoleIds,
+    entryLogChannelId,
+    entryPublicChannelId,
+    exitLogChannelId,
+    exitPublicChannelId,
+    logsClosedChannelId,
+    logsCreatedChannelId,
+    menuChannelId,
+    notifyRoleIds,
+    refundApprovalChannelId,
+    refundApproverRoleIds,
+    salesCartsCategoryId,
+    salesPaymentApprovedLogChannelId,
+    salesPaymentPendingLogChannelId,
+    salesPaymentRejectedLogChannelId,
+    securityLogsDraft,
+    ticketsCategoryId,
+  ]);
+
+  const {
+    textChannelOptions,
+    categoryOptions,
+    roleOptions,
+    applyResourceSnapshot,
+    refreshResourcesOnMenuOpen,
+  } = useLiveDiscordGuildResources(guildId, {
+    enabled: Boolean(guildId),
+    preserveResourceIds,
+  });
+
   const [savedSettingsDraft, setSavedSettingsDraft] =
     useState<ServerSettingsDraft | null>(null);
   const [savedWelcomeSettingsDraft, setSavedWelcomeSettingsDraft] =
     useState<WelcomeSettingsDraft | null>(null);
+  const [savedCaptchaSettingsDraft, setSavedCaptchaSettingsDraft] =
+    useState<CaptchaSettingsDraft | null>(null);
   const [savedAntiLinkSettingsDraft, setSavedAntiLinkSettingsDraft] =
     useState<AntiLinkSettingsDraft | null>(null);
   const [savedAutoRoleSettingsDraft, setSavedAutoRoleSettingsDraft] =
@@ -2336,6 +2491,8 @@ export function ServerSettingsEditor({
         sales_coupons_gifts_edit: "server_manage_tickets_overview",
         entry_exit_overview: "server_manage_welcome_overview",
         entry_exit_message: "server_manage_welcome_message",
+        captcha_overview: "server_manage_captcha_overview",
+        captcha_message: "server_manage_captcha_message",
         security_antilink: "server_manage_antilink",
         security_autorole: "server_manage_autorole",
         security_logs: "server_view_security_logs",
@@ -2400,9 +2557,11 @@ export function ServerSettingsEditor({
       }));
       const roleList = payload.roles as SelectOption[];
 
-      setTextChannelOptions(text);
-      setCategoryOptions(categories);
-      setRoleOptions(roleList);
+      applyResourceSnapshot({
+        textChannelOptions: text,
+        categoryOptions: categories,
+        roleOptions: roleList,
+      });
 
       const textSet = new Set(text.map((item) => item.id));
       const categorySet = new Set(categories.map((item) => item.id));
@@ -2506,6 +2665,63 @@ export function ServerSettingsEditor({
         (rawWelcome?.exitLogThumbnailMode || payload.welcomeSettings?.exitThumbnailMode) === "avatar"
           ? "avatar"
           : "custom";
+
+      const hasCaptchaSettings = Boolean(payload.captchaSettings);
+      const nextCaptchaEnabled = Boolean(payload.captchaSettings?.enabled);
+      const nextCaptchaPanelChannelId = hasCaptchaSettings
+        ? payload.captchaSettings?.panelChannelId &&
+          textSet.has(payload.captchaSettings.panelChannelId)
+          ? payload.captchaSettings.panelChannelId
+          : null
+        : null;
+      const nextCaptchaLogsChannelId = hasCaptchaSettings
+        ? payload.captchaSettings?.logsChannelId &&
+          textSet.has(payload.captchaSettings.logsChannelId)
+          ? payload.captchaSettings.logsChannelId
+          : null
+        : null;
+      const nextCaptchaVerifiedRoleIds = hasCaptchaSettings
+        ? Array.isArray(payload.captchaSettings?.verifiedRoleIds)
+          ? payload.captchaSettings.verifiedRoleIds.filter((id) => roleSet.has(id))
+          : []
+        : [];
+      const nextCaptchaBypassRoleIds = hasCaptchaSettings
+        ? Array.isArray(payload.captchaSettings?.bypassRoleIds)
+          ? payload.captchaSettings.bypassRoleIds.filter((id) => roleSet.has(id))
+          : []
+        : [];
+      const nextCaptchaPanelLayout = hasCaptchaSettings
+        ? normalizeCaptchaPanelLayout(payload.captchaSettings?.panelLayout, {
+            panelTitle: payload.captchaSettings?.panelTitle,
+            panelDescription: payload.captchaSettings?.panelDescription,
+            panelButtonLabel: payload.captchaSettings?.panelButtonLabel,
+          })
+        : createDefaultCaptchaPanelLayout();
+      const nextCaptchaChallengeTitle =
+        hasCaptchaSettings && typeof payload.captchaSettings?.challengeTitle === "string"
+          ? payload.captchaSettings.challengeTitle
+          : "Verificacao de seguranca";
+      const nextCaptchaChallengeDescription =
+        hasCaptchaSettings &&
+        typeof payload.captchaSettings?.challengeDescription === "string"
+          ? payload.captchaSettings.challengeDescription
+          : "Selecione o codigo que aparece na imagem acima.";
+      const nextCaptchaMaxAttempts =
+        hasCaptchaSettings && Number.isFinite(Number(payload.captchaSettings?.maxAttempts))
+          ? Number(payload.captchaSettings?.maxAttempts)
+          : 3;
+      const nextCaptchaTimeoutSeconds =
+        hasCaptchaSettings &&
+        Number.isFinite(Number(payload.captchaSettings?.timeoutSeconds))
+          ? Number(payload.captchaSettings?.timeoutSeconds)
+          : 120;
+      const nextCaptchaKickOnFail = hasCaptchaSettings
+        ? payload.captchaSettings?.kickOnFail === true
+        : false;
+      const nextCaptchaSuccessMessage =
+        hasCaptchaSettings && typeof payload.captchaSettings?.successMessage === "string"
+          ? payload.captchaSettings.successMessage
+          : "Verificacao concluida com sucesso. Bem-vindo ao servidor!";
 
       const nextAdminRoleId =
         payload.staffSettings?.adminRoleId &&
@@ -2794,6 +3010,18 @@ export function ServerSettingsEditor({
       setEntryLogThumbnailMode(nextEntryLogThumbnailMode);
       setExitPublicThumbnailMode(nextExitPublicThumbnailMode);
       setExitLogThumbnailMode(nextExitLogThumbnailMode);
+      setCaptchaEnabled(nextCaptchaEnabled);
+      setCaptchaPanelChannelId(nextCaptchaPanelChannelId);
+      setCaptchaLogsChannelId(nextCaptchaLogsChannelId);
+      setCaptchaVerifiedRoleIds(nextCaptchaVerifiedRoleIds);
+      setCaptchaBypassRoleIds(nextCaptchaBypassRoleIds);
+      setCaptchaPanelLayout(nextCaptchaPanelLayout);
+      setCaptchaChallengeTitle(nextCaptchaChallengeTitle);
+      setCaptchaChallengeDescription(nextCaptchaChallengeDescription);
+      setCaptchaMaxAttempts(nextCaptchaMaxAttempts);
+      setCaptchaTimeoutSeconds(nextCaptchaTimeoutSeconds);
+      setCaptchaKickOnFail(nextCaptchaKickOnFail);
+      setCaptchaSuccessMessage(nextCaptchaSuccessMessage);
       setAntiLinkEnabled(nextAntiLinkEnabled);
       setAntiLinkLogChannelId(nextAntiLinkLogChannelId);
       setAntiLinkEnforcementAction(nextAntiLinkEnforcementAction);
@@ -2873,6 +3101,22 @@ export function ServerSettingsEditor({
           exitLogThumbnailMode: nextExitLogThumbnailMode,
         }),
       );
+      setSavedCaptchaSettingsDraft(
+        normalizeCaptchaSettingsDraft({
+          enabled: nextCaptchaEnabled,
+          panelChannelId: nextCaptchaPanelChannelId,
+          logsChannelId: nextCaptchaLogsChannelId,
+          verifiedRoleIds: nextCaptchaVerifiedRoleIds,
+          bypassRoleIds: nextCaptchaBypassRoleIds,
+          panelLayout: nextCaptchaPanelLayout,
+          challengeTitle: nextCaptchaChallengeTitle,
+          challengeDescription: nextCaptchaChallengeDescription,
+          maxAttempts: nextCaptchaMaxAttempts,
+          timeoutSeconds: nextCaptchaTimeoutSeconds,
+          kickOnFail: nextCaptchaKickOnFail,
+          successMessage: nextCaptchaSuccessMessage,
+        }),
+      );
       setSavedAntiLinkSettingsDraft(
         normalizeAntiLinkSettingsDraft({
           enabled: nextAntiLinkEnabled,
@@ -2912,7 +3156,7 @@ export function ServerSettingsEditor({
         onPermissionsChange(payload.dashboardPermissions);
       }
     },
-    [onPermissionsChange],
+    [applyResourceSnapshot, onPermissionsChange],
   );
 
   useEffect(() => {
@@ -2978,12 +3222,27 @@ export function ServerSettingsEditor({
 
     setSavedSettingsDraft(null);
     setSavedWelcomeSettingsDraft(null);
+    setSavedCaptchaSettingsDraft(null);
     setSavedAntiLinkSettingsDraft(null);
     setSavedAutoRoleSettingsDraft(null);
     setSavedSalesSettingsDraft(null);
     setSavedSecurityLogsDraft(null);
     setPanelLayout(createDefaultTicketPanelLayout());
     setTicketEnabled(false);
+    setCaptchaEnabled(false);
+    setCaptchaPanelChannelId(null);
+    setCaptchaLogsChannelId(null);
+    setCaptchaVerifiedRoleIds([]);
+    setCaptchaBypassRoleIds([]);
+    setCaptchaPanelLayout(createDefaultCaptchaPanelLayout());
+    setCaptchaChallengeTitle("Verificacao de seguranca");
+    setCaptchaChallengeDescription("Selecione o codigo que aparece na imagem acima.");
+    setCaptchaMaxAttempts(3);
+    setCaptchaTimeoutSeconds(120);
+    setCaptchaKickOnFail(false);
+    setCaptchaSuccessMessage(
+      "Verificacao concluida com sucesso. Bem-vindo ao servidor!",
+    );
     setWelcomeEnabled(false);
     setEntryPublicChannelId(null);
     setEntryLogChannelId(null);
@@ -3772,8 +4031,12 @@ export function ServerSettingsEditor({
   const isWelcomeSection =
     settingsSection === "entry_exit_overview" ||
     settingsSection === "entry_exit_message";
+  const isCaptchaSection =
+    settingsSection === "captcha_overview" ||
+    settingsSection === "captcha_message";
   const isTicketMessageSection = settingsSection === "message";
   const isWelcomeMessageSection = settingsSection === "entry_exit_message";
+  const isCaptchaMessageSection = settingsSection === "captcha_message";
 
   const entryChannelsProvided = Boolean(
     entryPublicChannelId || entryLogChannelId,
@@ -3900,6 +4163,22 @@ export function ServerSettingsEditor({
           isEntryLayoutValid &&
           isExitLayoutValid)),
   );
+  const captchaFunctionButtonCount = countTicketPanelFunctionButtons(captchaPanelLayout);
+  const hasCaptchaTooManyFunctionButtons = captchaFunctionButtonCount > 1;
+  const isCaptchaMessageLayoutInvalid =
+    !ticketPanelLayoutHasRequiredParts(captchaPanelLayout) ||
+    hasCaptchaTooManyFunctionButtons;
+  const canSaveCaptcha = Boolean(
+    !settingsReadOnly &&
+      !isLoading &&
+      !isSaving &&
+      (!captchaEnabled ||
+        (captchaPanelChannelId &&
+          captchaVerifiedRoleIds.length &&
+          captchaPanelLayout.length &&
+          ticketPanelLayoutHasRequiredParts(captchaPanelLayout) &&
+          ticketPanelLayoutHasAtMostOneFunctionButton(captchaPanelLayout))),
+  );
   const antiLinkTimeoutValue = normalizeAntiLinkTimeoutMinutes(
     antiLinkTimeoutMinutes,
   );
@@ -3968,6 +4247,17 @@ export function ServerSettingsEditor({
       panelLayout.length &&
       ticketPanelLayoutHasRequiredParts(panelLayout) &&
       ticketPanelLayoutHasAtMostOneFunctionButton(panelLayout),
+  );
+  const canSendCaptchaEmbed = Boolean(
+    !settingsReadOnly &&
+      !isLoading &&
+      !isSaving &&
+      !isSendingEmbed &&
+      captchaEnabled &&
+      captchaPanelChannelId &&
+      captchaPanelLayout.length &&
+      ticketPanelLayoutHasRequiredParts(captchaPanelLayout) &&
+      ticketPanelLayoutHasAtMostOneFunctionButton(captchaPanelLayout),
   );
 
   const currentSettingsDraft = useMemo(
@@ -4059,6 +4349,37 @@ export function ServerSettingsEditor({
       welcomeEnabled,
     ],
   );
+  const currentCaptchaDraft = useMemo(
+    () =>
+      normalizeCaptchaSettingsDraft({
+        enabled: captchaEnabled,
+        panelChannelId: captchaPanelChannelId,
+        logsChannelId: captchaLogsChannelId,
+        verifiedRoleIds: captchaVerifiedRoleIds,
+        bypassRoleIds: captchaBypassRoleIds,
+        panelLayout: captchaPanelLayout,
+        challengeTitle: captchaChallengeTitle,
+        challengeDescription: captchaChallengeDescription,
+        maxAttempts: captchaMaxAttempts,
+        timeoutSeconds: captchaTimeoutSeconds,
+        kickOnFail: captchaKickOnFail,
+        successMessage: captchaSuccessMessage,
+      }),
+    [
+      captchaBypassRoleIds,
+      captchaChallengeDescription,
+      captchaChallengeTitle,
+      captchaEnabled,
+      captchaKickOnFail,
+      captchaLogsChannelId,
+      captchaMaxAttempts,
+      captchaPanelChannelId,
+      captchaPanelLayout,
+      captchaSuccessMessage,
+      captchaTimeoutSeconds,
+      captchaVerifiedRoleIds,
+    ],
+  );
   const currentAntiLinkDraft = useMemo(
     () =>
       normalizeAntiLinkSettingsDraft({
@@ -4120,6 +4441,7 @@ export function ServerSettingsEditor({
 
   const hasLoadedTicketDraft = !isLoading && savedSettingsDraft !== null;
   const hasLoadedWelcomeDraft = !isLoading && savedWelcomeSettingsDraft !== null;
+  const hasLoadedCaptchaDraft = !isLoading && savedCaptchaSettingsDraft !== null;
   const hasLoadedAntiLinkDraft =
     !isLoading && savedAntiLinkSettingsDraft !== null;
   const hasLoadedAutoRoleDraft =
@@ -4139,6 +4461,12 @@ export function ServerSettingsEditor({
       hasLoadedWelcomeDraft &&
       !areWelcomeSettingsDraftsEqual(currentWelcomeDraft, savedWelcomeSettingsDraft),
     [currentWelcomeDraft, hasLoadedWelcomeDraft, savedWelcomeSettingsDraft],
+  );
+  const hasCaptchaUnsavedChanges = useMemo(
+    () =>
+      hasLoadedCaptchaDraft &&
+      !areCaptchaSettingsDraftsEqual(currentCaptchaDraft, savedCaptchaSettingsDraft),
+    [currentCaptchaDraft, hasLoadedCaptchaDraft, savedCaptchaSettingsDraft],
   );
   const hasAntiLinkUnsavedChanges = useMemo(
     () =>
@@ -4192,6 +4520,8 @@ export function ServerSettingsEditor({
       ? true
     : isSecurityLogsSection
       ? hasLoadedSecurityLogsDraft
+    : isCaptchaSection
+      ? hasLoadedCaptchaDraft
     : isWelcomeSection
       ? hasLoadedWelcomeDraft
       : hasLoadedTicketDraft;
@@ -4205,6 +4535,8 @@ export function ServerSettingsEditor({
       ? false
     : isSecurityLogsSection
       ? hasSecurityLogsUnsavedChanges
+    : isCaptchaSection
+      ? hasCaptchaUnsavedChanges
     : isWelcomeSection
       ? hasWelcomeUnsavedChanges
       : hasTicketUnsavedChanges;
@@ -4224,6 +4556,8 @@ export function ServerSettingsEditor({
           ? null
         : isSecurityLogsSection
           ? savedSecurityLogsDraft
+        : isCaptchaSection
+          ? savedCaptchaSettingsDraft
         : isWelcomeSection
           ? savedWelcomeSettingsDraft
           : savedSettingsDraft),
@@ -4245,6 +4579,8 @@ export function ServerSettingsEditor({
         ? canSaveSales
       : isSecurityLogsSection
         ? canSaveSecurityLogs
+      : isCaptchaSection
+        ? canSaveCaptcha
       : isWelcomeSection
         ? canSaveWelcome
       : isTicketAiSection
@@ -4269,6 +4605,7 @@ export function ServerSettingsEditor({
   const aiControlsDisabled = isSaving || settingsReadOnly || !aiEnabled;
   const welcomeControlsDisabled =
     isSaving || settingsReadOnly || !welcomeEnabled || isActivatingWelcome;
+  const captchaControlsDisabled = isSaving || settingsReadOnly || !captchaEnabled;
   const antiLinkControlsDisabled =
     isSaving || settingsReadOnly || !antiLinkEnabled || isActivatingAntiLink;
   const autoRoleControlsDisabled =
@@ -4300,6 +4637,13 @@ export function ServerSettingsEditor({
     !isSaving &&
     !showSaveSuccessBar &&
     isWelcomeMessageLayoutInvalid;
+  const showInvalidCaptchaSaveState =
+    isCaptchaMessageSection &&
+    captchaEnabled &&
+    hasUnsavedChanges &&
+    !isSaving &&
+    !showSaveSuccessBar &&
+    isCaptchaMessageLayoutInvalid;
   const showSaveBarSuccessState =
     showSaveSuccessBar &&
     !hasUnsavedChanges &&
@@ -4312,6 +4656,7 @@ export function ServerSettingsEditor({
   const showSaveBarErrorState =
     showInvalidTicketSaveState ||
     showInvalidWelcomeSaveState ||
+    showInvalidCaptchaSaveState ||
     showBlockedNavigationSaveState;
   const saveActionVisualEnabled = canPersistSettings || isSaving;
   const floatingSaveBarTitle = showSaveBarSuccessState
@@ -4324,6 +4669,10 @@ export function ServerSettingsEditor({
         ? hasTooManyFunctionButtons
           ? "Existe mais de um botao funcional no embed"
           : "Nao da para salvar uma mensagem vazia"
+      : showInvalidCaptchaSaveState
+        ? hasCaptchaTooManyFunctionButtons
+          ? "Existe mais de um botao funcional no embed"
+          : "Nao da para salvar uma mensagem vazia"
       : showInvalidWelcomeSaveState
           ? "Adicione pelo menos um conteudo na mensagem"
       : showBlockedNavigationSaveState
@@ -4333,6 +4682,8 @@ export function ServerSettingsEditor({
               ? isAntiLinkSection
                 ? "Defina o canal de log para continuar"
                 : "Ative eventos validos e defina o canal de cada log ligado"
+              : isCaptchaSection
+                ? "Complete canal principal e cargos verificados para continuar"
               : isWelcomeSection
               ? "Complete os canais de entrada e saida para continuar"
               : "Complete os campos obrigatorios para continuar"
@@ -5262,6 +5613,19 @@ export function ServerSettingsEditor({
       setEntryLogThumbnailMode(savedWelcomeSettingsDraft.entryLogThumbnailMode);
       setExitPublicThumbnailMode(savedWelcomeSettingsDraft.exitPublicThumbnailMode);
       setExitLogThumbnailMode(savedWelcomeSettingsDraft.exitLogThumbnailMode);
+    } else if (isCaptchaSection && savedCaptchaSettingsDraft) {
+      setCaptchaEnabled(savedCaptchaSettingsDraft.enabled);
+      setCaptchaPanelChannelId(savedCaptchaSettingsDraft.panelChannelId);
+      setCaptchaLogsChannelId(savedCaptchaSettingsDraft.logsChannelId);
+      setCaptchaVerifiedRoleIds(savedCaptchaSettingsDraft.verifiedRoleIds);
+      setCaptchaBypassRoleIds(savedCaptchaSettingsDraft.bypassRoleIds);
+      setCaptchaPanelLayout(savedCaptchaSettingsDraft.panelLayout);
+      setCaptchaChallengeTitle(savedCaptchaSettingsDraft.challengeTitle);
+      setCaptchaChallengeDescription(savedCaptchaSettingsDraft.challengeDescription);
+      setCaptchaMaxAttempts(savedCaptchaSettingsDraft.maxAttempts);
+      setCaptchaTimeoutSeconds(savedCaptchaSettingsDraft.timeoutSeconds);
+      setCaptchaKickOnFail(savedCaptchaSettingsDraft.kickOnFail);
+      setCaptchaSuccessMessage(savedCaptchaSettingsDraft.successMessage);
     } else if (savedSettingsDraft) {
       setTicketEnabled(savedSettingsDraft.enabled);
       setMenuChannelId(savedSettingsDraft.menuChannelId);
@@ -5296,11 +5660,13 @@ export function ServerSettingsEditor({
     canResetSettings,
     isAntiLinkSection,
     isAutoRoleSection,
+    isCaptchaSection,
     isSalesSettingsSection,
     isSecurityLogsSection,
     isWelcomeSection,
     savedAntiLinkSettingsDraft,
     savedAutoRoleSettingsDraft,
+    savedCaptchaSettingsDraft,
     savedSalesSettingsDraft,
     savedSecurityLogsDraft,
     savedSettingsDraft,
@@ -5501,6 +5867,90 @@ export function ServerSettingsEditor({
         }
 
         setSavedWelcomeSettingsDraft(currentWelcomeDraft);
+      } else if (isCaptchaSection) {
+        const legacyFields = deriveLegacyTicketPanelFields(captchaPanelLayout);
+        const response = await fetch("/api/auth/me/guilds/captcha-settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            guildId,
+            enabled: captchaEnabled,
+            panelChannelId: captchaPanelChannelId,
+            logsChannelId: captchaLogsChannelId,
+            verifiedRoleIds: captchaVerifiedRoleIds,
+            bypassRoleIds: captchaBypassRoleIds,
+            panelLayout: captchaPanelLayout,
+            panelTitle: legacyFields.panelTitle,
+            panelDescription: legacyFields.panelDescription,
+            panelButtonLabel: legacyFields.panelButtonLabel,
+            challengeTitle: captchaChallengeTitle,
+            challengeDescription: captchaChallengeDescription,
+            maxAttempts: captchaMaxAttempts,
+            timeoutSeconds: captchaTimeoutSeconds,
+            kickOnFail: captchaKickOnFail,
+            successMessage: captchaSuccessMessage,
+          }),
+        });
+
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.message || "Falha ao salvar configuracoes de captcha.");
+        }
+
+        const nextCaptchaDraft = normalizeCaptchaSettingsDraft({
+          enabled: payload.settings?.enabled === true,
+          panelChannelId:
+            typeof payload.settings?.panelChannelId === "string"
+              ? payload.settings.panelChannelId
+              : null,
+          logsChannelId:
+            typeof payload.settings?.logsChannelId === "string"
+              ? payload.settings.logsChannelId
+              : null,
+          verifiedRoleIds: Array.isArray(payload.settings?.verifiedRoleIds)
+            ? payload.settings.verifiedRoleIds.filter(
+                (id: unknown): id is string => typeof id === "string",
+              )
+            : [],
+          bypassRoleIds: Array.isArray(payload.settings?.bypassRoleIds)
+            ? payload.settings.bypassRoleIds.filter(
+                (id: unknown): id is string => typeof id === "string",
+              )
+            : [],
+          panelLayout: normalizeTicketPanelLayout(
+            payload.settings?.panelLayout,
+            payload.settings || undefined,
+          ),
+          challengeTitle:
+            typeof payload.settings?.challengeTitle === "string"
+              ? payload.settings.challengeTitle
+              : captchaChallengeTitle,
+          challengeDescription:
+            typeof payload.settings?.challengeDescription === "string"
+              ? payload.settings.challengeDescription
+              : captchaChallengeDescription,
+          maxAttempts: Number(payload.settings?.maxAttempts ?? captchaMaxAttempts),
+          timeoutSeconds: Number(payload.settings?.timeoutSeconds ?? captchaTimeoutSeconds),
+          kickOnFail: payload.settings?.kickOnFail === true,
+          successMessage:
+            typeof payload.settings?.successMessage === "string"
+              ? payload.settings.successMessage
+              : captchaSuccessMessage,
+        });
+
+        setCaptchaEnabled(nextCaptchaDraft.enabled);
+        setCaptchaPanelChannelId(nextCaptchaDraft.panelChannelId);
+        setCaptchaLogsChannelId(nextCaptchaDraft.logsChannelId);
+        setCaptchaVerifiedRoleIds(nextCaptchaDraft.verifiedRoleIds);
+        setCaptchaBypassRoleIds(nextCaptchaDraft.bypassRoleIds);
+        setCaptchaPanelLayout(nextCaptchaDraft.panelLayout);
+        setCaptchaChallengeTitle(nextCaptchaDraft.challengeTitle);
+        setCaptchaChallengeDescription(nextCaptchaDraft.challengeDescription);
+        setCaptchaMaxAttempts(nextCaptchaDraft.maxAttempts);
+        setCaptchaTimeoutSeconds(nextCaptchaDraft.timeoutSeconds);
+        setCaptchaKickOnFail(nextCaptchaDraft.kickOnFail);
+        setCaptchaSuccessMessage(nextCaptchaDraft.successMessage);
+        setSavedCaptchaSettingsDraft(nextCaptchaDraft);
       } else {
         const shouldPersistTicketStaff =
           ticketEnabled ||
@@ -5715,10 +6165,23 @@ export function ServerSettingsEditor({
     applyAutoRoleRuntimePayload,
     adminRoleId,
     canPersistSettings,
+    captchaBypassRoleIds,
+    captchaChallengeDescription,
+    captchaChallengeTitle,
+    captchaEnabled,
+    captchaKickOnFail,
+    captchaLogsChannelId,
+    captchaMaxAttempts,
+    captchaPanelChannelId,
+    captchaPanelLayout,
+    captchaSuccessMessage,
+    captchaTimeoutSeconds,
+    captchaVerifiedRoleIds,
     claimRoleIds,
     closeRoleIds,
     currentAntiLinkDraft,
     currentAutoRoleDraft,
+    currentCaptchaDraft,
     currentWelcomeDraft,
     entryPublicLayout,
     entryLogLayout,
@@ -5735,6 +6198,7 @@ export function ServerSettingsEditor({
     guildId,
     isAntiLinkSection,
     isAutoRoleSection,
+    isCaptchaSection,
     isSalesSettingsSection,
     isSecurityLogsSection,
     isTicketSection,
@@ -5763,6 +6227,7 @@ export function ServerSettingsEditor({
     salesReceiptSupportText,
     setSavedAntiLinkSettingsDraft,
     setSavedAutoRoleSettingsDraft,
+    setSavedCaptchaSettingsDraft,
     setSavedSalesSettingsDraft,
     setSavedSecurityLogsDraft,
     setSavedSettingsDraft,
@@ -5807,6 +6272,41 @@ export function ServerSettingsEditor({
       setIsSendingEmbed(false);
     }
   }, [canSendEmbed, guildId, menuChannelId, panelLayout]);
+
+  const handleSendCaptchaEmbed = useCallback(async () => {
+    if (!canSendCaptchaEmbed || !captchaPanelChannelId) return;
+    if (isSendingEmbedRef.current) return;
+    isSendingEmbedRef.current = true;
+
+    setIsSendingEmbed(true);
+    setErrorMessage(null);
+
+    try {
+      const response = await fetch("/api/auth/me/guilds/captcha-panel-message", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          guildId,
+          panelChannelId: captchaPanelChannelId,
+          panelLayout: captchaPanelLayout,
+        }),
+      });
+
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.message || "Falha ao enviar o embed de captcha.");
+      }
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Erro ao enviar o embed de captcha.",
+      );
+    } finally {
+      isSendingEmbedRef.current = false;
+      setIsSendingEmbed(false);
+    }
+  }, [canSendCaptchaEmbed, captchaPanelChannelId, captchaPanelLayout, guildId]);
 
   const handleActivateWelcome = useCallback(async () => {
     if (isActivatingWelcome || settingsReadOnly) return;
@@ -6127,6 +6627,7 @@ export function ServerSettingsEditor({
   ]);
 
   return (
+    <DiscordGuildResourcesRefreshProvider refresh={refreshResourcesOnMenuOpen}>
     <ClientErrorBoundary
       fallback={
         <section
@@ -6965,6 +7466,178 @@ export function ServerSettingsEditor({
                         </div>
                       </div>
                     </div>
+                  ) : settingsSection === "captcha_overview" ? (
+                    <div className="space-y-[14px]">
+                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
+                          <div>
+                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
+                              Modulo Captcha
+                            </p>
+                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
+                              Proteja a entrada do servidor com verificacao
+                            </h3>
+                            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                              O Flowdesk libera painel, cargos verificados, logs e desafio visual quando o modulo estiver ativo.
+                            </p>
+                          </div>
+
+                          <DashboardInlineSwitch
+                            checked={captchaEnabled}
+                            onChange={() => {
+                              if (isSaving || settingsReadOnly) return;
+                              setCaptchaEnabled((current) => !current);
+                            }}
+                            disabled={isSaving || settingsReadOnly}
+                            ariaLabel="Ativar ou desativar modulo de captcha"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                        <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
+                          <div>
+                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Captcha</p>
+                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
+                              Canais e cargos
+                            </h3>
+                            <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                              Defina o canal principal do painel, logs opcionais e quem recebe acesso apos a verificacao.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
+                          <ConfigStepSelect label="Canal Principal" placeholder="Escolha o canal" options={textChannelOptions} value={captchaPanelChannelId} onChange={setCaptchaPanelChannelId} disabled={captchaControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepSelect label="Canal de Logs" placeholder="Escolha o canal de logs" options={textChannelOptions} value={captchaLogsChannelId} onChange={setCaptchaLogsChannelId} disabled={captchaControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepMultiSelect label="Cargos verificados" placeholder="Escolha os cargos" options={roleOptions} values={captchaVerifiedRoleIds} onChange={setCaptchaVerifiedRoleIds} disabled={captchaControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepMultiSelect label="Cargos bypass (opcional)" placeholder="Escolha os cargos" options={roleOptions} values={captchaBypassRoleIds} onChange={setCaptchaBypassRoleIds} disabled={captchaControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                        </div>
+                      </div>
+
+                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                        <div>
+                          <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Desafio</p>
+                          <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
+                            Regras da verificacao
+                          </h3>
+                          <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                            Personalize titulo, instrucoes, tentativas, tempo limite e o que acontece quando o membro falha.
+                          </p>
+                        </div>
+
+                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
+                          <div>
+                            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">Titulo do desafio</label>
+                            <input
+                              type="text"
+                              value={captchaChallengeTitle}
+                              onChange={(event) => setCaptchaChallengeTitle(event.currentTarget.value)}
+                              placeholder="Verificacao de seguranca"
+                              maxLength={80}
+                              disabled={captchaControlsDisabled}
+                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">Maximo de tentativas</label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={10}
+                              value={captchaMaxAttempts}
+                              onChange={(event) =>
+                                setCaptchaMaxAttempts(
+                                  Math.max(1, Math.min(10, Number(event.currentTarget.value || 3))),
+                                )
+                              }
+                              disabled={captchaControlsDisabled}
+                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                          </div>
+                          <div className="xl:col-span-2">
+                            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">Descricao do desafio</label>
+                            <textarea
+                              rows={3}
+                              value={captchaChallengeDescription}
+                              onChange={(event) => setCaptchaChallengeDescription(event.currentTarget.value)}
+                              placeholder="Selecione o codigo que aparece na imagem acima."
+                              maxLength={400}
+                              disabled={captchaControlsDisabled}
+                              className="min-h-[92px] w-full resize-none rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] py-[12px] text-[14px] leading-[1.5] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">Tempo limite (segundos)</label>
+                            <input
+                              type="number"
+                              min={30}
+                              max={600}
+                              value={captchaTimeoutSeconds}
+                              onChange={(event) =>
+                                setCaptchaTimeoutSeconds(
+                                  Math.max(30, Math.min(600, Number(event.currentTarget.value || 120))),
+                                )
+                              }
+                              disabled={captchaControlsDisabled}
+                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                          </div>
+                          <div className={`flex items-center justify-between gap-[16px] rounded-[16px] border border-[#171717] bg-[#090909] px-[16px] py-[14px] ${captchaControlsDisabled ? "opacity-40" : ""}`}>
+                            <span className="text-[13px] font-medium text-[#8A8A8A]">Expulsar ao falhar</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (captchaControlsDisabled) return;
+                                setCaptchaKickOnFail((current) => !current);
+                              }}
+                              disabled={captchaControlsDisabled}
+                              className={`relative inline-flex h-[22px] w-[40px] shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                                captchaKickOnFail ? "bg-[#0062FF]" : "bg-[#1E1E1E]"
+                              } ${captchaControlsDisabled ? "cursor-not-allowed" : ""}`}
+                            >
+                              <span
+                                className={`pointer-events-none inline-block h-[18px] w-[18px] transform rounded-full bg-[#FFFFFF] shadow transition duration-200 ease-in-out ${
+                                  captchaKickOnFail ? "translate-x-[18px]" : "translate-x-0"
+                                }`}
+                              />
+                            </button>
+                          </div>
+                          <div className="xl:col-span-2">
+                            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">Mensagem de sucesso</label>
+                            <input
+                              type="text"
+                              value={captchaSuccessMessage}
+                              onChange={(event) => setCaptchaSuccessMessage(event.currentTarget.value)}
+                              placeholder="Verificacao concluida com sucesso. Bem-vindo ao servidor!"
+                              maxLength={400}
+                              disabled={captchaControlsDisabled}
+                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : settingsSection === "captcha_message" ? (
+                    <TicketMessageBuilder
+                      guildId={guildId}
+                      value={captchaPanelLayout}
+                      onChange={setCaptchaPanelLayout}
+                      layoutPreset="captcha"
+                      disabled={
+                        isSaving ||
+                        isSendingEmbed ||
+                        settingsReadOnly ||
+                        !captchaEnabled
+                      }
+                      canSendEmbed={canSendCaptchaEmbed}
+                      isSendingEmbed={isSendingEmbed}
+                      onSendEmbed={handleSendCaptchaEmbed}
+                      eyebrow="Captcha"
+                      headline="Mensagem do painel"
+                      description="Monte o embed publicado no canal principal e envie a mensagem quando estiver pronta."
+                      sendButtonLabel="Enviar embed de captcha"
+                    />
                   ) : settingsSection === "security_antilink" ? (
                     <div className="space-y-[14px]">
                       <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
@@ -9220,5 +9893,6 @@ export function ServerSettingsEditor({
       ) : null}
       </section>
     </ClientErrorBoundary>
+    </DiscordGuildResourcesRefreshProvider>
   );
 }

@@ -101,6 +101,8 @@ const PERMISSION_OPTIONS: { id: TeamRolePermission; label: string; description: 
   { id: "server_manage_tickets_message", label: "Painel: Mensagem do Ticket", description: "Pode editar o embed do painel de tickets" },
   { id: "server_manage_welcome_overview", label: "Painel: Canais e Logs (Boas-vindas)", description: "Acesso aos logs de entrada/saída" },
   { id: "server_manage_welcome_message", label: "Painel: Configurando Mensagem (Boas-vindas)", description: "Pode editar as embeds de boas-vindas" },
+  { id: "server_manage_captcha_overview", label: "Painel: Configurando Captcha", description: "Acesso as configuracoes gerais do captcha" },
+  { id: "server_manage_captcha_message", label: "Painel: Mensagem do Captcha", description: "Pode editar o embed do painel de captcha" },
   { id: "server_manage_antilink", label: "Painel: AntiLink", description: "Pode configurar o sistema de AntiLink" },
   { id: "server_manage_autorole", label: "Painel: AutoRole", description: "Pode configurar atribuição automática de cargos" },
   { id: "server_view_security_logs", label: "Painel: Logs", description: "Acesso aos logs de segurança" },

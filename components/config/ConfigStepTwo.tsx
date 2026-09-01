@@ -14,9 +14,11 @@ import {
   ConfigStepShell,
 } from "@/components/config/ConfigStepShell";
 import { ConfigStepSelect } from "@/components/config/ConfigStepSelect";
+import { DiscordGuildResourcesRefreshProvider } from "@/components/config/discordGuildResourcesRefreshContext";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 import type { StepTwoDraft } from "@/lib/auth/configContext";
 import { hasStepTwoDraftValues } from "@/lib/auth/configContext";
+import { useLiveDiscordGuildResources } from "@/lib/servers/useLiveDiscordGuildResources";
 
 type ConfigStepTwoProps = {
   displayName: string;
@@ -31,25 +33,6 @@ type ConfigStepTwoProps = {
 type SelectOption = {
   id: string;
   name: string;
-};
-
-type GuildChannelsApiResponse = {
-  ok: boolean;
-  message?: string;
-  channels?: {
-    text: Array<{
-      id: string;
-      name: string;
-      type: number;
-      position: number;
-    }>;
-    categories: Array<{
-      id: string;
-      name: string;
-      type: number;
-      position: number;
-    }>;
-  };
 };
 
 type TicketSettingsSnapshot = {
@@ -89,15 +72,43 @@ export function ConfigStepTwo({
 }: ConfigStepTwoProps) {
   const latestInitialDraftRef = useRef(buildStepTwoDraft(initialDraft));
   const hasInitialDraftValuesRef = useRef(hasStepTwoDraftValues(initialDraft));
-  const [textChannelOptions, setTextChannelOptions] = useState<SelectOption[]>([]);
-  const [categoryOptions, setCategoryOptions] = useState<SelectOption[]>([]);
-  const [isLoadingChannels, setIsLoadingChannels] = useState(true);
+  const hasAppliedInitialSettingsRef = useRef(false);
+  const [isLoadingSettings, setIsLoadingSettings] = useState(true);
   const [menuChannelId, setMenuChannelId] = useState<string | null>(null);
   const [ticketsCategoryId, setTicketsCategoryId] = useState<string | null>(null);
   const [logsCreatedChannelId, setLogsCreatedChannelId] = useState<string | null>(null);
   const [logsClosedChannelId, setLogsClosedChannelId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const preserveResourceIds = useMemo(
+    () => ({
+      channelIds: [
+        menuChannelId,
+        logsCreatedChannelId,
+        logsClosedChannelId,
+      ],
+      categoryIds: [ticketsCategoryId],
+    }),
+    [
+      logsClosedChannelId,
+      logsCreatedChannelId,
+      menuChannelId,
+      ticketsCategoryId,
+    ],
+  );
+
+  const {
+    textChannelOptions,
+    categoryOptions,
+    hasLoadedResourcesOnce,
+    refreshResourcesOnMenuOpen,
+  } = useLiveDiscordGuildResources(guildId, {
+    enabled: Boolean(guildId),
+    preserveResourceIds,
+  });
+
+  const isLoadingChannels = !hasLoadedResourcesOnce || isLoadingSettings;
   const isPlanLocked =
     guildLicenseStatus === "expired" ||
     guildLicenseStatus === "off" ||
@@ -109,14 +120,20 @@ export function ConfigStepTwo({
   }, [initialDraft]);
 
   useEffect(() => {
+    hasAppliedInitialSettingsRef.current = false;
+  }, [guildId]);
+
+  useEffect(() => {
     if (!guildId) {
-      setTextChannelOptions([]);
-      setCategoryOptions([]);
       setMenuChannelId(null);
       setTicketsCategoryId(null);
       setLogsCreatedChannelId(null);
       setLogsClosedChannelId(null);
-      setIsLoadingChannels(false);
+      setIsLoadingSettings(false);
+      return;
+    }
+
+    if (!hasLoadedResourcesOnce || hasAppliedInitialSettingsRef.current) {
       return;
     }
 
@@ -125,42 +142,22 @@ export function ConfigStepTwo({
     const timeoutId = window.setTimeout(() => {
       controller.abort();
     }, 12000);
-    setIsLoadingChannels(true);
+    setIsLoadingSettings(true);
     setErrorMessage(null);
 
-    async function loadChannelsAndSettings() {
+    async function loadSettings() {
       try {
-        const [channelsResponse, settingsResponse] = await Promise.all([
-          fetch(`/api/auth/me/guilds/channels?guildId=${guildId}`, {
+        const settingsResponse = await fetch(
+          `/api/auth/me/guilds/ticket-settings?guildId=${guildId}`,
+          {
             cache: "no-store",
             signal: controller.signal,
-          }),
-          fetch(`/api/auth/me/guilds/ticket-settings?guildId=${guildId}`, {
-            cache: "no-store",
-            signal: controller.signal,
-          }),
-        ]);
+          },
+        );
 
-        const channelsPayload = (await channelsResponse.json()) as GuildChannelsApiResponse;
         const settingsPayload = (await settingsResponse.json()) as TicketSettingsApiResponse;
 
         if (!isMounted) return;
-
-        if (!channelsResponse.ok || !channelsPayload.ok || !channelsPayload.channels) {
-          throw new Error(channelsPayload.message || "Falha ao carregar canais do servidor.");
-        }
-
-        const nextTextOptions = channelsPayload.channels.text.map((channel) => ({
-          id: channel.id,
-          name: `# ${channel.name}`,
-        }));
-        const nextCategoryOptions = channelsPayload.channels.categories.map((category) => ({
-          id: category.id,
-          name: category.name,
-        }));
-
-        setTextChannelOptions(nextTextOptions);
-        setCategoryOptions(nextCategoryOptions);
 
         const fallbackSettings =
           settingsResponse.ok && settingsPayload.ok && settingsPayload.settings
@@ -171,57 +168,37 @@ export function ConfigStepTwo({
           ? latestInitialDraftRef.current
           : fallbackSettings;
 
-        const textChannelSet = new Set(nextTextOptions.map((option) => option.id));
-        const categorySet = new Set(nextCategoryOptions.map((option) => option.id));
-
-        setMenuChannelId(
-          sourceDraft.menuChannelId && textChannelSet.has(sourceDraft.menuChannelId)
-            ? sourceDraft.menuChannelId
-            : null,
-        );
-        setTicketsCategoryId(
-          sourceDraft.ticketsCategoryId && categorySet.has(sourceDraft.ticketsCategoryId)
-            ? sourceDraft.ticketsCategoryId
-            : null,
-        );
-        setLogsCreatedChannelId(
-          sourceDraft.logsCreatedChannelId && textChannelSet.has(sourceDraft.logsCreatedChannelId)
-            ? sourceDraft.logsCreatedChannelId
-            : null,
-        );
-        setLogsClosedChannelId(
-          sourceDraft.logsClosedChannelId && textChannelSet.has(sourceDraft.logsClosedChannelId)
-            ? sourceDraft.logsClosedChannelId
-            : null,
-        );
+        setMenuChannelId(sourceDraft.menuChannelId);
+        setTicketsCategoryId(sourceDraft.ticketsCategoryId);
+        setLogsCreatedChannelId(sourceDraft.logsCreatedChannelId);
+        setLogsClosedChannelId(sourceDraft.logsClosedChannelId);
+        hasAppliedInitialSettingsRef.current = true;
       } catch (error) {
         if (!isMounted) return;
         if (error instanceof DOMException && error.name === "AbortError") {
-          setErrorMessage("Tempo esgotado ao buscar canais do servidor. Tente novamente.");
+          setErrorMessage("Tempo esgotado ao buscar configuracoes do ticket. Tente novamente.");
           return;
         }
-        setTextChannelOptions([]);
-        setCategoryOptions([]);
         setErrorMessage(
           error instanceof Error
             ? error.message
-            : "Erro ao buscar os canais do servidor selecionado.",
+            : "Erro ao carregar configuracoes do ticket.",
         );
       } finally {
         if (!isMounted) return;
         window.clearTimeout(timeoutId);
-        setIsLoadingChannels(false);
+        setIsLoadingSettings(false);
       }
     }
 
-    void loadChannelsAndSettings();
+    void loadSettings();
 
     return () => {
       isMounted = false;
       window.clearTimeout(timeoutId);
       controller.abort();
     };
-  }, [guildId]);
+  }, [guildId, hasLoadedResourcesOnce]);
 
   useEffect(() => {
     if (!guildId || isLoadingChannels) return;
@@ -350,6 +327,7 @@ export function ConfigStepTwo({
   }
 
   return (
+    <DiscordGuildResourcesRefreshProvider refresh={refreshResourcesOnMenuOpen}>
     <ConfigStepShell
       stepNumber={2}
       title="Estruture os canais que sustentam o atendimento"
@@ -490,5 +468,6 @@ export function ConfigStepTwo({
 
       <span className="sr-only">{displayName}</span>
     </ConfigStepShell>
+    </DiscordGuildResourcesRefreshProvider>
   );
 }

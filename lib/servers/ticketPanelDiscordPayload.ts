@@ -1,5 +1,6 @@
 import {
   DEFAULT_TICKET_PANEL_BUTTON_LABEL,
+  buildDiscordButtonEmojiPayload,
   deriveLegacyTicketPanelFields,
   normalizeTicketPanelLayout,
   type TicketPanelButtonComponent,
@@ -88,12 +89,15 @@ function buildButton(
     | Extract<TicketPanelContentAccessory, { type: "button" | "link_button" }>,
   state: BuildState,
 ): JsonRecord {
+  const emoji = buildDiscordButtonEmojiPayload(component.emoji);
+
   if (component.type === "link_button") {
     return {
       type: COMPONENT_TYPE.BUTTON,
       style: BUTTON_STYLE.LINK,
       label: component.label.trim() || "Abrir link",
       url: component.url.trim() || "https://flowdesk.com.br",
+      ...(emoji ? { emoji } : {}),
     };
   }
 
@@ -104,6 +108,7 @@ function buildButton(
     style: resolveButtonStyle(component.style),
     label: component.label.trim() || DEFAULT_TICKET_PANEL_BUTTON_LABEL,
     disabled: Boolean(component.disabled),
+    ...(emoji ? { emoji } : {}),
   };
 }
 

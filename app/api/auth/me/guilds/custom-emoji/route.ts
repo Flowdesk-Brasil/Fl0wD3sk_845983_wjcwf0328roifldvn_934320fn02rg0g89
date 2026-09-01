@@ -154,7 +154,7 @@ export async function GET(request: Request) {
     const query = requestUrl.searchParams.get("query")?.trim().toLowerCase() || "";
     const limit = Math.min(
       Math.max(Number.parseInt(requestUrl.searchParams.get("limit") || "24", 10) || 24, 1),
-      100,
+      1000,
     );
 
     if (!isGuildId(guildId)) {

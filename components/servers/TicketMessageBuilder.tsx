@@ -15,7 +15,9 @@ import {
   List,
   Minus,
   Plus,
+  Search,
   Shapes,
+  Smile,
   Trash2,
 } from "lucide-react";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
@@ -25,7 +27,13 @@ import {
   createTicketPanelComponentId,
   createTicketPanelContainerChildByType,
   createTicketPanelContentAccessoryByType,
+  createDefaultCaptchaPanelLayout,
+  formatButtonEmojiMarkup,
+  isUnsetCaptchaPanelLayout,
+  normalizeCaptchaPanelLayout,
   normalizeTicketPanelLayout,
+  parseButtonEmojiMarkup,
+  sanitizeButtonEmoji,
   type TicketPanelButtonStyle,
   type TicketPanelComponent,
   type TicketPanelComponentType,
@@ -54,6 +62,7 @@ type Props = {
   sendButtonLabel?: string;
   hideSendButton?: boolean;
   thumbnailPreviewUrl?: string | null;
+  layoutPreset?: "ticket" | "captcha";
 };
 
 type Scope = { parentId: string | null; componentId: string };
@@ -76,6 +85,9 @@ type EmojiAutocompleteState = {
   replaceStart: number;
   replaceEnd: number;
 };
+type ButtonEmojiTarget =
+  | { kind: "component"; scope: Scope }
+  | { kind: "accessory"; scope: Scope };
 type OpenMenu =
   | { kind: "root" }
   | { kind: "container"; containerId: string }
@@ -128,6 +140,7 @@ const INLINE_MARKDOWN_REGEX = /(\[[^\]]+\]\(https?:\/\/[^\s)]+\)|\*\*[^*]+\*\*|`
 const emojiPreviewUrlCache = new Map<string, string | null>();
 const guildEmojiAutocompleteCache = new Map<string, GuildEmojiSuggestion[]>();
 const EMOJI_CATALOG_STORAGE_KEY_PREFIX = "flowdesk-ticket-emoji-catalog:";
+const BUTTON_EMOJI_RECENT_STORAGE_KEY_PREFIX = "flowdesk-button-emoji-recent:";
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -261,33 +274,188 @@ function writeEmojiCatalogToStorage(
   }
 }
 
+function readRecentButtonEmojisFromStorage(guildId: string) {
+  if (typeof window === "undefined" || !guildId) {
+    return [] as GuildEmojiSuggestion[];
+  }
+
+  try {
+    const raw = window.localStorage.getItem(
+      `${BUTTON_EMOJI_RECENT_STORAGE_KEY_PREFIX}${guildId}`,
+    );
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as GuildEmojiSuggestion[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeRecentButtonEmojisToStorage(
+  guildId: string,
+  emojis: GuildEmojiSuggestion[],
+) {
+  if (typeof window === "undefined" || !guildId) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(
+      `${BUTTON_EMOJI_RECENT_STORAGE_KEY_PREFIX}${guildId}`,
+      JSON.stringify(emojis.slice(0, 24)),
+    );
+  } catch {
+    // Ignora falhas de storage para nao afetar o builder.
+  }
+}
+
+function buttonEmojiTargetKey(target: ButtonEmojiTarget) {
+  return `${target.kind}:${scopeKey(target.scope)}`;
+}
+
+function resolveButtonEmojiFromTarget(
+  layout: TicketPanelLayout,
+  target: ButtonEmojiTarget,
+) {
+  const findInScope = (
+    component: TicketPanelComponent | TicketPanelContainerChild | null,
+  ) => {
+    if (!component) return "";
+
+    if (target.kind === "accessory") {
+      if (component.type !== "content" || !component.accessory) return "";
+      if (
+        component.accessory.type !== "button" &&
+        component.accessory.type !== "link_button"
+      ) {
+        return "";
+      }
+      return component.accessory.emoji || "";
+    }
+
+    if (component.type === "button" || component.type === "link_button") {
+      return component.emoji || "";
+    }
+
+    return "";
+  };
+
+  if (target.scope.parentId) {
+    const parent = layout.find(
+      (component): component is TicketPanelContainerComponent =>
+        component.type === "container" && component.id === target.scope.parentId,
+    );
+    const child =
+      parent?.children.find((item) => item.id === target.scope.componentId) ??
+      null;
+    return findInScope(child);
+  }
+
+  const root =
+    layout.find((component) => component.id === target.scope.componentId) ??
+    null;
+  return findInScope(root);
+}
+
+function applyButtonEmojiToLayout(
+  layout: TicketPanelLayout,
+  target: ButtonEmojiTarget,
+  emoji: string,
+): TicketPanelLayout {
+  const nextEmoji = sanitizeButtonEmoji(emoji);
+
+  const patchComponent = (
+    component: TicketPanelComponent | TicketPanelContainerChild,
+  ): TicketPanelComponent | TicketPanelContainerChild => {
+    if (target.kind === "accessory") {
+      if (component.type !== "content" || !component.accessory) {
+        return component;
+      }
+
+      if (
+        component.accessory.type !== "button" &&
+        component.accessory.type !== "link_button"
+      ) {
+        return component;
+      }
+
+      return {
+        ...component,
+        accessory: {
+          ...component.accessory,
+          emoji: nextEmoji,
+        },
+      };
+    }
+
+    if (component.type === "button" || component.type === "link_button") {
+      return {
+        ...component,
+        emoji: nextEmoji,
+      };
+    }
+
+    return component;
+  };
+
+  if (target.scope.parentId) {
+    return layout.map((component) => {
+      if (
+        component.type !== "container" ||
+        component.id !== target.scope.parentId
+      ) {
+        return component;
+      }
+
+      return {
+        ...component,
+        children: component.children.map((child) =>
+          child.id === target.scope.componentId
+            ? (patchComponent(child) as TicketPanelContainerChild)
+            : child,
+        ),
+      };
+    });
+  }
+
+  return layout.map((component) =>
+    component.id === target.scope.componentId
+      ? (patchComponent(component) as TicketPanelComponent)
+      : component,
+  );
+}
+
 function CustomEmojiPreview({
   guildId,
   emojiId,
   name,
   animated,
   raw,
+  size = "inline",
 }: {
   guildId: string;
   emojiId: string;
   name: string;
   animated: boolean;
   raw: string;
+  size?: "inline" | "icon";
 }) {
   const cacheKey = `${guildId}:${emojiId}:${animated ? "a" : "s"}`;
-  const cachedEmojiUrl = emojiPreviewUrlCache.has(cacheKey)
-    ? emojiPreviewUrlCache.get(cacheKey)
-    : undefined;
   const optimisticUrl =
     guildId && emojiId ? buildDiscordEmojiCdnUrl(emojiId, animated) : null;
-  if (cachedEmojiUrl === undefined && optimisticUrl) {
-    emojiPreviewUrlCache.set(cacheKey, optimisticUrl);
-  }
-  const [emojiUrl, setEmojiUrl] = useState<string | null | undefined>(
-    cachedEmojiUrl !== undefined
-      ? cachedEmojiUrl
-      : optimisticUrl,
-  );
+  const [emojiUrl, setEmojiUrl] = useState<string | null | undefined>(() => {
+    if (emojiPreviewUrlCache.has(cacheKey)) {
+      return emojiPreviewUrlCache.get(cacheKey);
+    }
+    return optimisticUrl;
+  });
+
+  useEffect(() => {
+    const nextOptimisticUrl =
+      guildId && emojiId ? buildDiscordEmojiCdnUrl(emojiId, animated) : null;
+    const cached = emojiPreviewUrlCache.get(cacheKey);
+    setEmojiUrl(cached !== undefined ? cached : nextOptimisticUrl);
+  }, [animated, cacheKey, emojiId, guildId]);
 
   if (!emojiUrl) {
     return <span>{raw}</span>;
@@ -295,9 +463,15 @@ function CustomEmojiPreview({
 
   return (
     <img
+      key={cacheKey}
       src={emojiUrl}
       alt={`:${name}:`}
-      className="inline-block h-[1.18em] w-[1.18em] align-[-0.22em] object-contain drop-shadow-[0_1px_2px_rgba(0,0,0,0.22)]"
+      className={cn(
+        "object-contain",
+        size === "icon"
+          ? "h-[20px] w-[20px]"
+          : "inline-block h-[1.18em] w-[1.18em] align-[-0.22em] drop-shadow-[0_1px_2px_rgba(0,0,0,0.22)]",
+      )}
       loading="lazy"
       draggable={false}
       data-animated={animated ? "true" : "false"}
@@ -381,49 +555,33 @@ function renderInlineMarkdown(text: string, guildId: string) {
 
       if (/^\*\*.*\*\*$/.test(segment)) {
         return (
-          <InlineMarkdownText
+          <strong
             key={`${segment}-${index}`}
-            text={segment.slice(2, -2)}
-            guildId={guildId}
-            emphasized
-          />
+            className="font-semibold text-[#F2F3F5]"
+          >
+            {renderTextWithMarkdownLinks(
+              segment.slice(2, -2),
+              guildId,
+              `bold-${index}`,
+            )}
+          </strong>
         );
       }
 
       const linkMatch = segment.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/);
       if (linkMatch) {
-        const safeUrl = normalizeExternalUrl(linkMatch[2]);
-        if (!safeUrl) {
-          return (
-            <InlineMarkdownText
-              key={`${segment}-${index}`}
-              text={segment}
-              guildId={guildId}
-            />
-          );
-        }
-
-        return (
-          <button
-            key={`${safeUrl}-${index}`}
-            type="button"
-            data-preview-link={safeUrl}
-            className="inline rounded-none border-none bg-transparent p-0 align-baseline text-left text-[#7FB3FF] underline decoration-[rgba(127,179,255,0.55)] underline-offset-[2px] transition-colors hover:text-[#A6CBFF]"
-          >
-            <InlineMarkdownText
-              text={linkMatch[1]}
-              guildId={guildId}
-            />
-          </button>
+        return renderDiscordLink(
+          linkMatch[1],
+          linkMatch[2],
+          guildId,
+          `${segment}-${index}`,
         );
       }
 
       return (
-        <InlineMarkdownText
-          key={`${segment}-${index}`}
-          text={segment}
-          guildId={guildId}
-        />
+        <span key={`${segment}-${index}`}>
+          {renderTextWithMarkdownLinks(segment, guildId, `segment-${index}`)}
+        </span>
       );
     });
 }
@@ -672,6 +830,7 @@ function mapComponentToContentAccessory(
     return {
       type: "button",
       label: component.label,
+      emoji: component.emoji,
       style: component.style,
       disabled: component.disabled,
     };
@@ -681,6 +840,7 @@ function mapComponentToContentAccessory(
     return {
       type: "link_button",
       label: component.label,
+      emoji: component.emoji,
       url: component.url,
     };
   }
@@ -978,6 +1138,350 @@ function EmojiAutocompleteMenu({
   );
 }
 
+function ButtonEmojiPreview({
+  guildId,
+  emojiValue,
+  className,
+  size = "inline",
+}: {
+  guildId: string;
+  emojiValue: string;
+  className?: string;
+  size?: "inline" | "icon";
+}) {
+  const parsed = useMemo(() => parseButtonEmojiMarkup(emojiValue), [emojiValue]);
+  if (!parsed) return null;
+
+  if (parsed.kind === "custom") {
+    return (
+      <CustomEmojiPreview
+        key={parsed.raw}
+        guildId={guildId}
+        emojiId={parsed.id}
+        name={parsed.name}
+        animated={parsed.animated}
+        raw={parsed.raw}
+        size={size}
+      />
+    );
+  }
+
+  return <span className={className}>{parsed.name}</span>;
+}
+
+const MARKDOWN_LINK_REGEX = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
+
+function renderDiscordLink(
+  label: string,
+  url: string,
+  guildId: string,
+  key: string,
+) {
+  const safeUrl = normalizeExternalUrl(url);
+  if (!safeUrl) {
+    return (
+      <InlineMarkdownText
+        key={key}
+        text={`[${label}](${url})`}
+        guildId={guildId}
+      />
+    );
+  }
+
+  return (
+    <button
+      key={key}
+      type="button"
+      data-preview-link={safeUrl}
+      className="inline rounded-none border-none bg-transparent p-0 align-baseline text-left text-[#00A8FC] underline decoration-[rgba(0,168,252,0.55)] underline-offset-[2px] transition-colors hover:text-[#4FC3FF]"
+    >
+      <InlineMarkdownText text={label} guildId={guildId} />
+    </button>
+  );
+}
+
+function renderTextWithMarkdownLinks(
+  text: string,
+  guildId: string,
+  keyPrefix: string,
+) {
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+
+  for (const match of text.matchAll(MARKDOWN_LINK_REGEX)) {
+    const fullMatch = match[0];
+    const label = match[1] ?? "";
+    const url = match[2] ?? "";
+    const matchIndex = match.index ?? 0;
+
+    if (matchIndex > lastIndex) {
+      parts.push(
+        <InlineMarkdownText
+          key={`${keyPrefix}-text-${lastIndex}`}
+          text={text.slice(lastIndex, matchIndex)}
+          guildId={guildId}
+        />,
+      );
+    }
+
+    parts.push(renderDiscordLink(label, url, guildId, `${keyPrefix}-link-${matchIndex}`));
+    lastIndex = matchIndex + fullMatch.length;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push(
+      <InlineMarkdownText
+        key={`${keyPrefix}-tail-${lastIndex}`}
+        text={text.slice(lastIndex)}
+        guildId={guildId}
+      />,
+    );
+  }
+
+  if (!parts.length) {
+    return [
+      <InlineMarkdownText
+        key={`${keyPrefix}-plain`}
+        text={text}
+        guildId={guildId}
+      />,
+    ];
+  }
+
+  return parts;
+}
+
+function ButtonEmojiPickerMenu({
+  anchorElement,
+  guildId,
+  currentEmoji,
+  items,
+  recentItems,
+  loading,
+  searchQuery,
+  onSearchQueryChange,
+  onSelect,
+  onRemove,
+}: {
+  anchorElement: HTMLElement | null;
+  guildId: string;
+  currentEmoji: string;
+  items: GuildEmojiSuggestion[];
+  recentItems: GuildEmojiSuggestion[];
+  loading: boolean;
+  searchQuery: string;
+  onSearchQueryChange: (value: string) => void;
+  onSelect: (emoji: GuildEmojiSuggestion) => void;
+  onRemove: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [position, setPosition] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    placement: "top" | "bottom";
+  } | null>(null);
+  const [hoveredEmoji, setHoveredEmoji] = useState<GuildEmojiSuggestion | null>(
+    null,
+  );
+  const hasCurrentEmoji = Boolean(parseButtonEmojiMarkup(currentEmoji));
+  const previewEmoji =
+    hoveredEmoji ||
+    (hasCurrentEmoji
+      ? items.find((emoji) => formatButtonEmojiMarkup(emoji) === currentEmoji) ||
+        recentItems.find((emoji) => formatButtonEmojiMarkup(emoji) === currentEmoji) ||
+        null
+      : null);
+
+  useLayoutEffect(() => {
+    if (!anchorElement || !menuRef.current) return;
+
+    const updatePosition = () => {
+      if (!menuRef.current || !anchorElement) return;
+
+      const anchor = anchorElement.getBoundingClientRect();
+      const viewportPadding = 12;
+      const offset = 8;
+      const menuWidth = Math.min(
+        Math.max(menuRef.current.offsetWidth || 360, 320),
+        window.innerWidth - viewportPadding * 2,
+      );
+      const menuHeight = menuRef.current.offsetHeight || 420;
+      const availableBelow = window.innerHeight - anchor.bottom - viewportPadding;
+      const availableAbove = anchor.top - viewportPadding;
+      const shouldOpenUpward =
+        availableBelow < menuHeight && availableAbove > availableBelow;
+
+      const nextLeft = Math.min(
+        window.innerWidth - menuWidth - viewportPadding,
+        Math.max(viewportPadding, anchor.left),
+      );
+
+      const nextTop = shouldOpenUpward
+        ? Math.max(viewportPadding, anchor.top - menuHeight - offset)
+        : Math.min(
+            window.innerHeight - menuHeight - viewportPadding,
+            anchor.bottom + offset,
+          );
+
+      setPosition({
+        top: nextTop,
+        left: nextLeft,
+        width: menuWidth,
+        placement: shouldOpenUpward ? "top" : "bottom",
+      });
+    };
+
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [anchorElement, items.length, loading, searchQuery]);
+
+  if (!anchorElement || typeof document === "undefined") return null;
+
+  const renderEmojiGrid = (gridItems: GuildEmojiSuggestion[], title: string) => {
+    if (!gridItems.length) return null;
+
+    return (
+      <div className="px-[10px] pb-[10px]">
+        <p className="px-[4px] pb-[8px] text-[11px] font-medium uppercase tracking-[0.16em] text-[#666666]">
+          {title}
+        </p>
+        <div className="grid grid-cols-8 gap-[4px] sm:grid-cols-9">
+          {gridItems.map((emoji) => (
+            <button
+              key={`${title}-${emoji.id}`}
+              type="button"
+              onMouseEnter={() => setHoveredEmoji(emoji)}
+              onFocus={() => setHoveredEmoji(emoji)}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onSelect(emoji);
+              }}
+              className={cn(
+                "inline-flex h-[34px] w-full items-center justify-center rounded-[10px] transition-colors duration-150 hover:bg-[#151515] active:bg-[#1A1A1A]",
+                formatButtonEmojiMarkup(emoji) === currentEmoji
+                  ? "bg-[#171717] ring-1 ring-[#333333]"
+                  : "",
+              )}
+              title={
+                formatButtonEmojiMarkup(emoji) === currentEmoji
+                  ? `Emoji atual: :${emoji.name}:`
+                  : `Substituir por :${emoji.name}:`
+              }
+            >
+              <img
+                src={emoji.url}
+                alt=""
+                className="h-[22px] w-[22px] object-contain"
+                loading="lazy"
+                draggable={false}
+              />
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      data-ticket-button-emoji="true"
+      className={cn(
+        "flowdesk-scale-in-soft fixed z-[426] overflow-hidden rounded-[22px] border border-[#171717] bg-[#090909] shadow-[0_28px_70px_rgba(0,0,0,0.52)]",
+        (position?.placement ?? "bottom") === "top" ? "origin-bottom" : "origin-top",
+      )}
+      style={
+        position
+          ? { top: position.top, left: position.left, width: position.width }
+          : { width: 360 }
+      }
+    >
+      <div className="border-b border-[#141414] px-[12px] py-[12px]">
+        <div className="flex items-center gap-[10px]">
+          <div className="relative min-w-0 flex-1">
+            <Search className="pointer-events-none absolute left-[12px] top-1/2 h-[14px] w-[14px] -translate-y-1/2 text-[#666666]" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
+              placeholder="Buscar emoji do servidor"
+              className="h-[40px] w-full rounded-[14px] border border-[#171717] bg-[#080808] pl-[36px] pr-[12px] text-[13px] text-[#E6E6E6] outline-none transition-colors placeholder:text-[#555555] focus:border-[#262626]"
+            />
+          </div>
+          <div className="inline-flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-[14px] border border-[#171717] bg-[#0A0A0A]">
+            {previewEmoji ? (
+              <img
+                src={previewEmoji.url}
+                alt=""
+                className="h-[24px] w-[24px] object-contain"
+                draggable={false}
+              />
+            ) : hasCurrentEmoji ? (
+              <ButtonEmojiPreview
+                guildId={guildId}
+                emojiValue={currentEmoji}
+                className="text-[18px] leading-none"
+              />
+            ) : (
+              <Smile className="h-[18px] w-[18px] text-[#666666]" strokeWidth={2.1} />
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={hasCurrentEmoji ? onRemove : undefined}
+            disabled={!hasCurrentEmoji}
+            className={cn(
+              "inline-flex h-[40px] shrink-0 items-center justify-center rounded-[14px] border px-[12px] text-[12px] font-medium transition-colors duration-200",
+              hasCurrentEmoji
+                ? "border-[#262626] bg-[#111111] text-[#EDEDED] hover:bg-[#151515]"
+                : "cursor-not-allowed border-[#171717] bg-[#0A0A0A] text-[#555555]",
+            )}
+          >
+            {hasCurrentEmoji ? "Remover emoji" : "Adicionar emoji"}
+          </button>
+        </div>
+      </div>
+
+      <div className="flowdesk-selectmenu-scrollbar max-h-[360px] overflow-y-auto py-[8px]">
+        {loading ? (
+          <div className="flex items-center justify-center gap-[10px] px-[12px] py-[24px] text-[13px] text-[#8B8B8B]">
+            <ButtonLoader size={14} colorClassName="text-[#8B8B8B]" />
+            Carregando emojis...
+          </div>
+        ) : (
+          <>
+            {!searchQuery.trim() && recentItems.length
+              ? renderEmojiGrid(recentItems, "Utilizados com frequencia")
+              : null}
+            {items.length ? (
+              renderEmojiGrid(
+                items,
+                searchQuery.trim()
+                  ? "Resultados"
+                  : "Emojis do servidor",
+              )
+            ) : (
+              <div className="px-[16px] py-[24px] text-[13px] leading-[1.6] text-[#7E7E7E]">
+                Nenhum emoji encontrado para este servidor.
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function Field({ value, onChange, placeholder, textarea = false, disabled, rows = 4 }: { value: string; onChange: (value: string) => void; placeholder: string; textarea?: boolean; disabled?: boolean; rows?: number }) {
   const className = "w-full rounded-[16px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#E2E2E2] outline-none transition-colors duration-200 placeholder:text-[#4F4F4F] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-55";
   if (textarea) {
@@ -1012,14 +1516,34 @@ function ActionButton({ children, onClick, disabled, className }: { children: Re
   );
 }
 
-function IconButton({ label, onClick, disabled, children, draggable, onDragStart, onDragEnd }: { label: string; onClick?: () => void; disabled?: boolean; children: React.ReactNode; draggable?: boolean; onDragStart?: React.DragEventHandler<HTMLButtonElement>; onDragEnd?: React.DragEventHandler<HTMLButtonElement> }) {
-  return <button type="button" aria-label={label} title={label} onClick={onClick} disabled={disabled} draggable={draggable} onDragStart={onDragStart} onDragEnd={onDragEnd} className="inline-flex h-[34px] w-[34px] items-center justify-center rounded-[12px] border border-[#171717] bg-[#0C0C0C] text-[#AFAFAF] transition-colors duration-200 hover:bg-[#111111] hover:text-[#F1F1F1] disabled:cursor-not-allowed disabled:opacity-45">{children}</button>;
+function IconButton({ label, onClick, disabled, children, draggable, onDragStart, onDragEnd, dataTicketButtonEmojiTrigger = false }: { label: string; onClick?: React.MouseEventHandler<HTMLButtonElement>; disabled?: boolean; children: React.ReactNode; draggable?: boolean; onDragStart?: React.DragEventHandler<HTMLButtonElement>; onDragEnd?: React.DragEventHandler<HTMLButtonElement>; dataTicketButtonEmojiTrigger?: boolean }) {
+  return <button type="button" aria-label={label} title={label} onClick={onClick} disabled={disabled} draggable={draggable} onDragStart={onDragStart} onDragEnd={onDragEnd} data-ticket-button-emoji-trigger={dataTicketButtonEmojiTrigger ? "true" : undefined} className="inline-flex h-[34px] w-[34px] items-center justify-center rounded-[12px] border border-[#171717] bg-[#0C0C0C] text-[#AFAFAF] transition-colors duration-200 hover:bg-[#111111] hover:text-[#F1F1F1] disabled:cursor-not-allowed disabled:opacity-45">{children}</button>;
+}
+
+function renderButtonLabelContent(
+  guildId: string,
+  label: string,
+  emoji?: string,
+) {
+  return (
+    <span className="inline-flex items-center gap-[6px]">
+      {emoji ? (
+        <ButtonEmojiPreview
+          key={emoji}
+          guildId={guildId}
+          emojiValue={emoji}
+        />
+      ) : null}
+      <span>{label}</span>
+    </span>
+  );
 }
 
 function previewAccessory(
   accessory: TicketPanelContentAccessory | null,
   onOpenLink: (url: string, label: string) => void,
   thumbnailPreviewUrl?: string | null,
+  guildId = "",
 ) {
   if (!accessory) return null;
   if (accessory.type === "thumbnail") {
@@ -1037,20 +1561,20 @@ function previewAccessory(
   }
   if (accessory.type === "link_button") {
     const safeUrl = normalizeExternalUrl(accessory.url || "");
-    return <button type="button" disabled={!safeUrl} onClick={() => safeUrl ? onOpenLink(safeUrl, accessory.label || "Abrir link") : undefined} className="inline-flex min-h-[36px] items-center justify-center rounded-[12px] border border-[#2B2D31] bg-[#26282C] px-[13px] text-[12px] font-medium text-[#F2F3F5] disabled:cursor-not-allowed disabled:opacity-55">{accessory.label || "Abrir link"}</button>;
+    return <button type="button" disabled={!safeUrl} onClick={() => safeUrl ? onOpenLink(safeUrl, accessory.label || "Abrir link") : undefined} className="inline-flex min-h-[36px] items-center justify-center rounded-[12px] border border-[#2B2D31] bg-[#26282C] px-[13px] text-[12px] font-medium text-[#F2F3F5] disabled:cursor-not-allowed disabled:opacity-55">{renderButtonLabelContent(guildId, accessory.label || "Abrir link", accessory.emoji)}</button>;
   }
-  return <button type="button" disabled={accessory.disabled} className={cn("inline-flex min-h-[36px] items-center justify-center rounded-[12px] border px-[13px] text-[12px] font-medium", buttonClass(accessory.style), accessory.disabled && "cursor-not-allowed opacity-55")}>{accessory.label || "Acao"}</button>;
+  return <button type="button" disabled={accessory.disabled} className={cn("inline-flex min-h-[36px] items-center justify-center rounded-[12px] border px-[13px] text-[12px] font-medium", buttonClass(accessory.style), accessory.disabled && "cursor-not-allowed opacity-55")}>{renderButtonLabelContent(guildId, accessory.label || "Acao", accessory.emoji)}</button>;
 }
 
-function previewAction(item: ActionComponent, onOpenLink: (url: string, label: string) => void) {
+function previewAction(item: ActionComponent, onOpenLink: (url: string, label: string) => void, guildId = "") {
   if (item.type === "select") {
     return <div key={item.id} className="inline-flex min-h-[38px] min-w-[210px] items-center justify-between gap-[12px] rounded-[12px] border border-[#2B2D31] bg-[#1E1F22] px-[14px] text-[13px] text-[#F2F3F5]"><span className="truncate">{item.placeholder || "Escolha uma opcao"}</span><ChevronDown className="h-[14px] w-[14px] shrink-0 text-[#A0A0A0]" /></div>;
   }
   if (item.type === "link_button") {
     const safeUrl = normalizeExternalUrl(item.url || "");
-    return <button key={item.id} type="button" disabled={!safeUrl} onClick={() => safeUrl ? onOpenLink(safeUrl, item.label || "Abrir link") : undefined} className="inline-flex min-h-[38px] items-center justify-center rounded-[12px] border border-[#2B2D31] bg-[#26282C] px-[14px] text-[13px] font-medium text-[#F2F3F5] disabled:cursor-not-allowed disabled:opacity-55">{item.label || "Abrir link"}</button>;
+    return <button key={item.id} type="button" disabled={!safeUrl} onClick={() => safeUrl ? onOpenLink(safeUrl, item.label || "Abrir link") : undefined} className="inline-flex min-h-[38px] items-center justify-center rounded-[12px] border border-[#2B2D31] bg-[#26282C] px-[14px] text-[13px] font-medium text-[#F2F3F5] disabled:cursor-not-allowed disabled:opacity-55">{renderButtonLabelContent(guildId, item.label || "Abrir link", item.emoji)}</button>;
   }
-  return <button key={item.id} type="button" disabled={item.disabled} className={cn("inline-flex min-h-[38px] items-center justify-center rounded-[12px] border px-[14px] text-[13px] font-medium", buttonClass(item.style), item.disabled && "cursor-not-allowed opacity-55")}>{item.label || "Acao"}</button>;
+  return <button key={item.id} type="button" disabled={item.disabled} className={cn("inline-flex min-h-[38px] items-center justify-center rounded-[12px] border px-[14px] text-[13px] font-medium", buttonClass(item.style), item.disabled && "cursor-not-allowed opacity-55")}>{renderButtonLabelContent(guildId, item.label || "Acao", item.emoji)}</button>;
 }
 
 function TicketMessageBuilder({
@@ -1067,8 +1591,34 @@ function TicketMessageBuilder({
   sendButtonLabel = "Enviar embed",
   hideSendButton = false,
   thumbnailPreviewUrl = null,
+  layoutPreset = "ticket",
 }: Props) {
-  const layout = useMemo(() => normalizeTicketPanelLayout(value), [value]);
+  const normalizeLayout = useCallback(
+    (next: TicketPanelLayout) =>
+      layoutPreset === "captcha"
+        ? normalizeCaptchaPanelLayout(next)
+        : normalizeTicketPanelLayout(next),
+    [layoutPreset],
+  );
+  const layout = useMemo(() => normalizeLayout(value), [normalizeLayout, value]);
+  const didSyncCaptchaDefaultsRef = useRef(false);
+
+  useEffect(() => {
+    didSyncCaptchaDefaultsRef.current = false;
+  }, [layoutPreset]);
+
+  useEffect(() => {
+    if (layoutPreset !== "captcha" || didSyncCaptchaDefaultsRef.current) {
+      return;
+    }
+
+    if (!isUnsetCaptchaPanelLayout(value)) {
+      return;
+    }
+
+    didSyncCaptchaDefaultsRef.current = true;
+    onChange(createDefaultCaptchaPanelLayout());
+  }, [layoutPreset, onChange, value]);
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const [menuAnchor, setMenuAnchor] = useState<MenuAnchor | null>(null);
   const [dragState, setDragState] = useState<DragState>(null);
@@ -1081,7 +1631,16 @@ function TicketMessageBuilder({
   const [emojiCatalogLoading, setEmojiCatalogLoading] = useState(false);
   const [emojiAutocomplete, setEmojiAutocomplete] = useState<EmojiAutocompleteState | null>(null);
   const [emojiHighlightIndex, setEmojiHighlightIndex] = useState(0);
+  const [openButtonEmojiPicker, setOpenButtonEmojiPicker] = useState<ButtonEmojiTarget | null>(null);
+  const [buttonEmojiPickerAnchor, setButtonEmojiPickerAnchor] = useState<HTMLElement | null>(null);
+  const [buttonEmojiSearchQuery, setButtonEmojiSearchQuery] = useState("");
+  const [recentButtonEmojis, setRecentButtonEmojis] = useState<GuildEmojiSuggestion[]>([]);
   const contentTextareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
+  const buttonEmojiTriggerRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const layoutRef = useRef(layout);
+  const openButtonEmojiPickerRef = useRef<ButtonEmojiTarget | null>(null);
+  layoutRef.current = layout;
+  openButtonEmojiPickerRef.current = openButtonEmojiPicker;
   const functionalButtonCount = useMemo(() => countTicketPanelFunctionButtons(layout), [layout]);
   const draggedComponent = useMemo(() => {
     if (!dragState) {
@@ -1124,6 +1683,14 @@ function TicketMessageBuilder({
   }, []);
 
   useEffect(() => {
+    if (!guildId) {
+      setRecentButtonEmojis([]);
+      return;
+    }
+    setRecentButtonEmojis(readRecentButtonEmojisFromStorage(guildId));
+  }, [guildId]);
+
+  useEffect(() => {
     let isMounted = true;
 
     if (!guildId) {
@@ -1150,7 +1717,7 @@ function TicketMessageBuilder({
 
         const params = new URLSearchParams({
           guildId,
-          limit: "100",
+          limit: "1000",
         });
 
         const response = await fetch(`/api/auth/me/guilds/custom-emoji?${params.toString()}`, {
@@ -1210,6 +1777,10 @@ function TicketMessageBuilder({
         setMenuAnchor(null);
         setPendingPreviewLink(null);
         setEmojiAutocomplete(null);
+        openButtonEmojiPickerRef.current = null;
+        setOpenButtonEmojiPicker(null);
+        setButtonEmojiPickerAnchor(null);
+        setButtonEmojiSearchQuery("");
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -1228,9 +1799,22 @@ function TicketMessageBuilder({
       }
     };
 
+    const handleButtonEmojiOutsideClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest("[data-ticket-button-emoji='true']") &&
+        !target?.closest("[data-ticket-button-emoji-trigger='true']")) {
+        openButtonEmojiPickerRef.current = null;
+        setOpenButtonEmojiPicker(null);
+        setButtonEmojiPickerAnchor(null);
+        setButtonEmojiSearchQuery("");
+      }
+    };
+
     document.addEventListener("mousedown", handleEmojiOutside);
+    document.addEventListener("click", handleButtonEmojiOutsideClick);
     return () => {
       document.removeEventListener("mousedown", handleEmojiOutside);
+      document.removeEventListener("click", handleButtonEmojiOutsideClick);
     };
   }, []);
 
@@ -1263,9 +1847,36 @@ function TicketMessageBuilder({
           return leftStarts ? -1 : 1;
         }
         return left.name.localeCompare(right.name);
-      })
-      .slice(0, 8);
+      });
   }, [emojiAutocomplete, emojiCatalog]);
+
+  const filteredButtonEmojiSuggestions = useMemo(() => {
+    const query = buttonEmojiSearchQuery.trim().toLowerCase();
+
+    return emojiCatalog
+      .filter((emoji) => {
+        if (!query) return true;
+        return emoji.name.toLowerCase().includes(query);
+      })
+      .sort((left, right) => {
+        if (!query) return left.name.localeCompare(right.name);
+        const leftStarts = left.name.toLowerCase().startsWith(query);
+        const rightStarts = right.name.toLowerCase().startsWith(query);
+        if (leftStarts !== rightStarts) {
+          return leftStarts ? -1 : 1;
+        }
+        return left.name.localeCompare(right.name);
+      })
+      .slice(0, 180);
+  }, [buttonEmojiSearchQuery, emojiCatalog]);
+
+  const currentButtonEmojiValue = useMemo(
+    () =>
+      openButtonEmojiPicker
+        ? resolveButtonEmojiFromTarget(layout, openButtonEmojiPicker)
+        : "",
+    [layout, openButtonEmojiPicker],
+  );
 
   useEffect(() => {
     setEmojiHighlightIndex(0);
@@ -1297,7 +1908,10 @@ function TicketMessageBuilder({
     });
   }, []);
 
-  const commit = useCallback((next: TicketPanelLayout) => onChange(normalizeTicketPanelLayout(next)), [onChange]);
+  const commit = useCallback(
+    (next: TicketPanelLayout) => onChange(normalizeLayout(next)),
+    [normalizeLayout, onChange],
+  );
   const updateRoot = useCallback((id: string, updater: (component: TicketPanelComponent) => TicketPanelComponent) => commit(layout.map((component) => component.id === id ? updater(component) : component)), [commit, layout]);
   const updateContainerChildren = useCallback((containerId: string, updater: (children: TicketPanelContainerChild[]) => TicketPanelContainerChild[]) => {
     commit(layout.map((component) => component.type === "container" && component.id === containerId ? { ...component, children: updater(component.children) } : component));
@@ -1344,6 +1958,63 @@ function TicketMessageBuilder({
       target.setSelectionRange(nextCursor, nextCursor);
     });
   }, [emojiAutocomplete, updateContentMarkdown]);
+
+  const closeButtonEmojiPicker = useCallback(() => {
+    openButtonEmojiPickerRef.current = null;
+    setOpenButtonEmojiPicker(null);
+    setButtonEmojiPickerAnchor(null);
+    setButtonEmojiSearchQuery("");
+  }, []);
+
+  const openButtonEmojiPickerAt = useCallback(
+    (target: ButtonEmojiTarget, anchor: HTMLElement) => {
+      openButtonEmojiPickerRef.current = target;
+      setOpenButtonEmojiPicker(target);
+      setButtonEmojiPickerAnchor(anchor);
+      setButtonEmojiSearchQuery("");
+    },
+    [],
+  );
+
+  const updateButtonEmoji = useCallback(
+    (target: ButtonEmojiTarget, emoji: string) => {
+      commit(applyButtonEmojiToLayout(layoutRef.current, target, emoji));
+    },
+    [commit],
+  );
+
+  const rememberRecentButtonEmoji = useCallback(
+    (emoji: GuildEmojiSuggestion) => {
+      setRecentButtonEmojis((current) => {
+        const next = [
+          emoji,
+          ...current.filter((item) => item.id !== emoji.id),
+        ].slice(0, 24);
+        writeRecentButtonEmojisToStorage(guildId, next);
+        return next;
+      });
+    },
+    [guildId],
+  );
+
+  const applyButtonEmojiSelection = useCallback(
+    (emoji: GuildEmojiSuggestion) => {
+      const target = openButtonEmojiPickerRef.current;
+      if (!target) return;
+
+      updateButtonEmoji(target, formatButtonEmojiMarkup(emoji));
+      rememberRecentButtonEmoji(emoji);
+      closeButtonEmojiPicker();
+    },
+    [closeButtonEmojiPicker, rememberRecentButtonEmoji, updateButtonEmoji],
+  );
+
+  const removeButtonEmojiSelection = useCallback(() => {
+    const target = openButtonEmojiPickerRef.current;
+    if (!target) return;
+    updateButtonEmoji(target, "");
+    closeButtonEmojiPicker();
+  }, [closeButtonEmojiPicker, updateButtonEmoji]);
 
   const removeComponent = useCallback((scope: Scope) => {
     if (scope.parentId) {
@@ -1694,27 +2365,70 @@ function TicketMessageBuilder({
                 Arraste imagem, botao ou link para este slot. Imagem vira miniatura automaticamente.
               </p>
             </div>
-            {content.accessory ? (
-              <IconButton
-                label="Remover acessorio"
-                disabled={disabled}
-                onClick={() =>
-                  scope.parentId
-                    ? updateChild(scope.parentId, scope.componentId, (current) =>
-                        current.type === "content"
-                          ? { ...current, accessory: null }
-                          : current,
-                      )
-                    : updateRoot(scope.componentId, (current) =>
-                        current.type === "content"
-                          ? { ...current, accessory: null }
-                          : current,
-                      )
-                }
-              >
-                <Trash2 className="h-[15px] w-[15px]" strokeWidth={2.1} />
-              </IconButton>
-            ) : null}
+            <div className="flex items-center gap-[8px]">
+              {content.accessory &&
+              (content.accessory.type === "button" ||
+                content.accessory.type === "link_button") ? (
+                <IconButton
+                  dataTicketButtonEmojiTrigger
+                  label={
+                    content.accessory.emoji?.trim()
+                      ? "Alterar emoji do botao"
+                      : "Adicionar emoji ao botao"
+                  }
+                  disabled={disabled}
+                  onClick={(event) => {
+                    const target: ButtonEmojiTarget = {
+                      kind: "accessory",
+                      scope,
+                    };
+                    const targetKey = buttonEmojiTargetKey(target);
+                    const shouldClose =
+                      openButtonEmojiPicker &&
+                      buttonEmojiTargetKey(openButtonEmojiPicker) === targetKey;
+                    if (shouldClose) {
+                      closeButtonEmojiPicker();
+                      return;
+                    }
+                    buttonEmojiTriggerRefs.current[targetKey] = event.currentTarget;
+                    openButtonEmojiPickerAt(target, event.currentTarget);
+                  }}
+                >
+                  {content.accessory.emoji?.trim() ? (
+                    <ButtonEmojiPreview
+                      key={content.accessory.emoji}
+                      guildId={guildId}
+                      emojiValue={content.accessory.emoji}
+                      size="icon"
+                      className="text-[16px] leading-none text-[#CFCFCF]"
+                    />
+                  ) : (
+                    <Smile className="h-[15px] w-[15px]" strokeWidth={2.1} />
+                  )}
+                </IconButton>
+              ) : null}
+              {content.accessory ? (
+                <IconButton
+                  label="Remover acessorio"
+                  disabled={disabled}
+                  onClick={() =>
+                    scope.parentId
+                      ? updateChild(scope.parentId, scope.componentId, (current) =>
+                          current.type === "content"
+                            ? { ...current, accessory: null }
+                            : current,
+                        )
+                      : updateRoot(scope.componentId, (current) =>
+                          current.type === "content"
+                            ? { ...current, accessory: null }
+                            : current,
+                        )
+                  }
+                >
+                  <Trash2 className="h-[15px] w-[15px]" strokeWidth={2.1} />
+                </IconButton>
+              ) : null}
+            </div>
           </div>
           {content.accessory ? (
             <>
@@ -1994,7 +2708,7 @@ function TicketMessageBuilder({
       >
         <div className="flex items-start justify-between gap-[14px]">
           <div className="min-w-0 flex flex-1 items-start gap-[14px]">
-            <div className="shrink-0 pt-[2px]">
+            <div className="flex shrink-0 items-center gap-[8px] pt-[2px]">
               <IconButton
                 label="Mover componente"
                 disabled={disabled}
@@ -2016,6 +2730,45 @@ function TicketMessageBuilder({
               >
                 <GripVertical className="h-[15px] w-[15px]" strokeWidth={2.1} />
               </IconButton>
+              {component.type === "button" || component.type === "link_button" ? (
+                <IconButton
+                  dataTicketButtonEmojiTrigger
+                  label={
+                    component.emoji?.trim()
+                      ? "Alterar emoji do botao"
+                      : "Adicionar emoji ao botao"
+                  }
+                  disabled={disabled}
+                  onClick={(event) => {
+                    const target: ButtonEmojiTarget = {
+                      kind: "component",
+                      scope,
+                    };
+                    const targetKey = buttonEmojiTargetKey(target);
+                    const shouldClose =
+                      openButtonEmojiPicker &&
+                      buttonEmojiTargetKey(openButtonEmojiPicker) === targetKey;
+                    if (shouldClose) {
+                      closeButtonEmojiPicker();
+                      return;
+                    }
+                    buttonEmojiTriggerRefs.current[targetKey] = event.currentTarget;
+                    openButtonEmojiPickerAt(target, event.currentTarget);
+                  }}
+                >
+                  {component.emoji?.trim() ? (
+                    <ButtonEmojiPreview
+                      key={component.emoji}
+                      guildId={guildId}
+                      emojiValue={component.emoji}
+                      size="icon"
+                      className="text-[16px] leading-none text-[#CFCFCF]"
+                    />
+                  ) : (
+                    <Smile className="h-[15px] w-[15px]" strokeWidth={2.1} />
+                  )}
+                </IconButton>
+              ) : null}
             </div>
 
             <div className="min-w-0 flex-1">
@@ -2334,7 +3087,7 @@ function TicketMessageBuilder({
   };
 
   const renderPreview = (items: Array<TicketPanelComponent | TicketPanelContainerChild>, nested = false) => groupedPreview(items).map((group, index) => {
-    if (group.kind === "actions") return <div key={`actions-${index}`} className={cn("flex flex-wrap gap-[8px]", nested && "pt-[2px]")}>{group.items.map((item) => previewAction(item, handlePreviewLinkIntent))}</div>;
+    if (group.kind === "actions") return <div key={`actions-${index}`} className={cn("flex flex-wrap gap-[8px]", nested && "pt-[2px]")}>{group.items.map((item) => previewAction(item, handlePreviewLinkIntent, guildId))}</div>;
     const item = group.item;
     if (item.type === "content") return <div key={item.id} className={cn("grid gap-[14px]", item.accessory ? "min-[520px]:grid-cols-[minmax(0,1fr)_auto]" : "grid-cols-1")}><div className="min-w-0 space-y-[6px]" onClick={(event) => {
       const target = event.target as HTMLElement | null;
@@ -2345,7 +3098,7 @@ function TicketMessageBuilder({
         event.preventDefault();
         handlePreviewLinkIntent(href, linkTarget.textContent?.trim() || "Abrir link");
       }
-    }}>{renderMarkdownPreview(item.markdown, guildId)}</div>{item.accessory ? <div className="justify-self-start min-[520px]:justify-self-end">{previewAccessory(item.accessory, handlePreviewLinkIntent, thumbnailPreviewUrl)}</div> : null}</div>;
+    }}>{renderMarkdownPreview(item.markdown, guildId)}</div>{item.accessory ? <div className="justify-self-start min-[520px]:justify-self-end">{previewAccessory(item.accessory, handlePreviewLinkIntent, thumbnailPreviewUrl, guildId)}</div> : null}</div>;
     if (item.type === "container") return <div key={item.id} className="relative overflow-hidden rounded-[20px] border border-[#2B2D31] bg-[#15171B]">{item.accentColor ? <div className="absolute bottom-0 left-0 top-0 w-[4px]" style={{ backgroundColor: item.accentColor }} /> : null}<div className={cn("space-y-[14px] px-[18px] py-[16px]", item.accentColor ? "pl-[20px]" : "pl-[18px]")}>{item.children.length ? renderPreview(item.children, true) : <div className="rounded-[16px] border border-dashed border-[#2E3136] bg-[#111216] px-[14px] py-[16px] text-[12px] leading-[1.55] text-[#8D9198]">Container vazio. Adicione conteudos, botoes ou separadores para montar o embed final.</div>}</div></div>;
     if (item.type === "image") return <div key={item.id} className="overflow-hidden rounded-[18px] border border-[#2B2D31] bg-[#17181B]">{item.url ? <img src={item.url} alt="" className="max-h-[240px] w-full object-cover" /> : <div className="flex h-[180px] items-center justify-center text-[#73767D]"><ImageIcon className="h-[28px] w-[28px]" /></div>}</div>;
     if (item.type === "file") return <div key={item.id} className="flex items-center justify-between gap-[14px] rounded-[18px] border border-[#2B2D31] bg-[#17181B] px-[16px] py-[14px]"><div className="flex min-w-0 items-center gap-[12px]"><span className="inline-flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-[12px] bg-[#0F1012] text-[#D5D7DB]"><FileText className="h-[18px] w-[18px]" /></span><div className="min-w-0"><p className="truncate text-[13px] font-medium text-[#F2F3F5]">{item.name || "Arquivo-flowdesk.pdf"}</p><p className="mt-[3px] text-[12px] text-[#8E939A]">{item.sizeLabel || "PDF | 1.2 MB"}</p></div></div><span className="rounded-full border border-[#2B2D31] bg-[#111216] px-[10px] py-[6px] text-[11px] font-medium uppercase tracking-[0.14em] text-[#A3A7AE]">Anexo</span></div>;
@@ -2562,6 +3315,25 @@ function TicketMessageBuilder({
           loading={emojiCatalogLoading}
           onHover={setEmojiHighlightIndex}
           onSelect={(emoji) => applyEmojiSuggestion(emojiAutocomplete.scope, emoji)}
+        />
+      ) : null}
+
+      {openButtonEmojiPicker ? (
+        <ButtonEmojiPickerMenu
+          anchorElement={
+            buttonEmojiPickerAnchor ||
+            buttonEmojiTriggerRefs.current[buttonEmojiTargetKey(openButtonEmojiPicker)] ||
+            null
+          }
+          guildId={guildId}
+          currentEmoji={currentButtonEmojiValue}
+          items={filteredButtonEmojiSuggestions}
+          recentItems={recentButtonEmojis}
+          loading={emojiCatalogLoading}
+          searchQuery={buttonEmojiSearchQuery}
+          onSearchQueryChange={setButtonEmojiSearchQuery}
+          onSelect={applyButtonEmojiSelection}
+          onRemove={removeButtonEmojiSelection}
         />
       ) : null}
 

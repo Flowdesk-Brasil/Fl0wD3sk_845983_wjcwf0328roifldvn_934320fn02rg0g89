@@ -25,6 +25,8 @@ export type ServerSettingsSkeletonSection =
   | "sales_coupons_gifts_edit"
   | "entry_exit_overview"
   | "entry_exit_message"
+  | "captcha_overview"
+  | "captcha_message"
   | "security_antilink"
   | "security_autorole"
   | "security_logs"
@@ -764,6 +766,14 @@ function resolveSkeletonContent(
 
   if (settingsSection === "entry_exit_message") {
     return renderTicketMessageSkeleton(true);
+  }
+
+  if (settingsSection === "captcha_overview") {
+    return renderSettingsOverviewSkeleton();
+  }
+
+  if (settingsSection === "captcha_message") {
+    return renderTicketMessageSkeleton();
   }
 
   if (settingsSection === "security_antilink") {

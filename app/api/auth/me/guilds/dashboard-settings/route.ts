@@ -20,7 +20,10 @@ import {
   rewriteUnreadableServerSettingsVaultSnapshot,
   type ServerSettingsVaultModule,
 } from "@/lib/servers/serverSettingsVault";
-import { normalizeTicketPanelLayout } from "@/lib/servers/ticketPanelBuilder";
+import {
+  normalizeCaptchaPanelLayout,
+  normalizeTicketPanelLayout,
+} from "@/lib/servers/ticketPanelBuilder";
 import {
   createDefaultWelcomeEntryLayout,
   createDefaultWelcomeExitLayout,
@@ -550,6 +553,111 @@ function buildWelcomePayload(input: {
   };
 }
 
+function buildCaptchaPayload(input: {
+  record: Record<string, unknown> | null;
+  snapshot: Record<string, unknown> | null;
+  textSet: Set<string>;
+  roleSet: Set<string>;
+  updatedAt: string | null;
+}) {
+  if (!input.record && !input.snapshot) {
+    return null;
+  }
+
+  const panelTitle =
+    typeof input.snapshot?.panelTitle === "string"
+      ? input.snapshot.panelTitle
+      : typeof input.record?.panel_title === "string"
+        ? input.record.panel_title
+        : "";
+  const panelDescription =
+    typeof input.snapshot?.panelDescription === "string"
+      ? input.snapshot.panelDescription
+      : typeof input.record?.panel_description === "string"
+        ? input.record.panel_description
+        : "";
+  const panelButtonLabel =
+    typeof input.snapshot?.panelButtonLabel === "string"
+      ? input.snapshot.panelButtonLabel
+      : typeof input.record?.panel_button_label === "string"
+        ? input.record.panel_button_label
+        : "";
+
+  return {
+    enabled:
+      typeof input.snapshot?.enabled === "boolean"
+        ? input.snapshot.enabled
+        : input.record?.enabled === true,
+    panelChannelId:
+      typeof input.snapshot?.panelChannelId === "string" &&
+      (input.textSet.size === 0 || input.textSet.has(input.snapshot.panelChannelId))
+        ? input.snapshot.panelChannelId
+        : typeof input.record?.panel_channel_id === "string" &&
+            (input.textSet.size === 0 || input.textSet.has(input.record.panel_channel_id))
+          ? input.record.panel_channel_id
+          : null,
+    logsChannelId:
+      typeof input.snapshot?.logsChannelId === "string" &&
+      (input.textSet.size === 0 || input.textSet.has(input.snapshot.logsChannelId))
+        ? input.snapshot.logsChannelId
+        : typeof input.record?.logs_channel_id === "string" &&
+            (input.textSet.size === 0 || input.textSet.has(input.record.logs_channel_id))
+          ? input.record.logs_channel_id
+          : null,
+    verifiedRoleIds: filterKnownIds(
+      input.snapshot?.verifiedRoleIds ?? input.record?.verified_role_ids,
+      input.roleSet,
+    ),
+    bypassRoleIds: filterKnownIds(
+      input.snapshot?.bypassRoleIds ?? input.record?.bypass_role_ids,
+      input.roleSet,
+    ),
+    panelLayout: normalizeCaptchaPanelLayout(
+      input.snapshot?.panelLayout ?? input.record?.panel_layout,
+      { panelTitle, panelDescription, panelButtonLabel },
+    ),
+    panelTitle,
+    panelDescription,
+    panelButtonLabel,
+    challengeTitle:
+      typeof input.snapshot?.challengeTitle === "string"
+        ? input.snapshot.challengeTitle
+        : typeof input.record?.challenge_title === "string"
+          ? input.record.challenge_title
+          : "Verificacao de seguranca",
+    challengeDescription:
+      typeof input.snapshot?.challengeDescription === "string"
+        ? input.snapshot.challengeDescription
+        : typeof input.record?.challenge_description === "string"
+          ? input.record.challenge_description
+          : "Selecione o codigo que aparece na imagem acima.",
+    maxAttempts: Math.max(
+      1,
+      Math.min(
+        10,
+        Number(input.snapshot?.maxAttempts ?? input.record?.max_attempts ?? 3) || 3,
+      ),
+    ),
+    timeoutSeconds: Math.max(
+      30,
+      Math.min(
+        600,
+        Number(input.snapshot?.timeoutSeconds ?? input.record?.timeout_seconds ?? 120) ||
+          120,
+      ),
+    ),
+    kickOnFail:
+      input.snapshot?.kickOnFail === true || input.record?.kick_on_fail === true,
+    successMessage:
+      typeof input.snapshot?.successMessage === "string"
+        ? input.snapshot.successMessage
+        : typeof input.record?.success_message === "string"
+          ? input.record.success_message
+          : "Verificacao concluida com sucesso. Bem-vindo ao servidor!",
+    updatedAt: input.updatedAt,
+  };
+}
+
 function buildAntiLinkPayload(input: {
   record: Record<string, unknown> | null;
   snapshot: Record<string, unknown> | null;
@@ -941,6 +1049,7 @@ export async function GET(request: Request) {
       refundResult,
       staffResult,
       welcomeResult,
+      captchaResult,
       antiLinkResult,
       autoRoleResult,
       salesResult,
@@ -966,6 +1075,13 @@ export async function GET(request: Request) {
         .from("guild_welcome_settings")
         .select(
           "enabled, entry_public_channel_id, entry_log_channel_id, exit_public_channel_id, exit_log_channel_id, entry_layout, exit_layout, entry_thumbnail_mode, exit_thumbnail_mode, updated_at",
+        )
+        .eq("guild_id", guildId)
+        .maybeSingle(),
+      supabase
+        .from("guild_captcha_settings")
+        .select(
+          "enabled, panel_channel_id, logs_channel_id, verified_role_ids, bypass_role_ids, panel_layout, panel_title, panel_description, panel_button_label, challenge_title, challenge_description, max_attempts, timeout_seconds, kick_on_fail, success_message, updated_at",
         )
         .eq("guild_id", guildId)
         .maybeSingle(),
@@ -1003,6 +1119,7 @@ export async function GET(request: Request) {
           "ticket_settings",
           "ticket_staff_settings",
           "welcome_settings",
+          "captcha_settings",
           "antilink_settings",
           "autorole_settings",
           "sales_settings",
@@ -1018,6 +1135,16 @@ export async function GET(request: Request) {
     if (refundResult.error) throw new Error(refundResult.error.message);
     if (staffResult.error) throw new Error(staffResult.error.message);
     if (welcomeResult.error) throw new Error(welcomeResult.error.message);
+    if (captchaResult.error) {
+      const code = typeof captchaResult.error.code === "string" ? captchaResult.error.code : "";
+      const message =
+        typeof captchaResult.error.message === "string"
+          ? captchaResult.error.message.toLowerCase()
+          : "";
+      if (code !== "42P01" && !message.includes("guild_captcha_settings")) {
+        throw new Error(captchaResult.error.message);
+      }
+    }
     if (antiLinkResult.error) throw new Error(antiLinkResult.error.message);
     if (autoRoleResult.error) throw new Error(autoRoleResult.error.message);
     if (salesResult.error) {
@@ -1122,6 +1249,17 @@ export async function GET(request: Request) {
             ? welcomeResult.data.updated_at
             : null),
       }),
+      captchaSettings: buildCaptchaPayload({
+        record: toRecordOrNull(captchaResult.data),
+        snapshot: toRecordOrNull(secureSnapshots.get("captcha_settings")?.payload),
+        textSet,
+        roleSet,
+        updatedAt:
+          secureSnapshots.get("captcha_settings")?.updatedAt ||
+          (typeof captchaResult.data?.updated_at === "string"
+            ? captchaResult.data.updated_at
+            : null),
+      }),
       antiLinkSettings: buildAntiLinkPayload({
         record: toRecordOrNull(antiLinkResult.data),
         snapshot: toRecordOrNull(
@@ -1185,6 +1323,7 @@ export async function GET(request: Request) {
       { moduleKey: "ticket_settings", settings: payload.ticketSettings },
       { moduleKey: "ticket_staff_settings", settings: payload.staffSettings },
       { moduleKey: "welcome_settings", settings: payload.welcomeSettings },
+      { moduleKey: "captcha_settings", settings: payload.captchaSettings },
       { moduleKey: "antilink_settings", settings: payload.antiLinkSettings },
       { moduleKey: "autorole_settings", settings: payload.autoRoleSettings },
       { moduleKey: "sales_settings", settings: payload.salesSettings },
