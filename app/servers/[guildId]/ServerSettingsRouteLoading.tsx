@@ -3,12 +3,6 @@ import { ServerSettingsEditorSkeleton } from "@/components/servers/ServerSetting
 type ServerSettingsSection =
   | "overview"
   | "message"
-  | "timeclock"
-  | "timeclock_config"
-  | "timeclock_live"
-  | "timeclock_history"
-  | "timeclock_ranking"
-  | "timeclock_audit"
   | "sales_overview"
   | "sales_categories"
   | "sales_category_create"
