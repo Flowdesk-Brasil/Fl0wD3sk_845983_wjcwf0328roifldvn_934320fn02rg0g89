@@ -13,7 +13,6 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Clock3,
   CircleHelp,
   Cog,
   Copy as CopyLucide,
@@ -116,12 +115,6 @@ type ServerEditorTab = "settings" | "payments" | "methods" | "plans";
 type ServerSettingsSection =
   | "overview"
   | "message"
-  | "timeclock"
-  | "timeclock_config"
-  | "timeclock_live"
-  | "timeclock_history"
-  | "timeclock_ranking"
-  | "timeclock_audit"
   | "sales_overview"
   | "sales_categories"
   | "sales_category_create"
@@ -188,7 +181,7 @@ const FILTER_LABEL: Record<FilterOption, string> = {
 
 type SidebarItem = {
   label: string;
-  kind: "overview" | "settings" | "sales" | "ticket" | "timeclock" | "entry_exit" | "security" | "dashboard";
+  kind: "overview" | "settings" | "sales" | "ticket" | "entry_exit" | "security" | "dashboard";
   tab?: ServerEditorTab | null;
   settingsSection?: ServerSettingsSection | null;
   disabled?: boolean;
@@ -263,49 +256,6 @@ const TICKET_SIDEBAR_ITEMS: SidebarItem[] = [
       "regras",
       "empresa",
     ],
-  },
-];
-
-const TIMECLOCK_SIDEBAR_ITEMS: SidebarItem[] = [
-  {
-    label: "Configuracao",
-    kind: "timeclock",
-    tab: "settings",
-    settingsSection: "timeclock_config",
-    requiredPermission: "server_manage_tickets_overview",
-    searchAliases: ["bate ponto", "ponto", "configuracao", "canal", "cargos", "escala"],
-  },
-  {
-    label: "Acompanhamento",
-    kind: "timeclock",
-    tab: "settings",
-    settingsSection: "timeclock_live",
-    requiredPermission: "server_manage_tickets_overview",
-    searchAliases: ["bate ponto", "tempo real", "jornada", "trabalhando", "pausa"],
-  },
-  {
-    label: "Historico",
-    kind: "timeclock",
-    tab: "settings",
-    settingsSection: "timeclock_history",
-    requiredPermission: "server_manage_tickets_overview",
-    searchAliases: ["bate ponto", "historico", "folha", "registros", "jornadas"],
-  },
-  {
-    label: "Ranking",
-    kind: "timeclock",
-    tab: "settings",
-    settingsSection: "timeclock_ranking",
-    requiredPermission: "server_manage_tickets_overview",
-    searchAliases: ["bate ponto", "ranking", "produtividade", "horas", "banco"],
-  },
-  {
-    label: "Auditoria",
-    kind: "timeclock",
-    tab: "settings",
-    settingsSection: "timeclock_audit",
-    requiredPermission: "server_manage_tickets_overview",
-    searchAliases: ["bate ponto", "auditoria", "eventos", "logs", "ajustes"],
   },
 ];
 
@@ -575,7 +525,7 @@ function parseWorkspaceRoute(pathname: string | null): {
     }
 
     if (
-      /^\/\d{10,25}(?:\/(?:sales\/(?:overview|categories(?:\/create)?|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai|timeclock)|timeclock\/(?:configuracao|acompanhamento|historico|ranking|auditoria)|entry-exit\/(?:overview|message)|security\/(?:antilink|autorole|logs))?)?$/.test(
+      /^\/\d{10,25}(?:\/(?:sales\/(?:overview|categories(?:\/create)?|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|security\/(?:antilink|autorole|logs))?)?$/.test(
         comparablePathname,
       )
     ) {
@@ -595,7 +545,7 @@ function parseWorkspaceRoute(pathname: string | null): {
   }
 
   const ticketSectionMatch = normalizedPathname.match(
-    /^\/servers\/(\d{10,25})\/tickets?\/(overview|message|flowai|timeclock)\/?$/,
+    /^\/servers\/(\d{10,25})\/tickets?\/(overview|message|flowai)\/?$/,
   );
   if (ticketSectionMatch) {
     return {
@@ -604,29 +554,7 @@ function parseWorkspaceRoute(pathname: string | null): {
       settingsSection:
         ticketSectionMatch[2] === "flowai"
           ? "ticket_ai"
-          : ticketSectionMatch[2] === "timeclock"
-            ? "timeclock_config"
           : (ticketSectionMatch[2] as ServerSettingsSection),
-    };
-  }
-
-  const timeclockSectionMatch = normalizedPathname.match(
-    /^\/servers\/(\d{10,25})\/timeclock\/(configuracao|acompanhamento|historico|ranking|auditoria)\/?$/,
-  );
-  if (timeclockSectionMatch) {
-    return {
-      guildId: timeclockSectionMatch[1],
-      tab: "settings",
-      settingsSection:
-        timeclockSectionMatch[2] === "acompanhamento"
-          ? "timeclock_live"
-          : timeclockSectionMatch[2] === "historico"
-            ? "timeclock_history"
-            : timeclockSectionMatch[2] === "ranking"
-              ? "timeclock_ranking"
-              : timeclockSectionMatch[2] === "auditoria"
-                ? "timeclock_audit"
-                : "timeclock_config",
     };
   }
 
@@ -727,7 +655,7 @@ function isServersWorkspacePath(pathname: string) {
     return true;
   }
 
-  return /^\/\d{10,25}(?:\/(?:sales\/(?:overview|categories|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai|timeclock)|timeclock\/(?:configuracao|acompanhamento|historico|ranking|auditoria)|entry-exit\/(?:overview|message)|security\/(?:antilink|autorole|logs))?)?\/?$/.test(
+  return /^\/\d{10,25}(?:\/(?:sales\/(?:overview|categories|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|security\/(?:antilink|autorole|logs))?)?\/?$/.test(
     pathname,
   );
 }
@@ -1118,7 +1046,6 @@ function SidebarNavIcon({
     overview: FolderKanban,
     settings: Settings2,
     ticket: Ticket,
-    timeclock: Clock3,
     entry_exit: ArrowRightLeft,
     security: Shield,
     sales: ShoppingBag,
@@ -1605,7 +1532,6 @@ export function ServersWorkspace({
   const hasUnsavedSettingsChangesRef = useRef(false);
   const [isSalesSidebarOpen, setIsSalesSidebarOpen] = useState(false);
   const [isTicketSidebarOpen, setIsTicketSidebarOpen] = useState(false);
-  const [isTimeclockSidebarOpen, setIsTimeclockSidebarOpen] = useState(false);
   const [isEntryExitSidebarOpen, setIsEntryExitSidebarOpen] = useState(false);
   const [isSecuritySidebarOpen, setIsSecuritySidebarOpen] = useState(false);
   const [currentDashboardPermissions, setCurrentDashboardPermissions] = useState<string[] | "full">([]);
@@ -2468,27 +2394,6 @@ export function ServersWorkspace({
       .map((entry) => entry.item);
   }, [isEditingServer, normalizedSidebarQuery]);
 
-  const filteredTimeclockSidebarItems = useMemo(() => {
-    if (!isEditingServer) return [];
-
-    const items = TIMECLOCK_SIDEBAR_ITEMS;
-
-    if (!normalizedSidebarQuery) return items;
-
-    return items
-      .map((item) => {
-        const haystack = [item.label, ...(item.searchAliases || [])].join(" ");
-        return { item, score: getSearchScore(haystack, normalizedSidebarQuery) };
-      })
-      .filter((entry) => entry.score > 0)
-      .sort((a, b) =>
-        a.score !== b.score
-          ? b.score - a.score
-          : a.item.label.localeCompare(b.item.label, "pt-BR"),
-      )
-      .map((entry) => entry.item);
-  }, [isEditingServer, normalizedSidebarQuery]);
-
   const filteredSalesSidebarItems = useMemo(() => {
     if (!isEditingServer) return [];
 
@@ -2561,15 +2466,6 @@ export function ServersWorkspace({
     (selectedSettingsSectionForConfig === "overview" ||
       selectedSettingsSectionForConfig === "message" ||
       selectedSettingsSectionForConfig === "ticket_ai");
-  const isTimeclockGroupActive =
-    isEditingServer &&
-    selectedEditorTabForConfig === "settings" &&
-    (selectedSettingsSectionForConfig === "timeclock" ||
-      selectedSettingsSectionForConfig === "timeclock_config" ||
-      selectedSettingsSectionForConfig === "timeclock_live" ||
-      selectedSettingsSectionForConfig === "timeclock_history" ||
-      selectedSettingsSectionForConfig === "timeclock_ranking" ||
-      selectedSettingsSectionForConfig === "timeclock_audit");
   const isSalesGroupActive =
     isEditingServer &&
     selectedEditorTabForConfig === "settings" &&
@@ -2599,7 +2495,6 @@ export function ServersWorkspace({
   useEffect(() => {
     if (normalizedSidebarQuery) {
       setIsTicketSidebarOpen(true);
-      setIsTimeclockSidebarOpen(true);
       setIsSalesSidebarOpen(true);
       setIsEntryExitSidebarOpen(true);
       setIsSecuritySidebarOpen(true);
@@ -2612,16 +2507,13 @@ export function ServersWorkspace({
     if (isTicketGroupActive) {
       setIsTicketSidebarOpen(true);
     }
-    if (isTimeclockGroupActive) {
-      setIsTimeclockSidebarOpen(true);
-    }
     if (isEntryExitGroupActive) {
       setIsEntryExitSidebarOpen(true);
     }
     if (isSecurityGroupActive) {
       setIsSecuritySidebarOpen(true);
     }
-  }, [isEntryExitGroupActive, isSalesGroupActive, isSecurityGroupActive, isTicketGroupActive, isTimeclockGroupActive, normalizedSidebarQuery]);
+  }, [isEntryExitGroupActive, isSalesGroupActive, isSecurityGroupActive, isTicketGroupActive, normalizedSidebarQuery]);
 
   useEffect(() => {
     if (!selectedGuildIdForConfig) {
@@ -2729,21 +2621,6 @@ export function ServersWorkspace({
     }
     if (settingsSection === "ticket_ai") {
       return `/servers/${encodedGuildId}/tickets/flowai/`;
-    }
-    if (settingsSection === "timeclock" || settingsSection === "timeclock_config") {
-      return `/servers/${encodedGuildId}/timeclock/configuracao/`;
-    }
-    if (settingsSection === "timeclock_live") {
-      return `/servers/${encodedGuildId}/timeclock/acompanhamento/`;
-    }
-    if (settingsSection === "timeclock_history") {
-      return `/servers/${encodedGuildId}/timeclock/historico/`;
-    }
-    if (settingsSection === "timeclock_ranking") {
-      return `/servers/${encodedGuildId}/timeclock/ranking/`;
-    }
-    if (settingsSection === "timeclock_audit") {
-      return `/servers/${encodedGuildId}/timeclock/auditoria/`;
     }
     if (settingsSection === "entry_exit_message") {
       return `/servers/${encodedGuildId}/entry-exit/message/`;
@@ -2877,11 +2754,6 @@ export function ServersWorkspace({
       buildServerConfigUrl(guildId, "settings", "overview"),
       buildServerConfigUrl(guildId, "settings", "message"),
       buildServerConfigUrl(guildId, "settings", "ticket_ai"),
-      buildServerConfigUrl(guildId, "settings", "timeclock_config"),
-      buildServerConfigUrl(guildId, "settings", "timeclock_live"),
-      buildServerConfigUrl(guildId, "settings", "timeclock_history"),
-      buildServerConfigUrl(guildId, "settings", "timeclock_ranking"),
-      buildServerConfigUrl(guildId, "settings", "timeclock_audit"),
       buildServerConfigUrl(guildId, "settings", "entry_exit_overview"),
       buildServerConfigUrl(guildId, "settings", "entry_exit_message"),
       buildServerConfigUrl(guildId, "settings", "security_antilink"),
@@ -3401,12 +3273,6 @@ export function ServersWorkspace({
     if (section === "message") return perms.has("server_manage_tickets_message");
     if (
       section === "ticket_ai" ||
-      section === "timeclock" ||
-      section === "timeclock_config" ||
-      section === "timeclock_live" ||
-      section === "timeclock_history" ||
-      section === "timeclock_ranking" ||
-      section === "timeclock_audit" ||
       section === "sales_overview" ||
       section === "sales_categories" ||
       section === "sales_category_create" ||
@@ -3725,7 +3591,6 @@ export function ServersWorkspace({
         {filteredProjectsSidebarItems.length ||
         filteredSalesSidebarItems.length ||
         filteredTicketSidebarItems.length ||
-        filteredTimeclockSidebarItems.length ||
         filteredEntryExitSidebarItems.length ||
         filteredSecuritySidebarItems.length ? (
           <>
@@ -3835,86 +3700,6 @@ export function ServersWorkspace({
                               guildId: selectedServer.guildId,
                               tab: item.tab,
                               settingsSection: item.settingsSection || "sales_overview",
-                            });
-                          }}
-                          disabled={isDisabled}
-                          className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[10px] text-left transition-all duration-200 ${
-                            isActive
-                              ? "bg-[#1A1A1A] text-[#F0F0F0]"
-                              : isDisabled
-                                ? "text-[#585858]"
-                                : "text-[#AFAFAF] hover:bg-[#101010] hover:text-[#E3E3E3]"
-                          }`}
-                        >
-                          <span className={`inline-flex h-[20px] w-[20px] items-center justify-center ${isActive ? "text-[#F0F0F0]" : isDisabled ? "text-[#4A4A4A]" : "text-[#7F7F7F] group-hover:text-[#DADADA]"}`}>
-                            <SidebarNavIcon kind={item.kind} active={isActive} />
-                          </span>
-                          <span className="min-w-0 flex-1 truncate text-[14px] leading-none font-medium tracking-[-0.03em]">
-                            {item.label}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
-            {filteredTimeclockSidebarItems.length ? (
-              <div className="mt-[12px]">
-                <button
-                  type="button"
-                  onClick={() => setIsTimeclockSidebarOpen((current) => !current)}
-                  className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-all duration-200 ${
-                    isTimeclockGroupActive
-                      ? "bg-[#1E1E1E] text-[#F0F0F0]"
-                      : isTimeclockSidebarOpen
-                        ? "bg-[#121212] text-[#D6D6D6]"
-                        : "text-[#B5B5B5] hover:bg-[#111111] hover:text-[#E3E3E3]"
-                  }`}
-                >
-                  <span className={`inline-flex h-[22px] w-[22px] items-center justify-center ${isTimeclockGroupActive ? "text-[#F0F0F0]" : isTimeclockSidebarOpen ? "text-[#C7C7C7]" : "text-[#8A8A8A] group-hover:text-[#DADADA]"}`}>
-                    <SidebarNavIcon kind="timeclock" active={isTimeclockGroupActive} />
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-[15px] leading-none font-medium tracking-[-0.03em]">
-                    Bate Ponto
-                  </span>
-                  <span
-                    className={`transition-transform duration-200 ${
-                      isTimeclockSidebarOpen || normalizedSidebarQuery
-                        ? "rotate-180 text-[#C9C9C9]"
-                        : "rotate-0 text-[#6F6F6F] group-hover:text-[#BEBEBE]"
-                    }`}
-                  >
-                    <SidebarDropdownChevronIcon />
-                  </span>
-                </button>
-
-                {isTimeclockSidebarOpen || normalizedSidebarQuery ? (
-                  <div className="mt-[6px] space-y-[4px] pl-[12px]">
-                    {filteredTimeclockSidebarItems.map((item) => {
-                      const isDisabled = item.disabled || !selectedServer || !item.tab;
-                      const isActive =
-                        Boolean(
-                          item.tab &&
-                            selectedEditorTabForConfig === item.tab &&
-                            selectedSettingsSectionForConfig === item.settingsSection &&
-                            isEditingServer,
-                        );
-
-                      return (
-                        <button
-                          key={item.label}
-                          type="button"
-                          onMouseEnter={() => prefetchSelectedWorkspaceSections(item.tab)}
-                          onFocus={() => prefetchSelectedWorkspaceSections(item.tab)}
-                          onPointerDown={() => prefetchSelectedWorkspaceSections(item.tab)}
-                          onClick={() => {
-                            if (isDisabled || !selectedServer || !item.tab) return;
-                            handleSidebarSettingsSectionNavigation({
-                              guildId: selectedServer.guildId,
-                              tab: item.tab,
-                              settingsSection: item.settingsSection || "timeclock_config",
                             });
                           }}
                           disabled={isDisabled}
