@@ -93,9 +93,6 @@ type ServerDashboardSettingsPayload = {
     panelDescription: string;
     panelButtonLabel: string;
     suggestionLayout: TicketPanelLayout;
-    publishedHeader: string;
-    publishedFooter: string;
-    threadNamePrefix: string;
     updatedAt: string | null;
   } | null;
   antiLinkSettings: {

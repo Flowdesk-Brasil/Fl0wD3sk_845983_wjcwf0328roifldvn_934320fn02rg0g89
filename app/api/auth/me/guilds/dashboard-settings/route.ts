@@ -21,6 +21,8 @@ import {
   type ServerSettingsVaultModule,
 } from "@/lib/servers/serverSettingsVault";
 import {
+  DEFAULT_SUGGESTION_PUBLISHED_FOOTER,
+  DEFAULT_SUGGESTION_PUBLISHED_HEADER,
   normalizeCaptchaPanelLayout,
   normalizeSuggestionPanelLayout,
   normalizeSuggestionPublishedLayout,
@@ -727,25 +729,21 @@ function buildSuggestionsPayload(input: {
     panelButtonLabel,
     suggestionLayout: normalizeSuggestionPublishedLayout(
       input.snapshot?.suggestionLayout ?? input.record?.suggestion_layout,
+      {
+        publishedHeader:
+          typeof input.snapshot?.publishedHeader === "string"
+            ? input.snapshot.publishedHeader
+            : typeof input.record?.published_header === "string"
+              ? input.record.published_header
+              : DEFAULT_SUGGESTION_PUBLISHED_HEADER,
+        publishedFooter:
+          typeof input.snapshot?.publishedFooter === "string"
+            ? input.snapshot.publishedFooter
+            : typeof input.record?.published_footer === "string"
+              ? input.record.published_footer
+              : DEFAULT_SUGGESTION_PUBLISHED_FOOTER,
+      },
     ),
-    publishedHeader:
-      typeof input.snapshot?.publishedHeader === "string"
-        ? input.snapshot.publishedHeader
-        : typeof input.record?.published_header === "string"
-          ? input.record.published_header
-          : "NOVA SUGESTAO ENVIADA!",
-    publishedFooter:
-      typeof input.snapshot?.publishedFooter === "string"
-        ? input.snapshot.publishedFooter
-        : typeof input.record?.published_footer === "string"
-          ? input.record.published_footer
-          : "Flowdesk | Sistema de sugestoes",
-    threadNamePrefix:
-      typeof input.snapshot?.threadNamePrefix === "string"
-        ? input.snapshot.threadNamePrefix
-        : typeof input.record?.thread_name_prefix === "string"
-          ? input.record.thread_name_prefix
-          : "Debater sugestao",
     updatedAt: input.updatedAt,
   };
 }

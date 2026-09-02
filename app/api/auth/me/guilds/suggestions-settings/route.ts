@@ -27,6 +27,8 @@ import {
 } from "@/lib/security/errors";
 import {
   deriveLegacyTicketPanelFields,
+  DEFAULT_SUGGESTION_PUBLISHED_FOOTER,
+  DEFAULT_SUGGESTION_PUBLISHED_HEADER,
   normalizeSuggestionPanelLayout,
   normalizeSuggestionPublishedLayout,
   normalizeTicketPanelLayout,
@@ -71,9 +73,6 @@ type SuggestionsSecureSnapshot = {
   panelDescription: string;
   panelButtonLabel: string;
   suggestionLayout: TicketPanelLayout;
-  publishedHeader: string;
-  publishedFooter: string;
-  threadNamePrefix: string;
 };
 
 function getTrimmedId(value: unknown) {
@@ -106,14 +105,14 @@ function normalizeSuggestionsSecureSnapshot(
     panelTitle: legacyFields.panelTitle,
     panelDescription: legacyFields.panelDescription,
     panelButtonLabel: legacyFields.panelButtonLabel,
-    suggestionLayout: normalizeSuggestionPublishedLayout(record.suggestionLayout),
-    publishedHeader:
-      getTrimmedText(record.publishedHeader) || "NOVA SUGESTAO ENVIADA!",
-    publishedFooter:
-      getTrimmedText(record.publishedFooter) ||
-      "Flowdesk | Sistema de sugestoes",
-    threadNamePrefix:
-      getTrimmedText(record.threadNamePrefix) || "Debater sugestao",
+    suggestionLayout: normalizeSuggestionPublishedLayout(record.suggestionLayout, {
+      publishedHeader:
+        getTrimmedText(record.publishedHeader) ||
+        DEFAULT_SUGGESTION_PUBLISHED_HEADER,
+      publishedFooter:
+        getTrimmedText(record.publishedFooter) ||
+        DEFAULT_SUGGESTION_PUBLISHED_FOOTER,
+    }),
   };
 }
 
@@ -131,9 +130,6 @@ function buildSuggestionsResponse(
     panelDescription: snapshot.panelDescription,
     panelButtonLabel: snapshot.panelButtonLabel,
     suggestionLayout: snapshot.suggestionLayout,
-    publishedHeader: snapshot.publishedHeader,
-    publishedFooter: snapshot.publishedFooter,
-    threadNamePrefix: snapshot.threadNamePrefix,
     updatedAt,
   };
 }
@@ -284,7 +280,6 @@ export async function GET(request: Request) {
       suggestionLayout: result.data.suggestion_layout,
       publishedHeader: result.data.published_header,
       publishedFooter: result.data.published_footer,
-      threadNamePrefix: result.data.thread_name_prefix,
     });
 
     if (canonicalSnapshot && secureSnapshotResult?.recovery?.unreadable) {
@@ -361,15 +356,6 @@ export async function POST(request: Request) {
           suggestionLayout: flowSecureDto.optional(
             flowSecureDto.array(flowSecureDto.record()),
           ),
-          publishedHeader: flowSecureDto.optional(
-            flowSecureDto.string({ allowEmpty: true, maxLength: 120 }),
-          ),
-          publishedFooter: flowSecureDto.optional(
-            flowSecureDto.string({ allowEmpty: true, maxLength: 200 }),
-          ),
-          threadNamePrefix: flowSecureDto.optional(
-            flowSecureDto.string({ allowEmpty: true, maxLength: 80 }),
-          ),
         },
         { rejectUnknown: true },
       ) as Record<string, unknown>;
@@ -394,9 +380,6 @@ export async function POST(request: Request) {
       panelDescription: body.panelDescription,
       panelButtonLabel: body.panelButtonLabel,
       suggestionLayout: body.suggestionLayout,
-      publishedHeader: body.publishedHeader,
-      publishedFooter: body.publishedFooter,
-      threadNamePrefix: body.threadNamePrefix,
     });
 
     if (!snapshot || !isGuildId(guildId)) {
@@ -534,9 +517,9 @@ export async function POST(request: Request) {
           panel_description: snapshot.panelDescription,
           panel_button_label: snapshot.panelButtonLabel,
           suggestion_layout: snapshot.suggestionLayout,
-          published_header: snapshot.publishedHeader,
-          published_footer: snapshot.publishedFooter,
-          thread_name_prefix: snapshot.threadNamePrefix,
+          published_header: DEFAULT_SUGGESTION_PUBLISHED_HEADER,
+          published_footer: DEFAULT_SUGGESTION_PUBLISHED_FOOTER,
+          thread_name_prefix: "Debater sugestao",
           configured_by_user_id: authUserId,
         },
         { onConflict: "guild_id" },

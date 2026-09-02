@@ -30,6 +30,7 @@ import {
   createDefaultCaptchaPanelLayout,
   createDefaultSuggestionPanelLayout,
   createDefaultSuggestionPublishedLayout,
+  DEFAULT_USER_THUMBNAIL_PREVIEW_URL,
   formatButtonEmojiMarkup,
   isUnsetCaptchaPanelLayout,
   isUnsetSuggestionPanelLayout,
@@ -72,8 +73,6 @@ type Props = {
   hideSendButton?: boolean;
   thumbnailPreviewUrl?: string | null;
   layoutPreset?: "ticket" | "captcha" | "suggestions" | "suggestion_publish";
-  suggestionPreviewHeader?: string;
-  suggestionPreviewFooter?: string;
 };
 
 type Scope = { parentId: string | null; componentId: string };
@@ -1566,11 +1565,16 @@ function previewAccessory(
     return <div className="inline-flex h-[72px] w-[72px] shrink-0 overflow-hidden rounded-[18px] border border-[#2B2D31] bg-[#17181B]">{previewUrl ? <img src={previewUrl} alt="" className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center text-[#7D7D7D]"><ImageIcon className="h-[24px] w-[24px]" /></div>}</div>;
   }
   if (accessory.type === "user_thumbnail") {
+    const previewUrl = thumbnailPreviewUrl || DEFAULT_USER_THUMBNAIL_PREVIEW_URL;
     return (
       <div className="inline-flex h-[72px] w-[72px] shrink-0 overflow-hidden rounded-[18px] border border-[#2B2D31] bg-[#17181B]">
-        <div className="flex h-full w-full items-center justify-center bg-[linear-gradient(135deg,#2B2D31_0%,#1E1F22_100%)] text-[#B5BAC1]">
-          <Shapes className="h-[28px] w-[28px]" strokeWidth={2.1} />
-        </div>
+        {previewUrl ? (
+          <img src={previewUrl} alt="" className="h-full w-full object-cover" />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center bg-[linear-gradient(135deg,#2B2D31_0%,#1E1F22_100%)] text-[#B5BAC1]">
+            <Shapes className="h-[28px] w-[28px]" strokeWidth={2.1} />
+          </div>
+        )}
       </div>
     );
   }
@@ -1607,8 +1611,6 @@ function TicketMessageBuilder({
   hideSendButton = false,
   thumbnailPreviewUrl = null,
   layoutPreset = "ticket",
-  suggestionPreviewHeader,
-  suggestionPreviewFooter,
 }: Props) {
   const normalizeLayout = useCallback(
     (next: TicketPanelLayout) =>
@@ -1690,6 +1692,7 @@ function TicketMessageBuilder({
   const [buttonEmojiPickerAnchor, setButtonEmojiPickerAnchor] = useState<HTMLElement | null>(null);
   const [buttonEmojiSearchQuery, setButtonEmojiSearchQuery] = useState("");
   const [recentButtonEmojis, setRecentButtonEmojis] = useState<GuildEmojiSuggestion[]>([]);
+  const [viewerAvatarUrl, setViewerAvatarUrl] = useState<string | null>(null);
   const contentTextareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
   const buttonEmojiTriggerRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const layoutRef = useRef(layout);
@@ -1744,6 +1747,38 @@ function TicketMessageBuilder({
     }
     setRecentButtonEmojis(readRecentButtonEmojisFromStorage(guildId));
   }, [guildId]);
+
+  useEffect(() => {
+    if (thumbnailPreviewUrl) {
+      return;
+    }
+
+    let isMounted = true;
+    const controller = new AbortController();
+
+    fetch("/api/public/landing/runtime", { signal: controller.signal })
+      .then((response) => response.json())
+      .then((payload) => {
+        if (!isMounted) return;
+        const avatarUrl =
+          typeof payload?.authenticatedUser?.avatarUrl === "string"
+            ? payload.authenticatedUser.avatarUrl
+            : null;
+        setViewerAvatarUrl(avatarUrl);
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setViewerAvatarUrl(null);
+      });
+
+    return () => {
+      isMounted = false;
+      controller.abort();
+    };
+  }, [thumbnailPreviewUrl]);
+
+  const resolvedThumbnailPreviewUrl =
+    thumbnailPreviewUrl ?? viewerAvatarUrl ?? DEFAULT_USER_THUMBNAIL_PREVIEW_URL;
 
   useEffect(() => {
     let isMounted = true;
@@ -2828,7 +2863,7 @@ function TicketMessageBuilder({
           onKeyDown={(event) => handleContentEmojiKeyDown(event, scope)}
           placeholder={
             layoutPreset === "suggestion_publish"
-              ? "Escreva o texto livremente aqui.\nUse {{published_header}}, {{published_footer}} e {{suggestion_author}} quando quiser.\nDigite : para autocompletar emojis do servidor."
+              ? "Escreva o texto livremente aqui.\nUse {{suggestion_author}} quando quiser.\nDigite : para autocompletar emojis do servidor."
               : "## Titulo do embed\nEscreva o texto livremente aqui.\n-# Observacao pequena\nUse **negrito** quando quiser destaque.\nDigite : para autocompletar emojis do servidor."
           }
           rows={nested ? 7 : 9}
@@ -3333,13 +3368,10 @@ function TicketMessageBuilder({
       }
     }}>{renderMarkdownPreview(
       layoutPreset === "suggestion_publish"
-        ? resolveSuggestionPublishedPreviewMarkdown(item.markdown, {
-            publishedHeader: suggestionPreviewHeader,
-            publishedFooter: suggestionPreviewFooter,
-          })
+        ? resolveSuggestionPublishedPreviewMarkdown(item.markdown)
         : item.markdown,
       guildId,
-    )}</div>{item.accessory ? <div className="justify-self-start min-[520px]:justify-self-end">{previewAccessory(item.accessory, handlePreviewLinkIntent, thumbnailPreviewUrl, guildId)}</div> : null}</div>;
+    )}</div>{item.accessory ? <div className="justify-self-start min-[520px]:justify-self-end">{previewAccessory(item.accessory, handlePreviewLinkIntent, resolvedThumbnailPreviewUrl, guildId)}</div> : null}</div>;
     if (item.type === "container") return <div key={item.id} className="relative overflow-hidden rounded-[20px] border border-[#2B2D31] bg-[#15171B]">{item.accentColor ? <div className="absolute bottom-0 left-0 top-0 w-[4px]" style={{ backgroundColor: item.accentColor }} /> : null}<div className={cn("space-y-[14px] px-[18px] py-[16px]", item.accentColor ? "pl-[20px]" : "pl-[18px]")}>{item.children.length ? renderPreview(item.children, true) : <div className="rounded-[16px] border border-dashed border-[#2E3136] bg-[#111216] px-[14px] py-[16px] text-[12px] leading-[1.55] text-[#8D9198]">Container vazio. Adicione conteudos, botoes ou separadores para montar o embed final.</div>}</div></div>;
     if (item.type === "image") return <div key={item.id} className="overflow-hidden rounded-[18px] border border-[#2B2D31] bg-[#17181B]">{item.url ? <img src={item.url} alt="" className="max-h-[240px] w-full object-cover" /> : <div className="flex h-[180px] items-center justify-center text-[#73767D]"><ImageIcon className="h-[28px] w-[28px]" /></div>}</div>;
     if (item.type === "file") return <div key={item.id} className="flex items-center justify-between gap-[14px] rounded-[18px] border border-[#2B2D31] bg-[#17181B] px-[16px] py-[14px]"><div className="flex min-w-0 items-center gap-[12px]"><span className="inline-flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-[12px] bg-[#0F1012] text-[#D5D7DB]"><FileText className="h-[18px] w-[18px]" /></span><div className="min-w-0"><p className="truncate text-[13px] font-medium text-[#F2F3F5]">{item.name || "Arquivo-flowdesk.pdf"}</p><p className="mt-[3px] text-[12px] text-[#8E939A]">{item.sizeLabel || "PDF | 1.2 MB"}</p></div></div><span className="rounded-full border border-[#2B2D31] bg-[#111216] px-[10px] py-[6px] text-[11px] font-medium uppercase tracking-[0.14em] text-[#A3A7AE]">Anexo</span></div>;

@@ -256,9 +256,6 @@ type SuggestionSettingsDraft = {
   logsChannelId: string | null;
   panelLayout: TicketPanelLayout;
   suggestionLayout: TicketPanelLayout;
-  publishedHeader: string;
-  publishedFooter: string;
-  threadNamePrefix: string;
 };
 
 type AntiLinkEnforcementAction = "delete_only" | "timeout" | "kick" | "ban";
@@ -866,12 +863,6 @@ function normalizeSuggestionSettingsDraft(
     suggestionLayout: isUnsetSuggestionPublishedLayout(draft.suggestionLayout)
       ? ([] as TicketPanelLayout)
       : normalizeSuggestionPublishedLayout(draft.suggestionLayout),
-    publishedHeader:
-      typeof draft.publishedHeader === "string" ? draft.publishedHeader.trim() : "",
-    publishedFooter:
-      typeof draft.publishedFooter === "string" ? draft.publishedFooter.trim() : "",
-    threadNamePrefix:
-      typeof draft.threadNamePrefix === "string" ? draft.threadNamePrefix.trim() : "",
   };
 }
 
@@ -2251,15 +2242,6 @@ export function ServerSettingsEditor({
   );
   const [suggestionsSuggestionLayout, setSuggestionsSuggestionLayout] =
     useState<TicketPanelLayout>(createDefaultSuggestionPublishedLayout());
-  const [suggestionsPublishedHeader, setSuggestionsPublishedHeader] = useState(
-    "NOVA SUGESTAO ENVIADA!",
-  );
-  const [suggestionsPublishedFooter, setSuggestionsPublishedFooter] = useState(
-    "Flowdesk | Sistema de sugestoes",
-  );
-  const [suggestionsThreadNamePrefix, setSuggestionsThreadNamePrefix] = useState(
-    "Debater sugestao",
-  );
   const [welcomeEnabled, setWelcomeEnabled] = useState(false);
   const [entryPublicChannelId, setEntryPublicChannelId] = useState<string | null>(null);
   const [entryLogChannelId, setEntryLogChannelId] = useState<string | null>(null);
@@ -2840,23 +2822,10 @@ export function ServerSettingsEditor({
           })
         : createDefaultSuggestionPanelLayout();
       const nextSuggestionsSuggestionLayout = hasSuggestionsSettings
-        ? normalizeSuggestionPublishedLayout(payload.suggestionsSettings?.suggestionLayout)
+        ? normalizeSuggestionPublishedLayout(
+            payload.suggestionsSettings?.suggestionLayout,
+          )
         : createDefaultSuggestionPublishedLayout();
-      const nextSuggestionsPublishedHeader =
-        hasSuggestionsSettings &&
-        typeof payload.suggestionsSettings?.publishedHeader === "string"
-          ? payload.suggestionsSettings.publishedHeader
-          : "NOVA SUGESTAO ENVIADA!";
-      const nextSuggestionsPublishedFooter =
-        hasSuggestionsSettings &&
-        typeof payload.suggestionsSettings?.publishedFooter === "string"
-          ? payload.suggestionsSettings.publishedFooter
-          : "Flowdesk | Sistema de sugestoes";
-      const nextSuggestionsThreadNamePrefix =
-        hasSuggestionsSettings &&
-        typeof payload.suggestionsSettings?.threadNamePrefix === "string"
-          ? payload.suggestionsSettings.threadNamePrefix
-          : "Debater sugestao";
 
       const nextAdminRoleId =
         payload.staffSettings?.adminRoleId &&
@@ -3163,9 +3132,6 @@ export function ServerSettingsEditor({
       setSuggestionsLogsChannelId(nextSuggestionsLogsChannelId);
       setSuggestionsPanelLayout(nextSuggestionsPanelLayout);
       setSuggestionsSuggestionLayout(nextSuggestionsSuggestionLayout);
-      setSuggestionsPublishedHeader(nextSuggestionsPublishedHeader);
-      setSuggestionsPublishedFooter(nextSuggestionsPublishedFooter);
-      setSuggestionsThreadNamePrefix(nextSuggestionsThreadNamePrefix);
       setAntiLinkEnabled(nextAntiLinkEnabled);
       setAntiLinkLogChannelId(nextAntiLinkLogChannelId);
       setAntiLinkEnforcementAction(nextAntiLinkEnforcementAction);
@@ -3269,9 +3235,6 @@ export function ServerSettingsEditor({
           logsChannelId: nextSuggestionsLogsChannelId,
           panelLayout: nextSuggestionsPanelLayout,
           suggestionLayout: nextSuggestionsSuggestionLayout,
-          publishedHeader: nextSuggestionsPublishedHeader,
-          publishedFooter: nextSuggestionsPublishedFooter,
-          threadNamePrefix: nextSuggestionsThreadNamePrefix,
         }),
       );
       setSavedAntiLinkSettingsDraft(
@@ -3407,9 +3370,6 @@ export function ServerSettingsEditor({
     setSuggestionsLogsChannelId(null);
     setSuggestionsPanelLayout(createDefaultSuggestionPanelLayout());
     setSuggestionsSuggestionLayout(createDefaultSuggestionPublishedLayout());
-    setSuggestionsPublishedHeader("NOVA SUGESTAO ENVIADA!");
-    setSuggestionsPublishedFooter("Flowdesk | Sistema de sugestoes");
-    setSuggestionsThreadNamePrefix("Debater sugestao");
     setWelcomeEnabled(false);
     setEntryPublicChannelId(null);
     setEntryLogChannelId(null);
@@ -4593,9 +4553,6 @@ export function ServerSettingsEditor({
         logsChannelId: suggestionsLogsChannelId,
         panelLayout: suggestionsPanelLayout,
         suggestionLayout: suggestionsSuggestionLayout,
-        publishedHeader: suggestionsPublishedHeader,
-        publishedFooter: suggestionsPublishedFooter,
-        threadNamePrefix: suggestionsThreadNamePrefix,
       }),
     [
       suggestionsEnabled,
@@ -4603,10 +4560,7 @@ export function ServerSettingsEditor({
       suggestionsPanelChannelId,
       suggestionsPanelLayout,
       suggestionsPublishChannelId,
-      suggestionsPublishedFooter,
-      suggestionsPublishedHeader,
       suggestionsSuggestionLayout,
-      suggestionsThreadNamePrefix,
     ],
   );
   const currentAntiLinkDraft = useMemo(
@@ -5110,11 +5064,6 @@ export function ServerSettingsEditor({
     exitPublicThumbnailMode,
     exitLogThumbnailMode,
   ]);
-
-  const activeWelcomeThumbnailPreviewUrl =
-    activeWelcomeThumbnailMode === "avatar"
-      ? "/cdn/icons/discord-icon.svg"
-      : null;
 
   const handleWelcomeLayoutChange = useCallback(
     (nextLayout: TicketPanelLayout) => {
@@ -5904,9 +5853,6 @@ export function ServerSettingsEditor({
           ? savedSuggestionSettingsDraft.suggestionLayout
           : createDefaultSuggestionPublishedLayout(),
       );
-      setSuggestionsPublishedHeader(savedSuggestionSettingsDraft.publishedHeader);
-      setSuggestionsPublishedFooter(savedSuggestionSettingsDraft.publishedFooter);
-      setSuggestionsThreadNamePrefix(savedSuggestionSettingsDraft.threadNamePrefix);
     } else if (savedSettingsDraft) {
       setTicketEnabled(savedSettingsDraft.enabled);
       setMenuChannelId(savedSettingsDraft.menuChannelId);
@@ -6250,9 +6196,6 @@ export function ServerSettingsEditor({
             panelDescription: legacyFields.panelDescription,
             panelButtonLabel: legacyFields.panelButtonLabel,
             suggestionLayout: suggestionsSuggestionLayout,
-            publishedHeader: suggestionsPublishedHeader,
-            publishedFooter: suggestionsPublishedFooter,
-            threadNamePrefix: suggestionsThreadNamePrefix,
           }),
         });
 
@@ -6284,18 +6227,6 @@ export function ServerSettingsEditor({
           suggestionLayout: normalizeSuggestionPublishedLayout(
             payload.settings?.suggestionLayout,
           ),
-          publishedHeader:
-            typeof payload.settings?.publishedHeader === "string"
-              ? payload.settings.publishedHeader
-              : suggestionsPublishedHeader,
-          publishedFooter:
-            typeof payload.settings?.publishedFooter === "string"
-              ? payload.settings.publishedFooter
-              : suggestionsPublishedFooter,
-          threadNamePrefix:
-            typeof payload.settings?.threadNamePrefix === "string"
-              ? payload.settings.threadNamePrefix
-              : suggestionsThreadNamePrefix,
         });
 
         setSuggestionsEnabled(nextSuggestionDraft.enabled);
@@ -6304,9 +6235,6 @@ export function ServerSettingsEditor({
         setSuggestionsLogsChannelId(nextSuggestionDraft.logsChannelId);
         setSuggestionsPanelLayout(nextSuggestionDraft.panelLayout);
         setSuggestionsSuggestionLayout(nextSuggestionDraft.suggestionLayout);
-        setSuggestionsPublishedHeader(nextSuggestionDraft.publishedHeader);
-        setSuggestionsPublishedFooter(nextSuggestionDraft.publishedFooter);
-        setSuggestionsThreadNamePrefix(nextSuggestionDraft.threadNamePrefix);
         setSavedSuggestionSettingsDraft(nextSuggestionDraft);
       } else {
         const shouldPersistTicketStaff =
@@ -6597,10 +6525,7 @@ export function ServerSettingsEditor({
     suggestionsPanelChannelId,
     suggestionsPanelLayout,
     suggestionsPublishChannelId,
-    suggestionsPublishedFooter,
-    suggestionsPublishedHeader,
     suggestionsSuggestionLayout,
-    suggestionsThreadNamePrefix,
     ticketEnabled,
     ticketsCategoryId,
     welcomeEnabled,
@@ -7921,69 +7846,16 @@ export function ServerSettingsEditor({
                         </div>
                       </div>
 
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div>
-                          <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Publicacao</p>
-                          <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                            Textos da sugestao publicada
-                          </h3>
-                          <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                            Personalize cabecalho, rodape e prefixo do topico criado para debater cada sugestao.
-                          </p>
-                        </div>
-
-                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
-                          <div>
-                            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">Cabecalho publicado</label>
-                            <input
-                              type="text"
-                              value={suggestionsPublishedHeader}
-                              onChange={(event) => setSuggestionsPublishedHeader(event.currentTarget.value)}
-                              placeholder="NOVA SUGESTAO ENVIADA!"
-                              maxLength={120}
-                              disabled={suggestionsControlsDisabled}
-                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
-                            />
-                          </div>
-                          <div>
-                            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">Prefixo do topico</label>
-                            <input
-                              type="text"
-                              value={suggestionsThreadNamePrefix}
-                              onChange={(event) => setSuggestionsThreadNamePrefix(event.currentTarget.value)}
-                              placeholder="Debater sugestao"
-                              maxLength={80}
-                              disabled={suggestionsControlsDisabled}
-                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
-                            />
-                          </div>
-                          <div className="xl:col-span-2">
-                            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">Rodape publicado</label>
-                            <input
-                              type="text"
-                              value={suggestionsPublishedFooter}
-                              onChange={(event) => setSuggestionsPublishedFooter(event.currentTarget.value)}
-                              placeholder="Flowdesk | Sistema de sugestoes"
-                              maxLength={200}
-                              disabled={suggestionsControlsDisabled}
-                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
-                            />
-                          </div>
-                        </div>
-                      </div>
-
                       <TicketMessageBuilder
                         guildId={guildId}
                         value={suggestionsSuggestionLayout}
                         onChange={setSuggestionsSuggestionLayout}
                         layoutPreset="suggestion_publish"
-                        suggestionPreviewHeader={suggestionsPublishedHeader}
-                        suggestionPreviewFooter={suggestionsPublishedFooter}
                         disabled={isSaving || settingsReadOnly || !suggestionsEnabled}
                         hideSendButton
                         eyebrow="Sugestoes"
                         headline="Template da sugestao publicada"
-                        description="Personalize cabecalho, rodape e blocos extras. Titulo e descricao do membro ficam em um bloco fixo; adicione conteudos, separadores e imagens como nos outros builders."
+                        description="Monte cabecalho, rodape e blocos extras no builder. Titulo e descricao do membro ficam em um bloco fixo; adicione conteudos, separadores e imagens como nos outros modulos."
                       />
                     </div>
                   ) : settingsSection === "suggestions_message" ? (
@@ -8886,7 +8758,6 @@ export function ServerSettingsEditor({
                           eyebrow=""
                           headline=""
                           description=""
-                          thumbnailPreviewUrl={activeWelcomeThumbnailPreviewUrl}
                         />
                       </div>
                     </>

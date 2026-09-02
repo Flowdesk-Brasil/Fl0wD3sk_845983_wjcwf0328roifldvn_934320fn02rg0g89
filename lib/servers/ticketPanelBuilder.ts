@@ -514,6 +514,9 @@ export function isUnsetSuggestionPanelLayout(
 }
 
 export const DEFAULT_SUGGESTION_PUBLISHED_ACCENT = "#00bcd4";
+export const DEFAULT_SUGGESTION_PUBLISHED_HEADER = "NOVA SUGESTAO ENVIADA!";
+export const DEFAULT_SUGGESTION_PUBLISHED_FOOTER =
+  "Flowdesk | Sistema de sugestoes";
 export const SUGGESTION_PUBLISHED_HEADER_TOKEN = "{{published_header}}";
 export const SUGGESTION_PUBLISHED_FOOTER_TOKEN = "{{published_footer}}";
 export const SUGGESTION_PUBLISHED_TITLE_TOKEN = "{{suggestion_title}}";
@@ -806,7 +809,7 @@ function ensureSuggestionPublishedSlotsInLayout(
   );
 }
 
-export function resolveSuggestionPublishedPreviewMarkdown(
+export function inlineSuggestionPublishedStaticTokens(
   markdown: string,
   options?: {
     publishedHeader?: string;
@@ -814,13 +817,61 @@ export function resolveSuggestionPublishedPreviewMarkdown(
   },
 ) {
   const header =
-    trimText(options?.publishedHeader) || "NOVA SUGESTAO ENVIADA!";
+    trimText(options?.publishedHeader) || DEFAULT_SUGGESTION_PUBLISHED_HEADER;
   const footer =
-    trimText(options?.publishedFooter) || "Flowdesk | Sistema de sugestoes";
+    trimText(options?.publishedFooter) || DEFAULT_SUGGESTION_PUBLISHED_FOOTER;
 
   return markdown
     .replaceAll(SUGGESTION_PUBLISHED_HEADER_TOKEN, header)
-    .replaceAll(SUGGESTION_PUBLISHED_FOOTER_TOKEN, footer)
+    .replaceAll(SUGGESTION_PUBLISHED_FOOTER_TOKEN, footer);
+}
+
+function inlineStaticTokensInLayout(
+  layout: TicketPanelLayout,
+  migration?: {
+    publishedHeader?: string;
+    publishedFooter?: string;
+  },
+): TicketPanelLayout {
+  return layout.map((component) => {
+    if (component.type === "container") {
+      return {
+        ...component,
+        children: component.children.map((child) => {
+          if (child.type !== "content" || isSuggestionMemberSlotMarkdown(child.markdown)) {
+            return child;
+          }
+
+          return {
+            ...child,
+            markdown: inlineSuggestionPublishedStaticTokens(
+              child.markdown,
+              migration,
+            ),
+          };
+        }),
+      };
+    }
+
+    if (
+      component.type === "content" &&
+      !isSuggestionMemberSlotMarkdown(component.markdown)
+    ) {
+      return {
+        ...component,
+        markdown: inlineSuggestionPublishedStaticTokens(
+          component.markdown,
+          migration,
+        ),
+      };
+    }
+
+    return component;
+  });
+}
+
+export function resolveSuggestionPublishedPreviewMarkdown(markdown: string) {
+  return inlineSuggestionPublishedStaticTokens(markdown)
     .replaceAll(
       SUGGESTION_PUBLISHED_TITLE_TOKEN,
       SUGGESTION_PUBLISHED_TITLE_PREVIEW,
@@ -865,10 +916,12 @@ export function createDefaultSuggestionPublishedLayout(): TicketPanelLayout {
       type: "container",
       accentColor: DEFAULT_SUGGESTION_PUBLISHED_ACCENT,
       children: [
-        createSuggestionPublishedContentChild("## 💡 {{published_header}}"),
+        createSuggestionPublishedContentChild(
+          `## 💡 ${DEFAULT_SUGGESTION_PUBLISHED_HEADER}`,
+        ),
         createSuggestionMemberSlotChild(),
         createSuggestionPublishedContentChild(
-          "-# Enviada por {{suggestion_author}}\n-# {{published_footer}}",
+          `-# Enviada por {{suggestion_author}}\n-# ${DEFAULT_SUGGESTION_PUBLISHED_FOOTER}`,
         ),
       ],
     },
@@ -885,13 +938,18 @@ export function isUnsetSuggestionPublishedLayout(value: unknown) {
 
 export function normalizeSuggestionPublishedLayout(
   value: unknown,
+  migration?: {
+    publishedHeader?: string;
+    publishedFooter?: string;
+  },
 ): TicketPanelLayout {
   if (isUnsetSuggestionPublishedLayout(value)) {
     return createDefaultSuggestionPublishedLayout();
   }
 
-  return ensureSuggestionPublishedSlotsInLayout(
-    normalizeTicketPanelLayout(value),
+  return inlineStaticTokensInLayout(
+    ensureSuggestionPublishedSlotsInLayout(normalizeTicketPanelLayout(value)),
+    migration,
   );
 }
 
@@ -1015,8 +1073,12 @@ function normalizeContentAccessory(
 ): TicketPanelContentAccessory | null {
   if (!value || typeof value !== "object") return null;
   const candidate = value as Record<string, unknown>;
+  const rawType =
+    typeof candidate.type === "string"
+      ? candidate.type.trim().toLowerCase().replace(/-/g, "_")
+      : "";
 
-  if (candidate.type === "thumbnail") {
+  if (rawType === "thumbnail") {
     return {
       type: "thumbnail",
       imageUrl: getCandidateString(candidate, "imageUrl", "", 1000),
@@ -1024,7 +1086,7 @@ function normalizeContentAccessory(
     };
   }
 
-  if (candidate.type === "user_thumbnail") {
+  if (rawType === "user_thumbnail" || rawType === "userthumbnail") {
     return {
       type: "user_thumbnail",
       alt: "",
@@ -1394,4 +1456,90 @@ export function ticketPanelLayoutHasRequiredParts(layout: TicketPanelLayout) {
   }
 
   return hasContent && hasAction;
+}
+
+export const DEFAULT_USER_THUMBNAIL_PREVIEW_URL =
+  "https://cdn.discordapp.com/embed/avatars/0.png";
+
+export function layoutHasUserThumbnailAccessory(layout: TicketPanelLayout) {
+  let found = false;
+
+  for (const component of normalizeTicketPanelLayout(layout)) {
+    walkComponent(component, (current) => {
+      if (
+        current.type === "content" &&
+        current.accessory?.type === "user_thumbnail"
+      ) {
+        found = true;
+      }
+    });
+    if (found) break;
+  }
+
+  return found;
+}
+
+function mapContainerChildUserThumbnail(
+  child: TicketPanelContainerChild,
+  userAvatarUrl: string,
+): TicketPanelContainerChild {
+  if (
+    child.type === "content" &&
+    child.accessory?.type === "user_thumbnail"
+  ) {
+    return {
+      ...child,
+      accessory: {
+        type: "thumbnail",
+        imageUrl: userAvatarUrl,
+        alt: child.accessory.alt || "",
+      },
+    };
+  }
+
+  return child;
+}
+
+function mapComponentUserThumbnail(
+  component: TicketPanelComponent,
+  userAvatarUrl: string,
+): TicketPanelComponent {
+  if (component.type === "container") {
+    return {
+      ...component,
+      children: component.children.map((child) =>
+        mapContainerChildUserThumbnail(child, userAvatarUrl),
+      ),
+    };
+  }
+
+  if (
+    component.type === "content" &&
+    component.accessory?.type === "user_thumbnail"
+  ) {
+    return {
+      ...component,
+      accessory: {
+        type: "thumbnail",
+        imageUrl: userAvatarUrl,
+        alt: component.accessory.alt || "",
+      },
+    };
+  }
+
+  return component;
+}
+
+export function applyUserAvatarThumbnailToLayout(
+  layout: TicketPanelLayout,
+  userAvatarUrl?: string | null,
+): TicketPanelLayout {
+  const safeUrl = trimText(userAvatarUrl || "");
+  if (!safeUrl) {
+    return layout;
+  }
+
+  return normalizeTicketPanelLayout(layout).map((component) =>
+    mapComponentUserThumbnail(component, safeUrl),
+  );
 }
