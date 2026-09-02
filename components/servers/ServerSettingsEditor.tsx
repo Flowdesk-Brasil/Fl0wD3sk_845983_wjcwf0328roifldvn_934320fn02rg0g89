@@ -7983,7 +7983,7 @@ export function ServerSettingsEditor({
                         hideSendButton
                         eyebrow="Sugestoes"
                         headline="Template da sugestao publicada"
-                        description="Personalize cabecalho, rodape e blocos extras. Titulo e descricao do membro ficam fixos e sao embutidos automaticamente pelo bot."
+                        description="Personalize cabecalho, rodape e blocos extras. Titulo e descricao do membro ficam em um bloco fixo; adicione conteudos, separadores e imagens como nos outros builders."
                       />
                     </div>
                   ) : settingsSection === "suggestions_message" ? (

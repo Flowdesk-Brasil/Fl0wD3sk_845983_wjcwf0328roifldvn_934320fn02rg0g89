@@ -33,12 +33,11 @@ import {
   formatButtonEmojiMarkup,
   isUnsetCaptchaPanelLayout,
   isUnsetSuggestionPanelLayout,
-  mergeSuggestionPublishedContentMarkdown,
+  isSuggestionMemberSlotMarkdown,
   normalizeCaptchaPanelLayout,
   normalizeSuggestionPanelLayout,
   normalizeSuggestionPublishedLayout,
   normalizeTicketPanelLayout,
-  parseSuggestionPublishedContentMarkdown,
   resolveSuggestionPublishedPreviewMarkdown,
   SUGGESTION_PUBLISHED_BODY_PREVIEW,
   SUGGESTION_PUBLISHED_TITLE_PREVIEW,
@@ -160,6 +159,10 @@ function cn(...classes: Array<string | false | null | undefined>) {
 
 function scopeKey(scope: Scope) {
   return scope.parentId ? `${scope.parentId}:${scope.componentId}` : scope.componentId;
+}
+
+function contentTextareaKey(scope: Scope) {
+  return scopeKey(scope);
 }
 
 function isSameScope(left: Scope | null, right: Scope | null) {
@@ -1657,6 +1660,20 @@ function TicketMessageBuilder({
         : createDefaultSuggestionPanelLayout(),
     );
   }, [layoutPreset, onChange, value]);
+
+  useEffect(() => {
+    if (layoutPreset !== "suggestion_publish") {
+      return;
+    }
+
+    const normalized = normalizeSuggestionPublishedLayout(value);
+    if (JSON.stringify(value) === JSON.stringify(normalized)) {
+      return;
+    }
+
+    onChange(normalized);
+  }, [layoutPreset, onChange, value]);
+
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const [menuAnchor, setMenuAnchor] = useState<MenuAnchor | null>(null);
   const [dragState, setDragState] = useState<DragState>(null);
@@ -1927,7 +1944,11 @@ function TicketMessageBuilder({
     }
   }, [dragState]);
 
-  const syncEmojiAutocomplete = useCallback((scope: Scope, element: HTMLTextAreaElement, currentValue: string) => {
+  const syncEmojiAutocomplete = useCallback((
+    scope: Scope,
+    element: HTMLTextAreaElement,
+    currentValue: string,
+  ) => {
     const cursor = element.selectionStart ?? currentValue.length;
     const match = getEmojiAutocompleteMatch(currentValue, cursor);
 
@@ -1971,7 +1992,7 @@ function TicketMessageBuilder({
   }, [updateChild, updateRoot]);
 
   const applyEmojiSuggestion = useCallback((scope: Scope, emoji: GuildEmojiSuggestion) => {
-    const textarea = contentTextareaRefs.current[scopeKey(scope)];
+    const textarea = contentTextareaRefs.current[contentTextareaKey(scope)];
     if (!textarea || !emojiAutocomplete || scopeKey(emojiAutocomplete.scope) !== scopeKey(scope)) {
       return;
     }
@@ -1989,7 +2010,7 @@ function TicketMessageBuilder({
     setEmojiAutocomplete(null);
 
     requestAnimationFrame(() => {
-      const target = contentTextareaRefs.current[scopeKey(scope)];
+      const target = contentTextareaRefs.current[contentTextareaKey(scope)];
       if (!target) return;
       const nextCursor = emojiAutocomplete.replaceStart + markup.length;
       target.focus();
@@ -2692,112 +2713,153 @@ function TicketMessageBuilder({
     </div>
   );
 
-  const updateSuggestionPublishedContent = useCallback(
-    (scope: Scope, prefix: string, suffix: string) => {
-      const nextMarkdown = mergeSuggestionPublishedContentMarkdown(prefix, suffix);
-      updateContentMarkdown(scope, nextMarkdown);
+  const handleContentEmojiKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLTextAreaElement>, scope: Scope) => {
+      if (
+        !emojiAutocomplete ||
+        scopeKey(emojiAutocomplete.scope) !== scopeKey(scope) ||
+        !filteredEmojiSuggestions.length
+      ) {
+        return;
+      }
+
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setEmojiHighlightIndex(
+          (current) => (current + 1) % filteredEmojiSuggestions.length,
+        );
+        return;
+      }
+
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setEmojiHighlightIndex(
+          (current) =>
+            (current - 1 + filteredEmojiSuggestions.length) %
+            filteredEmojiSuggestions.length,
+        );
+        return;
+      }
+
+      if (event.key === "Enter" || event.key === "Tab") {
+        event.preventDefault();
+        applyEmojiSuggestion(
+          scope,
+          filteredEmojiSuggestions[emojiHighlightIndex] ||
+            filteredEmojiSuggestions[0],
+        );
+        return;
+      }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setEmojiAutocomplete(null);
+      }
     },
-    [updateContentMarkdown],
+    [
+      applyEmojiSuggestion,
+      emojiAutocomplete,
+      emojiHighlightIndex,
+      filteredEmojiSuggestions,
+    ],
   );
 
-  const renderSuggestionPublishedContentEditor = (
+  const renderSuggestionMemberSlotEditor = () => (
+    <div className="rounded-[16px] border border-[#232323] bg-[#0A0A0A] p-[14px]">
+      <p className="text-[12px] font-medium uppercase tracking-[0.16em] text-[#666666]">
+        Campos fixos do membro
+      </p>
+      <p className="mt-[8px] text-[12px] leading-[1.55] text-[#7B7B7B]">
+        Titulo e descricao sao preenchidos no modal e embutidos automaticamente pelo bot. Este bloco nao pode ser removido.
+      </p>
+      <div className="mt-[12px] grid gap-[12px]">
+        <div>
+          <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">
+            Titulo (fixo)
+          </label>
+          <textarea
+            readOnly
+            value={SUGGESTION_PUBLISHED_TITLE_PREVIEW}
+            rows={2}
+            className="min-h-[56px] w-full resize-none rounded-[14px] border border-[#1A1A1A] bg-[#070707] px-[14px] py-[10px] text-[14px] leading-[1.55] text-[#9A9A9A] outline-none"
+          />
+        </div>
+        <div>
+          <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">
+            Descricao (fixo)
+          </label>
+          <textarea
+            readOnly
+            value={SUGGESTION_PUBLISHED_BODY_PREVIEW}
+            rows={2}
+            className="min-h-[56px] w-full resize-none rounded-[14px] border border-[#1A1A1A] bg-[#070707] px-[14px] py-[10px] text-[14px] leading-[1.55] text-[#9A9A9A] outline-none"
+          />
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderNormalContentEditor = (
     component: TicketPanelContentComponent,
     scope: Scope,
     nested = false,
-  ) => {
-    const parsed = parseSuggestionPublishedContentMarkdown(component.markdown);
-
-    return (
-      <div
-        className="grid items-start gap-[6px] xl:grid-cols-[minmax(0,1fr)_42px]"
-        data-ticket-emoji="true"
-      >
-        <div className="min-w-0 w-full space-y-[12px]">
-          <div>
-            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">
-              Conteudo acima do titulo
-            </label>
-            <textarea
-              value={parsed.prefix}
-              onChange={(event) =>
-                updateSuggestionPublishedContent(
-                  scope,
-                  event.currentTarget.value.slice(0, 1800),
-                  parsed.suffix,
-                )
-              }
-              placeholder={"## 💡 {{published_header}}\nUse {{published_header}} para sincronizar com o campo Cabecalho publicado."}
-              rows={nested ? 4 : 5}
-              disabled={disabled}
-              className="min-h-[92px] w-full resize-y rounded-[16px] border border-[#171717] bg-[#080808] px-[14px] py-[12px] text-[14px] leading-[1.55] text-[#E2E2E2] outline-none transition-colors duration-200 placeholder:text-[#4F4F4F] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-55"
-            />
-          </div>
-
-          <div className="rounded-[16px] border border-[#232323] bg-[#0A0A0A] p-[14px]">
-            <p className="text-[12px] font-medium uppercase tracking-[0.16em] text-[#666666]">
-              Campos fixos do membro
-            </p>
-            <p className="mt-[8px] text-[12px] leading-[1.55] text-[#7B7B7B]">
-              Titulo e descricao sao preenchidos no modal e embutidos automaticamente pelo bot. Nao da para remover nem editar estes blocos.
-            </p>
-            <div className="mt-[12px] grid gap-[12px]">
-              <div>
-                <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">
-                  Titulo (fixo)
-                </label>
-                <textarea
-                  readOnly
-                  value={SUGGESTION_PUBLISHED_TITLE_PREVIEW}
-                  rows={2}
-                  className="min-h-[56px] w-full resize-none rounded-[14px] border border-[#1A1A1A] bg-[#070707] px-[14px] py-[10px] text-[14px] leading-[1.55] text-[#9A9A9A] outline-none"
-                />
-              </div>
-              <div>
-                <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">
-                  Descricao (fixo)
-                </label>
-                <textarea
-                  readOnly
-                  value={SUGGESTION_PUBLISHED_BODY_PREVIEW}
-                  rows={2}
-                  className="min-h-[56px] w-full resize-none rounded-[14px] border border-[#1A1A1A] bg-[#070707] px-[14px] py-[10px] text-[14px] leading-[1.55] text-[#9A9A9A] outline-none"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">
-              Conteudo abaixo da descricao
-            </label>
-            <textarea
-              value={parsed.suffix}
-              onChange={(event) =>
-                updateSuggestionPublishedContent(
-                  scope,
-                  parsed.prefix,
-                  event.currentTarget.value.slice(0, 1800),
-                )
-              }
-              placeholder={"-# Enviada por {{suggestion_author}}\n-# {{published_footer}}"}
-              rows={nested ? 4 : 5}
-              disabled={disabled}
-              className="min-h-[92px] w-full resize-y rounded-[16px] border border-[#171717] bg-[#080808] px-[14px] py-[12px] text-[14px] leading-[1.55] text-[#E2E2E2] outline-none transition-colors duration-200 placeholder:text-[#4F4F4F] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-55"
-            />
-          </div>
+  ) => (
+    <div className="grid items-start gap-[6px] xl:grid-cols-[minmax(0,1fr)_42px]" data-ticket-emoji="true">
+      <div className="min-w-0 w-full space-y-[12px]">
+        <textarea
+          ref={(element) => {
+            contentTextareaRefs.current[contentTextareaKey(scope)] = element;
+          }}
+          value={component.markdown}
+          onChange={(event) => {
+            const nextValue = event.currentTarget.value.slice(0, 4000);
+            updateContentMarkdown(scope, nextValue);
+            syncEmojiAutocomplete(scope, event.currentTarget, nextValue);
+          }}
+          onClick={(event) =>
+            syncEmojiAutocomplete(scope, event.currentTarget, event.currentTarget.value)
+          }
+          onKeyUp={(event) =>
+            syncEmojiAutocomplete(scope, event.currentTarget, event.currentTarget.value)
+          }
+          onSelect={(event) =>
+            syncEmojiAutocomplete(scope, event.currentTarget, event.currentTarget.value)
+          }
+          onKeyDown={(event) => handleContentEmojiKeyDown(event, scope)}
+          placeholder={
+            layoutPreset === "suggestion_publish"
+              ? "Escreva o texto livremente aqui.\nUse {{published_header}}, {{published_footer}} e {{suggestion_author}} quando quiser.\nDigite : para autocompletar emojis do servidor."
+              : "## Titulo do embed\nEscreva o texto livremente aqui.\n-# Observacao pequena\nUse **negrito** quando quiser destaque.\nDigite : para autocompletar emojis do servidor."
+          }
+          rows={nested ? 7 : 9}
+          disabled={disabled}
+          className="min-h-[118px] w-full resize-y rounded-[16px] border border-[#171717] bg-[#080808] px-[14px] py-[12px] text-[14px] leading-[1.55] text-[#E2E2E2] outline-none transition-colors duration-200 placeholder:text-[#4F4F4F] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-55"
+        />
+        <div className="flex flex-wrap gap-[8px]">
+          {["#", "##", "###", "-#", "**negrito**", ":emoji"].map((token) => (
+            <span
+              key={token}
+              className="inline-flex h-[28px] items-center rounded-full border border-[#171717] bg-[#0A0A0A] px-[10px] text-[11px] font-medium text-[#8A8A8A]"
+            >
+              {token}
+            </span>
+          ))}
         </div>
-        {renderContentAccessoryEditor(component, scope)}
       </div>
-    );
-  };
+      {renderContentAccessoryEditor(component, scope)}
+    </div>
+  );
 
   const renderLeafEditor = (component: Exclude<TicketPanelComponent | TicketPanelContainerChild, TicketPanelContainerComponent>, scope: Scope, nested = false) => {
     if (component.type === "content") {
-      if (layoutPreset === "suggestion_publish") {
-        return renderSuggestionPublishedContentEditor(component, scope, nested);
+      if (
+        layoutPreset === "suggestion_publish" &&
+        isSuggestionMemberSlotMarkdown(component.markdown)
+      ) {
+        return renderSuggestionMemberSlotEditor();
       }
 
-      return <div className="grid items-start gap-[6px] xl:grid-cols-[minmax(0,1fr)_42px]" data-ticket-emoji="true"><div className="min-w-0 w-full space-y-[12px]"><textarea ref={(element) => { contentTextareaRefs.current[scopeKey(scope)] = element; }} value={component.markdown} onChange={(event) => { const nextValue = event.currentTarget.value.slice(0, 4000); updateContentMarkdown(scope, nextValue); syncEmojiAutocomplete(scope, event.currentTarget, nextValue); }} onClick={(event) => syncEmojiAutocomplete(scope, event.currentTarget, event.currentTarget.value)} onKeyUp={(event) => syncEmojiAutocomplete(scope, event.currentTarget, event.currentTarget.value)} onSelect={(event) => syncEmojiAutocomplete(scope, event.currentTarget, event.currentTarget.value)} onKeyDown={(event) => { if (!emojiAutocomplete || scopeKey(emojiAutocomplete.scope) !== scopeKey(scope) || !filteredEmojiSuggestions.length) { return; } if (event.key === "ArrowDown") { event.preventDefault(); setEmojiHighlightIndex((current) => (current + 1) % filteredEmojiSuggestions.length); return; } if (event.key === "ArrowUp") { event.preventDefault(); setEmojiHighlightIndex((current) => (current - 1 + filteredEmojiSuggestions.length) % filteredEmojiSuggestions.length); return; } if (event.key === "Enter" || event.key === "Tab") { event.preventDefault(); applyEmojiSuggestion(scope, filteredEmojiSuggestions[emojiHighlightIndex] || filteredEmojiSuggestions[0]); return; } if (event.key === "Escape") { event.preventDefault(); setEmojiAutocomplete(null); } }} placeholder={"## Titulo do embed\nEscreva o texto livremente aqui.\n-# Observacao pequena\nUse **negrito** quando quiser destaque.\nDigite : para autocompletar emojis do servidor."} rows={nested ? 7 : 9} disabled={disabled} className="min-h-[118px] w-full resize-y rounded-[16px] border border-[#171717] bg-[#080808] px-[14px] py-[12px] text-[14px] leading-[1.55] text-[#E2E2E2] outline-none transition-colors duration-200 placeholder:text-[#4F4F4F] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-55" /><div className="flex flex-wrap gap-[8px]">{["#", "##", "###", "-#", "**negrito**", ":emoji"].map((token) => <span key={token} className="inline-flex h-[28px] items-center rounded-full border border-[#171717] bg-[#0A0A0A] px-[10px] text-[11px] font-medium text-[#8A8A8A]">{token}</span>)}</div></div>{renderContentAccessoryEditor(component, scope)}</div>;
+      return renderNormalContentEditor(component, scope, nested);
     }
     if (component.type === "image") return <div className="grid gap-[12px]"><Field value={component.url} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "image" ? { ...current, url: next.slice(0, 1000), alt: "" } : current) : updateRoot(scope.componentId, (current) => current.type === "image" ? { ...current, url: next.slice(0, 1000), alt: "" } : current)} placeholder="URL da imagem" disabled={disabled} /></div>;
     if (component.type === "file") return <div className="grid gap-[12px] xl:grid-cols-2"><Field value={component.name} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "file" ? { ...current, name: next.slice(0, 120) } : current) : updateRoot(scope.componentId, (current) => current.type === "file" ? { ...current, name: next.slice(0, 120) } : current)} placeholder="Nome do arquivo" disabled={disabled} /><Field value={component.sizeLabel} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "file" ? { ...current, sizeLabel: next.slice(0, 60) } : current) : updateRoot(scope.componentId, (current) => current.type === "file" ? { ...current, sizeLabel: next.slice(0, 60) } : current)} placeholder="Ex.: PDF | 1.2 MB" disabled={disabled} /></div>;
@@ -2916,7 +2978,26 @@ function TicketMessageBuilder({
 
             <div className="min-w-0 flex-1">
               {component.type === "content" ? (
-                <div className="h-[34px]" />
+                layoutPreset === "suggestion_publish" &&
+                isSuggestionMemberSlotMarkdown(component.markdown) ? (
+                  <div className="min-w-0">
+                    <div className="inline-flex items-center gap-[8px] rounded-full border border-[#161616] bg-[#0D0D0D] px-[10px] py-[6px] text-[11px] font-medium uppercase tracking-[0.16em] text-[#757575]">
+                      Campos do membro
+                    </div>
+                    <p className="mt-[10px] text-[13px] leading-[1.55] text-[#7B7B7B]">
+                      Titulo e descricao injetados automaticamente quando o membro envia a sugestao.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="min-w-0">
+                    <div className="inline-flex items-center gap-[8px] rounded-full border border-[#161616] bg-[#0D0D0D] px-[10px] py-[6px] text-[11px] font-medium uppercase tracking-[0.16em] text-[#757575]">
+                      Conteudo
+                    </div>
+                    <p className="mt-[10px] text-[13px] leading-[1.55] text-[#7B7B7B]">
+                      Texto livre — adicione cabecalho, rodape, separadores ou remova este bloco quando quiser.
+                    </p>
+                  </div>
+                )
               ) : (
                 <div className="min-w-0">
                   <div className="inline-flex items-center gap-[8px] rounded-full border border-[#161616] bg-[#0D0D0D] px-[10px] py-[6px] text-[11px] font-medium uppercase tracking-[0.16em] text-[#757575]">
@@ -2955,7 +3036,7 @@ function TicketMessageBuilder({
                 disabled ||
                 (layoutPreset === "suggestion_publish" &&
                   component.type === "content" &&
-                  parseSuggestionPublishedContentMarkdown(component.markdown).hasSlots)
+                  isSuggestionMemberSlotMarkdown(component.markdown))
               }
               onClick={() => removeComponent(scope)}
             >
@@ -3469,12 +3550,21 @@ function TicketMessageBuilder({
 
       {emojiAutocomplete ? (
         <EmojiAutocompleteMenu
-          anchorElement={contentTextareaRefs.current[scopeKey(emojiAutocomplete.scope)] ?? null}
+          anchorElement={
+            contentTextareaRefs.current[
+              contentTextareaKey(emojiAutocomplete.scope)
+            ] ?? null
+          }
           items={filteredEmojiSuggestions}
-          activeIndex={Math.min(emojiHighlightIndex, Math.max(filteredEmojiSuggestions.length - 1, 0))}
+          activeIndex={Math.min(
+            emojiHighlightIndex,
+            Math.max(filteredEmojiSuggestions.length - 1, 0),
+          )}
           loading={emojiCatalogLoading}
           onHover={setEmojiHighlightIndex}
-          onSelect={(emoji) => applyEmojiSuggestion(emojiAutocomplete.scope, emoji)}
+          onSelect={(emoji) =>
+            applyEmojiSuggestion(emojiAutocomplete.scope, emoji)
+          }
         />
       ) : null}
 

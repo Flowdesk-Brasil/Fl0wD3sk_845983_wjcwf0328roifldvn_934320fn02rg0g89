@@ -531,6 +531,192 @@ export function formatSuggestionPublishedBody(body: string) {
   return `> \`\`\`${safe}\`\`\``;
 }
 
+export function createSuggestionMemberSlotMarkdown() {
+  return `${SUGGESTION_PUBLISHED_TITLE_TOKEN}\n\n${SUGGESTION_PUBLISHED_BODY_TOKEN}`;
+}
+
+export function isSuggestionMemberSlotMarkdown(markdown: string) {
+  const trimmed = markdown.trim();
+  if (
+    !trimmed.includes(SUGGESTION_PUBLISHED_TITLE_TOKEN) ||
+    !trimmed.includes(SUGGESTION_PUBLISHED_BODY_TOKEN)
+  ) {
+    return false;
+  }
+
+  if (
+    trimmed.includes(SUGGESTION_PUBLISHED_HEADER_TOKEN) ||
+    trimmed.includes(SUGGESTION_PUBLISHED_AUTHOR_TOKEN) ||
+    trimmed.includes(SUGGESTION_PUBLISHED_FOOTER_TOKEN)
+  ) {
+    return false;
+  }
+
+  return !stripLegacySuggestionPublishedPreviewLines(trimmed)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .some(
+      (line) =>
+        line !== SUGGESTION_PUBLISHED_TITLE_TOKEN &&
+        line !== SUGGESTION_PUBLISHED_BODY_TOKEN,
+    );
+}
+
+function isLegacyCombinedSuggestionContentMarkdown(markdown: string) {
+  return (
+    markdown.includes(SUGGESTION_PUBLISHED_TITLE_TOKEN) &&
+    markdown.includes(SUGGESTION_PUBLISHED_BODY_TOKEN) &&
+    !isSuggestionMemberSlotMarkdown(markdown)
+  );
+}
+
+function stripMemberSlotTokensFromContent(markdown: string) {
+  return markdown
+    .split(/\r?\n/)
+    .filter((line) => {
+      const trimmed = line.trim();
+      return (
+        trimmed !== SUGGESTION_PUBLISHED_TITLE_TOKEN &&
+        trimmed !== SUGGESTION_PUBLISHED_BODY_TOKEN
+      );
+    })
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function createSuggestionPublishedContentChild(
+  markdown: string,
+  id?: string,
+): TicketPanelContentComponent {
+  return {
+    id: id || createTicketPanelComponentId("content"),
+    type: "content",
+    markdown,
+    accessory: null,
+  };
+}
+
+export function createSuggestionMemberSlotChild(
+  id?: string,
+): TicketPanelContentComponent {
+  return {
+    id: id || createTicketPanelComponentId("slot"),
+    type: "content",
+    markdown: createSuggestionMemberSlotMarkdown(),
+    accessory: null,
+  };
+}
+
+function splitLegacyCombinedSuggestionContent(
+  markdown: string,
+): TicketPanelContainerChild[] {
+  const cleaned = stripLegacySuggestionPublishedPreviewLines(markdown);
+  const parsed = parseSuggestionPublishedContentMarkdown(cleaned);
+  const children: TicketPanelContainerChild[] = [];
+  const prefix = stripLegacySuggestionPublishedPreviewLines(parsed.prefix);
+
+  if (prefix) {
+    children.push(createSuggestionPublishedContentChild(prefix));
+  }
+
+  children.push(createSuggestionMemberSlotChild());
+
+  const suffix = stripLegacySuggestionPublishedPreviewLines(parsed.suffix);
+  if (suffix) {
+    children.push(createSuggestionPublishedContentChild(suffix));
+  }
+
+  return children;
+}
+
+function normalizeSuggestionPublishedContainerChildren(
+  children: TicketPanelContainerChild[],
+): TicketPanelContainerChild[] {
+  let expanded: TicketPanelContainerChild[] = [];
+
+  for (const child of children) {
+    if (
+      child.type === "content" &&
+      isLegacyCombinedSuggestionContentMarkdown(child.markdown)
+    ) {
+      expanded.push(...splitLegacyCombinedSuggestionContent(child.markdown));
+      continue;
+    }
+
+    expanded.push(child);
+  }
+
+  let slotSeen = false;
+  expanded = expanded
+    .filter((child) => {
+      if (
+        child.type === "content" &&
+        isSuggestionMemberSlotMarkdown(child.markdown)
+      ) {
+        if (slotSeen) {
+          return false;
+        }
+        slotSeen = true;
+        return true;
+      }
+
+      return true;
+    })
+    .map((child) => {
+      if (
+        child.type === "content" &&
+        isSuggestionMemberSlotMarkdown(child.markdown)
+      ) {
+        return createSuggestionMemberSlotChild(child.id);
+      }
+
+      if (child.type === "content") {
+        return {
+          ...child,
+          markdown: stripMemberSlotTokensFromContent(child.markdown),
+        };
+      }
+
+      return child;
+    });
+
+  if (!slotSeen) {
+    const insertAt = expanded.findIndex(
+      (child) =>
+        child.type === "separator" ||
+        (child.type === "content" &&
+          child.markdown.includes(SUGGESTION_PUBLISHED_AUTHOR_TOKEN)),
+    );
+    const index = insertAt >= 0 ? insertAt : expanded.length;
+    expanded = [
+      ...expanded.slice(0, index),
+      createSuggestionMemberSlotChild(),
+      ...expanded.slice(index),
+    ];
+  }
+
+  return expanded;
+}
+
+function normalizeSuggestionPublishedLayoutStructure(
+  layout: TicketPanelLayout,
+): TicketPanelLayout {
+  return layout.map((component) => {
+    if (component.type === "container") {
+      return {
+        ...component,
+        children: normalizeSuggestionPublishedContainerChildren(
+          component.children,
+        ),
+      };
+    }
+
+    return component;
+  });
+}
+
 export function mergeSuggestionPublishedContentMarkdown(
   prefix: string,
   suffix: string,
@@ -566,64 +752,58 @@ export function parseSuggestionPublishedContentMarkdown(markdown: string) {
   };
 }
 
-export function ensureSuggestionPublishedSlotsInMarkdown(markdown: string) {
-  if (
-    markdown.includes(SUGGESTION_PUBLISHED_TITLE_TOKEN) &&
-    markdown.includes(SUGGESTION_PUBLISHED_BODY_TOKEN)
-  ) {
-    return markdown;
-  }
-
-  const withoutLegacyTitleBody = markdown
+function stripLegacySuggestionPublishedPreviewLines(markdown: string) {
+  return markdown
     .split(/\r?\n/)
     .filter((line) => {
       const trimmed = line.trim();
+      if (!trimmed) {
+        return true;
+      }
+
+      if (
+        trimmed === SUGGESTION_PUBLISHED_TITLE_TOKEN ||
+        trimmed === SUGGESTION_PUBLISHED_BODY_TOKEN ||
+        trimmed.includes(SUGGESTION_PUBLISHED_AUTHOR_TOKEN) ||
+        trimmed.includes(SUGGESTION_PUBLISHED_HEADER_TOKEN) ||
+        trimmed.includes(SUGGESTION_PUBLISHED_FOOTER_TOKEN)
+      ) {
+        return true;
+      }
+
       return (
+        trimmed !== SUGGESTION_PUBLISHED_TITLE_PREVIEW &&
         trimmed !== "### Titulo da sugestao" &&
+        trimmed !== SUGGESTION_PUBLISHED_BODY_PREVIEW &&
+        trimmed !== "> ```descricao```" &&
+        trimmed !== "-# Enviada por @autor" &&
+        trimmed !== "Enviada por @autor" &&
+        trimmed !== "Flowdesk | Sistema de sugestoes" &&
+        trimmed !== "-# Flowdesk | Sistema de sugestoes" &&
         !trimmed.startsWith("Descreva aqui o corpo da sugestao")
       );
     })
     .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
 
-  return mergeSuggestionPublishedContentMarkdown(
-    withoutLegacyTitleBody || "## 💡 {{published_header}}",
-    [
-      "-# Enviada por {{suggestion_author}}",
-      "-# {{published_footer}}",
-    ].join("\n"),
+export function normalizeSuggestionPublishedContentMarkdown(markdown: string) {
+  if (isSuggestionMemberSlotMarkdown(markdown)) {
+    return createSuggestionMemberSlotMarkdown();
+  }
+
+  return stripMemberSlotTokensFromContent(
+    stripLegacySuggestionPublishedPreviewLines(markdown),
   );
 }
 
 function ensureSuggestionPublishedSlotsInLayout(
   layout: TicketPanelLayout,
 ): TicketPanelLayout {
-  return layout.map((component) => {
-    if (component.type === "container") {
-      return {
-        ...component,
-        children: component.children.map((child) =>
-          child.type === "content"
-            ? {
-                ...child,
-                markdown: ensureSuggestionPublishedSlotsInMarkdown(
-                  child.markdown,
-                ),
-              }
-            : child,
-        ),
-      };
-    }
-
-    if (component.type === "content") {
-      return {
-        ...component,
-        markdown: ensureSuggestionPublishedSlotsInMarkdown(component.markdown),
-      };
-    }
-
-    return component;
-  });
+  return normalizeSuggestionPublishedLayoutStructure(
+    normalizeTicketPanelLayout(layout),
+  );
 }
 
 export function resolveSuggestionPublishedPreviewMarkdown(
@@ -655,23 +835,27 @@ export function resolveSuggestionPublishedPreviewMarkdown(
 export function suggestionPublishedLayoutHasRequiredSlots(
   layout: TicketPanelLayout,
 ) {
-  const normalized = normalizeTicketPanelLayout(layout);
-  let hasTitleSlot = false;
-  let hasBodySlot = false;
+  const normalized = normalizeSuggestionPublishedLayoutStructure(
+    normalizeTicketPanelLayout(layout),
+  );
 
   for (const component of normalized) {
-    walkComponent(component, (current) => {
-      if (current.type !== "content") return;
-      if (current.markdown.includes(SUGGESTION_PUBLISHED_TITLE_TOKEN)) {
-        hasTitleSlot = true;
-      }
-      if (current.markdown.includes(SUGGESTION_PUBLISHED_BODY_TOKEN)) {
-        hasBodySlot = true;
-      }
-    });
+    if (component.type !== "container") {
+      continue;
+    }
+
+    const slotCount = component.children.filter(
+      (child) =>
+        child.type === "content" &&
+        isSuggestionMemberSlotMarkdown(child.markdown),
+    ).length;
+
+    if (slotCount === 1) {
+      return true;
+    }
   }
 
-  return hasTitleSlot && hasBodySlot;
+  return false;
 }
 
 export function createDefaultSuggestionPublishedLayout(): TicketPanelLayout {
@@ -681,18 +865,11 @@ export function createDefaultSuggestionPublishedLayout(): TicketPanelLayout {
       type: "container",
       accentColor: DEFAULT_SUGGESTION_PUBLISHED_ACCENT,
       children: [
-        {
-          id: createTicketPanelComponentId("content"),
-          type: "content",
-          markdown: mergeSuggestionPublishedContentMarkdown(
-            "## 💡 {{published_header}}",
-            [
-              "-# Enviada por {{suggestion_author}}",
-              "-# {{published_footer}}",
-            ].join("\n"),
-          ),
-          accessory: null,
-        },
+        createSuggestionPublishedContentChild("## 💡 {{published_header}}"),
+        createSuggestionMemberSlotChild(),
+        createSuggestionPublishedContentChild(
+          "-# Enviada por {{suggestion_author}}\n-# {{published_footer}}",
+        ),
       ],
     },
   ];
