@@ -23,6 +23,7 @@ import {
 import {
   normalizeCaptchaPanelLayout,
   normalizeSuggestionPanelLayout,
+  normalizeSuggestionPublishedLayout,
   normalizeTicketPanelLayout,
 } from "@/lib/servers/ticketPanelBuilder";
 import {
@@ -724,7 +725,7 @@ function buildSuggestionsPayload(input: {
     panelTitle,
     panelDescription,
     panelButtonLabel,
-    suggestionLayout: normalizeTicketPanelLayout(
+    suggestionLayout: normalizeSuggestionPublishedLayout(
       input.snapshot?.suggestionLayout ?? input.record?.suggestion_layout,
     ),
     publishedHeader:

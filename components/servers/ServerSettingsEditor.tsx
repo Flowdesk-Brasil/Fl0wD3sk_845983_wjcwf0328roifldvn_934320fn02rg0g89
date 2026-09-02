@@ -59,8 +59,14 @@ import {
   createDefaultTicketPanelLayout,
   createDefaultCaptchaPanelLayout,
   createDefaultSuggestionPanelLayout,
+  createDefaultSuggestionPublishedLayout,
+  isUnsetSuggestionPublishedLayout,
   normalizeCaptchaPanelLayout,
   normalizeSuggestionPanelLayout,
+  normalizeSuggestionPublishedLayout,
+  suggestionPublishedLayoutHasRequiredSlots,
+  SUGGESTION_PUBLISHED_BODY_PREVIEW,
+  SUGGESTION_PUBLISHED_TITLE_PREVIEW,
   deriveLegacyTicketPanelFields,
   normalizeTicketPanelLayout,
   ticketPanelLayoutHasAtMostOneFunctionButton,
@@ -857,7 +863,9 @@ function normalizeSuggestionSettingsDraft(
     publishChannelId: draft.publishChannelId,
     logsChannelId: draft.logsChannelId,
     panelLayout: normalizeSuggestionPanelLayout(draft.panelLayout),
-    suggestionLayout: normalizeTicketPanelLayout(draft.suggestionLayout),
+    suggestionLayout: isUnsetSuggestionPublishedLayout(draft.suggestionLayout)
+      ? ([] as TicketPanelLayout)
+      : normalizeSuggestionPublishedLayout(draft.suggestionLayout),
     publishedHeader:
       typeof draft.publishedHeader === "string" ? draft.publishedHeader.trim() : "",
     publishedFooter:
@@ -2242,7 +2250,7 @@ export function ServerSettingsEditor({
     createDefaultSuggestionPanelLayout(),
   );
   const [suggestionsSuggestionLayout, setSuggestionsSuggestionLayout] =
-    useState<TicketPanelLayout>([]);
+    useState<TicketPanelLayout>(createDefaultSuggestionPublishedLayout());
   const [suggestionsPublishedHeader, setSuggestionsPublishedHeader] = useState(
     "NOVA SUGESTAO ENVIADA!",
   );
@@ -2832,8 +2840,8 @@ export function ServerSettingsEditor({
           })
         : createDefaultSuggestionPanelLayout();
       const nextSuggestionsSuggestionLayout = hasSuggestionsSettings
-        ? normalizeTicketPanelLayout(payload.suggestionsSettings?.suggestionLayout)
-        : [];
+        ? normalizeSuggestionPublishedLayout(payload.suggestionsSettings?.suggestionLayout)
+        : createDefaultSuggestionPublishedLayout();
       const nextSuggestionsPublishedHeader =
         hasSuggestionsSettings &&
         typeof payload.suggestionsSettings?.publishedHeader === "string"
@@ -3398,7 +3406,7 @@ export function ServerSettingsEditor({
     setSuggestionsPublishChannelId(null);
     setSuggestionsLogsChannelId(null);
     setSuggestionsPanelLayout(createDefaultSuggestionPanelLayout());
-    setSuggestionsSuggestionLayout([]);
+    setSuggestionsSuggestionLayout(createDefaultSuggestionPublishedLayout());
     setSuggestionsPublishedHeader("NOVA SUGESTAO ENVIADA!");
     setSuggestionsPublishedFooter("Flowdesk | Sistema de sugestoes");
     setSuggestionsThreadNamePrefix("Debater sugestao");
@@ -4349,6 +4357,9 @@ export function ServerSettingsEditor({
   const isSuggestionsMessageLayoutInvalid =
     !ticketPanelLayoutHasRequiredParts(suggestionsPanelLayout) ||
     hasSuggestionsTooManyFunctionButtons;
+  const isSuggestionsPublishLayoutInvalid =
+    suggestionsEnabled &&
+    !suggestionPublishedLayoutHasRequiredSlots(suggestionsSuggestionLayout);
   const canSaveSuggestions = Boolean(
     !settingsReadOnly &&
       !isLoading &&
@@ -4358,7 +4369,8 @@ export function ServerSettingsEditor({
           suggestionsPublishChannelId &&
           suggestionsPanelLayout.length &&
           ticketPanelLayoutHasRequiredParts(suggestionsPanelLayout) &&
-          ticketPanelLayoutHasAtMostOneFunctionButton(suggestionsPanelLayout))),
+          ticketPanelLayoutHasAtMostOneFunctionButton(suggestionsPanelLayout) &&
+          suggestionPublishedLayoutHasRequiredSlots(suggestionsSuggestionLayout))),
   );
   const antiLinkTimeoutValue = normalizeAntiLinkTimeoutMinutes(
     antiLinkTimeoutMinutes,
@@ -4883,12 +4895,13 @@ export function ServerSettingsEditor({
     !showSaveSuccessBar &&
     isCaptchaMessageLayoutInvalid;
   const showInvalidSuggestionsSaveState =
-    isSuggestionsMessageSection &&
+    isSuggestionsSection &&
     suggestionsEnabled &&
     hasUnsavedChanges &&
     !isSaving &&
     !showSaveSuccessBar &&
-    isSuggestionsMessageLayoutInvalid;
+    ((settingsSection === "suggestions_message" && isSuggestionsMessageLayoutInvalid) ||
+      (settingsSection === "suggestions_overview" && isSuggestionsPublishLayoutInvalid));
   const showSaveBarSuccessState =
     showSaveSuccessBar &&
     !hasUnsavedChanges &&
@@ -4920,7 +4933,9 @@ export function ServerSettingsEditor({
           ? "Existe mais de um botao funcional no embed"
           : "Nao da para salvar uma mensagem vazia"
       : showInvalidSuggestionsSaveState
-        ? hasSuggestionsTooManyFunctionButtons
+        ? settingsSection === "suggestions_overview"
+          ? "O template publicado precisa manter titulo e descricao fixos do membro"
+          : hasSuggestionsTooManyFunctionButtons
           ? "Existe mais de um botao funcional no embed"
           : "Nao da para salvar uma mensagem vazia"
       : showInvalidWelcomeSaveState
@@ -5884,7 +5899,11 @@ export function ServerSettingsEditor({
       setSuggestionsPublishChannelId(savedSuggestionSettingsDraft.publishChannelId);
       setSuggestionsLogsChannelId(savedSuggestionSettingsDraft.logsChannelId);
       setSuggestionsPanelLayout(savedSuggestionSettingsDraft.panelLayout);
-      setSuggestionsSuggestionLayout(savedSuggestionSettingsDraft.suggestionLayout);
+      setSuggestionsSuggestionLayout(
+        savedSuggestionSettingsDraft.suggestionLayout.length
+          ? savedSuggestionSettingsDraft.suggestionLayout
+          : createDefaultSuggestionPublishedLayout(),
+      );
       setSuggestionsPublishedHeader(savedSuggestionSettingsDraft.publishedHeader);
       setSuggestionsPublishedFooter(savedSuggestionSettingsDraft.publishedFooter);
       setSuggestionsThreadNamePrefix(savedSuggestionSettingsDraft.threadNamePrefix);
@@ -6262,7 +6281,7 @@ export function ServerSettingsEditor({
             payload.settings?.panelLayout,
             payload.settings || undefined,
           ),
-          suggestionLayout: normalizeTicketPanelLayout(
+          suggestionLayout: normalizeSuggestionPublishedLayout(
             payload.settings?.suggestionLayout,
           ),
           publishedHeader:
@@ -7957,11 +7976,14 @@ export function ServerSettingsEditor({
                         guildId={guildId}
                         value={suggestionsSuggestionLayout}
                         onChange={setSuggestionsSuggestionLayout}
+                        layoutPreset="suggestion_publish"
+                        suggestionPreviewHeader={suggestionsPublishedHeader}
+                        suggestionPreviewFooter={suggestionsPublishedFooter}
                         disabled={isSaving || settingsReadOnly || !suggestionsEnabled}
                         hideSendButton
                         eyebrow="Sugestoes"
                         headline="Template da sugestao publicada"
-                        description="Monte o embed exibido quando uma sugestao for publicada no canal de votacao."
+                        description="Personalize cabecalho, rodape e blocos extras. Titulo e descricao do membro ficam fixos e sao embutidos automaticamente pelo bot."
                       />
                     </div>
                   ) : settingsSection === "suggestions_message" ? (

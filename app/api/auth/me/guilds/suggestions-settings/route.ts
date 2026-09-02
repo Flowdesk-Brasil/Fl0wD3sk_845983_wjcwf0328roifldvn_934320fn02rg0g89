@@ -28,7 +28,9 @@ import {
 import {
   deriveLegacyTicketPanelFields,
   normalizeSuggestionPanelLayout,
+  normalizeSuggestionPublishedLayout,
   normalizeTicketPanelLayout,
+  suggestionPublishedLayoutHasRequiredSlots,
   ticketPanelLayoutHasAtMostOneFunctionButton,
   ticketPanelLayoutHasRequiredParts,
   type TicketPanelLayout,
@@ -104,7 +106,7 @@ function normalizeSuggestionsSecureSnapshot(
     panelTitle: legacyFields.panelTitle,
     panelDescription: legacyFields.panelDescription,
     panelButtonLabel: legacyFields.panelButtonLabel,
-    suggestionLayout: normalizeTicketPanelLayout(record.suggestionLayout),
+    suggestionLayout: normalizeSuggestionPublishedLayout(record.suggestionLayout),
     publishedHeader:
       getTrimmedText(record.publishedHeader) || "NOVA SUGESTAO ENVIADA!",
     publishedFooter:
@@ -413,14 +415,15 @@ export async function POST(request: Request) {
       (!snapshot.panelChannelId ||
         !snapshot.publishChannelId ||
         !ticketPanelLayoutHasRequiredParts(snapshot.panelLayout) ||
-        !ticketPanelLayoutHasAtMostOneFunctionButton(snapshot.panelLayout))
+        !ticketPanelLayoutHasAtMostOneFunctionButton(snapshot.panelLayout) ||
+        !suggestionPublishedLayoutHasRequiredSlots(snapshot.suggestionLayout))
     ) {
       return applyNoStoreHeaders(
         NextResponse.json(
           {
             ok: false,
             message:
-              "Defina canal do painel, canal de publicacao e uma mensagem valida com um botao funcional.",
+              "Defina canal do painel, canal de publicacao, mensagem valida do painel e template publicado com titulo e descricao fixos do membro.",
           },
           { status: 400 },
         ),

@@ -29,12 +29,19 @@ import {
   createTicketPanelContentAccessoryByType,
   createDefaultCaptchaPanelLayout,
   createDefaultSuggestionPanelLayout,
+  createDefaultSuggestionPublishedLayout,
   formatButtonEmojiMarkup,
   isUnsetCaptchaPanelLayout,
   isUnsetSuggestionPanelLayout,
+  mergeSuggestionPublishedContentMarkdown,
   normalizeCaptchaPanelLayout,
   normalizeSuggestionPanelLayout,
+  normalizeSuggestionPublishedLayout,
   normalizeTicketPanelLayout,
+  parseSuggestionPublishedContentMarkdown,
+  resolveSuggestionPublishedPreviewMarkdown,
+  SUGGESTION_PUBLISHED_BODY_PREVIEW,
+  SUGGESTION_PUBLISHED_TITLE_PREVIEW,
   parseButtonEmojiMarkup,
   sanitizeButtonEmoji,
   type TicketPanelButtonStyle,
@@ -65,7 +72,9 @@ type Props = {
   sendButtonLabel?: string;
   hideSendButton?: boolean;
   thumbnailPreviewUrl?: string | null;
-  layoutPreset?: "ticket" | "captcha" | "suggestions";
+  layoutPreset?: "ticket" | "captcha" | "suggestions" | "suggestion_publish";
+  suggestionPreviewHeader?: string;
+  suggestionPreviewFooter?: string;
 };
 
 type Scope = { parentId: string | null; componentId: string };
@@ -1595,6 +1604,8 @@ function TicketMessageBuilder({
   hideSendButton = false,
   thumbnailPreviewUrl = null,
   layoutPreset = "ticket",
+  suggestionPreviewHeader,
+  suggestionPreviewFooter,
 }: Props) {
   const normalizeLayout = useCallback(
     (next: TicketPanelLayout) =>
@@ -1602,7 +1613,9 @@ function TicketMessageBuilder({
         ? normalizeCaptchaPanelLayout(next)
         : layoutPreset === "suggestions"
           ? normalizeSuggestionPanelLayout(next)
-          : normalizeTicketPanelLayout(next),
+          : layoutPreset === "suggestion_publish"
+            ? normalizeSuggestionPublishedLayout(next)
+            : normalizeTicketPanelLayout(next),
     [layoutPreset],
   );
   const layout = useMemo(() => normalizeLayout(value), [normalizeLayout, value]);
@@ -1621,12 +1634,19 @@ function TicketMessageBuilder({
       return;
     }
 
+    const isEmpty = !Array.isArray(value) || value.length === 0;
     const isUnset =
       layoutPreset === "captcha"
         ? isUnsetCaptchaPanelLayout(value)
         : isUnsetSuggestionPanelLayout(value);
 
+    if (!isEmpty && !isUnset) {
+      didSyncPresetDefaultsRef.current = true;
+      return;
+    }
+
     if (!isUnset) {
+      didSyncPresetDefaultsRef.current = true;
       return;
     }
 
@@ -2672,8 +2692,113 @@ function TicketMessageBuilder({
     </div>
   );
 
+  const updateSuggestionPublishedContent = useCallback(
+    (scope: Scope, prefix: string, suffix: string) => {
+      const nextMarkdown = mergeSuggestionPublishedContentMarkdown(prefix, suffix);
+      updateContentMarkdown(scope, nextMarkdown);
+    },
+    [updateContentMarkdown],
+  );
+
+  const renderSuggestionPublishedContentEditor = (
+    component: TicketPanelContentComponent,
+    scope: Scope,
+    nested = false,
+  ) => {
+    const parsed = parseSuggestionPublishedContentMarkdown(component.markdown);
+
+    return (
+      <div
+        className="grid items-start gap-[6px] xl:grid-cols-[minmax(0,1fr)_42px]"
+        data-ticket-emoji="true"
+      >
+        <div className="min-w-0 w-full space-y-[12px]">
+          <div>
+            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">
+              Conteudo acima do titulo
+            </label>
+            <textarea
+              value={parsed.prefix}
+              onChange={(event) =>
+                updateSuggestionPublishedContent(
+                  scope,
+                  event.currentTarget.value.slice(0, 1800),
+                  parsed.suffix,
+                )
+              }
+              placeholder={"## 💡 {{published_header}}\nUse {{published_header}} para sincronizar com o campo Cabecalho publicado."}
+              rows={nested ? 4 : 5}
+              disabled={disabled}
+              className="min-h-[92px] w-full resize-y rounded-[16px] border border-[#171717] bg-[#080808] px-[14px] py-[12px] text-[14px] leading-[1.55] text-[#E2E2E2] outline-none transition-colors duration-200 placeholder:text-[#4F4F4F] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-55"
+            />
+          </div>
+
+          <div className="rounded-[16px] border border-[#232323] bg-[#0A0A0A] p-[14px]">
+            <p className="text-[12px] font-medium uppercase tracking-[0.16em] text-[#666666]">
+              Campos fixos do membro
+            </p>
+            <p className="mt-[8px] text-[12px] leading-[1.55] text-[#7B7B7B]">
+              Titulo e descricao sao preenchidos no modal e embutidos automaticamente pelo bot. Nao da para remover nem editar estes blocos.
+            </p>
+            <div className="mt-[12px] grid gap-[12px]">
+              <div>
+                <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">
+                  Titulo (fixo)
+                </label>
+                <textarea
+                  readOnly
+                  value={SUGGESTION_PUBLISHED_TITLE_PREVIEW}
+                  rows={2}
+                  className="min-h-[56px] w-full resize-none rounded-[14px] border border-[#1A1A1A] bg-[#070707] px-[14px] py-[10px] text-[14px] leading-[1.55] text-[#9A9A9A] outline-none"
+                />
+              </div>
+              <div>
+                <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">
+                  Descricao (fixo)
+                </label>
+                <textarea
+                  readOnly
+                  value={SUGGESTION_PUBLISHED_BODY_PREVIEW}
+                  rows={2}
+                  className="min-h-[56px] w-full resize-none rounded-[14px] border border-[#1A1A1A] bg-[#070707] px-[14px] py-[10px] text-[14px] leading-[1.55] text-[#9A9A9A] outline-none"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">
+              Conteudo abaixo da descricao
+            </label>
+            <textarea
+              value={parsed.suffix}
+              onChange={(event) =>
+                updateSuggestionPublishedContent(
+                  scope,
+                  parsed.prefix,
+                  event.currentTarget.value.slice(0, 1800),
+                )
+              }
+              placeholder={"-# Enviada por {{suggestion_author}}\n-# {{published_footer}}"}
+              rows={nested ? 4 : 5}
+              disabled={disabled}
+              className="min-h-[92px] w-full resize-y rounded-[16px] border border-[#171717] bg-[#080808] px-[14px] py-[12px] text-[14px] leading-[1.55] text-[#E2E2E2] outline-none transition-colors duration-200 placeholder:text-[#4F4F4F] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-55"
+            />
+          </div>
+        </div>
+        {renderContentAccessoryEditor(component, scope)}
+      </div>
+    );
+  };
+
   const renderLeafEditor = (component: Exclude<TicketPanelComponent | TicketPanelContainerChild, TicketPanelContainerComponent>, scope: Scope, nested = false) => {
-    if (component.type === "content") return <div className="grid items-start gap-[6px] xl:grid-cols-[minmax(0,1fr)_42px]" data-ticket-emoji="true"><div className="min-w-0 w-full space-y-[12px]"><textarea ref={(element) => { contentTextareaRefs.current[scopeKey(scope)] = element; }} value={component.markdown} onChange={(event) => { const nextValue = event.currentTarget.value.slice(0, 4000); updateContentMarkdown(scope, nextValue); syncEmojiAutocomplete(scope, event.currentTarget, nextValue); }} onClick={(event) => syncEmojiAutocomplete(scope, event.currentTarget, event.currentTarget.value)} onKeyUp={(event) => syncEmojiAutocomplete(scope, event.currentTarget, event.currentTarget.value)} onSelect={(event) => syncEmojiAutocomplete(scope, event.currentTarget, event.currentTarget.value)} onKeyDown={(event) => { if (!emojiAutocomplete || scopeKey(emojiAutocomplete.scope) !== scopeKey(scope) || !filteredEmojiSuggestions.length) { return; } if (event.key === "ArrowDown") { event.preventDefault(); setEmojiHighlightIndex((current) => (current + 1) % filteredEmojiSuggestions.length); return; } if (event.key === "ArrowUp") { event.preventDefault(); setEmojiHighlightIndex((current) => (current - 1 + filteredEmojiSuggestions.length) % filteredEmojiSuggestions.length); return; } if (event.key === "Enter" || event.key === "Tab") { event.preventDefault(); applyEmojiSuggestion(scope, filteredEmojiSuggestions[emojiHighlightIndex] || filteredEmojiSuggestions[0]); return; } if (event.key === "Escape") { event.preventDefault(); setEmojiAutocomplete(null); } }} placeholder={"## Titulo do embed\nEscreva o texto livremente aqui.\n-# Observacao pequena\nUse **negrito** quando quiser destaque.\nDigite : para autocompletar emojis do servidor."} rows={nested ? 7 : 9} disabled={disabled} className="min-h-[118px] w-full resize-y rounded-[16px] border border-[#171717] bg-[#080808] px-[14px] py-[12px] text-[14px] leading-[1.55] text-[#E2E2E2] outline-none transition-colors duration-200 placeholder:text-[#4F4F4F] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-55" /><div className="flex flex-wrap gap-[8px]">{["#", "##", "###", "-#", "**negrito**", ":emoji"].map((token) => <span key={token} className="inline-flex h-[28px] items-center rounded-full border border-[#171717] bg-[#0A0A0A] px-[10px] text-[11px] font-medium text-[#8A8A8A]">{token}</span>)}</div></div>{renderContentAccessoryEditor(component, scope)}</div>;
+    if (component.type === "content") {
+      if (layoutPreset === "suggestion_publish") {
+        return renderSuggestionPublishedContentEditor(component, scope, nested);
+      }
+
+      return <div className="grid items-start gap-[6px] xl:grid-cols-[minmax(0,1fr)_42px]" data-ticket-emoji="true"><div className="min-w-0 w-full space-y-[12px]"><textarea ref={(element) => { contentTextareaRefs.current[scopeKey(scope)] = element; }} value={component.markdown} onChange={(event) => { const nextValue = event.currentTarget.value.slice(0, 4000); updateContentMarkdown(scope, nextValue); syncEmojiAutocomplete(scope, event.currentTarget, nextValue); }} onClick={(event) => syncEmojiAutocomplete(scope, event.currentTarget, event.currentTarget.value)} onKeyUp={(event) => syncEmojiAutocomplete(scope, event.currentTarget, event.currentTarget.value)} onSelect={(event) => syncEmojiAutocomplete(scope, event.currentTarget, event.currentTarget.value)} onKeyDown={(event) => { if (!emojiAutocomplete || scopeKey(emojiAutocomplete.scope) !== scopeKey(scope) || !filteredEmojiSuggestions.length) { return; } if (event.key === "ArrowDown") { event.preventDefault(); setEmojiHighlightIndex((current) => (current + 1) % filteredEmojiSuggestions.length); return; } if (event.key === "ArrowUp") { event.preventDefault(); setEmojiHighlightIndex((current) => (current - 1 + filteredEmojiSuggestions.length) % filteredEmojiSuggestions.length); return; } if (event.key === "Enter" || event.key === "Tab") { event.preventDefault(); applyEmojiSuggestion(scope, filteredEmojiSuggestions[emojiHighlightIndex] || filteredEmojiSuggestions[0]); return; } if (event.key === "Escape") { event.preventDefault(); setEmojiAutocomplete(null); } }} placeholder={"## Titulo do embed\nEscreva o texto livremente aqui.\n-# Observacao pequena\nUse **negrito** quando quiser destaque.\nDigite : para autocompletar emojis do servidor."} rows={nested ? 7 : 9} disabled={disabled} className="min-h-[118px] w-full resize-y rounded-[16px] border border-[#171717] bg-[#080808] px-[14px] py-[12px] text-[14px] leading-[1.55] text-[#E2E2E2] outline-none transition-colors duration-200 placeholder:text-[#4F4F4F] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-55" /><div className="flex flex-wrap gap-[8px]">{["#", "##", "###", "-#", "**negrito**", ":emoji"].map((token) => <span key={token} className="inline-flex h-[28px] items-center rounded-full border border-[#171717] bg-[#0A0A0A] px-[10px] text-[11px] font-medium text-[#8A8A8A]">{token}</span>)}</div></div>{renderContentAccessoryEditor(component, scope)}</div>;
+    }
     if (component.type === "image") return <div className="grid gap-[12px]"><Field value={component.url} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "image" ? { ...current, url: next.slice(0, 1000), alt: "" } : current) : updateRoot(scope.componentId, (current) => current.type === "image" ? { ...current, url: next.slice(0, 1000), alt: "" } : current)} placeholder="URL da imagem" disabled={disabled} /></div>;
     if (component.type === "file") return <div className="grid gap-[12px] xl:grid-cols-2"><Field value={component.name} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "file" ? { ...current, name: next.slice(0, 120) } : current) : updateRoot(scope.componentId, (current) => current.type === "file" ? { ...current, name: next.slice(0, 120) } : current)} placeholder="Nome do arquivo" disabled={disabled} /><Field value={component.sizeLabel} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "file" ? { ...current, sizeLabel: next.slice(0, 60) } : current) : updateRoot(scope.componentId, (current) => current.type === "file" ? { ...current, sizeLabel: next.slice(0, 60) } : current)} placeholder="Ex.: PDF | 1.2 MB" disabled={disabled} /></div>;
     if (component.type === "separator") return <div className="grid grid-cols-3 gap-[8px]">{(["sm", "md", "lg"] as TicketPanelSeparatorComponent["spacing"][]).map((spacing) => <button key={spacing} type="button" disabled={disabled} onClick={() => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "separator" ? { ...current, spacing } : current) : updateRoot(scope.componentId, (current) => current.type === "separator" ? { ...current, spacing } : current)} className={cn("rounded-[14px] border px-[12px] py-[11px] text-[12px] font-medium transition-colors duration-200", component.spacing === spacing ? "border-[#F2F2F2] bg-[#111111] text-[#F2F2F2]" : "border-[#171717] bg-[#0A0A0A] text-[#818181] hover:bg-[#101010]")}>{spacing === "sm" ? "Espaco curto" : spacing === "md" ? "Espaco medio" : "Espaco amplo"}</button>)}</div>;
@@ -2824,7 +2949,16 @@ function TicketMessageBuilder({
             <IconButton label="Descer componente" disabled={disabled} onClick={() => moveComponent(scope, 1)}>
               <ChevronDown className="h-[15px] w-[15px]" strokeWidth={2.1} />
             </IconButton>
-            <IconButton label="Remover componente" disabled={disabled} onClick={() => removeComponent(scope)}>
+            <IconButton
+              label="Remover componente"
+              disabled={
+                disabled ||
+                (layoutPreset === "suggestion_publish" &&
+                  component.type === "content" &&
+                  parseSuggestionPublishedContentMarkdown(component.markdown).hasSlots)
+              }
+              onClick={() => removeComponent(scope)}
+            >
               <Trash2 className="h-[15px] w-[15px]" strokeWidth={2.1} />
             </IconButton>
           </div>
@@ -3116,7 +3250,15 @@ function TicketMessageBuilder({
         event.preventDefault();
         handlePreviewLinkIntent(href, linkTarget.textContent?.trim() || "Abrir link");
       }
-    }}>{renderMarkdownPreview(item.markdown, guildId)}</div>{item.accessory ? <div className="justify-self-start min-[520px]:justify-self-end">{previewAccessory(item.accessory, handlePreviewLinkIntent, thumbnailPreviewUrl, guildId)}</div> : null}</div>;
+    }}>{renderMarkdownPreview(
+      layoutPreset === "suggestion_publish"
+        ? resolveSuggestionPublishedPreviewMarkdown(item.markdown, {
+            publishedHeader: suggestionPreviewHeader,
+            publishedFooter: suggestionPreviewFooter,
+          })
+        : item.markdown,
+      guildId,
+    )}</div>{item.accessory ? <div className="justify-self-start min-[520px]:justify-self-end">{previewAccessory(item.accessory, handlePreviewLinkIntent, thumbnailPreviewUrl, guildId)}</div> : null}</div>;
     if (item.type === "container") return <div key={item.id} className="relative overflow-hidden rounded-[20px] border border-[#2B2D31] bg-[#15171B]">{item.accentColor ? <div className="absolute bottom-0 left-0 top-0 w-[4px]" style={{ backgroundColor: item.accentColor }} /> : null}<div className={cn("space-y-[14px] px-[18px] py-[16px]", item.accentColor ? "pl-[20px]" : "pl-[18px]")}>{item.children.length ? renderPreview(item.children, true) : <div className="rounded-[16px] border border-dashed border-[#2E3136] bg-[#111216] px-[14px] py-[16px] text-[12px] leading-[1.55] text-[#8D9198]">Container vazio. Adicione conteudos, botoes ou separadores para montar o embed final.</div>}</div></div>;
     if (item.type === "image") return <div key={item.id} className="overflow-hidden rounded-[18px] border border-[#2B2D31] bg-[#17181B]">{item.url ? <img src={item.url} alt="" className="max-h-[240px] w-full object-cover" /> : <div className="flex h-[180px] items-center justify-center text-[#73767D]"><ImageIcon className="h-[28px] w-[28px]" /></div>}</div>;
     if (item.type === "file") return <div key={item.id} className="flex items-center justify-between gap-[14px] rounded-[18px] border border-[#2B2D31] bg-[#17181B] px-[16px] py-[14px]"><div className="flex min-w-0 items-center gap-[12px]"><span className="inline-flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-[12px] bg-[#0F1012] text-[#D5D7DB]"><FileText className="h-[18px] w-[18px]" /></span><div className="min-w-0"><p className="truncate text-[13px] font-medium text-[#F2F3F5]">{item.name || "Arquivo-flowdesk.pdf"}</p><p className="mt-[3px] text-[12px] text-[#8E939A]">{item.sizeLabel || "PDF | 1.2 MB"}</p></div></div><span className="rounded-full border border-[#2B2D31] bg-[#111216] px-[10px] py-[6px] text-[11px] font-medium uppercase tracking-[0.14em] text-[#A3A7AE]">Anexo</span></div>;

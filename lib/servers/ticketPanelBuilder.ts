@@ -502,18 +502,219 @@ export function isUnsetSuggestionPanelLayout(
     return isSuggestionPanelLegacyContent(legacyFallback);
   }
 
-  if (!isSuggestionPanelLegacyContent(legacyFallback)) {
-    return false;
-  }
-
   const derivedLegacy = deriveLegacyTicketPanelFields(
     normalizeTicketPanelLayout(value),
   );
 
   return (
-    derivedLegacy.panelTitle === DEFAULT_SUGGESTION_PANEL_TITLE &&
-    derivedLegacy.panelDescription === DEFAULT_SUGGESTION_PANEL_DESCRIPTION &&
-    derivedLegacy.panelButtonLabel === DEFAULT_SUGGESTION_PANEL_BUTTON_LABEL
+    derivedLegacy.panelTitle === DEFAULT_TICKET_PANEL_TITLE &&
+    derivedLegacy.panelDescription === DEFAULT_TICKET_PANEL_DESCRIPTION &&
+    derivedLegacy.panelButtonLabel === DEFAULT_TICKET_PANEL_BUTTON_LABEL
+  );
+}
+
+export const DEFAULT_SUGGESTION_PUBLISHED_ACCENT = "#00bcd4";
+export const SUGGESTION_PUBLISHED_HEADER_TOKEN = "{{published_header}}";
+export const SUGGESTION_PUBLISHED_FOOTER_TOKEN = "{{published_footer}}";
+export const SUGGESTION_PUBLISHED_TITLE_TOKEN = "{{suggestion_title}}";
+export const SUGGESTION_PUBLISHED_BODY_TOKEN = "{{suggestion_body}}";
+export const SUGGESTION_PUBLISHED_AUTHOR_TOKEN = "{{suggestion_author}}";
+export const SUGGESTION_PUBLISHED_TITLE_PREVIEW = "### Titulo da sugestao";
+export const SUGGESTION_PUBLISHED_BODY_PREVIEW = "> ```descricao```";
+
+export function formatSuggestionPublishedBody(body: string) {
+  const safe = trimText(body);
+  if (!safe) {
+    return SUGGESTION_PUBLISHED_BODY_PREVIEW;
+  }
+
+  return `> \`\`\`${safe}\`\`\``;
+}
+
+export function mergeSuggestionPublishedContentMarkdown(
+  prefix: string,
+  suffix: string,
+) {
+  const sections = [
+    prefix.trim(),
+    SUGGESTION_PUBLISHED_TITLE_TOKEN,
+    SUGGESTION_PUBLISHED_BODY_TOKEN,
+    suffix.trim(),
+  ].filter(Boolean);
+
+  return sections.join("\n\n");
+}
+
+export function parseSuggestionPublishedContentMarkdown(markdown: string) {
+  const titleIndex = markdown.indexOf(SUGGESTION_PUBLISHED_TITLE_TOKEN);
+  const bodyIndex = markdown.indexOf(SUGGESTION_PUBLISHED_BODY_TOKEN);
+
+  if (titleIndex === -1 || bodyIndex === -1 || bodyIndex < titleIndex) {
+    return {
+      prefix: markdown,
+      suffix: "",
+      hasSlots: false,
+    };
+  }
+
+  return {
+    prefix: markdown.slice(0, titleIndex).replace(/\s+$/, ""),
+    suffix: markdown
+      .slice(bodyIndex + SUGGESTION_PUBLISHED_BODY_TOKEN.length)
+      .replace(/^\s+/, ""),
+    hasSlots: true,
+  };
+}
+
+export function ensureSuggestionPublishedSlotsInMarkdown(markdown: string) {
+  if (
+    markdown.includes(SUGGESTION_PUBLISHED_TITLE_TOKEN) &&
+    markdown.includes(SUGGESTION_PUBLISHED_BODY_TOKEN)
+  ) {
+    return markdown;
+  }
+
+  const withoutLegacyTitleBody = markdown
+    .split(/\r?\n/)
+    .filter((line) => {
+      const trimmed = line.trim();
+      return (
+        trimmed !== "### Titulo da sugestao" &&
+        !trimmed.startsWith("Descreva aqui o corpo da sugestao")
+      );
+    })
+    .join("\n")
+    .trim();
+
+  return mergeSuggestionPublishedContentMarkdown(
+    withoutLegacyTitleBody || "## 💡 {{published_header}}",
+    [
+      "-# Enviada por {{suggestion_author}}",
+      "-# {{published_footer}}",
+    ].join("\n"),
+  );
+}
+
+function ensureSuggestionPublishedSlotsInLayout(
+  layout: TicketPanelLayout,
+): TicketPanelLayout {
+  return layout.map((component) => {
+    if (component.type === "container") {
+      return {
+        ...component,
+        children: component.children.map((child) =>
+          child.type === "content"
+            ? {
+                ...child,
+                markdown: ensureSuggestionPublishedSlotsInMarkdown(
+                  child.markdown,
+                ),
+              }
+            : child,
+        ),
+      };
+    }
+
+    if (component.type === "content") {
+      return {
+        ...component,
+        markdown: ensureSuggestionPublishedSlotsInMarkdown(component.markdown),
+      };
+    }
+
+    return component;
+  });
+}
+
+export function resolveSuggestionPublishedPreviewMarkdown(
+  markdown: string,
+  options?: {
+    publishedHeader?: string;
+    publishedFooter?: string;
+  },
+) {
+  const header =
+    trimText(options?.publishedHeader) || "NOVA SUGESTAO ENVIADA!";
+  const footer =
+    trimText(options?.publishedFooter) || "Flowdesk | Sistema de sugestoes";
+
+  return markdown
+    .replaceAll(SUGGESTION_PUBLISHED_HEADER_TOKEN, header)
+    .replaceAll(SUGGESTION_PUBLISHED_FOOTER_TOKEN, footer)
+    .replaceAll(
+      SUGGESTION_PUBLISHED_TITLE_TOKEN,
+      SUGGESTION_PUBLISHED_TITLE_PREVIEW,
+    )
+    .replaceAll(
+      SUGGESTION_PUBLISHED_BODY_TOKEN,
+      SUGGESTION_PUBLISHED_BODY_PREVIEW,
+    )
+    .replaceAll(SUGGESTION_PUBLISHED_AUTHOR_TOKEN, "@autor");
+}
+
+export function suggestionPublishedLayoutHasRequiredSlots(
+  layout: TicketPanelLayout,
+) {
+  const normalized = normalizeTicketPanelLayout(layout);
+  let hasTitleSlot = false;
+  let hasBodySlot = false;
+
+  for (const component of normalized) {
+    walkComponent(component, (current) => {
+      if (current.type !== "content") return;
+      if (current.markdown.includes(SUGGESTION_PUBLISHED_TITLE_TOKEN)) {
+        hasTitleSlot = true;
+      }
+      if (current.markdown.includes(SUGGESTION_PUBLISHED_BODY_TOKEN)) {
+        hasBodySlot = true;
+      }
+    });
+  }
+
+  return hasTitleSlot && hasBodySlot;
+}
+
+export function createDefaultSuggestionPublishedLayout(): TicketPanelLayout {
+  return [
+    {
+      id: createTicketPanelComponentId("container"),
+      type: "container",
+      accentColor: DEFAULT_SUGGESTION_PUBLISHED_ACCENT,
+      children: [
+        {
+          id: createTicketPanelComponentId("content"),
+          type: "content",
+          markdown: mergeSuggestionPublishedContentMarkdown(
+            "## 💡 {{published_header}}",
+            [
+              "-# Enviada por {{suggestion_author}}",
+              "-# {{published_footer}}",
+            ].join("\n"),
+          ),
+          accessory: null,
+        },
+      ],
+    },
+  ];
+}
+
+export function isUnsetSuggestionPublishedLayout(value: unknown) {
+  if (value === null || value === undefined) {
+    return true;
+  }
+
+  return !Array.isArray(value) || value.length === 0;
+}
+
+export function normalizeSuggestionPublishedLayout(
+  value: unknown,
+): TicketPanelLayout {
+  if (isUnsetSuggestionPublishedLayout(value)) {
+    return createDefaultSuggestionPublishedLayout();
+  }
+
+  return ensureSuggestionPublishedSlotsInLayout(
+    normalizeTicketPanelLayout(value),
   );
 }
 
