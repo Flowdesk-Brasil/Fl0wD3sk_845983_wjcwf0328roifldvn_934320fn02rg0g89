@@ -8,6 +8,11 @@ export const DEFAULT_CAPTCHA_PANEL_DESCRIPTION =
   "Complete a verificacao abaixo para liberar o acesso aos canais.";
 export const DEFAULT_CAPTCHA_PANEL_BUTTON_LABEL = "Iniciar captcha";
 
+export const DEFAULT_SUGGESTION_PANEL_TITLE = "Iniciar Sugestao";
+export const DEFAULT_SUGGESTION_PANEL_DESCRIPTION =
+  "Compartilhe ideias para melhorar o servidor. Clique abaixo para abrir uma sugestao.";
+export const DEFAULT_SUGGESTION_PANEL_BUTTON_LABEL = "Abrir Sugestao";
+
 export type TicketPanelComponentType =
   | "content"
   | "container"
@@ -449,6 +454,86 @@ export function normalizeCaptchaPanelLayout(
 
   if (isUnsetCaptchaPanelLayout(value, legacyFallback)) {
     return createDefaultCaptchaPanelLayout(resolvedLegacy);
+  }
+
+  return normalizeTicketPanelLayout(value, resolvedLegacy);
+}
+
+export function createDefaultSuggestionPanelLayout(
+  legacy?: Partial<LegacyTicketPanelFields>,
+): TicketPanelLayout {
+  return createDefaultTicketPanelLayout({
+    panelTitle: trimText(legacy?.panelTitle) || DEFAULT_SUGGESTION_PANEL_TITLE,
+    panelDescription:
+      trimText(legacy?.panelDescription) || DEFAULT_SUGGESTION_PANEL_DESCRIPTION,
+    panelButtonLabel:
+      trimText(legacy?.panelButtonLabel) || DEFAULT_SUGGESTION_PANEL_BUTTON_LABEL,
+  });
+}
+
+function isSuggestionPanelLegacyContent(legacy?: Partial<LegacyTicketPanelFields>) {
+  const title = trimText(legacy?.panelTitle);
+  const description = trimText(legacy?.panelDescription);
+  const buttonLabel = trimText(legacy?.panelButtonLabel);
+
+  const titleMatchesSuggestionDefault =
+    !title || title === DEFAULT_SUGGESTION_PANEL_TITLE;
+  const descriptionMatchesSuggestionDefault =
+    !description || description === DEFAULT_SUGGESTION_PANEL_DESCRIPTION;
+  const buttonMatchesSuggestionDefault =
+    !buttonLabel || buttonLabel === DEFAULT_SUGGESTION_PANEL_BUTTON_LABEL;
+
+  return (
+    titleMatchesSuggestionDefault &&
+    descriptionMatchesSuggestionDefault &&
+    buttonMatchesSuggestionDefault
+  );
+}
+
+export function isUnsetSuggestionPanelLayout(
+  value: unknown,
+  legacyFallback?: Partial<LegacyTicketPanelFields>,
+) {
+  if (value === null || value === undefined) {
+    return true;
+  }
+
+  if (!Array.isArray(value) || value.length === 0) {
+    return isSuggestionPanelLegacyContent(legacyFallback);
+  }
+
+  if (!isSuggestionPanelLegacyContent(legacyFallback)) {
+    return false;
+  }
+
+  const derivedLegacy = deriveLegacyTicketPanelFields(
+    normalizeTicketPanelLayout(value),
+  );
+
+  return (
+    derivedLegacy.panelTitle === DEFAULT_SUGGESTION_PANEL_TITLE &&
+    derivedLegacy.panelDescription === DEFAULT_SUGGESTION_PANEL_DESCRIPTION &&
+    derivedLegacy.panelButtonLabel === DEFAULT_SUGGESTION_PANEL_BUTTON_LABEL
+  );
+}
+
+export function normalizeSuggestionPanelLayout(
+  value: unknown,
+  legacyFallback?: Partial<LegacyTicketPanelFields>,
+): TicketPanelLayout {
+  const resolvedLegacy = {
+    panelTitle:
+      trimText(legacyFallback?.panelTitle) || DEFAULT_SUGGESTION_PANEL_TITLE,
+    panelDescription:
+      trimText(legacyFallback?.panelDescription) ||
+      DEFAULT_SUGGESTION_PANEL_DESCRIPTION,
+    panelButtonLabel:
+      trimText(legacyFallback?.panelButtonLabel) ||
+      DEFAULT_SUGGESTION_PANEL_BUTTON_LABEL,
+  };
+
+  if (isUnsetSuggestionPanelLayout(value, legacyFallback)) {
+    return createDefaultSuggestionPanelLayout(resolvedLegacy);
   }
 
   return normalizeTicketPanelLayout(value, resolvedLegacy);

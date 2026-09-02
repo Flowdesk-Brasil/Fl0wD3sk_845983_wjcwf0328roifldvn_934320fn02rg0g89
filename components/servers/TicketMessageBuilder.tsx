@@ -28,9 +28,12 @@ import {
   createTicketPanelContainerChildByType,
   createTicketPanelContentAccessoryByType,
   createDefaultCaptchaPanelLayout,
+  createDefaultSuggestionPanelLayout,
   formatButtonEmojiMarkup,
   isUnsetCaptchaPanelLayout,
+  isUnsetSuggestionPanelLayout,
   normalizeCaptchaPanelLayout,
+  normalizeSuggestionPanelLayout,
   normalizeTicketPanelLayout,
   parseButtonEmojiMarkup,
   sanitizeButtonEmoji,
@@ -62,7 +65,7 @@ type Props = {
   sendButtonLabel?: string;
   hideSendButton?: boolean;
   thumbnailPreviewUrl?: string | null;
-  layoutPreset?: "ticket" | "captcha";
+  layoutPreset?: "ticket" | "captcha" | "suggestions";
 };
 
 type Scope = { parentId: string | null; componentId: string };
@@ -1597,27 +1600,42 @@ function TicketMessageBuilder({
     (next: TicketPanelLayout) =>
       layoutPreset === "captcha"
         ? normalizeCaptchaPanelLayout(next)
-        : normalizeTicketPanelLayout(next),
+        : layoutPreset === "suggestions"
+          ? normalizeSuggestionPanelLayout(next)
+          : normalizeTicketPanelLayout(next),
     [layoutPreset],
   );
   const layout = useMemo(() => normalizeLayout(value), [normalizeLayout, value]);
-  const didSyncCaptchaDefaultsRef = useRef(false);
+  const didSyncPresetDefaultsRef = useRef(false);
 
   useEffect(() => {
-    didSyncCaptchaDefaultsRef.current = false;
+    didSyncPresetDefaultsRef.current = false;
   }, [layoutPreset]);
 
   useEffect(() => {
-    if (layoutPreset !== "captcha" || didSyncCaptchaDefaultsRef.current) {
+    if (layoutPreset !== "captcha" && layoutPreset !== "suggestions") {
       return;
     }
 
-    if (!isUnsetCaptchaPanelLayout(value)) {
+    if (didSyncPresetDefaultsRef.current) {
       return;
     }
 
-    didSyncCaptchaDefaultsRef.current = true;
-    onChange(createDefaultCaptchaPanelLayout());
+    const isUnset =
+      layoutPreset === "captcha"
+        ? isUnsetCaptchaPanelLayout(value)
+        : isUnsetSuggestionPanelLayout(value);
+
+    if (!isUnset) {
+      return;
+    }
+
+    didSyncPresetDefaultsRef.current = true;
+    onChange(
+      layoutPreset === "captcha"
+        ? createDefaultCaptchaPanelLayout()
+        : createDefaultSuggestionPanelLayout(),
+    );
   }, [layoutPreset, onChange, value]);
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const [menuAnchor, setMenuAnchor] = useState<MenuAnchor | null>(null);

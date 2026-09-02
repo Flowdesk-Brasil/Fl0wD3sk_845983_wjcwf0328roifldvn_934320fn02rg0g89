@@ -30,6 +30,7 @@ import {
   Settings2,
   Shield,
   ShieldCheck,
+  Lightbulb,
   ShoppingBag,
   SlidersHorizontal,
   Ticket,
@@ -133,6 +134,8 @@ type ServerSettingsSection =
   | "entry_exit_message"
   | "captcha_overview"
   | "captcha_message"
+  | "suggestions_overview"
+  | "suggestions_message"
   | "security_antilink"
   | "security_autorole"
   | "security_logs"
@@ -184,7 +187,7 @@ const FILTER_LABEL: Record<FilterOption, string> = {
 
 type SidebarItem = {
   label: string;
-  kind: "overview" | "settings" | "sales" | "ticket" | "entry_exit" | "captcha" | "security" | "dashboard";
+  kind: "overview" | "settings" | "sales" | "ticket" | "entry_exit" | "captcha" | "suggestions" | "security" | "dashboard";
   tab?: ServerEditorTab | null;
   settingsSection?: ServerSettingsSection | null;
   disabled?: boolean;
@@ -381,6 +384,41 @@ const CAPTCHA_SIDEBAR_ITEMS: SidebarItem[] = [
   },
 ];
 
+const SUGGESTIONS_SIDEBAR_ITEMS: SidebarItem[] = [
+  {
+    label: "Configurando Sugestoes",
+    kind: "suggestions",
+    tab: "settings",
+    settingsSection: "suggestions_overview",
+    requiredPermission: "server_manage_suggestions_overview",
+    searchAliases: [
+      "sugestoes",
+      "sugestao",
+      "ideias",
+      "votacao",
+      "config",
+      "canais",
+      "logs",
+      "painel",
+    ],
+  },
+  {
+    label: "Configurando Mensagem",
+    kind: "suggestions",
+    tab: "settings",
+    settingsSection: "suggestions_message",
+    requiredPermission: "server_manage_suggestions_message",
+    searchAliases: [
+      "sugestoes",
+      "mensagem",
+      "embed",
+      "painel",
+      "botao",
+      "ideias",
+    ],
+  },
+];
+
 const SECURITY_SIDEBAR_ITEMS: SidebarItem[] = [
   {
     label: "AntiLink",
@@ -562,7 +600,7 @@ function parseWorkspaceRoute(pathname: string | null): {
     }
 
     if (
-      /^\/\d{10,25}(?:\/(?:sales\/(?:overview|categories(?:\/create)?|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|captcha\/(?:overview|message)|security\/(?:antilink|autorole|logs))?)?$/.test(
+      /^\/\d{10,25}(?:\/(?:sales\/(?:overview|categories(?:\/create)?|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|captcha\/(?:overview|message)|suggestions\/(?:overview|message)|security\/(?:antilink|autorole|logs))?)?$/.test(
         comparablePathname,
       )
     ) {
@@ -660,6 +698,20 @@ function parseWorkspaceRoute(pathname: string | null): {
     };
   }
 
+  const suggestionsSectionMatch = normalizedPathname.match(
+    /^\/servers\/(\d{10,25})\/suggestions\/(overview|message)\/?$/,
+  );
+  if (suggestionsSectionMatch) {
+    return {
+      guildId: suggestionsSectionMatch[1],
+      tab: "settings",
+      settingsSection:
+        suggestionsSectionMatch[2] === "overview"
+          ? "suggestions_overview"
+          : "suggestions_message",
+    };
+  }
+
   const securitySectionMatch = normalizedPathname.match(
     /^\/servers\/(\d{10,25})\/security\/(antilink|autorole|logs)\/?$/,
   );
@@ -706,7 +758,7 @@ function isServersWorkspacePath(pathname: string) {
     return true;
   }
 
-  return /^\/\d{10,25}(?:\/(?:sales\/(?:overview|categories|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|captcha\/(?:overview|message)|security\/(?:antilink|autorole|logs))?)?\/?$/.test(
+  return /^\/\d{10,25}(?:\/(?:sales\/(?:overview|categories|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|captcha\/(?:overview|message)|suggestions\/(?:overview|message)|security\/(?:antilink|autorole|logs))?)?\/?$/.test(
     pathname,
   );
 }
@@ -1099,6 +1151,7 @@ function SidebarNavIcon({
     ticket: Ticket,
     entry_exit: ArrowRightLeft,
     captcha: ShieldCheck,
+    suggestions: Lightbulb,
     security: Shield,
     sales: ShoppingBag,
     dashboard: ChevronLeft,
@@ -1586,6 +1639,7 @@ export function ServersWorkspace({
   const [isTicketSidebarOpen, setIsTicketSidebarOpen] = useState(false);
   const [isEntryExitSidebarOpen, setIsEntryExitSidebarOpen] = useState(false);
   const [isCaptchaSidebarOpen, setIsCaptchaSidebarOpen] = useState(false);
+  const [isSuggestionsSidebarOpen, setIsSuggestionsSidebarOpen] = useState(false);
   const [isSecuritySidebarOpen, setIsSecuritySidebarOpen] = useState(false);
   const [currentDashboardPermissions, setCurrentDashboardPermissions] = useState<string[] | "full">([]);
   const [pendingWorkspacePaneKey, setPendingWorkspacePaneKey] = useState<string | null>(null);
@@ -2508,6 +2562,26 @@ export function ServersWorkspace({
       )
       .map((entry) => entry.item);
   }, [isEditingServer, normalizedSidebarQuery]);
+  const filteredSuggestionsSidebarItems = useMemo(() => {
+    if (!isEditingServer) return [];
+
+    const items = SUGGESTIONS_SIDEBAR_ITEMS;
+
+    if (!normalizedSidebarQuery) return items;
+
+    return items
+      .map((item) => {
+        const haystack = [item.label, ...(item.searchAliases || [])].join(" ");
+        return { item, score: getSearchScore(haystack, normalizedSidebarQuery) };
+      })
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) =>
+        a.score !== b.score
+          ? b.score - a.score
+          : a.item.label.localeCompare(b.item.label, "pt-BR"),
+      )
+      .map((entry) => entry.item);
+  }, [isEditingServer, normalizedSidebarQuery]);
   const filteredSecuritySidebarItems = useMemo(() => {
     if (!isEditingServer) return [];
 
@@ -2564,6 +2638,11 @@ export function ServersWorkspace({
     selectedEditorTabForConfig === "settings" &&
     (selectedSettingsSectionForConfig === "captcha_overview" ||
       selectedSettingsSectionForConfig === "captcha_message");
+  const isSuggestionsGroupActive =
+    isEditingServer &&
+    selectedEditorTabForConfig === "settings" &&
+    (selectedSettingsSectionForConfig === "suggestions_overview" ||
+      selectedSettingsSectionForConfig === "suggestions_message");
   const isSecurityGroupActive =
     isEditingServer &&
     selectedEditorTabForConfig === "settings" &&
@@ -2577,6 +2656,7 @@ export function ServersWorkspace({
       setIsSalesSidebarOpen(true);
       setIsEntryExitSidebarOpen(true);
       setIsCaptchaSidebarOpen(true);
+      setIsSuggestionsSidebarOpen(true);
       setIsSecuritySidebarOpen(true);
       return;
     }
@@ -2613,6 +2693,10 @@ export function ServersWorkspace({
       case "captcha_overview":
       case "captcha_message":
         setIsCaptchaSidebarOpen(true);
+        break;
+      case "suggestions_overview":
+      case "suggestions_message":
+        setIsSuggestionsSidebarOpen(true);
         break;
       case "security_antilink":
       case "security_autorole":
@@ -2748,6 +2832,12 @@ export function ServersWorkspace({
     if (settingsSection === "captcha_overview") {
       return `/servers/${encodedGuildId}/captcha/overview/`;
     }
+    if (settingsSection === "suggestions_message") {
+      return `/servers/${encodedGuildId}/suggestions/message/`;
+    }
+    if (settingsSection === "suggestions_overview") {
+      return `/servers/${encodedGuildId}/suggestions/overview/`;
+    }
     if (settingsSection === "security_antilink") {
       return `/servers/${encodedGuildId}/security/antilink/`;
     }
@@ -2878,6 +2968,8 @@ export function ServersWorkspace({
       buildServerConfigUrl(guildId, "settings", "entry_exit_message"),
       buildServerConfigUrl(guildId, "settings", "captcha_overview"),
       buildServerConfigUrl(guildId, "settings", "captcha_message"),
+      buildServerConfigUrl(guildId, "settings", "suggestions_overview"),
+      buildServerConfigUrl(guildId, "settings", "suggestions_message"),
       buildServerConfigUrl(guildId, "settings", "security_antilink"),
       buildServerConfigUrl(guildId, "settings", "security_autorole"),
       buildServerConfigUrl(guildId, "settings", "security_logs"),
@@ -3419,6 +3511,12 @@ export function ServersWorkspace({
       return perms.has("server_manage_captcha_overview");
     }
     if (section === "captcha_message") return perms.has("server_manage_captcha_message");
+    if (section === "suggestions_overview") {
+      return perms.has("server_manage_suggestions_overview");
+    }
+    if (section === "suggestions_message") {
+      return perms.has("server_manage_suggestions_message");
+    }
     if (section === "security_antilink") return perms.has("server_manage_antilink");
     if (section === "security_autorole") return perms.has("server_manage_autorole");
     if (section === "security_logs") return perms.has("server_view_security_logs");
@@ -3719,6 +3817,7 @@ export function ServersWorkspace({
         filteredTicketSidebarItems.length ||
         filteredEntryExitSidebarItems.length ||
         filteredCaptchaSidebarItems.length ||
+        filteredSuggestionsSidebarItems.length ||
         filteredSecuritySidebarItems.length ? (
           <>
             {filteredProjectsSidebarItems.length ? (
@@ -4045,6 +4144,86 @@ export function ServersWorkspace({
                 {isCaptchaSidebarOpen || normalizedSidebarQuery ? (
                   <div className="mt-[6px] space-y-[4px] pl-[12px]">
                     {filteredCaptchaSidebarItems.map((item) => {
+                      const isDisabled = item.disabled || !selectedServer || !item.tab;
+                      const isActive =
+                        Boolean(
+                          item.tab &&
+                            selectedEditorTabForConfig === item.tab &&
+                            selectedSettingsSectionForConfig === item.settingsSection &&
+                            isEditingServer,
+                        );
+
+                        return (
+                          <button
+                            key={item.label}
+                            type="button"
+                            onMouseEnter={() => prefetchSelectedWorkspaceSections(item.tab)}
+                            onFocus={() => prefetchSelectedWorkspaceSections(item.tab)}
+                            onPointerDown={() => prefetchSelectedWorkspaceSections(item.tab)}
+                            onClick={() => {
+                              if (isDisabled || !selectedServer || !item.tab) return;
+                              handleSidebarSettingsSectionNavigation({
+                              guildId: selectedServer.guildId,
+                              tab: item.tab,
+                              settingsSection: item.settingsSection || "overview",
+                            });
+                          }}
+                          disabled={isDisabled}
+                          className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[10px] text-left transition-all duration-200 ${
+                            isActive
+                              ? "bg-[#1A1A1A] text-[#F0F0F0]"
+                              : isDisabled
+                                ? "text-[#585858]"
+                                : "text-[#AFAFAF] hover:bg-[#101010] hover:text-[#E3E3E3]"
+                          }`}
+                        >
+                          <span className={`inline-flex h-[20px] w-[20px] items-center justify-center ${isActive ? "text-[#F0F0F0]" : isDisabled ? "text-[#4A4A4A]" : "text-[#7F7F7F] group-hover:text-[#DADADA]"}`}>
+                            <SidebarNavIcon kind={item.kind} active={isActive} />
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-[14px] leading-none font-medium tracking-[-0.03em]">
+                            {item.label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {filteredSuggestionsSidebarItems.length ? (
+              <div className="mt-[12px]">
+                <button
+                  type="button"
+                  onClick={() => setIsSuggestionsSidebarOpen((current) => !current)}
+                  className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-all duration-200 ${
+                    isSuggestionsGroupActive
+                      ? "bg-[#1E1E1E] text-[#F0F0F0]"
+                      : isSuggestionsSidebarOpen
+                        ? "bg-[#121212] text-[#D6D6D6]"
+                        : "text-[#B5B5B5] hover:bg-[#111111] hover:text-[#E3E3E3]"
+                  }`}
+                >
+                  <span className={`inline-flex h-[22px] w-[22px] items-center justify-center ${isSuggestionsGroupActive ? "text-[#F0F0F0]" : isSuggestionsSidebarOpen ? "text-[#C7C7C7]" : "text-[#8A8A8A] group-hover:text-[#DADADA]"}`}>
+                    <SidebarNavIcon kind="suggestions" active={isSuggestionsGroupActive} />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[15px] leading-none font-medium tracking-[-0.03em]">
+                    Sugestoes
+                  </span>
+                  <span
+                    className={`transition-transform duration-200 ${
+                      isSuggestionsSidebarOpen || normalizedSidebarQuery
+                        ? "rotate-180 text-[#C9C9C9]"
+                        : "rotate-0 text-[#6F6F6F] group-hover:text-[#BEBEBE]"
+                    }`}
+                  >
+                    <SidebarDropdownChevronIcon />
+                  </span>
+                </button>
+
+                {isSuggestionsSidebarOpen || normalizedSidebarQuery ? (
+                  <div className="mt-[6px] space-y-[4px] pl-[12px]">
+                    {filteredSuggestionsSidebarItems.map((item) => {
                       const isDisabled = item.disabled || !selectedServer || !item.tab;
                       const isActive =
                         Boolean(

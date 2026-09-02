@@ -58,7 +58,9 @@ import {
   countTicketPanelFunctionButtons,
   createDefaultTicketPanelLayout,
   createDefaultCaptchaPanelLayout,
+  createDefaultSuggestionPanelLayout,
   normalizeCaptchaPanelLayout,
+  normalizeSuggestionPanelLayout,
   deriveLegacyTicketPanelFields,
   normalizeTicketPanelLayout,
   ticketPanelLayoutHasAtMostOneFunctionButton,
@@ -109,6 +111,8 @@ type ServerSettingsSection =
   | "entry_exit_message"
   | "captcha_overview"
   | "captcha_message"
+  | "suggestions_overview"
+  | "suggestions_message"
   | "security_antilink"
   | "security_autorole"
   | "security_logs"
@@ -237,6 +241,18 @@ type CaptchaSettingsDraft = {
   timeoutSeconds: number;
   kickOnFail: boolean;
   successMessage: string;
+};
+
+type SuggestionSettingsDraft = {
+  enabled: boolean;
+  panelChannelId: string | null;
+  publishChannelId: string | null;
+  logsChannelId: string | null;
+  panelLayout: TicketPanelLayout;
+  suggestionLayout: TicketPanelLayout;
+  publishedHeader: string;
+  publishedFooter: string;
+  threadNamePrefix: string;
 };
 
 type AntiLinkEnforcementAction = "delete_only" | "timeout" | "kick" | "ban";
@@ -829,6 +845,37 @@ function areCaptchaSettingsDraftsEqual(
   return (
     JSON.stringify(normalizeCaptchaSettingsDraft(left)) ===
     JSON.stringify(normalizeCaptchaSettingsDraft(right))
+  );
+}
+
+function normalizeSuggestionSettingsDraft(
+  draft: SuggestionSettingsDraft,
+): SuggestionSettingsDraft {
+  return {
+    enabled: draft.enabled,
+    panelChannelId: draft.panelChannelId,
+    publishChannelId: draft.publishChannelId,
+    logsChannelId: draft.logsChannelId,
+    panelLayout: normalizeSuggestionPanelLayout(draft.panelLayout),
+    suggestionLayout: normalizeTicketPanelLayout(draft.suggestionLayout),
+    publishedHeader:
+      typeof draft.publishedHeader === "string" ? draft.publishedHeader.trim() : "",
+    publishedFooter:
+      typeof draft.publishedFooter === "string" ? draft.publishedFooter.trim() : "",
+    threadNamePrefix:
+      typeof draft.threadNamePrefix === "string" ? draft.threadNamePrefix.trim() : "",
+  };
+}
+
+function areSuggestionSettingsDraftsEqual(
+  left: SuggestionSettingsDraft | null,
+  right: SuggestionSettingsDraft | null,
+) {
+  if (!left || !right) return left === right;
+
+  return (
+    JSON.stringify(normalizeSuggestionSettingsDraft(left)) ===
+    JSON.stringify(normalizeSuggestionSettingsDraft(right))
   );
 }
 
@@ -2181,6 +2228,30 @@ export function ServerSettingsEditor({
   const [captchaSuccessMessage, setCaptchaSuccessMessage] = useState(
     "Verificacao concluida com sucesso. Bem-vindo ao servidor!",
   );
+  const [suggestionsEnabled, setSuggestionsEnabled] = useState(false);
+  const [suggestionsPanelChannelId, setSuggestionsPanelChannelId] = useState<string | null>(
+    null,
+  );
+  const [suggestionsPublishChannelId, setSuggestionsPublishChannelId] = useState<
+    string | null
+  >(null);
+  const [suggestionsLogsChannelId, setSuggestionsLogsChannelId] = useState<string | null>(
+    null,
+  );
+  const [suggestionsPanelLayout, setSuggestionsPanelLayout] = useState<TicketPanelLayout>(
+    createDefaultSuggestionPanelLayout(),
+  );
+  const [suggestionsSuggestionLayout, setSuggestionsSuggestionLayout] =
+    useState<TicketPanelLayout>([]);
+  const [suggestionsPublishedHeader, setSuggestionsPublishedHeader] = useState(
+    "NOVA SUGESTAO ENVIADA!",
+  );
+  const [suggestionsPublishedFooter, setSuggestionsPublishedFooter] = useState(
+    "Flowdesk | Sistema de sugestoes",
+  );
+  const [suggestionsThreadNamePrefix, setSuggestionsThreadNamePrefix] = useState(
+    "Debater sugestao",
+  );
   const [welcomeEnabled, setWelcomeEnabled] = useState(false);
   const [entryPublicChannelId, setEntryPublicChannelId] = useState<string | null>(null);
   const [entryLogChannelId, setEntryLogChannelId] = useState<string | null>(null);
@@ -2299,6 +2370,9 @@ export function ServerSettingsEditor({
         exitLogChannelId,
         captchaPanelChannelId,
         captchaLogsChannelId,
+        suggestionsPanelChannelId,
+        suggestionsPublishChannelId,
+        suggestionsLogsChannelId,
         antiLinkLogChannelId,
         salesPaymentApprovedLogChannelId,
         salesPaymentPendingLogChannelId,
@@ -2346,6 +2420,9 @@ export function ServerSettingsEditor({
     salesPaymentApprovedLogChannelId,
     salesPaymentPendingLogChannelId,
     salesPaymentRejectedLogChannelId,
+    suggestionsLogsChannelId,
+    suggestionsPanelChannelId,
+    suggestionsPublishChannelId,
     securityLogsDraft,
     ticketsCategoryId,
   ]);
@@ -2367,6 +2444,8 @@ export function ServerSettingsEditor({
     useState<WelcomeSettingsDraft | null>(null);
   const [savedCaptchaSettingsDraft, setSavedCaptchaSettingsDraft] =
     useState<CaptchaSettingsDraft | null>(null);
+  const [savedSuggestionSettingsDraft, setSavedSuggestionSettingsDraft] =
+    useState<SuggestionSettingsDraft | null>(null);
   const [savedAntiLinkSettingsDraft, setSavedAntiLinkSettingsDraft] =
     useState<AntiLinkSettingsDraft | null>(null);
   const [savedAutoRoleSettingsDraft, setSavedAutoRoleSettingsDraft] =
@@ -2493,6 +2572,8 @@ export function ServerSettingsEditor({
         entry_exit_message: "server_manage_welcome_message",
         captcha_overview: "server_manage_captcha_overview",
         captcha_message: "server_manage_captcha_message",
+        suggestions_overview: "server_manage_suggestions_overview",
+        suggestions_message: "server_manage_suggestions_message",
         security_antilink: "server_manage_antilink",
         security_autorole: "server_manage_autorole",
         security_logs: "server_view_security_logs",
@@ -2722,6 +2803,52 @@ export function ServerSettingsEditor({
         hasCaptchaSettings && typeof payload.captchaSettings?.successMessage === "string"
           ? payload.captchaSettings.successMessage
           : "Verificacao concluida com sucesso. Bem-vindo ao servidor!";
+
+      const hasSuggestionsSettings = Boolean(payload.suggestionsSettings);
+      const nextSuggestionsEnabled = Boolean(payload.suggestionsSettings?.enabled);
+      const nextSuggestionsPanelChannelId = hasSuggestionsSettings
+        ? payload.suggestionsSettings?.panelChannelId &&
+          textSet.has(payload.suggestionsSettings.panelChannelId)
+          ? payload.suggestionsSettings.panelChannelId
+          : null
+        : null;
+      const nextSuggestionsPublishChannelId = hasSuggestionsSettings
+        ? payload.suggestionsSettings?.publishChannelId &&
+          textSet.has(payload.suggestionsSettings.publishChannelId)
+          ? payload.suggestionsSettings.publishChannelId
+          : null
+        : null;
+      const nextSuggestionsLogsChannelId = hasSuggestionsSettings
+        ? payload.suggestionsSettings?.logsChannelId &&
+          textSet.has(payload.suggestionsSettings.logsChannelId)
+          ? payload.suggestionsSettings.logsChannelId
+          : null
+        : null;
+      const nextSuggestionsPanelLayout = hasSuggestionsSettings
+        ? normalizeSuggestionPanelLayout(payload.suggestionsSettings?.panelLayout, {
+            panelTitle: payload.suggestionsSettings?.panelTitle,
+            panelDescription: payload.suggestionsSettings?.panelDescription,
+            panelButtonLabel: payload.suggestionsSettings?.panelButtonLabel,
+          })
+        : createDefaultSuggestionPanelLayout();
+      const nextSuggestionsSuggestionLayout = hasSuggestionsSettings
+        ? normalizeTicketPanelLayout(payload.suggestionsSettings?.suggestionLayout)
+        : [];
+      const nextSuggestionsPublishedHeader =
+        hasSuggestionsSettings &&
+        typeof payload.suggestionsSettings?.publishedHeader === "string"
+          ? payload.suggestionsSettings.publishedHeader
+          : "NOVA SUGESTAO ENVIADA!";
+      const nextSuggestionsPublishedFooter =
+        hasSuggestionsSettings &&
+        typeof payload.suggestionsSettings?.publishedFooter === "string"
+          ? payload.suggestionsSettings.publishedFooter
+          : "Flowdesk | Sistema de sugestoes";
+      const nextSuggestionsThreadNamePrefix =
+        hasSuggestionsSettings &&
+        typeof payload.suggestionsSettings?.threadNamePrefix === "string"
+          ? payload.suggestionsSettings.threadNamePrefix
+          : "Debater sugestao";
 
       const nextAdminRoleId =
         payload.staffSettings?.adminRoleId &&
@@ -3022,6 +3149,15 @@ export function ServerSettingsEditor({
       setCaptchaTimeoutSeconds(nextCaptchaTimeoutSeconds);
       setCaptchaKickOnFail(nextCaptchaKickOnFail);
       setCaptchaSuccessMessage(nextCaptchaSuccessMessage);
+      setSuggestionsEnabled(nextSuggestionsEnabled);
+      setSuggestionsPanelChannelId(nextSuggestionsPanelChannelId);
+      setSuggestionsPublishChannelId(nextSuggestionsPublishChannelId);
+      setSuggestionsLogsChannelId(nextSuggestionsLogsChannelId);
+      setSuggestionsPanelLayout(nextSuggestionsPanelLayout);
+      setSuggestionsSuggestionLayout(nextSuggestionsSuggestionLayout);
+      setSuggestionsPublishedHeader(nextSuggestionsPublishedHeader);
+      setSuggestionsPublishedFooter(nextSuggestionsPublishedFooter);
+      setSuggestionsThreadNamePrefix(nextSuggestionsThreadNamePrefix);
       setAntiLinkEnabled(nextAntiLinkEnabled);
       setAntiLinkLogChannelId(nextAntiLinkLogChannelId);
       setAntiLinkEnforcementAction(nextAntiLinkEnforcementAction);
@@ -3115,6 +3251,19 @@ export function ServerSettingsEditor({
           timeoutSeconds: nextCaptchaTimeoutSeconds,
           kickOnFail: nextCaptchaKickOnFail,
           successMessage: nextCaptchaSuccessMessage,
+        }),
+      );
+      setSavedSuggestionSettingsDraft(
+        normalizeSuggestionSettingsDraft({
+          enabled: nextSuggestionsEnabled,
+          panelChannelId: nextSuggestionsPanelChannelId,
+          publishChannelId: nextSuggestionsPublishChannelId,
+          logsChannelId: nextSuggestionsLogsChannelId,
+          panelLayout: nextSuggestionsPanelLayout,
+          suggestionLayout: nextSuggestionsSuggestionLayout,
+          publishedHeader: nextSuggestionsPublishedHeader,
+          publishedFooter: nextSuggestionsPublishedFooter,
+          threadNamePrefix: nextSuggestionsThreadNamePrefix,
         }),
       );
       setSavedAntiLinkSettingsDraft(
@@ -3223,6 +3372,7 @@ export function ServerSettingsEditor({
     setSavedSettingsDraft(null);
     setSavedWelcomeSettingsDraft(null);
     setSavedCaptchaSettingsDraft(null);
+    setSavedSuggestionSettingsDraft(null);
     setSavedAntiLinkSettingsDraft(null);
     setSavedAutoRoleSettingsDraft(null);
     setSavedSalesSettingsDraft(null);
@@ -3243,6 +3393,15 @@ export function ServerSettingsEditor({
     setCaptchaSuccessMessage(
       "Verificacao concluida com sucesso. Bem-vindo ao servidor!",
     );
+    setSuggestionsEnabled(false);
+    setSuggestionsPanelChannelId(null);
+    setSuggestionsPublishChannelId(null);
+    setSuggestionsLogsChannelId(null);
+    setSuggestionsPanelLayout(createDefaultSuggestionPanelLayout());
+    setSuggestionsSuggestionLayout([]);
+    setSuggestionsPublishedHeader("NOVA SUGESTAO ENVIADA!");
+    setSuggestionsPublishedFooter("Flowdesk | Sistema de sugestoes");
+    setSuggestionsThreadNamePrefix("Debater sugestao");
     setWelcomeEnabled(false);
     setEntryPublicChannelId(null);
     setEntryLogChannelId(null);
@@ -4034,9 +4193,13 @@ export function ServerSettingsEditor({
   const isCaptchaSection =
     settingsSection === "captcha_overview" ||
     settingsSection === "captcha_message";
+  const isSuggestionsSection =
+    settingsSection === "suggestions_overview" ||
+    settingsSection === "suggestions_message";
   const isTicketMessageSection = settingsSection === "message";
   const isWelcomeMessageSection = settingsSection === "entry_exit_message";
   const isCaptchaMessageSection = settingsSection === "captcha_message";
+  const isSuggestionsMessageSection = settingsSection === "suggestions_message";
 
   const entryChannelsProvided = Boolean(
     entryPublicChannelId || entryLogChannelId,
@@ -4179,6 +4342,24 @@ export function ServerSettingsEditor({
           ticketPanelLayoutHasRequiredParts(captchaPanelLayout) &&
           ticketPanelLayoutHasAtMostOneFunctionButton(captchaPanelLayout))),
   );
+  const suggestionsFunctionButtonCount = countTicketPanelFunctionButtons(
+    suggestionsPanelLayout,
+  );
+  const hasSuggestionsTooManyFunctionButtons = suggestionsFunctionButtonCount > 1;
+  const isSuggestionsMessageLayoutInvalid =
+    !ticketPanelLayoutHasRequiredParts(suggestionsPanelLayout) ||
+    hasSuggestionsTooManyFunctionButtons;
+  const canSaveSuggestions = Boolean(
+    !settingsReadOnly &&
+      !isLoading &&
+      !isSaving &&
+      (!suggestionsEnabled ||
+        (suggestionsPanelChannelId &&
+          suggestionsPublishChannelId &&
+          suggestionsPanelLayout.length &&
+          ticketPanelLayoutHasRequiredParts(suggestionsPanelLayout) &&
+          ticketPanelLayoutHasAtMostOneFunctionButton(suggestionsPanelLayout))),
+  );
   const antiLinkTimeoutValue = normalizeAntiLinkTimeoutMinutes(
     antiLinkTimeoutMinutes,
   );
@@ -4258,6 +4439,17 @@ export function ServerSettingsEditor({
       captchaPanelLayout.length &&
       ticketPanelLayoutHasRequiredParts(captchaPanelLayout) &&
       ticketPanelLayoutHasAtMostOneFunctionButton(captchaPanelLayout),
+  );
+  const canSendSuggestionsEmbed = Boolean(
+    !settingsReadOnly &&
+      !isLoading &&
+      !isSaving &&
+      !isSendingEmbed &&
+      suggestionsEnabled &&
+      suggestionsPanelChannelId &&
+      suggestionsPanelLayout.length &&
+      ticketPanelLayoutHasRequiredParts(suggestionsPanelLayout) &&
+      ticketPanelLayoutHasAtMostOneFunctionButton(suggestionsPanelLayout),
   );
 
   const currentSettingsDraft = useMemo(
@@ -4380,6 +4572,31 @@ export function ServerSettingsEditor({
       captchaVerifiedRoleIds,
     ],
   );
+  const currentSuggestionDraft = useMemo(
+    () =>
+      normalizeSuggestionSettingsDraft({
+        enabled: suggestionsEnabled,
+        panelChannelId: suggestionsPanelChannelId,
+        publishChannelId: suggestionsPublishChannelId,
+        logsChannelId: suggestionsLogsChannelId,
+        panelLayout: suggestionsPanelLayout,
+        suggestionLayout: suggestionsSuggestionLayout,
+        publishedHeader: suggestionsPublishedHeader,
+        publishedFooter: suggestionsPublishedFooter,
+        threadNamePrefix: suggestionsThreadNamePrefix,
+      }),
+    [
+      suggestionsEnabled,
+      suggestionsLogsChannelId,
+      suggestionsPanelChannelId,
+      suggestionsPanelLayout,
+      suggestionsPublishChannelId,
+      suggestionsPublishedFooter,
+      suggestionsPublishedHeader,
+      suggestionsSuggestionLayout,
+      suggestionsThreadNamePrefix,
+    ],
+  );
   const currentAntiLinkDraft = useMemo(
     () =>
       normalizeAntiLinkSettingsDraft({
@@ -4442,6 +4659,8 @@ export function ServerSettingsEditor({
   const hasLoadedTicketDraft = !isLoading && savedSettingsDraft !== null;
   const hasLoadedWelcomeDraft = !isLoading && savedWelcomeSettingsDraft !== null;
   const hasLoadedCaptchaDraft = !isLoading && savedCaptchaSettingsDraft !== null;
+  const hasLoadedSuggestionDraft =
+    !isLoading && savedSuggestionSettingsDraft !== null;
   const hasLoadedAntiLinkDraft =
     !isLoading && savedAntiLinkSettingsDraft !== null;
   const hasLoadedAutoRoleDraft =
@@ -4467,6 +4686,15 @@ export function ServerSettingsEditor({
       hasLoadedCaptchaDraft &&
       !areCaptchaSettingsDraftsEqual(currentCaptchaDraft, savedCaptchaSettingsDraft),
     [currentCaptchaDraft, hasLoadedCaptchaDraft, savedCaptchaSettingsDraft],
+  );
+  const hasSuggestionUnsavedChanges = useMemo(
+    () =>
+      hasLoadedSuggestionDraft &&
+      !areSuggestionSettingsDraftsEqual(
+        currentSuggestionDraft,
+        savedSuggestionSettingsDraft,
+      ),
+    [currentSuggestionDraft, hasLoadedSuggestionDraft, savedSuggestionSettingsDraft],
   );
   const hasAntiLinkUnsavedChanges = useMemo(
     () =>
@@ -4522,6 +4750,8 @@ export function ServerSettingsEditor({
       ? hasLoadedSecurityLogsDraft
     : isCaptchaSection
       ? hasLoadedCaptchaDraft
+    : isSuggestionsSection
+      ? hasLoadedSuggestionDraft
     : isWelcomeSection
       ? hasLoadedWelcomeDraft
       : hasLoadedTicketDraft;
@@ -4537,6 +4767,8 @@ export function ServerSettingsEditor({
       ? hasSecurityLogsUnsavedChanges
     : isCaptchaSection
       ? hasCaptchaUnsavedChanges
+    : isSuggestionsSection
+      ? hasSuggestionUnsavedChanges
     : isWelcomeSection
       ? hasWelcomeUnsavedChanges
       : hasTicketUnsavedChanges;
@@ -4558,6 +4790,8 @@ export function ServerSettingsEditor({
           ? savedSecurityLogsDraft
         : isCaptchaSection
           ? savedCaptchaSettingsDraft
+        : isSuggestionsSection
+          ? savedSuggestionSettingsDraft
         : isWelcomeSection
           ? savedWelcomeSettingsDraft
           : savedSettingsDraft),
@@ -4581,6 +4815,8 @@ export function ServerSettingsEditor({
         ? canSaveSecurityLogs
       : isCaptchaSection
         ? canSaveCaptcha
+      : isSuggestionsSection
+        ? canSaveSuggestions
       : isWelcomeSection
         ? canSaveWelcome
       : isTicketAiSection
@@ -4606,6 +4842,8 @@ export function ServerSettingsEditor({
   const welcomeControlsDisabled =
     isSaving || settingsReadOnly || !welcomeEnabled || isActivatingWelcome;
   const captchaControlsDisabled = isSaving || settingsReadOnly || !captchaEnabled;
+  const suggestionsControlsDisabled =
+    isSaving || settingsReadOnly || !suggestionsEnabled;
   const antiLinkControlsDisabled =
     isSaving || settingsReadOnly || !antiLinkEnabled || isActivatingAntiLink;
   const autoRoleControlsDisabled =
@@ -4644,6 +4882,13 @@ export function ServerSettingsEditor({
     !isSaving &&
     !showSaveSuccessBar &&
     isCaptchaMessageLayoutInvalid;
+  const showInvalidSuggestionsSaveState =
+    isSuggestionsMessageSection &&
+    suggestionsEnabled &&
+    hasUnsavedChanges &&
+    !isSaving &&
+    !showSaveSuccessBar &&
+    isSuggestionsMessageLayoutInvalid;
   const showSaveBarSuccessState =
     showSaveSuccessBar &&
     !hasUnsavedChanges &&
@@ -4657,6 +4902,7 @@ export function ServerSettingsEditor({
     showInvalidTicketSaveState ||
     showInvalidWelcomeSaveState ||
     showInvalidCaptchaSaveState ||
+    showInvalidSuggestionsSaveState ||
     showBlockedNavigationSaveState;
   const saveActionVisualEnabled = canPersistSettings || isSaving;
   const floatingSaveBarTitle = showSaveBarSuccessState
@@ -4673,6 +4919,10 @@ export function ServerSettingsEditor({
         ? hasCaptchaTooManyFunctionButtons
           ? "Existe mais de um botao funcional no embed"
           : "Nao da para salvar uma mensagem vazia"
+      : showInvalidSuggestionsSaveState
+        ? hasSuggestionsTooManyFunctionButtons
+          ? "Existe mais de um botao funcional no embed"
+          : "Nao da para salvar uma mensagem vazia"
       : showInvalidWelcomeSaveState
           ? "Adicione pelo menos um conteudo na mensagem"
       : showBlockedNavigationSaveState
@@ -4684,6 +4934,8 @@ export function ServerSettingsEditor({
                 : "Ative eventos validos e defina o canal de cada log ligado"
               : isCaptchaSection
                 ? "Complete canal principal e cargos verificados para continuar"
+              : isSuggestionsSection
+                ? "Complete canais do painel e publicacao para continuar"
               : isWelcomeSection
               ? "Complete os canais de entrada e saida para continuar"
               : "Complete os campos obrigatorios para continuar"
@@ -5626,6 +5878,16 @@ export function ServerSettingsEditor({
       setCaptchaTimeoutSeconds(savedCaptchaSettingsDraft.timeoutSeconds);
       setCaptchaKickOnFail(savedCaptchaSettingsDraft.kickOnFail);
       setCaptchaSuccessMessage(savedCaptchaSettingsDraft.successMessage);
+    } else if (isSuggestionsSection && savedSuggestionSettingsDraft) {
+      setSuggestionsEnabled(savedSuggestionSettingsDraft.enabled);
+      setSuggestionsPanelChannelId(savedSuggestionSettingsDraft.panelChannelId);
+      setSuggestionsPublishChannelId(savedSuggestionSettingsDraft.publishChannelId);
+      setSuggestionsLogsChannelId(savedSuggestionSettingsDraft.logsChannelId);
+      setSuggestionsPanelLayout(savedSuggestionSettingsDraft.panelLayout);
+      setSuggestionsSuggestionLayout(savedSuggestionSettingsDraft.suggestionLayout);
+      setSuggestionsPublishedHeader(savedSuggestionSettingsDraft.publishedHeader);
+      setSuggestionsPublishedFooter(savedSuggestionSettingsDraft.publishedFooter);
+      setSuggestionsThreadNamePrefix(savedSuggestionSettingsDraft.threadNamePrefix);
     } else if (savedSettingsDraft) {
       setTicketEnabled(savedSettingsDraft.enabled);
       setMenuChannelId(savedSettingsDraft.menuChannelId);
@@ -5661,12 +5923,14 @@ export function ServerSettingsEditor({
     isAntiLinkSection,
     isAutoRoleSection,
     isCaptchaSection,
+    isSuggestionsSection,
     isSalesSettingsSection,
     isSecurityLogsSection,
     isWelcomeSection,
     savedAntiLinkSettingsDraft,
     savedAutoRoleSettingsDraft,
     savedCaptchaSettingsDraft,
+    savedSuggestionSettingsDraft,
     savedSalesSettingsDraft,
     savedSecurityLogsDraft,
     savedSettingsDraft,
@@ -5951,6 +6215,80 @@ export function ServerSettingsEditor({
         setCaptchaKickOnFail(nextCaptchaDraft.kickOnFail);
         setCaptchaSuccessMessage(nextCaptchaDraft.successMessage);
         setSavedCaptchaSettingsDraft(nextCaptchaDraft);
+      } else if (isSuggestionsSection) {
+        const legacyFields = deriveLegacyTicketPanelFields(suggestionsPanelLayout);
+        const response = await fetch("/api/auth/me/guilds/suggestions-settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            guildId,
+            enabled: suggestionsEnabled,
+            panelChannelId: suggestionsPanelChannelId,
+            publishChannelId: suggestionsPublishChannelId,
+            logsChannelId: suggestionsLogsChannelId,
+            panelLayout: suggestionsPanelLayout,
+            panelTitle: legacyFields.panelTitle,
+            panelDescription: legacyFields.panelDescription,
+            panelButtonLabel: legacyFields.panelButtonLabel,
+            suggestionLayout: suggestionsSuggestionLayout,
+            publishedHeader: suggestionsPublishedHeader,
+            publishedFooter: suggestionsPublishedFooter,
+            threadNamePrefix: suggestionsThreadNamePrefix,
+          }),
+        });
+
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) {
+          throw new Error(
+            payload.message || "Falha ao salvar configuracoes de sugestoes.",
+          );
+        }
+
+        const nextSuggestionDraft = normalizeSuggestionSettingsDraft({
+          enabled: payload.settings?.enabled === true,
+          panelChannelId:
+            typeof payload.settings?.panelChannelId === "string"
+              ? payload.settings.panelChannelId
+              : null,
+          publishChannelId:
+            typeof payload.settings?.publishChannelId === "string"
+              ? payload.settings.publishChannelId
+              : null,
+          logsChannelId:
+            typeof payload.settings?.logsChannelId === "string"
+              ? payload.settings.logsChannelId
+              : null,
+          panelLayout: normalizeSuggestionPanelLayout(
+            payload.settings?.panelLayout,
+            payload.settings || undefined,
+          ),
+          suggestionLayout: normalizeTicketPanelLayout(
+            payload.settings?.suggestionLayout,
+          ),
+          publishedHeader:
+            typeof payload.settings?.publishedHeader === "string"
+              ? payload.settings.publishedHeader
+              : suggestionsPublishedHeader,
+          publishedFooter:
+            typeof payload.settings?.publishedFooter === "string"
+              ? payload.settings.publishedFooter
+              : suggestionsPublishedFooter,
+          threadNamePrefix:
+            typeof payload.settings?.threadNamePrefix === "string"
+              ? payload.settings.threadNamePrefix
+              : suggestionsThreadNamePrefix,
+        });
+
+        setSuggestionsEnabled(nextSuggestionDraft.enabled);
+        setSuggestionsPanelChannelId(nextSuggestionDraft.panelChannelId);
+        setSuggestionsPublishChannelId(nextSuggestionDraft.publishChannelId);
+        setSuggestionsLogsChannelId(nextSuggestionDraft.logsChannelId);
+        setSuggestionsPanelLayout(nextSuggestionDraft.panelLayout);
+        setSuggestionsSuggestionLayout(nextSuggestionDraft.suggestionLayout);
+        setSuggestionsPublishedHeader(nextSuggestionDraft.publishedHeader);
+        setSuggestionsPublishedFooter(nextSuggestionDraft.publishedFooter);
+        setSuggestionsThreadNamePrefix(nextSuggestionDraft.threadNamePrefix);
+        setSavedSuggestionSettingsDraft(nextSuggestionDraft);
       } else {
         const shouldPersistTicketStaff =
           ticketEnabled ||
@@ -6182,6 +6520,7 @@ export function ServerSettingsEditor({
     currentAntiLinkDraft,
     currentAutoRoleDraft,
     currentCaptchaDraft,
+    currentSuggestionDraft,
     currentWelcomeDraft,
     entryPublicLayout,
     entryLogLayout,
@@ -6199,6 +6538,7 @@ export function ServerSettingsEditor({
     isAntiLinkSection,
     isAutoRoleSection,
     isCaptchaSection,
+    isSuggestionsSection,
     isSalesSettingsSection,
     isSecurityLogsSection,
     isTicketSection,
@@ -6228,10 +6568,20 @@ export function ServerSettingsEditor({
     setSavedAntiLinkSettingsDraft,
     setSavedAutoRoleSettingsDraft,
     setSavedCaptchaSettingsDraft,
+    setSavedSuggestionSettingsDraft,
     setSavedSalesSettingsDraft,
     setSavedSecurityLogsDraft,
     setSavedSettingsDraft,
     setSavedWelcomeSettingsDraft,
+    suggestionsEnabled,
+    suggestionsLogsChannelId,
+    suggestionsPanelChannelId,
+    suggestionsPanelLayout,
+    suggestionsPublishChannelId,
+    suggestionsPublishedFooter,
+    suggestionsPublishedHeader,
+    suggestionsSuggestionLayout,
+    suggestionsThreadNamePrefix,
     ticketEnabled,
     ticketsCategoryId,
     welcomeEnabled,
@@ -6307,6 +6657,46 @@ export function ServerSettingsEditor({
       setIsSendingEmbed(false);
     }
   }, [canSendCaptchaEmbed, captchaPanelChannelId, captchaPanelLayout, guildId]);
+
+  const handleSendSuggestionsEmbed = useCallback(async () => {
+    if (!canSendSuggestionsEmbed || !suggestionsPanelChannelId) return;
+    if (isSendingEmbedRef.current) return;
+    isSendingEmbedRef.current = true;
+
+    setIsSendingEmbed(true);
+    setErrorMessage(null);
+
+    try {
+      const response = await fetch("/api/auth/me/guilds/suggestions-panel-message", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          guildId,
+          panelChannelId: suggestionsPanelChannelId,
+          panelLayout: suggestionsPanelLayout,
+        }),
+      });
+
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.message || "Falha ao enviar o embed de sugestoes.");
+      }
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Erro ao enviar o embed de sugestoes.",
+      );
+    } finally {
+      isSendingEmbedRef.current = false;
+      setIsSendingEmbed(false);
+    }
+  }, [
+    canSendSuggestionsEmbed,
+    guildId,
+    suggestionsPanelChannelId,
+    suggestionsPanelLayout,
+  ]);
 
   const handleActivateWelcome = useCallback(async () => {
     if (isActivatingWelcome || settingsReadOnly) return;
@@ -7466,6 +7856,134 @@ export function ServerSettingsEditor({
                         </div>
                       </div>
                     </div>
+                  ) : settingsSection === "suggestions_overview" ? (
+                    <div className="space-y-[14px]">
+                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
+                          <div>
+                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
+                              Modulo Sugestoes
+                            </p>
+                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
+                              Colete ideias e publique votacoes
+                            </h3>
+                            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                              Configure canais do painel, publicacao e logs, alem do template exibido quando uma sugestao for enviada.
+                            </p>
+                          </div>
+
+                          <DashboardInlineSwitch
+                            checked={suggestionsEnabled}
+                            onChange={() => {
+                              if (isSaving || settingsReadOnly) return;
+                              setSuggestionsEnabled((current) => !current);
+                            }}
+                            disabled={isSaving || settingsReadOnly}
+                            ariaLabel="Ativar ou desativar modulo de sugestoes"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                        <div>
+                          <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Sugestoes</p>
+                          <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
+                            Canais do modulo
+                          </h3>
+                          <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                            Defina onde o painel sera publicado, onde as sugestoes aprovadas aparecem e onde os logs serao enviados.
+                          </p>
+                        </div>
+
+                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
+                          <ConfigStepSelect label="Canal do painel" placeholder="Escolha o canal" options={textChannelOptions} value={suggestionsPanelChannelId} onChange={setSuggestionsPanelChannelId} disabled={suggestionsControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepSelect label="Canal de publicacao" placeholder="Escolha o canal" options={textChannelOptions} value={suggestionsPublishChannelId} onChange={setSuggestionsPublishChannelId} disabled={suggestionsControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepSelect label="Canal de logs (opcional)" placeholder="Escolha o canal de logs" options={textChannelOptions} value={suggestionsLogsChannelId} onChange={setSuggestionsLogsChannelId} disabled={suggestionsControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                        </div>
+                      </div>
+
+                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                        <div>
+                          <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Publicacao</p>
+                          <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
+                            Textos da sugestao publicada
+                          </h3>
+                          <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                            Personalize cabecalho, rodape e prefixo do topico criado para debater cada sugestao.
+                          </p>
+                        </div>
+
+                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
+                          <div>
+                            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">Cabecalho publicado</label>
+                            <input
+                              type="text"
+                              value={suggestionsPublishedHeader}
+                              onChange={(event) => setSuggestionsPublishedHeader(event.currentTarget.value)}
+                              placeholder="NOVA SUGESTAO ENVIADA!"
+                              maxLength={120}
+                              disabled={suggestionsControlsDisabled}
+                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">Prefixo do topico</label>
+                            <input
+                              type="text"
+                              value={suggestionsThreadNamePrefix}
+                              onChange={(event) => setSuggestionsThreadNamePrefix(event.currentTarget.value)}
+                              placeholder="Debater sugestao"
+                              maxLength={80}
+                              disabled={suggestionsControlsDisabled}
+                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                          </div>
+                          <div className="xl:col-span-2">
+                            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">Rodape publicado</label>
+                            <input
+                              type="text"
+                              value={suggestionsPublishedFooter}
+                              onChange={(event) => setSuggestionsPublishedFooter(event.currentTarget.value)}
+                              placeholder="Flowdesk | Sistema de sugestoes"
+                              maxLength={200}
+                              disabled={suggestionsControlsDisabled}
+                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <TicketMessageBuilder
+                        guildId={guildId}
+                        value={suggestionsSuggestionLayout}
+                        onChange={setSuggestionsSuggestionLayout}
+                        disabled={isSaving || settingsReadOnly || !suggestionsEnabled}
+                        hideSendButton
+                        eyebrow="Sugestoes"
+                        headline="Template da sugestao publicada"
+                        description="Monte o embed exibido quando uma sugestao for publicada no canal de votacao."
+                      />
+                    </div>
+                  ) : settingsSection === "suggestions_message" ? (
+                    <TicketMessageBuilder
+                      guildId={guildId}
+                      value={suggestionsPanelLayout}
+                      onChange={setSuggestionsPanelLayout}
+                      layoutPreset="suggestions"
+                      disabled={
+                        isSaving ||
+                        isSendingEmbed ||
+                        settingsReadOnly ||
+                        !suggestionsEnabled
+                      }
+                      canSendEmbed={canSendSuggestionsEmbed}
+                      isSendingEmbed={isSendingEmbed}
+                      onSendEmbed={handleSendSuggestionsEmbed}
+                      eyebrow="Sugestoes"
+                      headline="Mensagem do painel"
+                      description="Monte o embed publicado no canal do painel e envie a mensagem quando estiver pronta."
+                      sendButtonLabel="Enviar embed de sugestoes"
+                    />
                   ) : settingsSection === "captcha_overview" ? (
                     <div className="space-y-[14px]">
                       <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">

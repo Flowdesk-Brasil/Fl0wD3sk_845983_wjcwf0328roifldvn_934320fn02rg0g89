@@ -10,6 +10,7 @@ export type ServerSettingsVaultModule =
   | "ticket_staff_settings"
   | "welcome_settings"
   | "captcha_settings"
+  | "suggestions_settings"
   | "antilink_settings"
   | "autorole_settings"
   | "sales_settings"

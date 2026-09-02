@@ -83,6 +83,21 @@ type ServerDashboardSettingsPayload = {
     successMessage: string;
     updatedAt: string | null;
   } | null;
+  suggestionsSettings: {
+    enabled: boolean;
+    panelChannelId: string | null;
+    publishChannelId: string | null;
+    logsChannelId: string | null;
+    panelLayout: TicketPanelLayout;
+    panelTitle: string;
+    panelDescription: string;
+    panelButtonLabel: string;
+    suggestionLayout: TicketPanelLayout;
+    publishedHeader: string;
+    publishedFooter: string;
+    threadNamePrefix: string;
+    updatedAt: string | null;
+  } | null;
   antiLinkSettings: {
     enabled: boolean;
     logChannelId: string | null;
