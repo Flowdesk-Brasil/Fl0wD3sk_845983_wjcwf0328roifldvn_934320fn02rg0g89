@@ -668,6 +668,18 @@ export const flowSecureDto = {
     };
   },
 
+  legacyPanelPlainText(options: {
+    maxLength: number;
+    allowEmpty?: boolean;
+  }): FlowSecureReader<string> {
+    return flowSecureDto.string({
+      allowEmpty: options.allowEmpty ?? true,
+      maxLength: options.maxLength,
+      disallowAngleBrackets: false,
+      rejectThreatPatterns: true,
+    });
+  },
+
   email(): FlowSecureReader<string> {
     return flowSecureDto.string({
       maxLength: 254,

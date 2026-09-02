@@ -175,6 +175,19 @@ const dashboardSettingsInflight = new Map<
   Promise<ServerDashboardSettingsPayload>
 >();
 
+const dashboardSettingsFetchEpoch = new Map<string, number>();
+
+function getDashboardSettingsFetchEpoch(guildId: string) {
+  return dashboardSettingsFetchEpoch.get(guildId) ?? 0;
+}
+
+function bumpDashboardSettingsFetchEpoch(guildId: string) {
+  const nextEpoch = getDashboardSettingsFetchEpoch(guildId) + 1;
+  dashboardSettingsFetchEpoch.set(guildId, nextEpoch);
+  dashboardSettingsInflight.delete(guildId);
+  return nextEpoch;
+}
+
 function canUseStorage() {
   return (
     typeof window !== "undefined" &&
@@ -260,6 +273,7 @@ function storePayload(guildId: string, payload: ServerDashboardSettingsPayload) 
 }
 
 export function invalidateCachedServerDashboardSettings(guildId: string) {
+  bumpDashboardSettingsFetchEpoch(guildId);
   dashboardSettingsCache.delete(guildId);
   const cache = readStorageCache();
   if (cache[guildId]) {
@@ -268,10 +282,49 @@ export function invalidateCachedServerDashboardSettings(guildId: string) {
   }
 }
 
+export function markServerDashboardSettingsSaved(guildId: string) {
+  return bumpDashboardSettingsFetchEpoch(guildId);
+}
+
+export function getServerDashboardSettingsFetchEpoch(guildId: string) {
+  return getDashboardSettingsFetchEpoch(guildId);
+}
+
+export function patchCachedServerDashboardSettings(
+  guildId: string,
+  patch: Partial<
+    Pick<
+      ServerDashboardSettingsPayload,
+      | "ticketSettings"
+      | "staffSettings"
+      | "welcomeSettings"
+      | "captchaSettings"
+      | "suggestionsSettings"
+      | "antiLinkSettings"
+      | "autoRoleSettings"
+      | "salesSettings"
+      | "securityLogsSettings"
+    >
+  >,
+) {
+  markServerDashboardSettingsSaved(guildId);
+  const current = readCachedServerDashboardSettings(guildId);
+  if (!current) {
+    return;
+  }
+
+  storePayload(guildId, {
+    ...current,
+    ...patch,
+  });
+}
+
 async function requestServerDashboardSettings(
   guildId: string,
   signal?: AbortSignal,
 ) {
+  const fetchEpoch = getDashboardSettingsFetchEpoch(guildId);
+
   const response = await fetch(
     `/api/auth/me/guilds/dashboard-settings?guildId=${encodeURIComponent(guildId)}`,
     {
@@ -288,7 +341,10 @@ async function requestServerDashboardSettings(
     throw new Error(message || "Falha ao carregar configuracoes do servidor.");
   }
 
-  storePayload(guildId, payload);
+  if (getDashboardSettingsFetchEpoch(guildId) === fetchEpoch) {
+    storePayload(guildId, payload);
+  }
+
   return payload;
 }
 

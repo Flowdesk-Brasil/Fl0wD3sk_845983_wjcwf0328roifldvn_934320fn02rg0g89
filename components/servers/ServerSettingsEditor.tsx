@@ -50,7 +50,10 @@ import { SalesPaymentMethodsPanel } from "@/components/servers/sales/SalesPaymen
 import { SalesStockPanel } from "@/components/servers/sales/SalesStockPanel";
 import {
   getServerDashboardSettings,
+  getServerDashboardSettingsFetchEpoch,
   invalidateCachedServerDashboardSettings,
+  markServerDashboardSettingsSaved,
+  patchCachedServerDashboardSettings,
   readCachedServerDashboardSettings,
 } from "@/lib/servers/serverDashboardSettingsClient";
 import type { ServerDashboardSettingsPayload } from "@/lib/servers/serverDashboardSettingsClient";
@@ -1162,6 +1165,18 @@ function areSecurityLogsSettingsDraftsEqual(
   if (!left || !right) return left === right;
 
   return JSON.stringify(normalizeSecurityLogsSettingsDraft(left)) === JSON.stringify(normalizeSecurityLogsSettingsDraft(right));
+}
+
+function isSettingsDraftDirty<T>(
+  current: T | null | undefined,
+  saved: T | null | undefined,
+  areEqual: (left: T, right: T) => boolean,
+) {
+  if (current == null || saved == null) {
+    return false;
+  }
+
+  return !areEqual(current, saved);
 }
 
 type DashboardInlineSwitchProps = {
@@ -2444,6 +2459,20 @@ export function ServerSettingsEditor({
     useState<SalesSettingsDraft | null>(null);
   const currentTicketDraftRef = useRef<ServerSettingsDraft | null>(null);
   const savedTicketDraftRef = useRef<ServerSettingsDraft | null>(null);
+  const currentWelcomeDraftRef = useRef<WelcomeSettingsDraft | null>(null);
+  const savedWelcomeDraftRef = useRef<WelcomeSettingsDraft | null>(null);
+  const currentCaptchaDraftRef = useRef<CaptchaSettingsDraft | null>(null);
+  const savedCaptchaDraftRef = useRef<CaptchaSettingsDraft | null>(null);
+  const currentSuggestionDraftRef = useRef<SuggestionSettingsDraft | null>(null);
+  const savedSuggestionDraftRef = useRef<SuggestionSettingsDraft | null>(null);
+  const currentAntiLinkDraftRef = useRef<AntiLinkSettingsDraft | null>(null);
+  const savedAntiLinkDraftRef = useRef<AntiLinkSettingsDraft | null>(null);
+  const currentAutoRoleDraftRef = useRef<AutoRoleSettingsDraft | null>(null);
+  const savedAutoRoleDraftRef = useRef<AutoRoleSettingsDraft | null>(null);
+  const currentSalesDraftRef = useRef<SalesSettingsDraft | null>(null);
+  const savedSalesDraftRef = useRef<SalesSettingsDraft | null>(null);
+  const currentSecurityLogsDraftRef = useRef<SecurityLogsSettingsDraft | null>(null);
+  const savedSecurityLogsDraftRef = useRef<SecurityLogsSettingsDraft | null>(null);
   const [isStaffCardCollapsed, setIsStaffCardCollapsed] = useState(true);
   const [welcomeMessageTab, setWelcomeMessageTab] = useState<"entry" | "exit">(
     "entry",
@@ -2611,13 +2640,46 @@ export function ServerSettingsEditor({
 
   const applyDashboardSettingsPayload = useCallback(
     (payload: ServerDashboardSettingsPayload) => {
-      const shouldPreserveLocalTicketDraft =
-        currentTicketDraftRef.current !== null &&
-        savedTicketDraftRef.current !== null &&
-        !areServerSettingsDraftsEqual(
-          currentTicketDraftRef.current,
-          savedTicketDraftRef.current,
-        );
+      const shouldPreserveLocalTicketDraft = isSettingsDraftDirty(
+        currentTicketDraftRef.current,
+        savedTicketDraftRef.current,
+        areServerSettingsDraftsEqual,
+      );
+      const shouldPreserveLocalWelcomeDraft = isSettingsDraftDirty(
+        currentWelcomeDraftRef.current,
+        savedWelcomeDraftRef.current,
+        areWelcomeSettingsDraftsEqual,
+      );
+      const shouldPreserveLocalCaptchaDraft = isSettingsDraftDirty(
+        currentCaptchaDraftRef.current,
+        savedCaptchaDraftRef.current,
+        areCaptchaSettingsDraftsEqual,
+      );
+      const shouldPreserveLocalSuggestionDraft = isSettingsDraftDirty(
+        currentSuggestionDraftRef.current,
+        savedSuggestionDraftRef.current,
+        areSuggestionSettingsDraftsEqual,
+      );
+      const shouldPreserveLocalAntiLinkDraft = isSettingsDraftDirty(
+        currentAntiLinkDraftRef.current,
+        savedAntiLinkDraftRef.current,
+        areAntiLinkSettingsDraftsEqual,
+      );
+      const shouldPreserveLocalAutoRoleDraft = isSettingsDraftDirty(
+        currentAutoRoleDraftRef.current,
+        savedAutoRoleDraftRef.current,
+        areAutoRoleSettingsDraftsEqual,
+      );
+      const shouldPreserveLocalSalesDraft = isSettingsDraftDirty(
+        currentSalesDraftRef.current,
+        savedSalesDraftRef.current,
+        areSalesSettingsDraftsEqual,
+      );
+      const shouldPreserveLocalSecurityLogsDraft = isSettingsDraftDirty(
+        currentSecurityLogsDraftRef.current,
+        savedSecurityLogsDraftRef.current,
+        areSecurityLogsSettingsDraftsEqual,
+      );
       const text = payload.channels.text.map((channel) => ({
         id: channel.id,
         name: `# ${channel.name}`,
@@ -2919,10 +2981,13 @@ export function ServerSettingsEditor({
         ? payload.antiLinkSettings.ignoredChannelIds.filter((id) => textSet.has(id))
         : [];
       const nextAntiLinkBlockExternalLinks =
+        payload.antiLinkSettings?.blockExternalLinks ??
         ANTILINK_DEFAULT_DETECTION.blockExternalLinks;
       const nextAntiLinkBlockDiscordInvites =
+        payload.antiLinkSettings?.blockDiscordInvites ??
         ANTILINK_DEFAULT_DETECTION.blockDiscordInvites;
       const nextAntiLinkBlockObfuscatedLinks =
+        payload.antiLinkSettings?.blockObfuscatedLinks ??
         ANTILINK_DEFAULT_DETECTION.blockObfuscatedLinks;
       const nextAutoRoleEnabled = Boolean(payload.autoRoleSettings?.enabled);
       const nextAutoRoleRoleIds = Array.isArray(payload.autoRoleSettings?.roleIds)
@@ -3101,175 +3166,207 @@ export function ServerSettingsEditor({
         setCloseRoleIds(nextCloseRoleIds);
         setNotifyRoleIds(nextNotifyRoleIds);
       }
-      setWelcomeEnabled(nextWelcomeEnabled);
-      setEntryPublicChannelId(nextEntryPublicChannelId);
-      setEntryLogChannelId(nextEntryLogChannelId);
-      setExitPublicChannelId(nextExitPublicChannelId);
-      setExitLogChannelId(nextExitLogChannelId);
-      setEntryPublicLayout(nextEntryPublicLayout);
-      setEntryLogLayout(nextEntryLogLayout);
-      setExitPublicLayout(nextExitPublicLayout);
-      setExitLogLayout(nextExitLogLayout);
-      setEntryPublicThumbnailMode(nextEntryPublicThumbnailMode);
-      setEntryLogThumbnailMode(nextEntryLogThumbnailMode);
-      setExitPublicThumbnailMode(nextExitPublicThumbnailMode);
-      setExitLogThumbnailMode(nextExitLogThumbnailMode);
-      setCaptchaEnabled(nextCaptchaEnabled);
-      setCaptchaPanelChannelId(nextCaptchaPanelChannelId);
-      setCaptchaLogsChannelId(nextCaptchaLogsChannelId);
-      setCaptchaVerifiedRoleIds(nextCaptchaVerifiedRoleIds);
-      setCaptchaBypassRoleIds(nextCaptchaBypassRoleIds);
-      setCaptchaPanelLayout(nextCaptchaPanelLayout);
-      setCaptchaChallengeTitle(nextCaptchaChallengeTitle);
-      setCaptchaChallengeDescription(nextCaptchaChallengeDescription);
-      setCaptchaMaxAttempts(nextCaptchaMaxAttempts);
-      setCaptchaTimeoutSeconds(nextCaptchaTimeoutSeconds);
-      setCaptchaKickOnFail(nextCaptchaKickOnFail);
-      setCaptchaSuccessMessage(nextCaptchaSuccessMessage);
-      setSuggestionsEnabled(nextSuggestionsEnabled);
-      setSuggestionsPanelChannelId(nextSuggestionsPanelChannelId);
-      setSuggestionsPublishChannelId(nextSuggestionsPublishChannelId);
-      setSuggestionsLogsChannelId(nextSuggestionsLogsChannelId);
-      setSuggestionsPanelLayout(nextSuggestionsPanelLayout);
-      setSuggestionsSuggestionLayout(nextSuggestionsSuggestionLayout);
-      setAntiLinkEnabled(nextAntiLinkEnabled);
-      setAntiLinkLogChannelId(nextAntiLinkLogChannelId);
-      setAntiLinkEnforcementAction(nextAntiLinkEnforcementAction);
-      setAntiLinkTimeoutMinutes(nextAntiLinkTimeoutMinutes);
-      setAntiLinkIgnoredRoleIds(nextAntiLinkIgnoredRoleIds);
-      setAntiLinkIgnoredChannelIds(nextAntiLinkIgnoredChannelIds);
-      setAntiLinkBlockExternalLinks(nextAntiLinkBlockExternalLinks);
-      setAntiLinkBlockDiscordInvites(nextAntiLinkBlockDiscordInvites);
-      setAntiLinkBlockObfuscatedLinks(nextAntiLinkBlockObfuscatedLinks);
-      setAutoRoleEnabled(nextAutoRoleEnabled);
-      setAutoRoleRoleIds(nextAutoRoleRoleIds);
-      setAutoRoleAssignmentDelayMinutes(nextAutoRoleAssignmentDelayMinutes);
-      setAutoRoleSyncExistingMembers(false);
-      setAutoRoleSyncStatus(nextAutoRoleSyncStatus);
-      setAutoRoleSyncRequestedAt(nextAutoRoleSyncRequestedAt);
-      setAutoRoleSyncStartedAt(nextAutoRoleSyncStartedAt);
-      setAutoRoleSyncCompletedAt(nextAutoRoleSyncCompletedAt);
-      setAutoRoleSyncError(nextAutoRoleSyncError);
-      setSalesEnabled(nextSalesEnabled);
-      setSalesCartsCategoryId(nextSalesCartsCategoryId);
-      setSalesPaymentApprovedLogChannelId(nextSalesPaymentApprovedLogChannelId);
-      setSalesPaymentPendingLogChannelId(nextSalesPaymentPendingLogChannelId);
-      setSalesPaymentRejectedLogChannelId(nextSalesPaymentRejectedLogChannelId);
-      setSalesReceiptCompanyName(nextSalesReceiptCompanyName);
-      setSalesReceiptCompanyDocument(nextSalesReceiptCompanyDocument);
-      setSalesReceiptSupportText(nextSalesReceiptSupportText);
-      setRefundLimitDays(nextRefundLimitDays);
-      setRefundRules(nextRefundRules);
-      setRefundAutoProcessEnabled(nextRefundAutoProcessEnabled);
-      setRefundManualApprovalRequired(nextRefundManualApprovalRequired);
-      setRefundApprovalChannelId(nextRefundApprovalChannelId);
-      setRefundApproverRoleIds(nextRefundApproverRoleIds);
-      setRefundSuccessMessage(nextRefundSuccessMessage);
-      setRefundErrorMessage(nextRefundErrorMessage);
-      setSecurityLogsDraft(nextSecurityLogsDraft);
-      setSavedSettingsDraft(
-        normalizeServerSettingsDraft({
-          enabled: nextTicketEnabled,
-          menuChannelId: nextMenuChannelId,
-          ticketsCategoryId: nextTicketsCategoryId,
-          logsCreatedChannelId: nextLogsCreatedChannelId,
-          logsClosedChannelId: nextLogsClosedChannelId,
-          panelLayout: nextPanelLayout,
-          adminRoleId: nextAdminRoleId,
-          claimRoleIds: nextClaimRoleIds,
-          closeRoleIds: nextCloseRoleIds,
-          notifyRoleIds: nextNotifyRoleIds,
-          aiRules: nextAiRules,
-          aiCompanyName: nextAiCompanyName,
-          aiCompanyBio: nextAiCompanyBio,
-          aiTone: nextAiTone,
-          aiEnabled: nextAiEnabled,
-          refundLimitDays: nextRefundLimitDays,
-          refundRules: nextRefundRules,
-          refundAutoProcessEnabled: nextRefundAutoProcessEnabled,
-          refundManualApprovalRequired: nextRefundManualApprovalRequired,
-          refundApprovalChannelId: nextRefundApprovalChannelId,
-          refundApproverRoleIds: nextRefundApproverRoleIds,
-          refundSuccessMessage: nextRefundSuccessMessage,
-          refundErrorMessage: nextRefundErrorMessage,
-        }),
-      );
-      setSavedWelcomeSettingsDraft(
-        normalizeWelcomeSettingsDraft({
-          enabled: nextWelcomeEnabled,
-          entryPublicChannelId: nextEntryPublicChannelId,
-          entryLogChannelId: nextEntryLogChannelId,
-          exitPublicChannelId: nextExitPublicChannelId,
-          exitLogChannelId: nextExitLogChannelId,
-          entryPublicLayout: nextEntryPublicLayout,
-          entryLogLayout: nextEntryLogLayout,
-          exitPublicLayout: nextExitPublicLayout,
-          exitLogLayout: nextExitLogLayout,
-          entryPublicThumbnailMode: nextEntryPublicThumbnailMode,
-          entryLogThumbnailMode: nextEntryLogThumbnailMode,
-          exitPublicThumbnailMode: nextExitPublicThumbnailMode,
-          exitLogThumbnailMode: nextExitLogThumbnailMode,
-        }),
-      );
-      setSavedCaptchaSettingsDraft(
-        normalizeCaptchaSettingsDraft({
-          enabled: nextCaptchaEnabled,
-          panelChannelId: nextCaptchaPanelChannelId,
-          logsChannelId: nextCaptchaLogsChannelId,
-          verifiedRoleIds: nextCaptchaVerifiedRoleIds,
-          bypassRoleIds: nextCaptchaBypassRoleIds,
-          panelLayout: nextCaptchaPanelLayout,
-          challengeTitle: nextCaptchaChallengeTitle,
-          challengeDescription: nextCaptchaChallengeDescription,
-          maxAttempts: nextCaptchaMaxAttempts,
-          timeoutSeconds: nextCaptchaTimeoutSeconds,
-          kickOnFail: nextCaptchaKickOnFail,
-          successMessage: nextCaptchaSuccessMessage,
-        }),
-      );
-      setSavedSuggestionSettingsDraft(
-        normalizeSuggestionSettingsDraft({
-          enabled: nextSuggestionsEnabled,
-          panelChannelId: nextSuggestionsPanelChannelId,
-          publishChannelId: nextSuggestionsPublishChannelId,
-          logsChannelId: nextSuggestionsLogsChannelId,
-          panelLayout: nextSuggestionsPanelLayout,
-          suggestionLayout: nextSuggestionsSuggestionLayout,
-        }),
-      );
-      setSavedAntiLinkSettingsDraft(
-        normalizeAntiLinkSettingsDraft({
-          enabled: nextAntiLinkEnabled,
-          logChannelId: nextAntiLinkLogChannelId,
-          enforcementAction: nextAntiLinkEnforcementAction,
-          timeoutMinutes: nextAntiLinkTimeoutMinutes,
-          ignoredRoleIds: nextAntiLinkIgnoredRoleIds,
-          ignoredChannelIds: nextAntiLinkIgnoredChannelIds,
-          blockExternalLinks: nextAntiLinkBlockExternalLinks,
-          blockDiscordInvites: nextAntiLinkBlockDiscordInvites,
-          blockObfuscatedLinks: nextAntiLinkBlockObfuscatedLinks,
-        }),
-      );
-      setSavedAutoRoleSettingsDraft(
-        normalizeAutoRoleSettingsDraft({
-          enabled: nextAutoRoleEnabled,
-          roleIds: nextAutoRoleRoleIds,
-          assignmentDelayMinutes: nextAutoRoleAssignmentDelayMinutes,
-        }),
-      );
-      setSavedSalesSettingsDraft(
-        normalizeSalesSettingsDraft({
-          enabled: nextSalesEnabled,
-          cartsCategoryId: nextSalesCartsCategoryId,
-          paymentApprovedLogChannelId: nextSalesPaymentApprovedLogChannelId,
-          paymentPendingLogChannelId: nextSalesPaymentPendingLogChannelId,
-          paymentRejectedLogChannelId: nextSalesPaymentRejectedLogChannelId,
-          receiptCompanyName: nextSalesReceiptCompanyName,
-          receiptCompanyDocument: nextSalesReceiptCompanyDocument,
-          receiptSupportText: nextSalesReceiptSupportText,
-        }),
-      );
-      setSavedSecurityLogsDraft(nextSecurityLogsDraft);
+      if (!shouldPreserveLocalWelcomeDraft) {
+        setWelcomeEnabled(nextWelcomeEnabled);
+        setEntryPublicChannelId(nextEntryPublicChannelId);
+        setEntryLogChannelId(nextEntryLogChannelId);
+        setExitPublicChannelId(nextExitPublicChannelId);
+        setExitLogChannelId(nextExitLogChannelId);
+        setEntryPublicLayout(nextEntryPublicLayout);
+        setEntryLogLayout(nextEntryLogLayout);
+        setExitPublicLayout(nextExitPublicLayout);
+        setExitLogLayout(nextExitLogLayout);
+        setEntryPublicThumbnailMode(nextEntryPublicThumbnailMode);
+        setEntryLogThumbnailMode(nextEntryLogThumbnailMode);
+        setExitPublicThumbnailMode(nextExitPublicThumbnailMode);
+        setExitLogThumbnailMode(nextExitLogThumbnailMode);
+      }
+      if (!shouldPreserveLocalCaptchaDraft) {
+        setCaptchaEnabled(nextCaptchaEnabled);
+        setCaptchaPanelChannelId(nextCaptchaPanelChannelId);
+        setCaptchaLogsChannelId(nextCaptchaLogsChannelId);
+        setCaptchaVerifiedRoleIds(nextCaptchaVerifiedRoleIds);
+        setCaptchaBypassRoleIds(nextCaptchaBypassRoleIds);
+        setCaptchaPanelLayout(nextCaptchaPanelLayout);
+        setCaptchaChallengeTitle(nextCaptchaChallengeTitle);
+        setCaptchaChallengeDescription(nextCaptchaChallengeDescription);
+        setCaptchaMaxAttempts(nextCaptchaMaxAttempts);
+        setCaptchaTimeoutSeconds(nextCaptchaTimeoutSeconds);
+        setCaptchaKickOnFail(nextCaptchaKickOnFail);
+        setCaptchaSuccessMessage(nextCaptchaSuccessMessage);
+      }
+      if (!shouldPreserveLocalSuggestionDraft) {
+        setSuggestionsEnabled(nextSuggestionsEnabled);
+        setSuggestionsPanelChannelId(nextSuggestionsPanelChannelId);
+        setSuggestionsPublishChannelId(nextSuggestionsPublishChannelId);
+        setSuggestionsLogsChannelId(nextSuggestionsLogsChannelId);
+        setSuggestionsPanelLayout(nextSuggestionsPanelLayout);
+        setSuggestionsSuggestionLayout(nextSuggestionsSuggestionLayout);
+      }
+      if (!shouldPreserveLocalAntiLinkDraft) {
+        setAntiLinkEnabled(nextAntiLinkEnabled);
+        setAntiLinkLogChannelId(nextAntiLinkLogChannelId);
+        setAntiLinkEnforcementAction(nextAntiLinkEnforcementAction);
+        setAntiLinkTimeoutMinutes(nextAntiLinkTimeoutMinutes);
+        setAntiLinkIgnoredRoleIds(nextAntiLinkIgnoredRoleIds);
+        setAntiLinkIgnoredChannelIds(nextAntiLinkIgnoredChannelIds);
+        setAntiLinkBlockExternalLinks(nextAntiLinkBlockExternalLinks);
+        setAntiLinkBlockDiscordInvites(nextAntiLinkBlockDiscordInvites);
+        setAntiLinkBlockObfuscatedLinks(nextAntiLinkBlockObfuscatedLinks);
+      }
+      if (!shouldPreserveLocalAutoRoleDraft) {
+        setAutoRoleEnabled(nextAutoRoleEnabled);
+        setAutoRoleRoleIds(nextAutoRoleRoleIds);
+        setAutoRoleAssignmentDelayMinutes(nextAutoRoleAssignmentDelayMinutes);
+        setAutoRoleSyncExistingMembers(false);
+        setAutoRoleSyncStatus(nextAutoRoleSyncStatus);
+        setAutoRoleSyncRequestedAt(nextAutoRoleSyncRequestedAt);
+        setAutoRoleSyncStartedAt(nextAutoRoleSyncStartedAt);
+        setAutoRoleSyncCompletedAt(nextAutoRoleSyncCompletedAt);
+        setAutoRoleSyncError(nextAutoRoleSyncError);
+      }
+      if (!shouldPreserveLocalSalesDraft) {
+        setSalesEnabled(nextSalesEnabled);
+        setSalesCartsCategoryId(nextSalesCartsCategoryId);
+        setSalesPaymentApprovedLogChannelId(nextSalesPaymentApprovedLogChannelId);
+        setSalesPaymentPendingLogChannelId(nextSalesPaymentPendingLogChannelId);
+        setSalesPaymentRejectedLogChannelId(nextSalesPaymentRejectedLogChannelId);
+        setSalesReceiptCompanyName(nextSalesReceiptCompanyName);
+        setSalesReceiptCompanyDocument(nextSalesReceiptCompanyDocument);
+        setSalesReceiptSupportText(nextSalesReceiptSupportText);
+      }
+      if (!shouldPreserveLocalTicketDraft) {
+        setRefundLimitDays(nextRefundLimitDays);
+        setRefundRules(nextRefundRules);
+        setRefundAutoProcessEnabled(nextRefundAutoProcessEnabled);
+        setRefundManualApprovalRequired(nextRefundManualApprovalRequired);
+        setRefundApprovalChannelId(nextRefundApprovalChannelId);
+        setRefundApproverRoleIds(nextRefundApproverRoleIds);
+        setRefundSuccessMessage(nextRefundSuccessMessage);
+        setRefundErrorMessage(nextRefundErrorMessage);
+      }
+      if (!shouldPreserveLocalSecurityLogsDraft) {
+        setSecurityLogsDraft(nextSecurityLogsDraft);
+      }
+      if (!shouldPreserveLocalTicketDraft) {
+        setSavedSettingsDraft(
+          normalizeServerSettingsDraft({
+            enabled: nextTicketEnabled,
+            menuChannelId: nextMenuChannelId,
+            ticketsCategoryId: nextTicketsCategoryId,
+            logsCreatedChannelId: nextLogsCreatedChannelId,
+            logsClosedChannelId: nextLogsClosedChannelId,
+            panelLayout: nextPanelLayout,
+            adminRoleId: nextAdminRoleId,
+            claimRoleIds: nextClaimRoleIds,
+            closeRoleIds: nextCloseRoleIds,
+            notifyRoleIds: nextNotifyRoleIds,
+            aiRules: nextAiRules,
+            aiCompanyName: nextAiCompanyName,
+            aiCompanyBio: nextAiCompanyBio,
+            aiTone: nextAiTone,
+            aiEnabled: nextAiEnabled,
+            refundLimitDays: nextRefundLimitDays,
+            refundRules: nextRefundRules,
+            refundAutoProcessEnabled: nextRefundAutoProcessEnabled,
+            refundManualApprovalRequired: nextRefundManualApprovalRequired,
+            refundApprovalChannelId: nextRefundApprovalChannelId,
+            refundApproverRoleIds: nextRefundApproverRoleIds,
+            refundSuccessMessage: nextRefundSuccessMessage,
+            refundErrorMessage: nextRefundErrorMessage,
+          }),
+        );
+      }
+      if (!shouldPreserveLocalWelcomeDraft) {
+        setSavedWelcomeSettingsDraft(
+          normalizeWelcomeSettingsDraft({
+            enabled: nextWelcomeEnabled,
+            entryPublicChannelId: nextEntryPublicChannelId,
+            entryLogChannelId: nextEntryLogChannelId,
+            exitPublicChannelId: nextExitPublicChannelId,
+            exitLogChannelId: nextExitLogChannelId,
+            entryPublicLayout: nextEntryPublicLayout,
+            entryLogLayout: nextEntryLogLayout,
+            exitPublicLayout: nextExitPublicLayout,
+            exitLogLayout: nextExitLogLayout,
+            entryPublicThumbnailMode: nextEntryPublicThumbnailMode,
+            entryLogThumbnailMode: nextEntryLogThumbnailMode,
+            exitPublicThumbnailMode: nextExitPublicThumbnailMode,
+            exitLogThumbnailMode: nextExitLogThumbnailMode,
+          }),
+        );
+      }
+      if (!shouldPreserveLocalCaptchaDraft) {
+        setSavedCaptchaSettingsDraft(
+          normalizeCaptchaSettingsDraft({
+            enabled: nextCaptchaEnabled,
+            panelChannelId: nextCaptchaPanelChannelId,
+            logsChannelId: nextCaptchaLogsChannelId,
+            verifiedRoleIds: nextCaptchaVerifiedRoleIds,
+            bypassRoleIds: nextCaptchaBypassRoleIds,
+            panelLayout: nextCaptchaPanelLayout,
+            challengeTitle: nextCaptchaChallengeTitle,
+            challengeDescription: nextCaptchaChallengeDescription,
+            maxAttempts: nextCaptchaMaxAttempts,
+            timeoutSeconds: nextCaptchaTimeoutSeconds,
+            kickOnFail: nextCaptchaKickOnFail,
+            successMessage: nextCaptchaSuccessMessage,
+          }),
+        );
+      }
+      if (!shouldPreserveLocalSuggestionDraft) {
+        setSavedSuggestionSettingsDraft(
+          normalizeSuggestionSettingsDraft({
+            enabled: nextSuggestionsEnabled,
+            panelChannelId: nextSuggestionsPanelChannelId,
+            publishChannelId: nextSuggestionsPublishChannelId,
+            logsChannelId: nextSuggestionsLogsChannelId,
+            panelLayout: nextSuggestionsPanelLayout,
+            suggestionLayout: nextSuggestionsSuggestionLayout,
+          }),
+        );
+      }
+      if (!shouldPreserveLocalAntiLinkDraft) {
+        setSavedAntiLinkSettingsDraft(
+          normalizeAntiLinkSettingsDraft({
+            enabled: nextAntiLinkEnabled,
+            logChannelId: nextAntiLinkLogChannelId,
+            enforcementAction: nextAntiLinkEnforcementAction,
+            timeoutMinutes: nextAntiLinkTimeoutMinutes,
+            ignoredRoleIds: nextAntiLinkIgnoredRoleIds,
+            ignoredChannelIds: nextAntiLinkIgnoredChannelIds,
+            blockExternalLinks: nextAntiLinkBlockExternalLinks,
+            blockDiscordInvites: nextAntiLinkBlockDiscordInvites,
+            blockObfuscatedLinks: nextAntiLinkBlockObfuscatedLinks,
+          }),
+        );
+      }
+      if (!shouldPreserveLocalAutoRoleDraft) {
+        setSavedAutoRoleSettingsDraft(
+          normalizeAutoRoleSettingsDraft({
+            enabled: nextAutoRoleEnabled,
+            roleIds: nextAutoRoleRoleIds,
+            assignmentDelayMinutes: nextAutoRoleAssignmentDelayMinutes,
+          }),
+        );
+      }
+      if (!shouldPreserveLocalSalesDraft) {
+        setSavedSalesSettingsDraft(
+          normalizeSalesSettingsDraft({
+            enabled: nextSalesEnabled,
+            cartsCategoryId: nextSalesCartsCategoryId,
+            paymentApprovedLogChannelId: nextSalesPaymentApprovedLogChannelId,
+            paymentPendingLogChannelId: nextSalesPaymentPendingLogChannelId,
+            paymentRejectedLogChannelId: nextSalesPaymentRejectedLogChannelId,
+            receiptCompanyName: nextSalesReceiptCompanyName,
+            receiptCompanyDocument: nextSalesReceiptCompanyDocument,
+            receiptSupportText: nextSalesReceiptSupportText,
+          }),
+        );
+      }
+      if (!shouldPreserveLocalSecurityLogsDraft) {
+        setSavedSecurityLogsDraft(nextSecurityLogsDraft);
+      }
       setDashboardPermissions(payload.dashboardPermissions);
       
       if (onPermissionsChange) {
@@ -3498,6 +3595,7 @@ export function ServerSettingsEditor({
     const controller = new AbortController();
 
     async function loadSettings() {
+      const fetchEpoch = getServerDashboardSettingsFetchEpoch(guildId);
       const cachedPayload = readCachedServerDashboardSettings(guildId);
 
       if (cachedPayload) {
@@ -3517,6 +3615,9 @@ export function ServerSettingsEditor({
         });
 
         if (!mounted) return;
+        if (getServerDashboardSettingsFetchEpoch(guildId) !== fetchEpoch) {
+          return;
+        }
         applyDashboardSettingsPayload(payload);
         markDashboardSnapshotLoaded();
         setErrorMessage(null);
@@ -4477,9 +4578,6 @@ export function ServerSettingsEditor({
       refundErrorMessage,
     ],
   );
-  currentTicketDraftRef.current = currentSettingsDraft;
-  savedTicketDraftRef.current = savedSettingsDraft;
-
   const currentWelcomeDraft = useMemo(
     () =>
       normalizeWelcomeSettingsDraft({
@@ -4572,11 +4670,14 @@ export function ServerSettingsEditor({
         timeoutMinutes: antiLinkTimeoutValue,
         ignoredRoleIds: antiLinkIgnoredRoleIds,
         ignoredChannelIds: antiLinkIgnoredChannelIds,
-        blockExternalLinks: ANTILINK_DEFAULT_DETECTION.blockExternalLinks,
-        blockDiscordInvites: ANTILINK_DEFAULT_DETECTION.blockDiscordInvites,
-        blockObfuscatedLinks: ANTILINK_DEFAULT_DETECTION.blockObfuscatedLinks,
+        blockExternalLinks: antiLinkBlockExternalLinks,
+        blockDiscordInvites: antiLinkBlockDiscordInvites,
+        blockObfuscatedLinks: antiLinkBlockObfuscatedLinks,
       }),
     [
+      antiLinkBlockDiscordInvites,
+      antiLinkBlockExternalLinks,
+      antiLinkBlockObfuscatedLinks,
       antiLinkEnabled,
       antiLinkEnforcementAction,
       antiLinkIgnoredChannelIds,
@@ -4621,6 +4722,23 @@ export function ServerSettingsEditor({
     () => normalizeSecurityLogsSettingsDraft(securityLogsDraft),
     [securityLogsDraft],
   );
+
+  currentTicketDraftRef.current = currentSettingsDraft;
+  savedTicketDraftRef.current = savedSettingsDraft;
+  currentWelcomeDraftRef.current = currentWelcomeDraft;
+  savedWelcomeDraftRef.current = savedWelcomeSettingsDraft;
+  currentCaptchaDraftRef.current = currentCaptchaDraft;
+  savedCaptchaDraftRef.current = savedCaptchaSettingsDraft;
+  currentSuggestionDraftRef.current = currentSuggestionDraft;
+  savedSuggestionDraftRef.current = savedSuggestionSettingsDraft;
+  currentAntiLinkDraftRef.current = currentAntiLinkDraft;
+  savedAntiLinkDraftRef.current = savedAntiLinkSettingsDraft;
+  currentAutoRoleDraftRef.current = currentAutoRoleDraft;
+  savedAutoRoleDraftRef.current = savedAutoRoleSettingsDraft;
+  currentSalesDraftRef.current = currentSalesDraft;
+  savedSalesDraftRef.current = savedSalesSettingsDraft;
+  currentSecurityLogsDraftRef.current = currentSecurityLogsDraft;
+  savedSecurityLogsDraftRef.current = savedSecurityLogsDraft;
 
   const hasLoadedTicketDraft = !isLoading && savedSettingsDraft !== null;
   const hasLoadedWelcomeDraft = !isLoading && savedWelcomeSettingsDraft !== null;
@@ -4973,14 +5091,6 @@ export function ServerSettingsEditor({
       onUnsavedChangesChange(hasUnsavedChanges);
     }
   }, [hasUnsavedChanges, onUnsavedChangesChange]);
-
-  useEffect(() => {
-    return () => {
-      if (typeof onUnsavedChangesChange === "function") {
-        onUnsavedChangesChange(false);
-      }
-    };
-  }, [onUnsavedChangesChange]);
 
   useEffect(() => {
     if (!navigationBlockSignal) return;
@@ -5908,6 +6018,8 @@ export function ServerSettingsEditor({
     setIsSaving(true);
     setErrorMessage(null);
     setSuccessMessage(null);
+    let dashboardCachePatch: Parameters<typeof patchCachedServerDashboardSettings>[1] | null =
+      null;
     try {
       if (isAutoRoleSection) {
         const response = await fetch("/api/auth/me/guilds/autorole-settings", {
@@ -5946,6 +6058,17 @@ export function ServerSettingsEditor({
 
         setAutoRoleSyncExistingMembers(false);
         setSavedAutoRoleSettingsDraft(currentAutoRoleDraft);
+        if (payload.settings) {
+          dashboardCachePatch = {
+            autoRoleSettings: {
+              ...payload.settings,
+              updatedAt:
+                typeof payload.settings.updatedAt === "string"
+                  ? payload.settings.updatedAt
+                  : new Date().toISOString(),
+            },
+          };
+        }
       } else if (isAntiLinkSection) {
         const response = await fetch("/api/auth/me/guilds/antilink-settings", {
           method: "POST",
@@ -5972,6 +6095,17 @@ export function ServerSettingsEditor({
         }
 
         setSavedAntiLinkSettingsDraft(currentAntiLinkDraft);
+        if (payload.settings) {
+          dashboardCachePatch = {
+            antiLinkSettings: {
+              ...payload.settings,
+              updatedAt:
+                typeof payload.settings.updatedAt === "string"
+                  ? payload.settings.updatedAt
+                  : new Date().toISOString(),
+            },
+          };
+        }
       } else if (isSecurityLogsSection) {
         const response = await fetch(
           "/api/auth/me/guilds/security-logs-settings",
@@ -5997,6 +6131,17 @@ export function ServerSettingsEditor({
         }
 
         setSavedSecurityLogsDraft(currentSecurityLogsDraft);
+        if (payload.settings) {
+          dashboardCachePatch = {
+            securityLogsSettings: {
+              ...payload.settings,
+              updatedAt:
+                typeof payload.settings.updatedAt === "string"
+                  ? payload.settings.updatedAt
+                  : new Date().toISOString(),
+            },
+          };
+        }
       } else if (isSalesSettingsSection) {
         const response = await fetch("/api/auth/me/guilds/sales-settings", {
           method: "POST",
@@ -6068,6 +6213,17 @@ export function ServerSettingsEditor({
         setSalesReceiptCompanyDocument(nextSalesDraft.receiptCompanyDocument);
         setSalesReceiptSupportText(nextSalesDraft.receiptSupportText);
         setSavedSalesSettingsDraft(nextSalesDraft);
+        if (payload.settings) {
+          dashboardCachePatch = {
+            salesSettings: {
+              ...payload.settings,
+              updatedAt:
+                typeof payload.settings.updatedAt === "string"
+                  ? payload.settings.updatedAt
+                  : new Date().toISOString(),
+            },
+          };
+        }
       } else if (isWelcomeSection) {
         const response = await fetch("/api/auth/me/guilds/welcome-settings", {
           method: "POST",
@@ -6096,6 +6252,17 @@ export function ServerSettingsEditor({
         }
 
         setSavedWelcomeSettingsDraft(currentWelcomeDraft);
+        if (payload.settings) {
+          dashboardCachePatch = {
+            welcomeSettings: {
+              ...payload.settings,
+              updatedAt:
+                typeof payload.settings.updatedAt === "string"
+                  ? payload.settings.updatedAt
+                  : new Date().toISOString(),
+            },
+          };
+        }
       } else if (isCaptchaSection) {
         const legacyFields = deriveLegacyTicketPanelFields(captchaPanelLayout);
         const response = await fetch("/api/auth/me/guilds/captcha-settings", {
@@ -6180,6 +6347,38 @@ export function ServerSettingsEditor({
         setCaptchaKickOnFail(nextCaptchaDraft.kickOnFail);
         setCaptchaSuccessMessage(nextCaptchaDraft.successMessage);
         setSavedCaptchaSettingsDraft(nextCaptchaDraft);
+        dashboardCachePatch = {
+          captchaSettings: {
+            enabled: nextCaptchaDraft.enabled,
+            panelChannelId: nextCaptchaDraft.panelChannelId,
+            logsChannelId: nextCaptchaDraft.logsChannelId,
+            verifiedRoleIds: nextCaptchaDraft.verifiedRoleIds,
+            bypassRoleIds: nextCaptchaDraft.bypassRoleIds,
+            panelLayout: nextCaptchaDraft.panelLayout,
+            panelTitle:
+              typeof payload.settings?.panelTitle === "string"
+                ? payload.settings.panelTitle
+                : "",
+            panelDescription:
+              typeof payload.settings?.panelDescription === "string"
+                ? payload.settings.panelDescription
+                : "",
+            panelButtonLabel:
+              typeof payload.settings?.panelButtonLabel === "string"
+                ? payload.settings.panelButtonLabel
+                : "",
+            challengeTitle: nextCaptchaDraft.challengeTitle,
+            challengeDescription: nextCaptchaDraft.challengeDescription,
+            maxAttempts: nextCaptchaDraft.maxAttempts,
+            timeoutSeconds: nextCaptchaDraft.timeoutSeconds,
+            kickOnFail: nextCaptchaDraft.kickOnFail,
+            successMessage: nextCaptchaDraft.successMessage,
+            updatedAt:
+              typeof payload.settings?.updatedAt === "string"
+                ? payload.settings.updatedAt
+                : new Date().toISOString(),
+          },
+        };
       } else if (isSuggestionsSection) {
         const legacyFields = deriveLegacyTicketPanelFields(suggestionsPanelLayout);
         const response = await fetch("/api/auth/me/guilds/suggestions-settings", {
@@ -6236,6 +6435,32 @@ export function ServerSettingsEditor({
         setSuggestionsPanelLayout(nextSuggestionDraft.panelLayout);
         setSuggestionsSuggestionLayout(nextSuggestionDraft.suggestionLayout);
         setSavedSuggestionSettingsDraft(nextSuggestionDraft);
+        dashboardCachePatch = {
+          suggestionsSettings: {
+            enabled: nextSuggestionDraft.enabled,
+            panelChannelId: nextSuggestionDraft.panelChannelId,
+            publishChannelId: nextSuggestionDraft.publishChannelId,
+            logsChannelId: nextSuggestionDraft.logsChannelId,
+            panelLayout: nextSuggestionDraft.panelLayout,
+            panelTitle:
+              typeof payload.settings?.panelTitle === "string"
+                ? payload.settings.panelTitle
+                : "",
+            panelDescription:
+              typeof payload.settings?.panelDescription === "string"
+                ? payload.settings.panelDescription
+                : "",
+            panelButtonLabel:
+              typeof payload.settings?.panelButtonLabel === "string"
+                ? payload.settings.panelButtonLabel
+                : "",
+            suggestionLayout: nextSuggestionDraft.suggestionLayout,
+            updatedAt:
+              typeof payload.settings?.updatedAt === "string"
+                ? payload.settings.updatedAt
+                : new Date().toISOString(),
+          },
+        };
       } else {
         const shouldPersistTicketStaff =
           ticketEnabled ||
@@ -6250,37 +6475,57 @@ export function ServerSettingsEditor({
         const normalizedRefundManualApprovalRequired = normalizedRefundAutoProcessEnabled
           ? false
           : refundManualApprovalRequired !== false;
-        const ticketRes = await fetch("/api/auth/me/guilds/ticket-settings", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            guildId,
-            enabled: ticketEnabled,
-            menuChannelId,
-            ticketsCategoryId,
-            logsCreatedChannelId,
-            logsClosedChannelId,
-            panelLayout,
-            aiRules,
-            aiEnabled,
-            aiCompanyName,
-            aiCompanyBio,
-            aiTone,
-            refundSettings: {
-              refundLimitDays,
-              refundRules,
-              refundAutoProcessEnabled: normalizedRefundAutoProcessEnabled,
-              refundManualApprovalRequired: normalizedRefundManualApprovalRequired,
-              refundApprovalChannelId,
-              refundApproverRoleIds,
-              refundSuccessMessage,
-              refundErrorMessage,
-            },
-            panelTitle: legacyFields.panelTitle,
-            panelDescription: legacyFields.panelDescription,
-            panelButtonLabel: legacyFields.panelButtonLabel,
-          }),
+        const ticketRequestBody = JSON.stringify({
+          guildId,
+          enabled: ticketEnabled,
+          menuChannelId,
+          ticketsCategoryId,
+          logsCreatedChannelId,
+          logsClosedChannelId,
+          panelLayout,
+          aiRules,
+          aiEnabled,
+          aiCompanyName,
+          aiCompanyBio,
+          aiTone,
+          refundSettings: {
+            refundLimitDays,
+            refundRules,
+            refundAutoProcessEnabled: normalizedRefundAutoProcessEnabled,
+            refundManualApprovalRequired: normalizedRefundManualApprovalRequired,
+            refundApprovalChannelId,
+            refundApproverRoleIds,
+            refundSuccessMessage,
+            refundErrorMessage,
+          },
+          panelTitle: legacyFields.panelTitle,
+          panelDescription: legacyFields.panelDescription,
+          panelButtonLabel: legacyFields.panelButtonLabel,
         });
+        const staffRequestBody = shouldPersistTicketStaff
+          ? JSON.stringify({
+              guildId,
+              adminRoleId,
+              claimRoleIds,
+              closeRoleIds,
+              notifyRoleIds,
+            })
+          : null;
+
+        const [ticketRes, staffRes] = await Promise.all([
+          fetch("/api/auth/me/guilds/ticket-settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: ticketRequestBody,
+          }),
+          staffRequestBody
+            ? fetch("/api/auth/me/guilds/ticket-staff-settings", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: staffRequestBody,
+              })
+            : Promise.resolve(null),
+        ]);
 
         const ticket = await ticketRes.json();
         if (!ticketRes.ok || !ticket.ok) {
@@ -6294,19 +6539,7 @@ export function ServerSettingsEditor({
           notifyRoleIds: savedSettingsDraft?.notifyRoleIds ?? [],
         };
 
-        if (shouldPersistTicketStaff) {
-          const staffRes = await fetch("/api/auth/me/guilds/ticket-staff-settings", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              guildId,
-              adminRoleId,
-              claimRoleIds,
-              closeRoleIds,
-              notifyRoleIds,
-            }),
-          });
-
+        if (staffRes) {
           const staff = await staffRes.json();
           if (!staffRes.ok || !staff.ok) {
             throw new Error(staff.message || "Falha ao salvar staff.");
@@ -6418,9 +6651,33 @@ export function ServerSettingsEditor({
         setRefundSuccessMessage(nextSavedTicketDraft.refundSuccessMessage);
         setRefundErrorMessage(nextSavedTicketDraft.refundErrorMessage);
         setSavedSettingsDraft(nextSavedTicketDraft);
+        dashboardCachePatch = {
+          ticketSettings: ticket.settings
+            ? {
+                ...ticket.settings,
+                updatedAt:
+                  typeof ticket.settings.updatedAt === "string"
+                    ? ticket.settings.updatedAt
+                    : new Date().toISOString(),
+              }
+            : undefined,
+          staffSettings: shouldPersistTicketStaff
+            ? {
+                adminRoleId: nextStaffSettings.adminRoleId,
+                claimRoleIds: nextStaffSettings.claimRoleIds,
+                closeRoleIds: nextStaffSettings.closeRoleIds,
+                notifyRoleIds: nextStaffSettings.notifyRoleIds,
+                updatedAt: new Date().toISOString(),
+              }
+            : undefined,
+        };
       }
 
-      invalidateCachedServerDashboardSettings(guildId);
+      if (dashboardCachePatch) {
+        patchCachedServerDashboardSettings(guildId, dashboardCachePatch);
+      } else {
+        markServerDashboardSettingsSaved(guildId);
+      }
       setSuccessMessage("Configuracoes salvas com sucesso.");
       setShowSaveSuccessBar(true);
     } catch (error) {
@@ -7010,7 +7267,7 @@ export function ServerSettingsEditor({
                     Atualizando dados do servidor...
                   </div>
                 ) : null}
-                <div className={`space-y-[18px] ${showFloatingSaveBar && !isUnauthorizedForSection ? "pb-[112px]" : ""} ${isLoading ? "pointer-events-none opacity-[0.78]" : ""}`}>
+                <div className={`space-y-[18px] ${showFloatingSaveBar && !isUnauthorizedForSection ? "pb-[112px]" : ""} ${shouldShowBlockingSkeleton ? "pointer-events-none opacity-[0.78]" : ""}`}>
                   {isUnauthorizedForSection ? (
                     <PermissionDeniedState 
                       onAction={() => {

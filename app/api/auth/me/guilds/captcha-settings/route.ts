@@ -365,19 +365,19 @@ export async function POST(request: Request) {
             flowSecureDto.array(flowSecureDto.record()),
           ),
           panelTitle: flowSecureDto.optional(
-            flowSecureDto.string({ allowEmpty: true, maxLength: 80 }),
+            flowSecureDto.legacyPanelPlainText({ maxLength: 80 }),
           ),
           panelDescription: flowSecureDto.optional(
-            flowSecureDto.string({ allowEmpty: true, maxLength: 400 }),
+            flowSecureDto.legacyPanelPlainText({ maxLength: 400 }),
           ),
           panelButtonLabel: flowSecureDto.optional(
-            flowSecureDto.string({ allowEmpty: true, maxLength: 40 }),
+            flowSecureDto.legacyPanelPlainText({ maxLength: 40 }),
           ),
           challengeTitle: flowSecureDto.optional(
-            flowSecureDto.string({ allowEmpty: true, maxLength: 80 }),
+            flowSecureDto.legacyPanelPlainText({ maxLength: 80 }),
           ),
           challengeDescription: flowSecureDto.optional(
-            flowSecureDto.string({ allowEmpty: true, maxLength: 400 }),
+            flowSecureDto.legacyPanelPlainText({ maxLength: 400 }),
           ),
           maxAttempts: flowSecureDto.optional(flowSecureDto.number()),
           timeoutSeconds: flowSecureDto.optional(flowSecureDto.number()),

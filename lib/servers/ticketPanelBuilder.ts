@@ -162,6 +162,18 @@ function stripMarkdownDecorators(value: string) {
     .trim();
 }
 
+export function sanitizeLegacyPanelPlainText(value: string) {
+  return value
+    .replace(/<a?:\w+:\d+>/g, " ")
+    .replace(/<@!?\d+>/g, " ")
+    .replace(/<@&\d+>/g, " ")
+    .replace(/<#\d+>/g, " ")
+    .replace(/<t:\d+(?::[tTdD])?>/g, " ")
+    .replace(/[<>]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function buildMarkdownFromLegacy(legacy?: Partial<LegacyTicketPanelFields>) {
   const title = trimText(legacy?.panelTitle) || DEFAULT_TICKET_PANEL_TITLE;
   const description =
@@ -1375,13 +1387,22 @@ export function deriveLegacyTicketPanelFields(
     .filter(Boolean);
 
   const firstMeaningfulLine = markdownLines[0] || "";
-  const titleCandidate = stripMarkdownDecorators(firstMeaningfulLine);
+  const titleCandidate = sanitizeLegacyPanelPlainText(
+    stripMarkdownDecorators(firstMeaningfulLine),
+  );
   const remainingLines = markdownLines.slice(1);
-  const descriptionCandidate = remainingLines
-    .map((line) => stripMarkdownDecorators(line))
-    .filter(Boolean)
-    .join("\n")
-    .trim();
+  const descriptionCandidate = sanitizeLegacyPanelPlainText(
+    remainingLines
+      .map((line) => stripMarkdownDecorators(line))
+      .filter(Boolean)
+      .join("\n")
+      .trim(),
+  );
+  const buttonLabelCandidate = sanitizeLegacyPanelPlainText(
+    (resolvedButtonLike && "placeholder" in resolvedButtonLike
+      ? resolvedButtonLike.placeholder
+      : resolvedButtonLike?.label) || "",
+  );
 
   return {
     panelTitle: clampText(titleCandidate || DEFAULT_TICKET_PANEL_TITLE, 80),
@@ -1394,9 +1415,7 @@ export function deriveLegacyTicketPanelFields(
       ),
     panelButtonLabel:
       clampText(
-        (resolvedButtonLike && "placeholder" in resolvedButtonLike
-          ? resolvedButtonLike.placeholder
-          : resolvedButtonLike?.label) || DEFAULT_TICKET_PANEL_BUTTON_LABEL,
+        buttonLabelCandidate || DEFAULT_TICKET_PANEL_BUTTON_LABEL,
         40,
       ),
   };

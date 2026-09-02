@@ -345,13 +345,13 @@ export async function POST(request: Request) {
             flowSecureDto.array(flowSecureDto.record()),
           ),
           panelTitle: flowSecureDto.optional(
-            flowSecureDto.string({ allowEmpty: true, maxLength: 80 }),
+            flowSecureDto.legacyPanelPlainText({ maxLength: 80 }),
           ),
           panelDescription: flowSecureDto.optional(
-            flowSecureDto.string({ allowEmpty: true, maxLength: 400 }),
+            flowSecureDto.legacyPanelPlainText({ maxLength: 400 }),
           ),
           panelButtonLabel: flowSecureDto.optional(
-            flowSecureDto.string({ allowEmpty: true, maxLength: 40 }),
+            flowSecureDto.legacyPanelPlainText({ maxLength: 40 }),
           ),
           suggestionLayout: flowSecureDto.optional(
             flowSecureDto.array(flowSecureDto.record()),
