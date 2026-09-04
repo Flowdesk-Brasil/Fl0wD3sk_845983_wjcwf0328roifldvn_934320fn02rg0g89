@@ -742,6 +742,58 @@ function renderPlansSkeleton() {
   );
 }
 
+function renderBatePontoRankingSkeleton() {
+  return (
+    <div className="space-y-[14px]">
+      <div className="rounded-[24px] border border-[#161616] bg-[#0B0B0B] px-[22px] py-[22px]">
+        <SkeletonBar width={120} height={12} className="rounded-full bg-[#111111]" />
+        <SkeletonBar width={280} height={22} className="mt-[12px] rounded-full" />
+        <SkeletonBar width="72%" height={14} className="mt-[12px] rounded-full bg-[#111111]" />
+      </div>
+      <div className="rounded-[24px] border border-[#161616] bg-[#0A0A0A] px-[24px] py-[28px]">
+        <div className="flex items-end justify-center gap-[16px]">
+          {[132, 188, 116].map((height, index) => (
+            <div key={index} className="flex w-full max-w-[220px] flex-col items-center">
+              <SkeletonBar width={72} height={72} className="rounded-full bg-[#151515]" />
+              <SkeletonBar width={120} height={14} className="mt-[12px] rounded-full bg-[#141414]" />
+              <SkeletonBar
+                width="100%"
+                height={height}
+                className="mt-[16px] rounded-t-[24px] bg-[#121212]"
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function renderBatePontoHistorySkeleton() {
+  return (
+    <div className="space-y-[14px]">
+      <div className="rounded-[24px] border border-[#161616] bg-[#0B0B0B] px-[22px] py-[22px]">
+        <SkeletonBar width={120} height={12} className="rounded-full bg-[#111111]" />
+        <SkeletonBar width={240} height={22} className="mt-[12px] rounded-full" />
+        <SkeletonBar width="100%" height={48} className="mt-[18px] rounded-[14px] bg-[#0A0A0A]" />
+      </div>
+      <div className="overflow-hidden rounded-[24px] border border-[#161616] bg-[#0A0A0A]">
+        {Array.from({ length: 6 }, (_, index) => (
+          <div key={index} className="border-b border-[#141414] px-[18px] py-[14px] last:border-b-0">
+            <div className="flex items-center gap-[12px]">
+              <SkeletonBar width={36} height={36} className="rounded-full bg-[#151515]" />
+              <div className="min-w-0 flex-1 space-y-[8px]">
+                <SkeletonBar width="38%" height={14} className="rounded-full bg-[#171717]" />
+                <SkeletonBar width="24%" height={11} className="rounded-full bg-[#121212]" />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function resolveSkeletonContent(
   tab: ServerSettingsSkeletonTab,
   settingsSection: ServerSettingsSkeletonSection,
@@ -792,6 +844,14 @@ function resolveSkeletonContent(
 
   if (settingsSection === "security_logs") {
     return renderSecurityLogsSkeleton();
+  }
+
+  if (settingsSection === "bate_ponto_ranking") {
+    return renderBatePontoRankingSkeleton();
+  }
+
+  if (settingsSection === "bate_ponto_history") {
+    return renderBatePontoHistorySkeleton();
   }
 
   return renderSettingsOverviewSkeleton();

@@ -45,6 +45,8 @@ import { getEffectiveDashboardPermissions } from "@/lib/teams/userTeams";
 const GUILD_CATEGORY = 4;
 const GUILD_TEXT = 0;
 const GUILD_ANNOUNCEMENT = 5;
+const GUILD_VOICE = 2;
+const GUILD_STAGE = 13;
 const DASHBOARD_SETTINGS_CACHE_TTL_MS = 15_000;
 const TICKET_SETTINGS_SELECT_BASE =
   "enabled, menu_channel_id, tickets_category_id, logs_created_channel_id, logs_closed_channel_id, panel_layout, panel_title, panel_description, panel_button_label, ai_rules, updated_at";
@@ -755,6 +757,7 @@ function buildBatePontoPayload(input: {
   snapshot: Record<string, unknown> | null;
   textSet: Set<string>;
   roleSet: Set<string>;
+  voiceSet: Set<string>;
   updatedAt: string | null;
 }) {
   if (!input.record && !input.snapshot) {
@@ -847,6 +850,14 @@ function buildBatePontoPayload(input: {
         Number(input.snapshot?.maxOpenHours ?? input.record?.max_open_hours ?? 12) ||
           12,
       ),
+    ),
+    requireVoiceChannel:
+      input.snapshot?.requireVoiceChannel === true ||
+      input.record?.require_voice_channel === true,
+    requiredVoiceChannelIds: filterKnownIds(
+      input.snapshot?.requiredVoiceChannelIds ??
+        input.record?.required_voice_channel_ids,
+      input.voiceSet,
     ),
     updatedAt: input.updatedAt,
   };
@@ -1291,7 +1302,7 @@ export async function GET(request: Request) {
       supabase
         .from("guild_bate_ponto_settings")
         .select(
-          "enabled, panel_channel_id, logs_channel_id, panel_layout, panel_title, panel_description, panel_button_label, log_layout, allowed_role_ids, hour_bank_enabled, daily_target_minutes, timezone, auto_finish_open_sessions, max_open_hours, updated_at",
+          "enabled, panel_channel_id, logs_channel_id, panel_layout, panel_title, panel_description, panel_button_label, log_layout, allowed_role_ids, hour_bank_enabled, daily_target_minutes, timezone, auto_finish_open_sessions, max_open_hours, require_voice_channel, required_voice_channel_ids, updated_at",
         )
         .eq("guild_id", guildId)
         .maybeSingle(),
@@ -1424,6 +1435,20 @@ export async function GET(request: Request) {
         })),
     );
     const textSet = new Set(textChannels.map((channel) => channel.id));
+    const voiceChannels = sortChannels(
+      rawChannels
+        .filter(
+          (channel) =>
+            channel.type === GUILD_VOICE || channel.type === GUILD_STAGE,
+        )
+        .map((channel) => ({
+          id: channel.id,
+          name: channel.name,
+          type: channel.type,
+          position: channel.position || 0,
+        })),
+    );
+    const voiceSet = new Set(voiceChannels.map((channel) => channel.id));
 
     const roles = sortRoles(
       (rawRoles || [])
@@ -1517,6 +1542,7 @@ export async function GET(request: Request) {
         ),
         textSet,
         roleSet,
+        voiceSet,
         updatedAt:
           secureSnapshots.get("bate_ponto_settings")?.updatedAt ||
           (typeof batePontoResult.data?.updated_at === "string"

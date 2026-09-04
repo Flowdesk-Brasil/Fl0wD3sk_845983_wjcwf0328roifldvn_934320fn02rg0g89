@@ -5,6 +5,7 @@ import {
   mapDiscordCategoryOptions,
   mapDiscordRoleOptions,
   mapDiscordTextChannelOptions,
+  mapDiscordVoiceChannelOptions,
   mergeDiscordResourceOptions,
   type DiscordResourceSelectOption,
 } from "@/lib/servers/discordGuildResourceOptions";
@@ -17,6 +18,7 @@ type GuildChannelsApiResponse = {
   message?: string;
   channels?: {
     text: Array<{ id: string; name: string }>;
+    voice?: Array<{ id: string; name: string }>;
     categories: Array<{ id: string; name: string }>;
   };
 };
@@ -29,6 +31,7 @@ type GuildRolesApiResponse = {
 
 type ResourceSnapshot = {
   textChannelOptions: DiscordResourceSelectOption[];
+  voiceChannelOptions: DiscordResourceSelectOption[];
   categoryOptions: DiscordResourceSelectOption[];
   roleOptions: DiscordResourceSelectOption[];
 };
@@ -61,6 +64,9 @@ export function useLiveDiscordGuildResources(
   const [textChannelOptions, setTextChannelOptions] = useState<
     DiscordResourceSelectOption[]
   >([]);
+  const [voiceChannelOptions, setVoiceChannelOptions] = useState<
+    DiscordResourceSelectOption[]
+  >([]);
   const [categoryOptions, setCategoryOptions] = useState<
     DiscordResourceSelectOption[]
   >([]);
@@ -76,6 +82,7 @@ export function useLiveDiscordGuildResources(
 
   const applyResourceSnapshot = useCallback((snapshot: ResourceSnapshot) => {
     setTextChannelOptions(snapshot.textChannelOptions);
+    setVoiceChannelOptions(snapshot.voiceChannelOptions);
     setCategoryOptions(snapshot.categoryOptions);
     setRoleOptions(snapshot.roleOptions);
   }, []);
@@ -143,7 +150,14 @@ export function useLiveDiscordGuildResources(
                   () => "Categoria indisponivel",
                 );
 
+                const nextVoice = mergeDiscordResourceOptions(
+                  mapDiscordVoiceChannelOptions(payload.channels.voice || []),
+                  uniqueIds(preserve.channelIds),
+                  () => "Call indisponivel",
+                );
+
                 setTextChannelOptions(nextText);
+                setVoiceChannelOptions(nextVoice);
                 setCategoryOptions(nextCategories);
               })(),
             );
@@ -210,6 +224,7 @@ export function useLiveDiscordGuildResources(
       setHasLoadedResourcesOnce(false);
       applyResourceSnapshot({
         textChannelOptions: [],
+        voiceChannelOptions: [],
         categoryOptions: [],
         roleOptions: [],
       });
@@ -248,6 +263,7 @@ export function useLiveDiscordGuildResources(
 
   return {
     textChannelOptions,
+    voiceChannelOptions,
     categoryOptions,
     roleOptions,
     isRefreshingResources,

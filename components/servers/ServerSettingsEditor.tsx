@@ -284,6 +284,8 @@ type BatePontoSettingsDraft = {
   timezone: string;
   autoFinishOpenSessions: boolean;
   maxOpenHours: number;
+  requireVoiceChannel: boolean;
+  requiredVoiceChannelIds: string[];
 };
 
 type AntiLinkEnforcementAction = "delete_only" | "timeout" | "kick" | "ban";
@@ -927,6 +929,8 @@ function normalizeBatePontoSettingsDraft(
         : "America/Sao_Paulo",
     autoFinishOpenSessions: draft.autoFinishOpenSessions === true,
     maxOpenHours: Math.max(1, Math.min(24, Number(draft.maxOpenHours || 12) || 12)),
+    requireVoiceChannel: draft.requireVoiceChannel === true,
+    requiredVoiceChannelIds: normalizeDraftIds(draft.requiredVoiceChannelIds),
   };
 }
 
@@ -2338,6 +2342,10 @@ export function ServerSettingsEditor({
   const [batePontoAutoFinishOpenSessions, setBatePontoAutoFinishOpenSessions] =
     useState(false);
   const [batePontoMaxOpenHours, setBatePontoMaxOpenHours] = useState(12);
+  const [batePontoRequireVoiceChannel, setBatePontoRequireVoiceChannel] =
+    useState(false);
+  const [batePontoRequiredVoiceChannelIds, setBatePontoRequiredVoiceChannelIds] =
+    useState<string[]>([]);
   const [welcomeEnabled, setWelcomeEnabled] = useState(false);
   const [entryPublicChannelId, setEntryPublicChannelId] = useState<string | null>(null);
   const [entryLogChannelId, setEntryLogChannelId] = useState<string | null>(null);
@@ -2479,6 +2487,7 @@ export function ServerSettingsEditor({
         ...captchaVerifiedRoleIds,
         ...captchaBypassRoleIds,
         ...batePontoAllowedRoleIds,
+        ...batePontoRequiredVoiceChannelIds,
         ...antiLinkIgnoredRoleIds,
         ...autoRoleRoleIds,
       ],
@@ -2513,6 +2522,7 @@ export function ServerSettingsEditor({
     suggestionsPanelChannelId,
     suggestionsPublishChannelId,
     batePontoAllowedRoleIds,
+    batePontoRequiredVoiceChannelIds,
     batePontoLogsChannelId,
     batePontoPanelChannelId,
     securityLogsDraft,
@@ -2521,6 +2531,7 @@ export function ServerSettingsEditor({
 
   const {
     textChannelOptions,
+    voiceChannelOptions,
     categoryOptions,
     roleOptions,
     applyResourceSnapshot,
@@ -3043,6 +3054,15 @@ export function ServerSettingsEditor({
             Math.min(24, Number(payload.batePontoSettings?.maxOpenHours ?? 12) || 12),
           )
         : 12;
+      const nextBatePontoRequireVoiceChannel =
+        hasBatePontoSettings && payload.batePontoSettings?.requireVoiceChannel === true;
+      const nextBatePontoRequiredVoiceChannelIds = hasBatePontoSettings
+        ? Array.isArray(payload.batePontoSettings?.requiredVoiceChannelIds)
+          ? payload.batePontoSettings.requiredVoiceChannelIds.filter((id) =>
+              textSet.has(id),
+            )
+          : []
+        : [];
 
       const nextAdminRoleId =
         payload.staffSettings?.adminRoleId &&
@@ -3370,6 +3390,8 @@ export function ServerSettingsEditor({
         setBatePontoTimezone(nextBatePontoTimezone);
         setBatePontoAutoFinishOpenSessions(nextBatePontoAutoFinishOpenSessions);
         setBatePontoMaxOpenHours(nextBatePontoMaxOpenHours);
+        setBatePontoRequireVoiceChannel(nextBatePontoRequireVoiceChannel);
+        setBatePontoRequiredVoiceChannelIds(nextBatePontoRequiredVoiceChannelIds);
       }
       if (!shouldPreserveLocalAntiLinkDraft) {
         setAntiLinkEnabled(nextAntiLinkEnabled);
@@ -3508,6 +3530,8 @@ export function ServerSettingsEditor({
             timezone: nextBatePontoTimezone,
             autoFinishOpenSessions: nextBatePontoAutoFinishOpenSessions,
             maxOpenHours: nextBatePontoMaxOpenHours,
+            requireVoiceChannel: nextBatePontoRequireVoiceChannel,
+            requiredVoiceChannelIds: nextBatePontoRequiredVoiceChannelIds,
           }),
         );
       }
@@ -4896,6 +4920,8 @@ export function ServerSettingsEditor({
         timezone: batePontoTimezone,
         autoFinishOpenSessions: batePontoAutoFinishOpenSessions,
         maxOpenHours: batePontoMaxOpenHours,
+        requireVoiceChannel: batePontoRequireVoiceChannel,
+        requiredVoiceChannelIds: batePontoRequiredVoiceChannelIds,
       }),
     [
       batePontoAllowedRoleIds,
@@ -4908,6 +4934,8 @@ export function ServerSettingsEditor({
       batePontoMaxOpenHours,
       batePontoPanelChannelId,
       batePontoPanelLayout,
+      batePontoRequireVoiceChannel,
+      batePontoRequiredVoiceChannelIds,
       batePontoTimezone,
     ],
   );
@@ -6277,6 +6305,12 @@ export function ServerSettingsEditor({
         savedBatePontoSettingsDraft.autoFinishOpenSessions,
       );
       setBatePontoMaxOpenHours(savedBatePontoSettingsDraft.maxOpenHours);
+      setBatePontoRequireVoiceChannel(
+        savedBatePontoSettingsDraft.requireVoiceChannel,
+      );
+      setBatePontoRequiredVoiceChannelIds(
+        savedBatePontoSettingsDraft.requiredVoiceChannelIds,
+      );
     } else if (savedSettingsDraft) {
       setTicketEnabled(savedSettingsDraft.enabled);
       setMenuChannelId(savedSettingsDraft.menuChannelId);
@@ -6799,6 +6833,8 @@ export function ServerSettingsEditor({
             timezone: batePontoTimezone,
             autoFinishOpenSessions: batePontoAutoFinishOpenSessions,
             maxOpenHours: batePontoMaxOpenHours,
+            requireVoiceChannel: batePontoRequireVoiceChannel,
+            requiredVoiceChannelIds: batePontoRequiredVoiceChannelIds,
           }),
         });
 
@@ -6840,6 +6876,14 @@ export function ServerSettingsEditor({
           autoFinishOpenSessions:
             payload.settings?.autoFinishOpenSessions === true,
           maxOpenHours: Number(payload.settings?.maxOpenHours ?? batePontoMaxOpenHours),
+          requireVoiceChannel: payload.settings?.requireVoiceChannel === true,
+          requiredVoiceChannelIds: Array.isArray(
+            payload.settings?.requiredVoiceChannelIds,
+          )
+            ? payload.settings.requiredVoiceChannelIds.filter(
+                (id: unknown): id is string => typeof id === "string",
+              )
+            : [],
         });
 
         setBatePontoEnabled(nextBatePontoDraft.enabled);
@@ -6853,6 +6897,10 @@ export function ServerSettingsEditor({
         setBatePontoTimezone(nextBatePontoDraft.timezone);
         setBatePontoAutoFinishOpenSessions(nextBatePontoDraft.autoFinishOpenSessions);
         setBatePontoMaxOpenHours(nextBatePontoDraft.maxOpenHours);
+        setBatePontoRequireVoiceChannel(nextBatePontoDraft.requireVoiceChannel);
+        setBatePontoRequiredVoiceChannelIds(
+          nextBatePontoDraft.requiredVoiceChannelIds,
+        );
         setSavedBatePontoSettingsDraft(nextBatePontoDraft);
         if (
           settingsSection === "bate_ponto_overview" &&
@@ -6886,6 +6934,8 @@ export function ServerSettingsEditor({
             timezone: nextBatePontoDraft.timezone,
             autoFinishOpenSessions: nextBatePontoDraft.autoFinishOpenSessions,
             maxOpenHours: nextBatePontoDraft.maxOpenHours,
+            requireVoiceChannel: nextBatePontoDraft.requireVoiceChannel,
+            requiredVoiceChannelIds: nextBatePontoDraft.requiredVoiceChannelIds,
             updatedAt:
               typeof payload.settings?.updatedAt === "string"
                 ? payload.settings.updatedAt
@@ -7145,6 +7195,8 @@ export function ServerSettingsEditor({
     batePontoLogLayout,
     batePontoLogsChannelId,
     batePontoMaxOpenHours,
+    batePontoRequireVoiceChannel,
+    batePontoRequiredVoiceChannelIds,
     batePontoPanelChannelId,
     batePontoPanelLayout,
     batePontoTimezone,
@@ -8666,6 +8718,49 @@ export function ServerSettingsEditor({
                           <div className="xl:col-span-2">
                             <ConfigStepMultiSelect label="Cargos autorizados" placeholder="Selecione os cargos" options={roleOptions} values={batePontoAllowedRoleIds} onChange={setBatePontoAllowedRoleIds} disabled={batePontoControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
                           </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
+                          <div>
+                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
+                              Requisito de call
+                            </p>
+                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
+                              Exigir call para iniciar ponto
+                            </h3>
+                            <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                              Quando ativo, o membro precisa estar em uma call do servidor para iniciar o ponto. Se nenhuma call especifica for selecionada abaixo, qualquer call do servidor serve.
+                            </p>
+                          </div>
+
+                          <DashboardInlineSwitch
+                            checked={batePontoRequireVoiceChannel}
+                            onChange={() => {
+                              if (isSaving || settingsReadOnly || batePontoControlsDisabled) return;
+                              setBatePontoRequireVoiceChannel((current) => !current);
+                            }}
+                            disabled={isSaving || settingsReadOnly || batePontoControlsDisabled}
+                            ariaLabel="Exigir call para iniciar ponto"
+                          />
+                        </div>
+
+                        <div className="mt-[18px]">
+                          <ConfigStepMultiSelect
+                            label="Calls autorizadas (opcional)"
+                            placeholder="Qualquer call do servidor"
+                            options={voiceChannelOptions}
+                            values={batePontoRequiredVoiceChannelIds}
+                            onChange={setBatePontoRequiredVoiceChannelIds}
+                            disabled={
+                              batePontoControlsDisabled || !batePontoRequireVoiceChannel
+                            }
+                            controlHeightPx={serverSettingsControlHeight}
+                          />
+                          <p className="mt-[8px] text-[12px] leading-[1.5] text-[#686868]">
+                            Deixe vazio para aceitar qualquer canal de voz. Selecione calls especificas para restringir onde o ponto pode ser iniciado.
+                          </p>
                         </div>
                       </div>
 

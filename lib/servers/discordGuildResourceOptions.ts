@@ -18,6 +18,15 @@ type RawRole = {
   name: string;
 };
 
+export function mapDiscordVoiceChannelOptions(
+  channels: RawTextChannel[],
+): DiscordResourceSelectOption[] {
+  return channels.map((channel) => ({
+    id: channel.id,
+    name: channel.name,
+  }));
+}
+
 export function mapDiscordTextChannelOptions(
   channels: RawTextChannel[],
 ): DiscordResourceSelectOption[] {

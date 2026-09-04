@@ -10,6 +10,10 @@ import {
 } from "@/lib/teams/userTeams";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { applyNoStoreHeaders } from "@/lib/security/http";
+import {
+  attachBatePontoMemberProfile,
+  enrichBatePontoMemberProfiles,
+} from "@/lib/servers/batePontoMemberSummaries";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 type SessionRow = {
@@ -29,6 +33,9 @@ type RankingEntry = {
   sessionCount: number;
   hourBankSeconds: number;
   rank: number;
+  displayName?: string;
+  mentionLabel?: string;
+  avatarUrl?: string | null;
 };
 
 function isMissingBatePontoTableError(error: {
@@ -170,7 +177,7 @@ export async function GET(request: Request) {
     ).toISOString();
     const supabase = getSupabaseAdminClientOrThrow();
 
-    const [finishedResult, activeResult, hourBankResult] = await Promise.all([
+    const [finishedResult, openResult, hourBankResult] = await Promise.all([
       supabase
         .from("guild_bate_ponto_sessions")
         .select("user_id, worked_seconds, status")
@@ -181,7 +188,7 @@ export async function GET(request: Request) {
         .from("guild_bate_ponto_sessions")
         .select("user_id, worked_seconds, status")
         .eq("guild_id", guildId)
-        .eq("status", "active")
+        .in("status", ["active", "on_break"])
         .gte("started_at", since),
       supabase
         .from("guild_bate_ponto_hour_bank")
@@ -189,7 +196,7 @@ export async function GET(request: Request) {
         .eq("guild_id", guildId),
     ]);
 
-    for (const result of [finishedResult, activeResult, hourBankResult]) {
+    for (const result of [finishedResult, openResult, hourBankResult]) {
       if (result.error && !isMissingBatePontoTableError(result.error)) {
         throw new Error(result.error.message);
       }
@@ -197,7 +204,7 @@ export async function GET(request: Request) {
 
     const sessions = [
       ...((finishedResult.data || []) as SessionRow[]),
-      ...((activeResult.data || []) as SessionRow[]),
+      ...((openResult.data || []) as SessionRow[]),
     ];
 
     const hourBankByUser = new Map<string, number>();
@@ -206,12 +213,19 @@ export async function GET(request: Request) {
     }
 
     const ranking = buildRankingEntries(sessions, hourBankByUser);
+    const profileMap = await enrichBatePontoMemberProfiles(
+      guildId,
+      ranking.slice(0, 50).map((entry) => entry.userId),
+    );
+    const enrichedRanking = ranking.map((entry) =>
+      attachBatePontoMemberProfile(entry, profileMap),
+    );
 
     return applyNoStoreHeaders(
       NextResponse.json({
         ok: true,
         periodDays,
-        ranking,
+        ranking: enrichedRanking,
       }),
     );
   } catch (error) {

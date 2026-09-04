@@ -12,6 +12,8 @@ import { applyNoStoreHeaders } from "@/lib/security/http";
 const GUILD_CATEGORY = 4;
 const GUILD_TEXT = 0;
 const GUILD_ANNOUNCEMENT = 5;
+const GUILD_VOICE = 2;
+const GUILD_STAGE = 13;
 
 type ChannelOption = {
   id: string;
@@ -123,6 +125,20 @@ export async function GET(request: Request) {
         })),
     );
 
+    const voiceChannels = sortChannels(
+      rawChannels
+        .filter(
+          (channel) =>
+            channel.type === GUILD_VOICE || channel.type === GUILD_STAGE,
+        )
+        .map((channel) => ({
+          id: channel.id,
+          name: channel.name,
+          type: channel.type,
+          position: channel.position || 0,
+        })),
+    );
+
     return applyNoStoreHeaders(
       NextResponse.json({
       ok: true,
@@ -132,6 +148,7 @@ export async function GET(request: Request) {
       },
       channels: {
         text: textChannels,
+        voice: voiceChannels,
         categories,
       },
       }),

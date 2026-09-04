@@ -10,6 +10,10 @@ import {
 } from "@/lib/teams/userTeams";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { applyNoStoreHeaders } from "@/lib/security/http";
+import {
+  attachBatePontoMemberProfile,
+  enrichBatePontoMemberProfiles,
+} from "@/lib/servers/batePontoMemberSummaries";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 const BATE_PONTO_HISTORY_SELECT =
@@ -26,6 +30,9 @@ type BatePontoHistoryEvent = {
   hourBankDeltaSeconds: number;
   note: string | null;
   createdAt: string;
+  displayName?: string;
+  mentionLabel?: string;
+  avatarUrl?: string | null;
   session: {
     id: number;
     status: string;
@@ -216,11 +223,18 @@ export async function GET(request: Request) {
     const events = (result.data || []).map((row) =>
       normalizeHistoryRow(row as Record<string, unknown>),
     );
+    const profileMap = await enrichBatePontoMemberProfiles(
+      guildId,
+      events.map((event) => event.userId),
+    );
+    const enrichedEvents = events.map((event) =>
+      attachBatePontoMemberProfile(event, profileMap),
+    );
 
     return applyNoStoreHeaders(
       NextResponse.json({
         ok: true,
-        events,
+        events: enrichedEvents,
         limit,
         offset,
       }),

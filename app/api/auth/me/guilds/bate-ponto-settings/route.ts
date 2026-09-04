@@ -51,7 +51,10 @@ import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 
 const GUILD_TEXT = 0;
 const GUILD_ANNOUNCEMENT = 5;
+const GUILD_VOICE = 2;
+const GUILD_STAGE = 13;
 const MAX_ALLOWED_ROLES = 20;
+const MAX_REQUIRED_VOICE_CHANNELS = 20;
 const DEFAULT_TIMEZONE = "America/Sao_Paulo";
 
 const OPTIONAL_DISCORD_SNOWFLAKE_TEXT = flowSecureDto.string({
@@ -63,7 +66,7 @@ const OPTIONAL_DISCORD_SNOWFLAKE_TEXT = flowSecureDto.string({
 });
 
 const BATE_PONTO_SETTINGS_SELECT =
-  "guild_id, enabled, panel_channel_id, logs_channel_id, panel_layout, panel_title, panel_description, panel_button_label, panel_message_id, log_layout, allowed_role_ids, hour_bank_enabled, daily_target_minutes, timezone, auto_finish_open_sessions, max_open_hours, updated_at";
+  "guild_id, enabled, panel_channel_id, logs_channel_id, panel_layout, panel_title, panel_description, panel_button_label, panel_message_id, log_layout, allowed_role_ids, hour_bank_enabled, daily_target_minutes, timezone, auto_finish_open_sessions, max_open_hours, require_voice_channel, required_voice_channel_ids, updated_at";
 
 type BatePontoSecureSnapshot = {
   enabled: boolean;
@@ -80,6 +83,8 @@ type BatePontoSecureSnapshot = {
   timezone: string;
   autoFinishOpenSessions: boolean;
   maxOpenHours: number;
+  requireVoiceChannel: boolean;
+  requiredVoiceChannelIds: string[];
 };
 
 function getTrimmedId(value: unknown) {
@@ -141,6 +146,11 @@ function normalizeBatePontoSecureSnapshot(
       1,
       Math.min(24, Number(record.maxOpenHours ?? 12) || 12),
     ),
+    requireVoiceChannel: record.requireVoiceChannel === true,
+    requiredVoiceChannelIds: normalizeRoleIds(
+      record.requiredVoiceChannelIds,
+      MAX_REQUIRED_VOICE_CHANNELS,
+    ),
   };
 }
 
@@ -163,8 +173,14 @@ function buildBatePontoResponse(
     timezone: snapshot.timezone,
     autoFinishOpenSessions: snapshot.autoFinishOpenSessions,
     maxOpenHours: snapshot.maxOpenHours,
+    requireVoiceChannel: snapshot.requireVoiceChannel,
+    requiredVoiceChannelIds: snapshot.requiredVoiceChannelIds,
     updatedAt,
   };
+}
+
+function isValidVoiceChannelType(type?: number) {
+  return type === GUILD_VOICE || type === GUILD_STAGE;
 }
 
 function isValidTextChannelType(type?: number) {
@@ -317,6 +333,8 @@ export async function GET(request: Request) {
       timezone: record.timezone,
       autoFinishOpenSessions: record.auto_finish_open_sessions,
       maxOpenHours: record.max_open_hours,
+      requireVoiceChannel: record.require_voice_channel,
+      requiredVoiceChannelIds: record.required_voice_channel_ids,
     });
 
     if (canonicalSnapshot && secureSnapshotResult?.recovery?.unreadable) {
@@ -403,6 +421,10 @@ export async function POST(request: Request) {
           ),
           autoFinishOpenSessions: flowSecureDto.optional(flowSecureDto.boolean()),
           maxOpenHours: flowSecureDto.optional(flowSecureDto.number()),
+          requireVoiceChannel: flowSecureDto.optional(flowSecureDto.boolean()),
+          requiredVoiceChannelIds: flowSecureDto.optional(
+            flowSecureDto.array(flowSecureDto.string({ maxLength: 20 })),
+          ),
         },
         { rejectUnknown: true },
       ) as Record<string, unknown>;
@@ -432,6 +454,8 @@ export async function POST(request: Request) {
       timezone: body.timezone,
       autoFinishOpenSessions: body.autoFinishOpenSessions,
       maxOpenHours: body.maxOpenHours,
+      requireVoiceChannel: body.requireVoiceChannel,
+      requiredVoiceChannelIds: body.requiredVoiceChannelIds,
     });
 
     if (!snapshot || !isGuildId(guildId)) {
@@ -550,6 +574,24 @@ export async function POST(request: Request) {
           ),
         );
       }
+
+      const invalidVoiceChannel = snapshot.requiredVoiceChannelIds.some(
+        (channelId) => {
+          const channel = channelsById.get(channelId);
+          return !channel || !isValidVoiceChannelType(channel.type);
+        },
+      );
+      if (invalidVoiceChannel) {
+        return applyNoStoreHeaders(
+          NextResponse.json(
+            {
+              ok: false,
+              message: "Um ou mais canais de voz selecionados sao invalidos.",
+            },
+            { status: 400 },
+          ),
+        );
+      }
     }
 
     const supabase = getSupabaseAdminClientOrThrow();
@@ -572,6 +614,8 @@ export async function POST(request: Request) {
           timezone: snapshot.timezone,
           auto_finish_open_sessions: snapshot.autoFinishOpenSessions,
           max_open_hours: snapshot.maxOpenHours,
+          require_voice_channel: snapshot.requireVoiceChannel,
+          required_voice_channel_ids: snapshot.requiredVoiceChannelIds,
           configured_by_user_id: authUserId,
         },
         { onConflict: "guild_id" },
