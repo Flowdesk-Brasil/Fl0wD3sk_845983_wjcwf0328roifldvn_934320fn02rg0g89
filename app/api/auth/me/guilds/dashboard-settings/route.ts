@@ -23,6 +23,8 @@ import {
 import {
   DEFAULT_SUGGESTION_PUBLISHED_FOOTER,
   DEFAULT_SUGGESTION_PUBLISHED_HEADER,
+  normalizeBatePontoLogLayout,
+  normalizeBatePontoPanelLayout,
   normalizeCaptchaPanelLayout,
   normalizeSuggestionPanelLayout,
   normalizeSuggestionPublishedLayout,
@@ -748,6 +750,108 @@ function buildSuggestionsPayload(input: {
   };
 }
 
+function buildBatePontoPayload(input: {
+  record: Record<string, unknown> | null;
+  snapshot: Record<string, unknown> | null;
+  textSet: Set<string>;
+  roleSet: Set<string>;
+  updatedAt: string | null;
+}) {
+  if (!input.record && !input.snapshot) {
+    return null;
+  }
+
+  const panelTitle =
+    typeof input.snapshot?.panelTitle === "string"
+      ? input.snapshot.panelTitle
+      : typeof input.record?.panel_title === "string"
+        ? input.record.panel_title
+        : "";
+  const panelDescription =
+    typeof input.snapshot?.panelDescription === "string"
+      ? input.snapshot.panelDescription
+      : typeof input.record?.panel_description === "string"
+        ? input.record.panel_description
+        : "";
+  const panelButtonLabel =
+    typeof input.snapshot?.panelButtonLabel === "string"
+      ? input.snapshot.panelButtonLabel
+      : typeof input.record?.panel_button_label === "string"
+        ? input.record.panel_button_label
+        : "";
+
+  return {
+    enabled:
+      typeof input.snapshot?.enabled === "boolean"
+        ? input.snapshot.enabled
+        : input.record?.enabled === true,
+    panelChannelId:
+      typeof input.snapshot?.panelChannelId === "string" &&
+      (input.textSet.size === 0 || input.textSet.has(input.snapshot.panelChannelId))
+        ? input.snapshot.panelChannelId
+        : typeof input.record?.panel_channel_id === "string" &&
+            (input.textSet.size === 0 || input.textSet.has(input.record.panel_channel_id))
+          ? input.record.panel_channel_id
+          : null,
+    logsChannelId:
+      typeof input.snapshot?.logsChannelId === "string" &&
+      (input.textSet.size === 0 || input.textSet.has(input.snapshot.logsChannelId))
+        ? input.snapshot.logsChannelId
+        : typeof input.record?.logs_channel_id === "string" &&
+            (input.textSet.size === 0 || input.textSet.has(input.record.logs_channel_id))
+          ? input.record.logs_channel_id
+          : null,
+    panelLayout: normalizeBatePontoPanelLayout(
+      input.snapshot?.panelLayout ?? input.record?.panel_layout,
+      { panelTitle, panelDescription, panelButtonLabel },
+    ),
+    panelTitle,
+    panelDescription,
+    panelButtonLabel,
+    logLayout: normalizeBatePontoLogLayout(
+      input.snapshot?.logLayout ?? input.record?.log_layout,
+    ),
+    allowedRoleIds: filterKnownIds(
+      input.snapshot?.allowedRoleIds ?? input.record?.allowed_role_ids,
+      input.roleSet,
+    ),
+    hourBankEnabled:
+      typeof input.snapshot?.hourBankEnabled === "boolean"
+        ? input.snapshot.hourBankEnabled
+        : input.record?.hour_bank_enabled !== false,
+    dailyTargetMinutes: Math.max(
+      60,
+      Math.min(
+        1440,
+        Number(
+          input.snapshot?.dailyTargetMinutes ??
+            input.record?.daily_target_minutes ??
+            480,
+        ) || 480,
+      ),
+    ),
+    timezone:
+      typeof input.snapshot?.timezone === "string" &&
+      input.snapshot.timezone.trim()
+        ? input.snapshot.timezone.trim()
+        : typeof input.record?.timezone === "string" && input.record.timezone.trim()
+          ? input.record.timezone.trim()
+          : "America/Sao_Paulo",
+    autoFinishOpenSessions:
+      input.snapshot?.autoFinishOpenSessions === true ||
+      input.record?.auto_finish_open_sessions === true,
+    maxOpenHours: Math.max(
+      1,
+      Math.min(
+        24,
+        Number(input.snapshot?.maxOpenHours ?? input.record?.max_open_hours ?? 12) ||
+          12,
+      ),
+    ),
+    updatedAt: input.updatedAt,
+  };
+}
+
 function buildAntiLinkPayload(input: {
   record: Record<string, unknown> | null;
   snapshot: Record<string, unknown> | null;
@@ -1141,6 +1245,7 @@ export async function GET(request: Request) {
       welcomeResult,
       captchaResult,
       suggestionsResult,
+      batePontoResult,
       antiLinkResult,
       autoRoleResult,
       salesResult,
@@ -1184,6 +1289,13 @@ export async function GET(request: Request) {
         .eq("guild_id", guildId)
         .maybeSingle(),
       supabase
+        .from("guild_bate_ponto_settings")
+        .select(
+          "enabled, panel_channel_id, logs_channel_id, panel_layout, panel_title, panel_description, panel_button_label, log_layout, allowed_role_ids, hour_bank_enabled, daily_target_minutes, timezone, auto_finish_open_sessions, max_open_hours, updated_at",
+        )
+        .eq("guild_id", guildId)
+        .maybeSingle(),
+      supabase
         .from("guild_antilink_settings")
         .select(
           "enabled, log_channel_id, enforcement_action, timeout_minutes, ignored_role_ids, ignored_channel_ids, block_external_links, block_discord_invites, block_obfuscated_links, updated_at",
@@ -1219,6 +1331,7 @@ export async function GET(request: Request) {
           "welcome_settings",
           "captcha_settings",
           "suggestions_settings",
+          "bate_ponto_settings",
           "antilink_settings",
           "autorole_settings",
           "sales_settings",
@@ -1255,6 +1368,19 @@ export async function GET(request: Request) {
           : "";
       if (code !== "42P01" && !message.includes("guild_suggestions_settings")) {
         throw new Error(suggestionsResult.error.message);
+      }
+    }
+    if (batePontoResult.error) {
+      const code =
+        typeof batePontoResult.error.code === "string"
+          ? batePontoResult.error.code
+          : "";
+      const message =
+        typeof batePontoResult.error.message === "string"
+          ? batePontoResult.error.message.toLowerCase()
+          : "";
+      if (code !== "42P01" && !message.includes("guild_bate_ponto_settings")) {
+        throw new Error(batePontoResult.error.message);
       }
     }
     if (antiLinkResult.error) throw new Error(antiLinkResult.error.message);
@@ -1384,6 +1510,19 @@ export async function GET(request: Request) {
             ? suggestionsResult.data.updated_at
             : null),
       }),
+      batePontoSettings: buildBatePontoPayload({
+        record: toRecordOrNull(batePontoResult.data),
+        snapshot: toRecordOrNull(
+          secureSnapshots.get("bate_ponto_settings")?.payload,
+        ),
+        textSet,
+        roleSet,
+        updatedAt:
+          secureSnapshots.get("bate_ponto_settings")?.updatedAt ||
+          (typeof batePontoResult.data?.updated_at === "string"
+            ? batePontoResult.data.updated_at
+            : null),
+      }),
       antiLinkSettings: buildAntiLinkPayload({
         record: toRecordOrNull(antiLinkResult.data),
         snapshot: toRecordOrNull(
@@ -1449,6 +1588,7 @@ export async function GET(request: Request) {
       { moduleKey: "welcome_settings", settings: payload.welcomeSettings },
       { moduleKey: "captcha_settings", settings: payload.captchaSettings },
       { moduleKey: "suggestions_settings", settings: payload.suggestionsSettings },
+      { moduleKey: "bate_ponto_settings", settings: payload.batePontoSettings },
       { moduleKey: "antilink_settings", settings: payload.antiLinkSettings },
       { moduleKey: "autorole_settings", settings: payload.autoRoleSettings },
       { moduleKey: "sales_settings", settings: payload.salesSettings },

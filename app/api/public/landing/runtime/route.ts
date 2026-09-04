@@ -16,6 +16,7 @@ export async function GET(request: Request) {
   const authenticatedUser = sessionResult.session
     ? {
         username: sessionResult.session.user.username,
+        discordUserId: sessionResult.session.user.discord_user_id,
         avatarUrl: resolveAuthUserAvatarUrl(sessionResult.session.user),
         href: "/dashboard",
       }

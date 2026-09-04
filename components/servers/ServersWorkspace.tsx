@@ -14,6 +14,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleHelp,
+  Clock,
   Cog,
   Copy as CopyLucide,
   Ellipsis,
@@ -136,6 +137,10 @@ type ServerSettingsSection =
   | "captcha_message"
   | "suggestions_overview"
   | "suggestions_message"
+  | "bate_ponto_overview"
+  | "bate_ponto_message"
+  | "bate_ponto_ranking"
+  | "bate_ponto_history"
   | "security_antilink"
   | "security_autorole"
   | "security_logs"
@@ -187,7 +192,7 @@ const FILTER_LABEL: Record<FilterOption, string> = {
 
 type SidebarItem = {
   label: string;
-  kind: "overview" | "settings" | "sales" | "ticket" | "entry_exit" | "captcha" | "suggestions" | "security" | "dashboard";
+  kind: "overview" | "settings" | "sales" | "ticket" | "entry_exit" | "captcha" | "suggestions" | "bate_ponto" | "security" | "dashboard";
   tab?: ServerEditorTab | null;
   settingsSection?: ServerSettingsSection | null;
   disabled?: boolean;
@@ -419,6 +424,71 @@ const SUGGESTIONS_SIDEBAR_ITEMS: SidebarItem[] = [
   },
 ];
 
+const BATE_PONTO_SIDEBAR_ITEMS: SidebarItem[] = [
+  {
+    label: "Configurando Ponto",
+    kind: "bate_ponto",
+    tab: "settings",
+    settingsSection: "bate_ponto_overview",
+    requiredPermission: "server_manage_bate_ponto_overview",
+    searchAliases: [
+      "bate ponto",
+      "ponto",
+      "expediente",
+      "config",
+      "canais",
+      "logs",
+      "painel",
+      "banco de horas",
+    ],
+  },
+  {
+    label: "Configurando Mensagem",
+    kind: "bate_ponto",
+    tab: "settings",
+    settingsSection: "bate_ponto_message",
+    requiredPermission: "server_manage_bate_ponto_message",
+    searchAliases: [
+      "bate ponto",
+      "mensagem",
+      "embed",
+      "painel",
+      "botao",
+      "ponto",
+    ],
+  },
+  {
+    label: "Ranking",
+    kind: "bate_ponto",
+    tab: "settings",
+    settingsSection: "bate_ponto_ranking",
+    requiredPermission: "server_manage_bate_ponto_ranking",
+    searchAliases: [
+      "bate ponto",
+      "ranking",
+      "horas",
+      "podiumio",
+      "top",
+      "expediente",
+    ],
+  },
+  {
+    label: "Historico",
+    kind: "bate_ponto",
+    tab: "settings",
+    settingsSection: "bate_ponto_history",
+    requiredPermission: "server_manage_bate_ponto_history",
+    searchAliases: [
+      "bate ponto",
+      "historico",
+      "eventos",
+      "registros",
+      "acoes",
+      "logs",
+    ],
+  },
+];
+
 const SECURITY_SIDEBAR_ITEMS: SidebarItem[] = [
   {
     label: "AntiLink",
@@ -600,7 +670,7 @@ function parseWorkspaceRoute(pathname: string | null): {
     }
 
     if (
-      /^\/\d{10,25}(?:\/(?:sales\/(?:overview|categories(?:\/create)?|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|captcha\/(?:overview|message)|suggestions\/(?:overview|message)|security\/(?:antilink|autorole|logs))?)?$/.test(
+      /^\/\d{10,25}(?:\/(?:sales\/(?:overview|categories(?:\/create)?|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|captcha\/(?:overview|message)|suggestions\/(?:overview|message)|bate-ponto\/(?:overview|message|ranking|history)|security\/(?:antilink|autorole|logs))?)?$/.test(
         comparablePathname,
       )
     ) {
@@ -712,6 +782,24 @@ function parseWorkspaceRoute(pathname: string | null): {
     };
   }
 
+  const batePontoSectionMatch = normalizedPathname.match(
+    /^\/servers\/(\d{10,25})\/bate-ponto\/(overview|message|ranking|history)\/?$/,
+  );
+  if (batePontoSectionMatch) {
+    return {
+      guildId: batePontoSectionMatch[1],
+      tab: "settings",
+      settingsSection:
+        batePontoSectionMatch[2] === "overview"
+          ? "bate_ponto_overview"
+          : batePontoSectionMatch[2] === "message"
+            ? "bate_ponto_message"
+            : batePontoSectionMatch[2] === "ranking"
+              ? "bate_ponto_ranking"
+              : "bate_ponto_history",
+    };
+  }
+
   const securitySectionMatch = normalizedPathname.match(
     /^\/servers\/(\d{10,25})\/security\/(antilink|autorole|logs)\/?$/,
   );
@@ -758,7 +846,7 @@ function isServersWorkspacePath(pathname: string) {
     return true;
   }
 
-  return /^\/\d{10,25}(?:\/(?:sales\/(?:overview|categories|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|captcha\/(?:overview|message)|suggestions\/(?:overview|message)|security\/(?:antilink|autorole|logs))?)?\/?$/.test(
+  return /^\/\d{10,25}(?:\/(?:sales\/(?:overview|categories|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|captcha\/(?:overview|message)|suggestions\/(?:overview|message)|bate-ponto\/(?:overview|message|ranking|history)|security\/(?:antilink|autorole|logs))?)?\/?$/.test(
     pathname,
   );
 }
@@ -1152,6 +1240,7 @@ function SidebarNavIcon({
     entry_exit: ArrowRightLeft,
     captcha: ShieldCheck,
     suggestions: Lightbulb,
+    bate_ponto: Clock,
     security: Shield,
     sales: ShoppingBag,
     dashboard: ChevronLeft,
@@ -1640,6 +1729,7 @@ export function ServersWorkspace({
   const [isEntryExitSidebarOpen, setIsEntryExitSidebarOpen] = useState(false);
   const [isCaptchaSidebarOpen, setIsCaptchaSidebarOpen] = useState(false);
   const [isSuggestionsSidebarOpen, setIsSuggestionsSidebarOpen] = useState(false);
+  const [isBatePontoSidebarOpen, setIsBatePontoSidebarOpen] = useState(false);
   const [isSecuritySidebarOpen, setIsSecuritySidebarOpen] = useState(false);
   const [currentDashboardPermissions, setCurrentDashboardPermissions] = useState<string[] | "full">([]);
   const [pendingWorkspacePaneKey, setPendingWorkspacePaneKey] = useState<string | null>(null);
@@ -2582,6 +2672,26 @@ export function ServersWorkspace({
       )
       .map((entry) => entry.item);
   }, [isEditingServer, normalizedSidebarQuery]);
+  const filteredBatePontoSidebarItems = useMemo(() => {
+    if (!isEditingServer) return [];
+
+    const items = BATE_PONTO_SIDEBAR_ITEMS;
+
+    if (!normalizedSidebarQuery) return items;
+
+    return items
+      .map((item) => {
+        const haystack = [item.label, ...(item.searchAliases || [])].join(" ");
+        return { item, score: getSearchScore(haystack, normalizedSidebarQuery) };
+      })
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) =>
+        a.score !== b.score
+          ? b.score - a.score
+          : a.item.label.localeCompare(b.item.label, "pt-BR"),
+      )
+      .map((entry) => entry.item);
+  }, [isEditingServer, normalizedSidebarQuery]);
   const filteredSecuritySidebarItems = useMemo(() => {
     if (!isEditingServer) return [];
 
@@ -2643,6 +2753,13 @@ export function ServersWorkspace({
     selectedEditorTabForConfig === "settings" &&
     (selectedSettingsSectionForConfig === "suggestions_overview" ||
       selectedSettingsSectionForConfig === "suggestions_message");
+  const isBatePontoGroupActive =
+    isEditingServer &&
+    selectedEditorTabForConfig === "settings" &&
+    (selectedSettingsSectionForConfig === "bate_ponto_overview" ||
+      selectedSettingsSectionForConfig === "bate_ponto_message" ||
+      selectedSettingsSectionForConfig === "bate_ponto_ranking" ||
+      selectedSettingsSectionForConfig === "bate_ponto_history");
   const isSecurityGroupActive =
     isEditingServer &&
     selectedEditorTabForConfig === "settings" &&
@@ -2657,6 +2774,7 @@ export function ServersWorkspace({
       setIsEntryExitSidebarOpen(true);
       setIsCaptchaSidebarOpen(true);
       setIsSuggestionsSidebarOpen(true);
+      setIsBatePontoSidebarOpen(true);
       setIsSecuritySidebarOpen(true);
       return;
     }
@@ -2697,6 +2815,12 @@ export function ServersWorkspace({
       case "suggestions_overview":
       case "suggestions_message":
         setIsSuggestionsSidebarOpen(true);
+        break;
+      case "bate_ponto_overview":
+      case "bate_ponto_message":
+      case "bate_ponto_ranking":
+      case "bate_ponto_history":
+        setIsBatePontoSidebarOpen(true);
         break;
       case "security_antilink":
       case "security_autorole":
@@ -2838,6 +2962,18 @@ export function ServersWorkspace({
     if (settingsSection === "suggestions_overview") {
       return `/servers/${encodedGuildId}/suggestions/overview/`;
     }
+    if (settingsSection === "bate_ponto_message") {
+      return `/servers/${encodedGuildId}/bate-ponto/message/`;
+    }
+    if (settingsSection === "bate_ponto_overview") {
+      return `/servers/${encodedGuildId}/bate-ponto/overview/`;
+    }
+    if (settingsSection === "bate_ponto_ranking") {
+      return `/servers/${encodedGuildId}/bate-ponto/ranking/`;
+    }
+    if (settingsSection === "bate_ponto_history") {
+      return `/servers/${encodedGuildId}/bate-ponto/history/`;
+    }
     if (settingsSection === "security_antilink") {
       return `/servers/${encodedGuildId}/security/antilink/`;
     }
@@ -2970,6 +3106,10 @@ export function ServersWorkspace({
       buildServerConfigUrl(guildId, "settings", "captcha_message"),
       buildServerConfigUrl(guildId, "settings", "suggestions_overview"),
       buildServerConfigUrl(guildId, "settings", "suggestions_message"),
+      buildServerConfigUrl(guildId, "settings", "bate_ponto_overview"),
+      buildServerConfigUrl(guildId, "settings", "bate_ponto_message"),
+      buildServerConfigUrl(guildId, "settings", "bate_ponto_ranking"),
+      buildServerConfigUrl(guildId, "settings", "bate_ponto_history"),
       buildServerConfigUrl(guildId, "settings", "security_antilink"),
       buildServerConfigUrl(guildId, "settings", "security_autorole"),
       buildServerConfigUrl(guildId, "settings", "security_logs"),
@@ -3517,6 +3657,18 @@ export function ServersWorkspace({
     if (section === "suggestions_message") {
       return perms.has("server_manage_suggestions_message");
     }
+    if (section === "bate_ponto_overview") {
+      return perms.has("server_manage_bate_ponto_overview");
+    }
+    if (section === "bate_ponto_message") {
+      return perms.has("server_manage_bate_ponto_message");
+    }
+    if (section === "bate_ponto_ranking") {
+      return perms.has("server_manage_bate_ponto_ranking");
+    }
+    if (section === "bate_ponto_history") {
+      return perms.has("server_manage_bate_ponto_history");
+    }
     if (section === "security_antilink") return perms.has("server_manage_antilink");
     if (section === "security_autorole") return perms.has("server_manage_autorole");
     if (section === "security_logs") return perms.has("server_view_security_logs");
@@ -3818,6 +3970,7 @@ export function ServersWorkspace({
         filteredEntryExitSidebarItems.length ||
         filteredCaptchaSidebarItems.length ||
         filteredSuggestionsSidebarItems.length ||
+        filteredBatePontoSidebarItems.length ||
         filteredSecuritySidebarItems.length ? (
           <>
             {filteredProjectsSidebarItems.length ? (
@@ -4224,6 +4377,86 @@ export function ServersWorkspace({
                 {isSuggestionsSidebarOpen || normalizedSidebarQuery ? (
                   <div className="mt-[6px] space-y-[4px] pl-[12px]">
                     {filteredSuggestionsSidebarItems.map((item) => {
+                      const isDisabled = item.disabled || !selectedServer || !item.tab;
+                      const isActive =
+                        Boolean(
+                          item.tab &&
+                            selectedEditorTabForConfig === item.tab &&
+                            selectedSettingsSectionForConfig === item.settingsSection &&
+                            isEditingServer,
+                        );
+
+                        return (
+                          <button
+                            key={item.label}
+                            type="button"
+                            onMouseEnter={() => prefetchSelectedWorkspaceSections(item.tab)}
+                            onFocus={() => prefetchSelectedWorkspaceSections(item.tab)}
+                            onPointerDown={() => prefetchSelectedWorkspaceSections(item.tab)}
+                            onClick={() => {
+                              if (isDisabled || !selectedServer || !item.tab) return;
+                              handleSidebarSettingsSectionNavigation({
+                              guildId: selectedServer.guildId,
+                              tab: item.tab,
+                              settingsSection: item.settingsSection || "overview",
+                            });
+                          }}
+                          disabled={isDisabled}
+                          className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[10px] text-left transition-all duration-200 ${
+                            isActive
+                              ? "bg-[#1A1A1A] text-[#F0F0F0]"
+                              : isDisabled
+                                ? "text-[#585858]"
+                                : "text-[#AFAFAF] hover:bg-[#101010] hover:text-[#E3E3E3]"
+                          }`}
+                        >
+                          <span className={`inline-flex h-[20px] w-[20px] items-center justify-center ${isActive ? "text-[#F0F0F0]" : isDisabled ? "text-[#4A4A4A]" : "text-[#7F7F7F] group-hover:text-[#DADADA]"}`}>
+                            <SidebarNavIcon kind={item.kind} active={isActive} />
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-[14px] leading-none font-medium tracking-[-0.03em]">
+                            {item.label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {filteredBatePontoSidebarItems.length ? (
+              <div className="mt-[12px]">
+                <button
+                  type="button"
+                  onClick={() => setIsBatePontoSidebarOpen((current) => !current)}
+                  className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-all duration-200 ${
+                    isBatePontoGroupActive
+                      ? "bg-[#1E1E1E] text-[#F0F0F0]"
+                      : isBatePontoSidebarOpen
+                        ? "bg-[#121212] text-[#D6D6D6]"
+                        : "text-[#B5B5B5] hover:bg-[#111111] hover:text-[#E3E3E3]"
+                  }`}
+                >
+                  <span className={`inline-flex h-[22px] w-[22px] items-center justify-center ${isBatePontoGroupActive ? "text-[#F0F0F0]" : isBatePontoSidebarOpen ? "text-[#C7C7C7]" : "text-[#8A8A8A] group-hover:text-[#DADADA]"}`}>
+                    <SidebarNavIcon kind="bate_ponto" active={isBatePontoGroupActive} />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[15px] leading-none font-medium tracking-[-0.03em]">
+                    Bate Ponto
+                  </span>
+                  <span
+                    className={`transition-transform duration-200 ${
+                      isBatePontoSidebarOpen || normalizedSidebarQuery
+                        ? "rotate-180 text-[#C9C9C9]"
+                        : "rotate-0 text-[#6F6F6F] group-hover:text-[#BEBEBE]"
+                    }`}
+                  >
+                    <SidebarDropdownChevronIcon />
+                  </span>
+                </button>
+
+                {isBatePontoSidebarOpen || normalizedSidebarQuery ? (
+                  <div className="mt-[6px] space-y-[4px] pl-[12px]">
+                    {filteredBatePontoSidebarItems.map((item) => {
                       const isDisabled = item.disabled || !selectedServer || !item.tab;
                       const isActive =
                         Boolean(

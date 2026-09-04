@@ -13,6 +13,62 @@ export const DEFAULT_SUGGESTION_PANEL_DESCRIPTION =
   "Compartilhe ideias para melhorar o servidor. Clique abaixo para abrir uma sugestao.";
 export const DEFAULT_SUGGESTION_PANEL_BUTTON_LABEL = "Abrir Sugestao";
 
+export const DEFAULT_BATE_PONTO_PANEL_TITLE = "Bate Ponto";
+export const DEFAULT_BATE_PONTO_PANEL_DESCRIPTION =
+  "Registre entrada, pausa e saida do seu expediente.";
+export const DEFAULT_BATE_PONTO_PANEL_BUTTON_LABEL = "Bater Ponto";
+export const DEFAULT_BATE_PONTO_LOG_TITLE = "{{action}}";
+export const DEFAULT_BATE_PONTO_LOG_DESCRIPTION =
+  "**Usuario:** {{member}} (`{{member_id}}`)\n**Horario:** {{timestamp}}\n**Tempo trabalhado:** {{worked_time}}\n**Tempo em pausa:** {{break_time}}\n**Banco de horas:** {{hour_bank}}";
+
+export const BATE_PONTO_LOG_ACTION_TOKEN = "{{action}}";
+export const BATE_PONTO_LOG_MEMBER_TOKEN = "{{member}}";
+export const BATE_PONTO_LOG_MEMBER_ID_TOKEN = "{{member_id}}";
+export const BATE_PONTO_LOG_TIMESTAMP_TOKEN = "{{timestamp}}";
+export const BATE_PONTO_LOG_WORKED_TIME_TOKEN = "{{worked_time}}";
+export const BATE_PONTO_LOG_BREAK_TIME_TOKEN = "{{break_time}}";
+export const BATE_PONTO_LOG_HOUR_BANK_TOKEN = "{{hour_bank}}";
+export const BATE_PONTO_LOG_SESSION_ID_TOKEN = "{{session_id}}";
+
+export type BatePontoLogPreviewContext = {
+  username: string;
+  memberId: string;
+};
+
+export function resolveBatePontoLogPreviewMarkdown(
+  markdown: string,
+  context?: Partial<BatePontoLogPreviewContext>,
+) {
+  const username = trimText(context?.username) || "usuario";
+  const memberId = trimText(context?.memberId) || "000000000000000000";
+  const memberMention = `<@${memberId}>`;
+  const timestampPreview = new Date().toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  return String(markdown || "")
+    .split(BATE_PONTO_LOG_ACTION_TOKEN)
+    .join("Ponto iniciado")
+    .split(BATE_PONTO_LOG_MEMBER_TOKEN)
+    .join(memberMention)
+    .split(BATE_PONTO_LOG_MEMBER_ID_TOKEN)
+    .join(memberId)
+    .split(BATE_PONTO_LOG_TIMESTAMP_TOKEN)
+    .join(timestampPreview)
+    .split(BATE_PONTO_LOG_WORKED_TIME_TOKEN)
+    .join("0s")
+    .split(BATE_PONTO_LOG_BREAK_TIME_TOKEN)
+    .join("0s")
+    .split(BATE_PONTO_LOG_HOUR_BANK_TOKEN)
+    .join("0")
+    .split(BATE_PONTO_LOG_SESSION_ID_TOKEN)
+    .join("1");
+}
+
 export type TicketPanelComponentType =
   | "content"
   | "container"
@@ -987,6 +1043,112 @@ export function normalizeSuggestionPanelLayout(
   return normalizeTicketPanelLayout(value, resolvedLegacy);
 }
 
+export function createDefaultBatePontoPanelLayout(
+  legacy?: Partial<LegacyTicketPanelFields>,
+): TicketPanelLayout {
+  return createDefaultTicketPanelLayout({
+    panelTitle: trimText(legacy?.panelTitle) || DEFAULT_BATE_PONTO_PANEL_TITLE,
+    panelDescription:
+      trimText(legacy?.panelDescription) || DEFAULT_BATE_PONTO_PANEL_DESCRIPTION,
+    panelButtonLabel:
+      trimText(legacy?.panelButtonLabel) || DEFAULT_BATE_PONTO_PANEL_BUTTON_LABEL,
+  });
+}
+
+function isBatePontoPanelLegacyContent(legacy?: Partial<LegacyTicketPanelFields>) {
+  const title = trimText(legacy?.panelTitle);
+  const description = trimText(legacy?.panelDescription);
+  const buttonLabel = trimText(legacy?.panelButtonLabel);
+
+  const titleMatchesDefault =
+    !title || title === DEFAULT_BATE_PONTO_PANEL_TITLE;
+  const descriptionMatchesDefault =
+    !description || description === DEFAULT_BATE_PONTO_PANEL_DESCRIPTION;
+  const buttonMatchesDefault =
+    !buttonLabel || buttonLabel === DEFAULT_BATE_PONTO_PANEL_BUTTON_LABEL;
+
+  return titleMatchesDefault && descriptionMatchesDefault && buttonMatchesDefault;
+}
+
+export function isUnsetBatePontoPanelLayout(
+  value: unknown,
+  legacyFallback?: Partial<LegacyTicketPanelFields>,
+) {
+  if (value === null || value === undefined) {
+    return true;
+  }
+
+  if (!Array.isArray(value) || value.length === 0) {
+    return isBatePontoPanelLegacyContent(legacyFallback);
+  }
+
+  return false;
+}
+
+export function normalizeBatePontoPanelLayout(
+  value: unknown,
+  legacyFallback?: Partial<LegacyTicketPanelFields>,
+): TicketPanelLayout {
+  const resolvedLegacy = {
+    panelTitle:
+      trimText(legacyFallback?.panelTitle) || DEFAULT_BATE_PONTO_PANEL_TITLE,
+    panelDescription:
+      trimText(legacyFallback?.panelDescription) ||
+      DEFAULT_BATE_PONTO_PANEL_DESCRIPTION,
+    panelButtonLabel:
+      trimText(legacyFallback?.panelButtonLabel) ||
+      DEFAULT_BATE_PONTO_PANEL_BUTTON_LABEL,
+  };
+
+  if (isUnsetBatePontoPanelLayout(value, legacyFallback)) {
+    return createDefaultBatePontoPanelLayout(resolvedLegacy);
+  }
+
+  return normalizeTicketPanelLayout(value, resolvedLegacy);
+}
+
+export function createDefaultBatePontoLogLayout(): TicketPanelLayout {
+  return [
+    {
+      id: createTicketPanelComponentId("container"),
+      type: "container",
+      accentColor: "",
+      children: [
+        {
+          id: createTicketPanelComponentId("content"),
+          type: "content",
+          markdown: `## ${DEFAULT_BATE_PONTO_LOG_TITLE}\n\n${DEFAULT_BATE_PONTO_LOG_DESCRIPTION}`,
+          accessory: null,
+        },
+      ],
+    },
+  ];
+}
+
+export function isUnsetBatePontoLogLayout(value: unknown) {
+  if (value === null || value === undefined) {
+    return true;
+  }
+
+  if (!Array.isArray(value) || value.length === 0) {
+    return true;
+  }
+
+  return false;
+}
+
+export function normalizeBatePontoLogLayout(value: unknown): TicketPanelLayout {
+  if (isUnsetBatePontoLogLayout(value)) {
+    return createDefaultBatePontoLogLayout();
+  }
+
+  return normalizeTicketPanelLayout(value, {
+    panelTitle: DEFAULT_BATE_PONTO_LOG_TITLE,
+    panelDescription: DEFAULT_BATE_PONTO_LOG_DESCRIPTION,
+    panelButtonLabel: "",
+  });
+}
+
 export function createTicketPanelComponentByType(
   type: TicketPanelComponentType,
 ): TicketPanelComponent {
@@ -1475,6 +1637,26 @@ export function ticketPanelLayoutHasRequiredParts(layout: TicketPanelLayout) {
   }
 
   return hasContent && hasAction;
+}
+
+export function ticketPanelLayoutHasRenderableContent(layout: TicketPanelLayout) {
+  const normalized = normalizeTicketPanelLayout(layout);
+
+  for (const component of normalized) {
+    let hasContent = false;
+
+    walkComponent(component, (current) => {
+      if (current.type === "content" && current.markdown.trim().length > 0) {
+        hasContent = true;
+      }
+    });
+
+    if (hasContent) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export const DEFAULT_USER_THUMBNAIL_PREVIEW_URL =

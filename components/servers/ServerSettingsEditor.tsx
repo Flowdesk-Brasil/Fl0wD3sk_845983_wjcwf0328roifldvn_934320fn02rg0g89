@@ -29,6 +29,8 @@ import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { useNotificationEffect } from "@/components/notifications/NotificationsProvider";
 import { ServerSettingsEditorSkeleton } from "@/components/servers/ServerSettingsEditorSkeleton";
 import { TicketMessageBuilder } from "@/components/servers/TicketMessageBuilder";
+import { BatePontoHistoryPanel } from "@/components/servers/BatePontoHistoryPanel";
+import { BatePontoRankingPanel } from "@/components/servers/BatePontoRankingPanel";
 import { PermissionDeniedState } from "@/components/servers/PermissionDeniedState";
 import { serversScale } from "@/components/servers/serversScale";
 import {
@@ -63,10 +65,14 @@ import {
   createDefaultCaptchaPanelLayout,
   createDefaultSuggestionPanelLayout,
   createDefaultSuggestionPublishedLayout,
+  createDefaultBatePontoPanelLayout,
+  createDefaultBatePontoLogLayout,
   isUnsetSuggestionPublishedLayout,
   normalizeCaptchaPanelLayout,
   normalizeSuggestionPanelLayout,
   normalizeSuggestionPublishedLayout,
+  normalizeBatePontoPanelLayout,
+  normalizeBatePontoLogLayout,
   suggestionPublishedLayoutHasRequiredSlots,
   SUGGESTION_PUBLISHED_BODY_PREVIEW,
   SUGGESTION_PUBLISHED_TITLE_PREVIEW,
@@ -74,6 +80,7 @@ import {
   normalizeTicketPanelLayout,
   ticketPanelLayoutHasAtMostOneFunctionButton,
   ticketPanelLayoutHasRequiredParts,
+  ticketPanelLayoutHasRenderableContent,
   type TicketPanelLayout,
 } from "@/lib/servers/ticketPanelBuilder";
 import {
@@ -122,6 +129,10 @@ type ServerSettingsSection =
   | "captcha_message"
   | "suggestions_overview"
   | "suggestions_message"
+  | "bate_ponto_overview"
+  | "bate_ponto_message"
+  | "bate_ponto_ranking"
+  | "bate_ponto_history"
   | "security_antilink"
   | "security_autorole"
   | "security_logs"
@@ -259,6 +270,20 @@ type SuggestionSettingsDraft = {
   logsChannelId: string | null;
   panelLayout: TicketPanelLayout;
   suggestionLayout: TicketPanelLayout;
+};
+
+type BatePontoSettingsDraft = {
+  enabled: boolean;
+  panelChannelId: string | null;
+  logsChannelId: string | null;
+  panelLayout: TicketPanelLayout;
+  logLayout: TicketPanelLayout;
+  allowedRoleIds: string[];
+  hourBankEnabled: boolean;
+  dailyTargetMinutes: number;
+  timezone: string;
+  autoFinishOpenSessions: boolean;
+  maxOpenHours: number;
 };
 
 type AntiLinkEnforcementAction = "delete_only" | "timeout" | "kick" | "ban";
@@ -878,6 +903,42 @@ function areSuggestionSettingsDraftsEqual(
   return (
     JSON.stringify(normalizeSuggestionSettingsDraft(left)) ===
     JSON.stringify(normalizeSuggestionSettingsDraft(right))
+  );
+}
+
+function normalizeBatePontoSettingsDraft(
+  draft: BatePontoSettingsDraft,
+): BatePontoSettingsDraft {
+  return {
+    enabled: draft.enabled,
+    panelChannelId: draft.panelChannelId,
+    logsChannelId: draft.logsChannelId,
+    panelLayout: normalizeBatePontoPanelLayout(draft.panelLayout),
+    logLayout: normalizeBatePontoLogLayout(draft.logLayout),
+    allowedRoleIds: normalizeDraftIds(draft.allowedRoleIds),
+    hourBankEnabled: draft.hourBankEnabled !== false,
+    dailyTargetMinutes: Math.max(
+      60,
+      Math.min(1440, Number(draft.dailyTargetMinutes || 480) || 480),
+    ),
+    timezone:
+      typeof draft.timezone === "string" && draft.timezone.trim()
+        ? draft.timezone.trim().slice(0, 64)
+        : "America/Sao_Paulo",
+    autoFinishOpenSessions: draft.autoFinishOpenSessions === true,
+    maxOpenHours: Math.max(1, Math.min(24, Number(draft.maxOpenHours || 12) || 12)),
+  };
+}
+
+function areBatePontoSettingsDraftsEqual(
+  left: BatePontoSettingsDraft | null,
+  right: BatePontoSettingsDraft | null,
+) {
+  if (!left || !right) return left === right;
+
+  return (
+    JSON.stringify(normalizeBatePontoSettingsDraft(left)) ===
+    JSON.stringify(normalizeBatePontoSettingsDraft(right))
   );
 }
 
@@ -2257,6 +2318,26 @@ export function ServerSettingsEditor({
   );
   const [suggestionsSuggestionLayout, setSuggestionsSuggestionLayout] =
     useState<TicketPanelLayout>(createDefaultSuggestionPublishedLayout());
+  const [batePontoEnabled, setBatePontoEnabled] = useState(false);
+  const [batePontoPanelChannelId, setBatePontoPanelChannelId] = useState<string | null>(
+    null,
+  );
+  const [batePontoLogsChannelId, setBatePontoLogsChannelId] = useState<string | null>(
+    null,
+  );
+  const [batePontoPanelLayout, setBatePontoPanelLayout] = useState<TicketPanelLayout>(
+    createDefaultBatePontoPanelLayout(),
+  );
+  const [batePontoLogLayout, setBatePontoLogLayout] = useState<TicketPanelLayout>(
+    createDefaultBatePontoLogLayout(),
+  );
+  const [batePontoAllowedRoleIds, setBatePontoAllowedRoleIds] = useState<string[]>([]);
+  const [batePontoHourBankEnabled, setBatePontoHourBankEnabled] = useState(true);
+  const [batePontoDailyTargetMinutes, setBatePontoDailyTargetMinutes] = useState(480);
+  const [batePontoTimezone, setBatePontoTimezone] = useState("America/Sao_Paulo");
+  const [batePontoAutoFinishOpenSessions, setBatePontoAutoFinishOpenSessions] =
+    useState(false);
+  const [batePontoMaxOpenHours, setBatePontoMaxOpenHours] = useState(12);
   const [welcomeEnabled, setWelcomeEnabled] = useState(false);
   const [entryPublicChannelId, setEntryPublicChannelId] = useState<string | null>(null);
   const [entryLogChannelId, setEntryLogChannelId] = useState<string | null>(null);
@@ -2378,6 +2459,8 @@ export function ServerSettingsEditor({
         suggestionsPanelChannelId,
         suggestionsPublishChannelId,
         suggestionsLogsChannelId,
+        batePontoPanelChannelId,
+        batePontoLogsChannelId,
         antiLinkLogChannelId,
         salesPaymentApprovedLogChannelId,
         salesPaymentPendingLogChannelId,
@@ -2395,6 +2478,7 @@ export function ServerSettingsEditor({
         ...refundApproverRoleIds,
         ...captchaVerifiedRoleIds,
         ...captchaBypassRoleIds,
+        ...batePontoAllowedRoleIds,
         ...antiLinkIgnoredRoleIds,
         ...autoRoleRoleIds,
       ],
@@ -2428,6 +2512,9 @@ export function ServerSettingsEditor({
     suggestionsLogsChannelId,
     suggestionsPanelChannelId,
     suggestionsPublishChannelId,
+    batePontoAllowedRoleIds,
+    batePontoLogsChannelId,
+    batePontoPanelChannelId,
     securityLogsDraft,
     ticketsCategoryId,
   ]);
@@ -2451,6 +2538,8 @@ export function ServerSettingsEditor({
     useState<CaptchaSettingsDraft | null>(null);
   const [savedSuggestionSettingsDraft, setSavedSuggestionSettingsDraft] =
     useState<SuggestionSettingsDraft | null>(null);
+  const [savedBatePontoSettingsDraft, setSavedBatePontoSettingsDraft] =
+    useState<BatePontoSettingsDraft | null>(null);
   const [savedAntiLinkSettingsDraft, setSavedAntiLinkSettingsDraft] =
     useState<AntiLinkSettingsDraft | null>(null);
   const [savedAutoRoleSettingsDraft, setSavedAutoRoleSettingsDraft] =
@@ -2465,6 +2554,8 @@ export function ServerSettingsEditor({
   const savedCaptchaDraftRef = useRef<CaptchaSettingsDraft | null>(null);
   const currentSuggestionDraftRef = useRef<SuggestionSettingsDraft | null>(null);
   const savedSuggestionDraftRef = useRef<SuggestionSettingsDraft | null>(null);
+  const currentBatePontoDraftRef = useRef<BatePontoSettingsDraft | null>(null);
+  const savedBatePontoDraftRef = useRef<BatePontoSettingsDraft | null>(null);
   const currentAntiLinkDraftRef = useRef<AntiLinkSettingsDraft | null>(null);
   const savedAntiLinkDraftRef = useRef<AntiLinkSettingsDraft | null>(null);
   const currentAutoRoleDraftRef = useRef<AutoRoleSettingsDraft | null>(null);
@@ -2593,6 +2684,10 @@ export function ServerSettingsEditor({
         captcha_message: "server_manage_captcha_message",
         suggestions_overview: "server_manage_suggestions_overview",
         suggestions_message: "server_manage_suggestions_message",
+        bate_ponto_overview: "server_manage_bate_ponto_overview",
+        bate_ponto_message: "server_manage_bate_ponto_message",
+        bate_ponto_ranking: "server_manage_bate_ponto_ranking",
+        bate_ponto_history: "server_manage_bate_ponto_history",
         security_antilink: "server_manage_antilink",
         security_autorole: "server_manage_autorole",
         security_logs: "server_view_security_logs",
@@ -2659,6 +2754,11 @@ export function ServerSettingsEditor({
         currentSuggestionDraftRef.current,
         savedSuggestionDraftRef.current,
         areSuggestionSettingsDraftsEqual,
+      );
+      const shouldPreserveLocalBatePontoDraft = isSettingsDraftDirty(
+        currentBatePontoDraftRef.current,
+        savedBatePontoDraftRef.current,
+        areBatePontoSettingsDraftsEqual,
       );
       const shouldPreserveLocalAntiLinkDraft = isSettingsDraftDirty(
         currentAntiLinkDraftRef.current,
@@ -2888,6 +2988,61 @@ export function ServerSettingsEditor({
             payload.suggestionsSettings?.suggestionLayout,
           )
         : createDefaultSuggestionPublishedLayout();
+
+      const hasBatePontoSettings = Boolean(payload.batePontoSettings);
+      const nextBatePontoEnabled = Boolean(payload.batePontoSettings?.enabled);
+      const nextBatePontoPanelChannelId = hasBatePontoSettings
+        ? payload.batePontoSettings?.panelChannelId &&
+          textSet.has(payload.batePontoSettings.panelChannelId)
+          ? payload.batePontoSettings.panelChannelId
+          : null
+        : null;
+      const nextBatePontoLogsChannelId = hasBatePontoSettings
+        ? payload.batePontoSettings?.logsChannelId &&
+          textSet.has(payload.batePontoSettings.logsChannelId)
+          ? payload.batePontoSettings.logsChannelId
+          : null
+        : null;
+      const nextBatePontoPanelLayout = hasBatePontoSettings
+        ? normalizeBatePontoPanelLayout(payload.batePontoSettings?.panelLayout, {
+            panelTitle: payload.batePontoSettings?.panelTitle,
+            panelDescription: payload.batePontoSettings?.panelDescription,
+            panelButtonLabel: payload.batePontoSettings?.panelButtonLabel,
+          })
+        : createDefaultBatePontoPanelLayout();
+      const nextBatePontoLogLayout = hasBatePontoSettings
+        ? normalizeBatePontoLogLayout(payload.batePontoSettings?.logLayout)
+        : createDefaultBatePontoLogLayout();
+      const nextBatePontoAllowedRoleIds = hasBatePontoSettings
+        ? Array.isArray(payload.batePontoSettings?.allowedRoleIds)
+          ? payload.batePontoSettings.allowedRoleIds.filter((id) => roleSet.has(id))
+          : []
+        : [];
+      const nextBatePontoHourBankEnabled =
+        hasBatePontoSettings && payload.batePontoSettings?.hourBankEnabled === false
+          ? false
+          : true;
+      const nextBatePontoDailyTargetMinutes = hasBatePontoSettings
+        ? Math.max(
+            60,
+            Math.min(
+              1440,
+              Number(payload.batePontoSettings?.dailyTargetMinutes ?? 480) || 480,
+            ),
+          )
+        : 480;
+      const nextBatePontoTimezone =
+        hasBatePontoSettings && typeof payload.batePontoSettings?.timezone === "string"
+          ? payload.batePontoSettings.timezone
+          : "America/Sao_Paulo";
+      const nextBatePontoAutoFinishOpenSessions =
+        hasBatePontoSettings && payload.batePontoSettings?.autoFinishOpenSessions === true;
+      const nextBatePontoMaxOpenHours = hasBatePontoSettings
+        ? Math.max(
+            1,
+            Math.min(24, Number(payload.batePontoSettings?.maxOpenHours ?? 12) || 12),
+          )
+        : 12;
 
       const nextAdminRoleId =
         payload.staffSettings?.adminRoleId &&
@@ -3203,6 +3358,19 @@ export function ServerSettingsEditor({
         setSuggestionsPanelLayout(nextSuggestionsPanelLayout);
         setSuggestionsSuggestionLayout(nextSuggestionsSuggestionLayout);
       }
+      if (!shouldPreserveLocalBatePontoDraft) {
+        setBatePontoEnabled(nextBatePontoEnabled);
+        setBatePontoPanelChannelId(nextBatePontoPanelChannelId);
+        setBatePontoLogsChannelId(nextBatePontoLogsChannelId);
+        setBatePontoPanelLayout(nextBatePontoPanelLayout);
+        setBatePontoLogLayout(nextBatePontoLogLayout);
+        setBatePontoAllowedRoleIds(nextBatePontoAllowedRoleIds);
+        setBatePontoHourBankEnabled(nextBatePontoHourBankEnabled);
+        setBatePontoDailyTargetMinutes(nextBatePontoDailyTargetMinutes);
+        setBatePontoTimezone(nextBatePontoTimezone);
+        setBatePontoAutoFinishOpenSessions(nextBatePontoAutoFinishOpenSessions);
+        setBatePontoMaxOpenHours(nextBatePontoMaxOpenHours);
+      }
       if (!shouldPreserveLocalAntiLinkDraft) {
         setAntiLinkEnabled(nextAntiLinkEnabled);
         setAntiLinkLogChannelId(nextAntiLinkLogChannelId);
@@ -3323,6 +3491,23 @@ export function ServerSettingsEditor({
             logsChannelId: nextSuggestionsLogsChannelId,
             panelLayout: nextSuggestionsPanelLayout,
             suggestionLayout: nextSuggestionsSuggestionLayout,
+          }),
+        );
+      }
+      if (!shouldPreserveLocalBatePontoDraft) {
+        setSavedBatePontoSettingsDraft(
+          normalizeBatePontoSettingsDraft({
+            enabled: nextBatePontoEnabled,
+            panelChannelId: nextBatePontoPanelChannelId,
+            logsChannelId: nextBatePontoLogsChannelId,
+            panelLayout: nextBatePontoPanelLayout,
+            logLayout: nextBatePontoLogLayout,
+            allowedRoleIds: nextBatePontoAllowedRoleIds,
+            hourBankEnabled: nextBatePontoHourBankEnabled,
+            dailyTargetMinutes: nextBatePontoDailyTargetMinutes,
+            timezone: nextBatePontoTimezone,
+            autoFinishOpenSessions: nextBatePontoAutoFinishOpenSessions,
+            maxOpenHours: nextBatePontoMaxOpenHours,
           }),
         );
       }
@@ -4265,10 +4450,16 @@ export function ServerSettingsEditor({
   const isSuggestionsSection =
     settingsSection === "suggestions_overview" ||
     settingsSection === "suggestions_message";
+  const isBatePontoSection =
+    settingsSection === "bate_ponto_overview" ||
+    settingsSection === "bate_ponto_message";
+  const isBatePontoRankingSection = settingsSection === "bate_ponto_ranking";
+  const isBatePontoHistorySection = settingsSection === "bate_ponto_history";
   const isTicketMessageSection = settingsSection === "message";
   const isWelcomeMessageSection = settingsSection === "entry_exit_message";
   const isCaptchaMessageSection = settingsSection === "captcha_message";
   const isSuggestionsMessageSection = settingsSection === "suggestions_message";
+  const isBatePontoMessageSection = settingsSection === "bate_ponto_message";
 
   const entryChannelsProvided = Boolean(
     entryPublicChannelId || entryLogChannelId,
@@ -4433,6 +4624,25 @@ export function ServerSettingsEditor({
           ticketPanelLayoutHasAtMostOneFunctionButton(suggestionsPanelLayout) &&
           suggestionPublishedLayoutHasRequiredSlots(suggestionsSuggestionLayout))),
   );
+  const batePontoFunctionButtonCount = countTicketPanelFunctionButtons(
+    batePontoPanelLayout,
+  );
+  const hasBatePontoTooManyFunctionButtons = batePontoFunctionButtonCount > 1;
+  const isBatePontoMessageLayoutInvalid =
+    !ticketPanelLayoutHasRequiredParts(batePontoPanelLayout) ||
+    hasBatePontoTooManyFunctionButtons;
+  const canSaveBatePonto = Boolean(
+    !settingsReadOnly &&
+      !isLoading &&
+      !isSaving &&
+      (!batePontoEnabled ||
+        (batePontoPanelChannelId &&
+          ticketPanelLayoutHasRenderableContent(batePontoLogLayout) &&
+          (settingsSection === "bate_ponto_overview" ||
+            (batePontoPanelLayout.length &&
+              ticketPanelLayoutHasRequiredParts(batePontoPanelLayout) &&
+              ticketPanelLayoutHasAtMostOneFunctionButton(batePontoPanelLayout))))),
+  );
   const antiLinkTimeoutValue = normalizeAntiLinkTimeoutMinutes(
     antiLinkTimeoutMinutes,
   );
@@ -4523,6 +4733,17 @@ export function ServerSettingsEditor({
       suggestionsPanelLayout.length &&
       ticketPanelLayoutHasRequiredParts(suggestionsPanelLayout) &&
       ticketPanelLayoutHasAtMostOneFunctionButton(suggestionsPanelLayout),
+  );
+  const canSendBatePontoEmbed = Boolean(
+    !settingsReadOnly &&
+      !isLoading &&
+      !isSaving &&
+      !isSendingEmbed &&
+      batePontoEnabled &&
+      batePontoPanelChannelId &&
+      batePontoPanelLayout.length &&
+      ticketPanelLayoutHasRequiredParts(batePontoPanelLayout) &&
+      ticketPanelLayoutHasAtMostOneFunctionButton(batePontoPanelLayout),
   );
 
   const currentSettingsDraft = useMemo(
@@ -4661,6 +4882,35 @@ export function ServerSettingsEditor({
       suggestionsSuggestionLayout,
     ],
   );
+  const currentBatePontoDraft = useMemo(
+    () =>
+      normalizeBatePontoSettingsDraft({
+        enabled: batePontoEnabled,
+        panelChannelId: batePontoPanelChannelId,
+        logsChannelId: batePontoLogsChannelId,
+        panelLayout: batePontoPanelLayout,
+        logLayout: batePontoLogLayout,
+        allowedRoleIds: batePontoAllowedRoleIds,
+        hourBankEnabled: batePontoHourBankEnabled,
+        dailyTargetMinutes: batePontoDailyTargetMinutes,
+        timezone: batePontoTimezone,
+        autoFinishOpenSessions: batePontoAutoFinishOpenSessions,
+        maxOpenHours: batePontoMaxOpenHours,
+      }),
+    [
+      batePontoAllowedRoleIds,
+      batePontoAutoFinishOpenSessions,
+      batePontoDailyTargetMinutes,
+      batePontoEnabled,
+      batePontoHourBankEnabled,
+      batePontoLogLayout,
+      batePontoLogsChannelId,
+      batePontoMaxOpenHours,
+      batePontoPanelChannelId,
+      batePontoPanelLayout,
+      batePontoTimezone,
+    ],
+  );
   const currentAntiLinkDraft = useMemo(
     () =>
       normalizeAntiLinkSettingsDraft({
@@ -4731,6 +4981,8 @@ export function ServerSettingsEditor({
   savedCaptchaDraftRef.current = savedCaptchaSettingsDraft;
   currentSuggestionDraftRef.current = currentSuggestionDraft;
   savedSuggestionDraftRef.current = savedSuggestionSettingsDraft;
+  currentBatePontoDraftRef.current = currentBatePontoDraft;
+  savedBatePontoDraftRef.current = savedBatePontoSettingsDraft;
   currentAntiLinkDraftRef.current = currentAntiLinkDraft;
   savedAntiLinkDraftRef.current = savedAntiLinkSettingsDraft;
   currentAutoRoleDraftRef.current = currentAutoRoleDraft;
@@ -4745,6 +4997,8 @@ export function ServerSettingsEditor({
   const hasLoadedCaptchaDraft = !isLoading && savedCaptchaSettingsDraft !== null;
   const hasLoadedSuggestionDraft =
     !isLoading && savedSuggestionSettingsDraft !== null;
+  const hasLoadedBatePontoDraft =
+    !isLoading && savedBatePontoSettingsDraft !== null;
   const hasLoadedAntiLinkDraft =
     !isLoading && savedAntiLinkSettingsDraft !== null;
   const hasLoadedAutoRoleDraft =
@@ -4779,6 +5033,12 @@ export function ServerSettingsEditor({
         savedSuggestionSettingsDraft,
       ),
     [currentSuggestionDraft, hasLoadedSuggestionDraft, savedSuggestionSettingsDraft],
+  );
+  const hasBatePontoUnsavedChanges = useMemo(
+    () =>
+      hasLoadedBatePontoDraft &&
+      !areBatePontoSettingsDraftsEqual(currentBatePontoDraft, savedBatePontoSettingsDraft),
+    [currentBatePontoDraft, hasLoadedBatePontoDraft, savedBatePontoSettingsDraft],
   );
   const hasAntiLinkUnsavedChanges = useMemo(
     () =>
@@ -4836,6 +5096,10 @@ export function ServerSettingsEditor({
       ? hasLoadedCaptchaDraft
     : isSuggestionsSection
       ? hasLoadedSuggestionDraft
+    : isBatePontoSection
+      ? hasLoadedBatePontoDraft
+    : isBatePontoRankingSection || isBatePontoHistorySection
+      ? true
     : isWelcomeSection
       ? hasLoadedWelcomeDraft
       : hasLoadedTicketDraft;
@@ -4853,6 +5117,10 @@ export function ServerSettingsEditor({
       ? hasCaptchaUnsavedChanges
     : isSuggestionsSection
       ? hasSuggestionUnsavedChanges
+    : isBatePontoSection
+      ? hasBatePontoUnsavedChanges
+    : isBatePontoRankingSection || isBatePontoHistorySection
+      ? false
     : isWelcomeSection
       ? hasWelcomeUnsavedChanges
       : hasTicketUnsavedChanges;
@@ -4876,6 +5144,8 @@ export function ServerSettingsEditor({
           ? savedCaptchaSettingsDraft
         : isSuggestionsSection
           ? savedSuggestionSettingsDraft
+        : isBatePontoSection
+          ? savedBatePontoSettingsDraft
         : isWelcomeSection
           ? savedWelcomeSettingsDraft
           : savedSettingsDraft),
@@ -4901,6 +5171,8 @@ export function ServerSettingsEditor({
         ? canSaveCaptcha
       : isSuggestionsSection
         ? canSaveSuggestions
+      : isBatePontoSection
+        ? canSaveBatePonto
       : isWelcomeSection
         ? canSaveWelcome
       : isTicketAiSection
@@ -4928,6 +5200,8 @@ export function ServerSettingsEditor({
   const captchaControlsDisabled = isSaving || settingsReadOnly || !captchaEnabled;
   const suggestionsControlsDisabled =
     isSaving || settingsReadOnly || !suggestionsEnabled;
+  const batePontoControlsDisabled =
+    isSaving || settingsReadOnly || !batePontoEnabled;
   const antiLinkControlsDisabled =
     isSaving || settingsReadOnly || !antiLinkEnabled || isActivatingAntiLink;
   const autoRoleControlsDisabled =
@@ -4974,6 +5248,15 @@ export function ServerSettingsEditor({
     !showSaveSuccessBar &&
     ((settingsSection === "suggestions_message" && isSuggestionsMessageLayoutInvalid) ||
       (settingsSection === "suggestions_overview" && isSuggestionsPublishLayoutInvalid));
+  const showInvalidBatePontoSaveState =
+    isBatePontoSection &&
+    batePontoEnabled &&
+    hasUnsavedChanges &&
+    !isSaving &&
+    !showSaveSuccessBar &&
+    ((settingsSection === "bate_ponto_message" && isBatePontoMessageLayoutInvalid) ||
+      (settingsSection === "bate_ponto_overview" &&
+        !ticketPanelLayoutHasRenderableContent(batePontoLogLayout)));
   const showSaveBarSuccessState =
     showSaveSuccessBar &&
     !hasUnsavedChanges &&
@@ -4988,6 +5271,7 @@ export function ServerSettingsEditor({
     showInvalidWelcomeSaveState ||
     showInvalidCaptchaSaveState ||
     showInvalidSuggestionsSaveState ||
+    showInvalidBatePontoSaveState ||
     showBlockedNavigationSaveState;
   const saveActionVisualEnabled = canPersistSettings || isSaving;
   const floatingSaveBarTitle = showSaveBarSuccessState
@@ -5010,6 +5294,12 @@ export function ServerSettingsEditor({
           : hasSuggestionsTooManyFunctionButtons
           ? "Existe mais de um botao funcional no embed"
           : "Nao da para salvar uma mensagem vazia"
+      : showInvalidBatePontoSaveState
+        ? settingsSection === "bate_ponto_overview"
+          ? "O template de log precisa manter pelo menos um conteudo valido"
+          : hasBatePontoTooManyFunctionButtons
+            ? "Existe mais de um botao funcional no embed"
+            : "Nao da para salvar uma mensagem vazia"
       : showInvalidWelcomeSaveState
           ? "Adicione pelo menos um conteudo na mensagem"
       : showBlockedNavigationSaveState
@@ -5023,6 +5313,8 @@ export function ServerSettingsEditor({
                 ? "Complete canal principal e cargos verificados para continuar"
               : isSuggestionsSection
                 ? "Complete canais do painel e publicacao para continuar"
+              : isBatePontoSection
+                ? "Complete canal do painel e mensagens validas para continuar"
               : isWelcomeSection
               ? "Complete os canais de entrada e saida para continuar"
               : "Complete os campos obrigatorios para continuar"
@@ -5046,6 +5338,14 @@ export function ServerSettingsEditor({
             ? isAntiLinkSection
               ? "Escolha um canal de log para o modulo anti-link."
               : "Todo evento ligado precisa ter um canal de log configurado."
+            : isCaptchaSection
+              ? "Complete canal principal e cargos verificados para continuar."
+            : isSuggestionsSection
+              ? "Complete canais do painel e publicacao para continuar."
+            : isBatePontoSection
+              ? settingsSection === "bate_ponto_message"
+                ? "Complete a mensagem do painel com conteudo e um botao funcional."
+                : "Defina o canal do painel e mantenha pelo menos um bloco de texto no template de log."
             : isWelcomeSection
             ? "Defina canais publicos e privados para entrada e saida antes de salvar."
             : "Preencha todos os campos de ticket e staff para liberar o salvamento."
@@ -5963,6 +6263,20 @@ export function ServerSettingsEditor({
           ? savedSuggestionSettingsDraft.suggestionLayout
           : createDefaultSuggestionPublishedLayout(),
       );
+    } else if (isBatePontoSection && savedBatePontoSettingsDraft) {
+      setBatePontoEnabled(savedBatePontoSettingsDraft.enabled);
+      setBatePontoPanelChannelId(savedBatePontoSettingsDraft.panelChannelId);
+      setBatePontoLogsChannelId(savedBatePontoSettingsDraft.logsChannelId);
+      setBatePontoPanelLayout(savedBatePontoSettingsDraft.panelLayout);
+      setBatePontoLogLayout(savedBatePontoSettingsDraft.logLayout);
+      setBatePontoAllowedRoleIds(savedBatePontoSettingsDraft.allowedRoleIds);
+      setBatePontoHourBankEnabled(savedBatePontoSettingsDraft.hourBankEnabled);
+      setBatePontoDailyTargetMinutes(savedBatePontoSettingsDraft.dailyTargetMinutes);
+      setBatePontoTimezone(savedBatePontoSettingsDraft.timezone);
+      setBatePontoAutoFinishOpenSessions(
+        savedBatePontoSettingsDraft.autoFinishOpenSessions,
+      );
+      setBatePontoMaxOpenHours(savedBatePontoSettingsDraft.maxOpenHours);
     } else if (savedSettingsDraft) {
       setTicketEnabled(savedSettingsDraft.enabled);
       setMenuChannelId(savedSettingsDraft.menuChannelId);
@@ -5999,6 +6313,7 @@ export function ServerSettingsEditor({
     isAutoRoleSection,
     isCaptchaSection,
     isSuggestionsSection,
+    isBatePontoSection,
     isSalesSettingsSection,
     isSecurityLogsSection,
     isWelcomeSection,
@@ -6006,6 +6321,7 @@ export function ServerSettingsEditor({
     savedAutoRoleSettingsDraft,
     savedCaptchaSettingsDraft,
     savedSuggestionSettingsDraft,
+    savedBatePontoSettingsDraft,
     savedSalesSettingsDraft,
     savedSecurityLogsDraft,
     savedSettingsDraft,
@@ -6020,6 +6336,7 @@ export function ServerSettingsEditor({
     setSuccessMessage(null);
     let dashboardCachePatch: Parameters<typeof patchCachedServerDashboardSettings>[1] | null =
       null;
+    let savedSuccessMessage: string | null = null;
     try {
       if (isAutoRoleSection) {
         const response = await fetch("/api/auth/me/guilds/autorole-settings", {
@@ -6461,6 +6778,120 @@ export function ServerSettingsEditor({
                 : new Date().toISOString(),
           },
         };
+      } else if (isBatePontoSection) {
+        const legacyFields = deriveLegacyTicketPanelFields(batePontoPanelLayout);
+        const response = await fetch("/api/auth/me/guilds/bate-ponto-settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            guildId,
+            enabled: batePontoEnabled,
+            panelChannelId: batePontoPanelChannelId,
+            logsChannelId: batePontoLogsChannelId,
+            panelLayout: batePontoPanelLayout,
+            panelTitle: legacyFields.panelTitle,
+            panelDescription: legacyFields.panelDescription,
+            panelButtonLabel: legacyFields.panelButtonLabel,
+            logLayout: batePontoLogLayout,
+            allowedRoleIds: batePontoAllowedRoleIds,
+            hourBankEnabled: batePontoHourBankEnabled,
+            dailyTargetMinutes: batePontoDailyTargetMinutes,
+            timezone: batePontoTimezone,
+            autoFinishOpenSessions: batePontoAutoFinishOpenSessions,
+            maxOpenHours: batePontoMaxOpenHours,
+          }),
+        });
+
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) {
+          throw new Error(
+            payload.message || "Falha ao salvar configuracoes de bate ponto.",
+          );
+        }
+
+        const nextBatePontoDraft = normalizeBatePontoSettingsDraft({
+          enabled: payload.settings?.enabled === true,
+          panelChannelId:
+            typeof payload.settings?.panelChannelId === "string"
+              ? payload.settings.panelChannelId
+              : null,
+          logsChannelId:
+            typeof payload.settings?.logsChannelId === "string"
+              ? payload.settings.logsChannelId
+              : null,
+          panelLayout: normalizeBatePontoPanelLayout(
+            payload.settings?.panelLayout,
+            payload.settings || undefined,
+          ),
+          logLayout: normalizeBatePontoLogLayout(payload.settings?.logLayout),
+          allowedRoleIds: Array.isArray(payload.settings?.allowedRoleIds)
+            ? payload.settings.allowedRoleIds.filter(
+                (id: unknown): id is string => typeof id === "string",
+              )
+            : [],
+          hourBankEnabled: payload.settings?.hourBankEnabled !== false,
+          dailyTargetMinutes: Number(
+            payload.settings?.dailyTargetMinutes ?? batePontoDailyTargetMinutes,
+          ),
+          timezone:
+            typeof payload.settings?.timezone === "string"
+              ? payload.settings.timezone
+              : batePontoTimezone,
+          autoFinishOpenSessions:
+            payload.settings?.autoFinishOpenSessions === true,
+          maxOpenHours: Number(payload.settings?.maxOpenHours ?? batePontoMaxOpenHours),
+        });
+
+        setBatePontoEnabled(nextBatePontoDraft.enabled);
+        setBatePontoPanelChannelId(nextBatePontoDraft.panelChannelId);
+        setBatePontoLogsChannelId(nextBatePontoDraft.logsChannelId);
+        setBatePontoPanelLayout(nextBatePontoDraft.panelLayout);
+        setBatePontoLogLayout(nextBatePontoDraft.logLayout);
+        setBatePontoAllowedRoleIds(nextBatePontoDraft.allowedRoleIds);
+        setBatePontoHourBankEnabled(nextBatePontoDraft.hourBankEnabled);
+        setBatePontoDailyTargetMinutes(nextBatePontoDraft.dailyTargetMinutes);
+        setBatePontoTimezone(nextBatePontoDraft.timezone);
+        setBatePontoAutoFinishOpenSessions(nextBatePontoDraft.autoFinishOpenSessions);
+        setBatePontoMaxOpenHours(nextBatePontoDraft.maxOpenHours);
+        setSavedBatePontoSettingsDraft(nextBatePontoDraft);
+        if (
+          settingsSection === "bate_ponto_overview" &&
+          payload.panelDispatch?.ok === true
+        ) {
+          savedSuccessMessage =
+            "Configuracoes salvas e embed padrao enviado no canal do painel.";
+        }
+        dashboardCachePatch = {
+          batePontoSettings: {
+            enabled: nextBatePontoDraft.enabled,
+            panelChannelId: nextBatePontoDraft.panelChannelId,
+            logsChannelId: nextBatePontoDraft.logsChannelId,
+            panelLayout: nextBatePontoDraft.panelLayout,
+            panelTitle:
+              typeof payload.settings?.panelTitle === "string"
+                ? payload.settings.panelTitle
+                : "",
+            panelDescription:
+              typeof payload.settings?.panelDescription === "string"
+                ? payload.settings.panelDescription
+                : "",
+            panelButtonLabel:
+              typeof payload.settings?.panelButtonLabel === "string"
+                ? payload.settings.panelButtonLabel
+                : "",
+            logLayout: nextBatePontoDraft.logLayout,
+            allowedRoleIds: nextBatePontoDraft.allowedRoleIds,
+            hourBankEnabled: nextBatePontoDraft.hourBankEnabled,
+            dailyTargetMinutes: nextBatePontoDraft.dailyTargetMinutes,
+            timezone: nextBatePontoDraft.timezone,
+            autoFinishOpenSessions: nextBatePontoDraft.autoFinishOpenSessions,
+            maxOpenHours: nextBatePontoDraft.maxOpenHours,
+            updatedAt:
+              typeof payload.settings?.updatedAt === "string"
+                ? payload.settings.updatedAt
+                : new Date().toISOString(),
+          },
+        };
       } else {
         const shouldPersistTicketStaff =
           ticketEnabled ||
@@ -6678,7 +7109,7 @@ export function ServerSettingsEditor({
       } else {
         markServerDashboardSettingsSaved(guildId);
       }
-      setSuccessMessage("Configuracoes salvas com sucesso.");
+      setSuccessMessage(savedSuccessMessage || "Configuracoes salvas com sucesso.");
       setShowSaveSuccessBar(true);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Erro ao salvar configuracoes.");
@@ -6706,6 +7137,17 @@ export function ServerSettingsEditor({
     autoRoleSyncExistingMembers,
     applyAutoRoleRuntimePayload,
     adminRoleId,
+    batePontoAllowedRoleIds,
+    batePontoAutoFinishOpenSessions,
+    batePontoDailyTargetMinutes,
+    batePontoEnabled,
+    batePontoHourBankEnabled,
+    batePontoLogLayout,
+    batePontoLogsChannelId,
+    batePontoMaxOpenHours,
+    batePontoPanelChannelId,
+    batePontoPanelLayout,
+    batePontoTimezone,
     canPersistSettings,
     captchaBypassRoleIds,
     captchaChallengeDescription,
@@ -6725,6 +7167,7 @@ export function ServerSettingsEditor({
     currentAutoRoleDraft,
     currentCaptchaDraft,
     currentSuggestionDraft,
+    currentBatePontoDraft,
     currentWelcomeDraft,
     entryPublicLayout,
     entryLogLayout,
@@ -6743,6 +7186,7 @@ export function ServerSettingsEditor({
     isAutoRoleSection,
     isCaptchaSection,
     isSuggestionsSection,
+    isBatePontoSection,
     isSalesSettingsSection,
     isSecurityLogsSection,
     isTicketSection,
@@ -6762,6 +7206,7 @@ export function ServerSettingsEditor({
     refundSuccessMessage,
     savedSettingsDraft,
     salesCartsCategoryId,
+    settingsSection,
     salesEnabled,
     salesPaymentApprovedLogChannelId,
     salesPaymentPendingLogChannelId,
@@ -6773,6 +7218,7 @@ export function ServerSettingsEditor({
     setSavedAutoRoleSettingsDraft,
     setSavedCaptchaSettingsDraft,
     setSavedSuggestionSettingsDraft,
+    setSavedBatePontoSettingsDraft,
     setSavedSalesSettingsDraft,
     setSavedSecurityLogsDraft,
     setSavedSettingsDraft,
@@ -6897,6 +7343,46 @@ export function ServerSettingsEditor({
     guildId,
     suggestionsPanelChannelId,
     suggestionsPanelLayout,
+  ]);
+
+  const handleSendBatePontoEmbed = useCallback(async () => {
+    if (!canSendBatePontoEmbed || !batePontoPanelChannelId) return;
+    if (isSendingEmbedRef.current) return;
+    isSendingEmbedRef.current = true;
+
+    setIsSendingEmbed(true);
+    setErrorMessage(null);
+
+    try {
+      const response = await fetch("/api/auth/me/guilds/bate-ponto-panel-message", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          guildId,
+          panelChannelId: batePontoPanelChannelId,
+          panelLayout: batePontoPanelLayout,
+        }),
+      });
+
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.message || "Falha ao enviar o embed de bate ponto.");
+      }
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Erro ao enviar o embed de bate ponto.",
+      );
+    } finally {
+      isSendingEmbedRef.current = false;
+      setIsSendingEmbed(false);
+    }
+  }, [
+    batePontoPanelChannelId,
+    batePontoPanelLayout,
+    canSendBatePontoEmbed,
+    guildId,
   ]);
 
   const handleActivateWelcome = useCallback(async () => {
@@ -8135,6 +8621,204 @@ export function ServerSettingsEditor({
                       description="Monte o embed publicado no canal do painel e envie a mensagem quando estiver pronta."
                       sendButtonLabel="Enviar embed de sugestoes"
                     />
+                  ) : settingsSection === "bate_ponto_overview" ? (
+                    <div className="space-y-[14px]">
+                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
+                          <div>
+                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
+                              Modulo Bate Ponto
+                            </p>
+                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
+                              Controle expediente e banco de horas
+                            </h3>
+                            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                              Configure canais do painel e logs, cargos autorizados, banco de horas e regras de encerramento automatico.
+                            </p>
+                          </div>
+
+                          <DashboardInlineSwitch
+                            checked={batePontoEnabled}
+                            onChange={() => {
+                              if (isSaving || settingsReadOnly) return;
+                              setBatePontoEnabled((current) => !current);
+                            }}
+                            disabled={isSaving || settingsReadOnly}
+                            ariaLabel="Ativar ou desativar modulo de bate ponto"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                        <div>
+                          <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Bate Ponto</p>
+                          <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
+                            Canais e cargos
+                          </h3>
+                          <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                            Defina onde o painel sera publicado, onde os logs serao enviados e quais cargos podem usar o modulo.
+                          </p>
+                        </div>
+
+                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
+                          <ConfigStepSelect label="Canal do painel" placeholder="Escolha o canal" options={textChannelOptions} value={batePontoPanelChannelId} onChange={setBatePontoPanelChannelId} disabled={batePontoControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepSelect label="Canal de logs (opcional)" placeholder="Escolha o canal de logs" options={textChannelOptions} value={batePontoLogsChannelId} onChange={setBatePontoLogsChannelId} disabled={batePontoControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <div className="xl:col-span-2">
+                            <ConfigStepMultiSelect label="Cargos autorizados" placeholder="Selecione os cargos" options={roleOptions} values={batePontoAllowedRoleIds} onChange={setBatePontoAllowedRoleIds} disabled={batePontoControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
+                          <div>
+                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Banco de horas</p>
+                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
+                              Meta diaria e fuso horario
+                            </h3>
+                            <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                              Ajuste a meta diaria de trabalho e o fuso usado para calcular saldo e registros.
+                            </p>
+                          </div>
+
+                          <DashboardInlineSwitch
+                            checked={batePontoHourBankEnabled}
+                            onChange={() => {
+                              if (isSaving || settingsReadOnly || batePontoControlsDisabled) return;
+                              setBatePontoHourBankEnabled((current) => !current);
+                            }}
+                            disabled={isSaving || settingsReadOnly || batePontoControlsDisabled}
+                            ariaLabel="Ativar ou desativar banco de horas"
+                          />
+                        </div>
+
+                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
+                          <div>
+                            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">
+                              Meta diaria (horas)
+                            </label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={24}
+                              step={0.25}
+                              value={Number((batePontoDailyTargetMinutes / 60).toFixed(2))}
+                              onChange={(event) => {
+                                const hours = Number(event.currentTarget.value);
+                                if (!Number.isFinite(hours)) return;
+                                setBatePontoDailyTargetMinutes(
+                                  Math.max(
+                                    60,
+                                    Math.min(1440, Math.round(hours * 60)),
+                                  ),
+                                );
+                              }}
+                              disabled={batePontoControlsDisabled || !batePontoHourBankEnabled}
+                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                            <p className="mt-[8px] text-[12px] leading-[1.5] text-[#686868]">
+                              Equivalente a {batePontoDailyTargetMinutes} minutos por dia.
+                            </p>
+                          </div>
+                          <div>
+                            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">Fuso horario</label>
+                            <input
+                              type="text"
+                              value={batePontoTimezone}
+                              onChange={(event) => setBatePontoTimezone(event.currentTarget.value)}
+                              placeholder="America/Sao_Paulo"
+                              maxLength={64}
+                              disabled={batePontoControlsDisabled}
+                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
+                          <div>
+                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Sessoes abertas</p>
+                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
+                              Encerramento automatico
+                            </h3>
+                            <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                              Finalize sessoes abertas automaticamente apos o limite de horas configurado.
+                            </p>
+                          </div>
+
+                          <DashboardInlineSwitch
+                            checked={batePontoAutoFinishOpenSessions}
+                            onChange={() => {
+                              if (isSaving || settingsReadOnly || batePontoControlsDisabled) return;
+                              setBatePontoAutoFinishOpenSessions((current) => !current);
+                            }}
+                            disabled={isSaving || settingsReadOnly || batePontoControlsDisabled}
+                            ariaLabel="Ativar ou desativar encerramento automatico de sessoes abertas"
+                          />
+                        </div>
+
+                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
+                          <div>
+                            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">Maximo de horas abertas</label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={24}
+                              value={batePontoMaxOpenHours}
+                              onChange={(event) =>
+                                setBatePontoMaxOpenHours(
+                                  Math.max(
+                                    1,
+                                    Math.min(24, Number(event.currentTarget.value) || 12),
+                                  ),
+                                )
+                              }
+                              disabled={
+                                batePontoControlsDisabled || !batePontoAutoFinishOpenSessions
+                              }
+                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <TicketMessageBuilder
+                        guildId={guildId}
+                        value={batePontoLogLayout}
+                        onChange={setBatePontoLogLayout}
+                        layoutPreset="bate_ponto_log"
+                        disabled={isSaving || settingsReadOnly || !batePontoEnabled}
+                        hideSendButton
+                        eyebrow="Bate Ponto"
+                        headline="Template do log"
+                        description="Monte o embed enviado no canal de logs quando uma acao de ponto for registrada."
+                      />
+                    </div>
+                  ) : settingsSection === "bate_ponto_message" ? (
+                    <TicketMessageBuilder
+                      guildId={guildId}
+                      value={batePontoPanelLayout}
+                      onChange={setBatePontoPanelLayout}
+                      layoutPreset="bate_ponto"
+                      disabled={
+                        isSaving ||
+                        isSendingEmbed ||
+                        settingsReadOnly ||
+                        !batePontoEnabled
+                      }
+                      canSendEmbed={canSendBatePontoEmbed}
+                      isSendingEmbed={isSendingEmbed}
+                      onSendEmbed={handleSendBatePontoEmbed}
+                      eyebrow="Bate Ponto"
+                      headline="Mensagem do painel"
+                      description="Monte o embed publicado no canal do painel e envie a mensagem quando estiver pronta."
+                      sendButtonLabel="Enviar embed de bate ponto"
+                    />
+                  ) : settingsSection === "bate_ponto_ranking" ? (
+                    <BatePontoRankingPanel guildId={guildId} />
+                  ) : settingsSection === "bate_ponto_history" ? (
+                    <BatePontoHistoryPanel guildId={guildId} />
                   ) : settingsSection === "captcha_overview" ? (
                     <div className="space-y-[14px]">
                       <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">

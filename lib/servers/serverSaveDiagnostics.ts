@@ -10,7 +10,9 @@ export type ServerSaveRouteName =
   | "antilink_settings"
   | "autorole_settings"
   | "sales_settings"
-  | "security_logs_settings";
+  | "security_logs_settings"
+  | "bate_ponto_settings"
+  | "bate_ponto_panel_dispatch";
 export type ServerSaveAccessMode = "owner" | "team" | "viewer" | "unknown";
 export type ServerSaveOutcome =
   | "payload_invalid"

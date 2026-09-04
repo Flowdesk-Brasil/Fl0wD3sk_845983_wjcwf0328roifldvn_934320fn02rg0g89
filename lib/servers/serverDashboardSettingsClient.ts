@@ -95,6 +95,23 @@ type ServerDashboardSettingsPayload = {
     suggestionLayout: TicketPanelLayout;
     updatedAt: string | null;
   } | null;
+  batePontoSettings: {
+    enabled: boolean;
+    panelChannelId: string | null;
+    logsChannelId: string | null;
+    panelLayout: TicketPanelLayout;
+    panelTitle: string;
+    panelDescription: string;
+    panelButtonLabel: string;
+    logLayout: TicketPanelLayout;
+    allowedRoleIds: string[];
+    hourBankEnabled: boolean;
+    dailyTargetMinutes: number;
+    timezone: string;
+    autoFinishOpenSessions: boolean;
+    maxOpenHours: number;
+    updatedAt: string | null;
+  } | null;
   antiLinkSettings: {
     enabled: boolean;
     logChannelId: string | null;
@@ -300,6 +317,7 @@ export function patchCachedServerDashboardSettings(
       | "welcomeSettings"
       | "captchaSettings"
       | "suggestionsSettings"
+      | "batePontoSettings"
       | "antiLinkSettings"
       | "autoRoleSettings"
       | "salesSettings"

@@ -27,9 +27,15 @@ import {
   createTicketPanelComponentId,
   createTicketPanelContainerChildByType,
   createTicketPanelContentAccessoryByType,
+  createDefaultBatePontoLogLayout,
+  createDefaultBatePontoPanelLayout,
   createDefaultCaptchaPanelLayout,
   createDefaultSuggestionPanelLayout,
   createDefaultSuggestionPublishedLayout,
+  isUnsetBatePontoLogLayout,
+  isUnsetBatePontoPanelLayout,
+  normalizeBatePontoLogLayout,
+  normalizeBatePontoPanelLayout,
   DEFAULT_USER_THUMBNAIL_PREVIEW_URL,
   formatButtonEmojiMarkup,
   isUnsetCaptchaPanelLayout,
@@ -40,6 +46,7 @@ import {
   normalizeSuggestionPublishedLayout,
   normalizeTicketPanelLayout,
   resolveSuggestionPublishedPreviewMarkdown,
+  resolveBatePontoLogPreviewMarkdown,
   SUGGESTION_PUBLISHED_BODY_PREVIEW,
   SUGGESTION_PUBLISHED_TITLE_PREVIEW,
   parseButtonEmojiMarkup,
@@ -72,7 +79,13 @@ type Props = {
   sendButtonLabel?: string;
   hideSendButton?: boolean;
   thumbnailPreviewUrl?: string | null;
-  layoutPreset?: "ticket" | "captcha" | "suggestions" | "suggestion_publish";
+  layoutPreset?:
+    | "ticket"
+    | "captcha"
+    | "suggestions"
+    | "suggestion_publish"
+    | "bate_ponto"
+    | "bate_ponto_log";
 };
 
 type Scope = { parentId: string | null; componentId: string };
@@ -146,7 +159,8 @@ const BUTTON_STYLES: Array<{ value: TicketPanelButtonStyle; label: string; previ
 
 const PRESET_ACCENT_COLORS = ["#5865F2", "#3B82F6", "#22C55E", "#F59E0B", "#EF4444", "#9B5CFF"];
 const CUSTOM_EMOJI_REGEX = /<(a?):([a-zA-Z0-9_]+):(\d{17,20})>/g;
-const INLINE_MARKDOWN_REGEX = /(\[[^\]]+\]\(https?:\/\/[^\s)]+\)|\*\*[^*]+\*\*|`[^`]+`)/g;
+const INLINE_MARKDOWN_REGEX = /(\[[^\]]+\]\(https?:\/\/[^\s)]+\)|\*\*[^*]+\*\*|`[^`]+`|<@!?\d+>)/g;
+const DISCORD_USER_MENTION_REGEX = /^<@!?(\d+)>$/;
 const emojiPreviewUrlCache = new Map<string, string | null>();
 const guildEmojiAutocompleteCache = new Map<string, GuildEmojiSuggestion[]>();
 const EMOJI_CATALOG_STORAGE_KEY_PREFIX = "flowdesk-ticket-emoji-catalog:";
@@ -507,14 +521,24 @@ function CustomEmojiPreview({
   );
 }
 
+function DiscordUserMentionPreview({ username }: { username: string }) {
+  return (
+    <span className="mx-[1px] inline-flex max-w-full items-center rounded-[4px] bg-[#5865F2]/20 px-[2px] py-[1px] text-[13px] font-medium text-[#C9CDFB]">
+      @{username}
+    </span>
+  );
+}
+
 function InlineMarkdownText({
   text,
   guildId,
   emphasized = false,
+  mentionUsernameById,
 }: {
   text: string;
   guildId: string;
   emphasized?: boolean;
+  mentionUsernameById?: Record<string, string>;
 }) {
   const tokens = useMemo(() => splitCustomEmojiTokens(text), [text]);
 
@@ -530,6 +554,18 @@ function InlineMarkdownText({
               animated={token.animated}
               name={token.name}
               raw={token.raw}
+            />
+          );
+        }
+
+        const mentionMatch = token.value.match(DISCORD_USER_MENTION_REGEX);
+        if (mentionMatch) {
+          const userId = mentionMatch[1] ?? "";
+          const username = mentionUsernameById?.[userId] || "usuario";
+          return (
+            <DiscordUserMentionPreview
+              key={`${token.value}-${index}`}
+              username={username}
             />
           );
         }
@@ -551,11 +587,27 @@ function InlineMarkdownText({
   );
 }
 
-function renderInlineMarkdown(text: string, guildId: string) {
+function renderInlineMarkdown(
+  text: string,
+  guildId: string,
+  mentionUsernameById?: Record<string, string>,
+) {
   return text
     .split(INLINE_MARKDOWN_REGEX)
     .filter((segment) => segment.length > 0)
     .map((segment, index) => {
+      const mentionMatch = segment.match(DISCORD_USER_MENTION_REGEX);
+      if (mentionMatch) {
+        const userId = mentionMatch[1] ?? "";
+        const username = mentionUsernameById?.[userId] || "usuario";
+        return (
+          <DiscordUserMentionPreview
+            key={`${segment}-${index}`}
+            username={username}
+          />
+        );
+      }
+
       if (/^`[^`]+`$/.test(segment)) {
         return (
           <code
@@ -577,6 +629,7 @@ function renderInlineMarkdown(text: string, guildId: string) {
               segment.slice(2, -2),
               guildId,
               `bold-${index}`,
+              mentionUsernameById,
             )}
           </strong>
         );
@@ -594,13 +647,22 @@ function renderInlineMarkdown(text: string, guildId: string) {
 
       return (
         <span key={`${segment}-${index}`}>
-          {renderTextWithMarkdownLinks(segment, guildId, `segment-${index}`)}
+          {renderTextWithMarkdownLinks(
+            segment,
+            guildId,
+            `segment-${index}`,
+            mentionUsernameById,
+          )}
         </span>
       );
     });
 }
 
-function renderMarkdownPreview(markdown: string, guildId: string) {
+function renderMarkdownPreview(
+  markdown: string,
+  guildId: string,
+  mentionUsernameById?: Record<string, string>,
+) {
   const lines = markdown.split(/\r?\n/);
 
   if (!lines.some((line) => line.trim().length > 0)) {
@@ -662,33 +724,33 @@ function renderMarkdownPreview(markdown: string, guildId: string) {
           key={`quote-${index}`}
           className="rounded-r-[14px] border-l-[3px] border-[#3A3D44] bg-[#111216] px-[12px] py-[9px] text-[13px] leading-[1.65] text-[#C5C8CE]"
         >
-          {renderInlineMarkdown(trimmed.replace(/^>\s?/, ""), guildId)}
+          {renderInlineMarkdown(trimmed.replace(/^>\s?/, ""), guildId, mentionUsernameById)}
         </div>,
       );
       continue;
     }
 
     if (/^###\s+/.test(trimmed)) {
-      rendered.push(<p key={`h3-${index}`} className="text-[13px] font-semibold text-[#F2F3F5]">{renderInlineMarkdown(trimmed.replace(/^###\s+/, ""), guildId)}</p>);
+      rendered.push(<p key={`h3-${index}`} className="text-[13px] font-semibold text-[#F2F3F5]">{renderInlineMarkdown(trimmed.replace(/^###\s+/, ""), guildId, mentionUsernameById)}</p>);
       continue;
     }
 
     if (/^##\s+/.test(trimmed)) {
-      rendered.push(<p key={`h2-${index}`} className="text-[15px] font-semibold text-[#F2F3F5]">{renderInlineMarkdown(trimmed.replace(/^##\s+/, ""), guildId)}</p>);
+      rendered.push(<p key={`h2-${index}`} className="text-[15px] font-semibold text-[#F2F3F5]">{renderInlineMarkdown(trimmed.replace(/^##\s+/, ""), guildId, mentionUsernameById)}</p>);
       continue;
     }
 
     if (/^#\s+/.test(trimmed)) {
-      rendered.push(<p key={`h1-${index}`} className="text-[17px] font-semibold text-[#F7F7F8]">{renderInlineMarkdown(trimmed.replace(/^#\s+/, ""), guildId)}</p>);
+      rendered.push(<p key={`h1-${index}`} className="text-[17px] font-semibold text-[#F7F7F8]">{renderInlineMarkdown(trimmed.replace(/^#\s+/, ""), guildId, mentionUsernameById)}</p>);
       continue;
     }
 
     if (/^-#\s+/.test(trimmed)) {
-      rendered.push(<p key={`sub-${index}`} className="text-[11px] leading-[1.55] text-[#90959D]">{renderInlineMarkdown(trimmed.replace(/^-#\s+/, ""), guildId)}</p>);
+      rendered.push(<p key={`sub-${index}`} className="text-[11px] leading-[1.55] text-[#90959D]">{renderInlineMarkdown(trimmed.replace(/^-#\s+/, ""), guildId, mentionUsernameById)}</p>);
       continue;
     }
 
-    rendered.push(<p key={`p-${index}`} className="text-[13px] leading-[1.65] text-[#C5C8CE]">{renderInlineMarkdown(trimmed, guildId)}</p>);
+    rendered.push(<p key={`p-${index}`} className="text-[13px] leading-[1.65] text-[#C5C8CE]">{renderInlineMarkdown(trimmed, guildId, mentionUsernameById)}</p>);
   }
 
   return rendered;
@@ -1218,6 +1280,7 @@ function renderTextWithMarkdownLinks(
   text: string,
   guildId: string,
   keyPrefix: string,
+  mentionUsernameById?: Record<string, string>,
 ) {
   const parts: React.ReactNode[] = [];
   let lastIndex = 0;
@@ -1234,6 +1297,7 @@ function renderTextWithMarkdownLinks(
           key={`${keyPrefix}-text-${lastIndex}`}
           text={text.slice(lastIndex, matchIndex)}
           guildId={guildId}
+          mentionUsernameById={mentionUsernameById}
         />,
       );
     }
@@ -1248,6 +1312,7 @@ function renderTextWithMarkdownLinks(
         key={`${keyPrefix}-tail-${lastIndex}`}
         text={text.slice(lastIndex)}
         guildId={guildId}
+        mentionUsernameById={mentionUsernameById}
       />,
     );
   }
@@ -1258,6 +1323,7 @@ function renderTextWithMarkdownLinks(
         key={`${keyPrefix}-plain`}
         text={text}
         guildId={guildId}
+        mentionUsernameById={mentionUsernameById}
       />,
     ];
   }
@@ -1620,7 +1686,11 @@ function TicketMessageBuilder({
           ? normalizeSuggestionPanelLayout(next)
           : layoutPreset === "suggestion_publish"
             ? normalizeSuggestionPublishedLayout(next)
-            : normalizeTicketPanelLayout(next),
+            : layoutPreset === "bate_ponto"
+              ? normalizeBatePontoPanelLayout(next)
+              : layoutPreset === "bate_ponto_log"
+                ? normalizeBatePontoLogLayout(next)
+                : normalizeTicketPanelLayout(next),
     [layoutPreset],
   );
   const layout = useMemo(() => normalizeLayout(value), [normalizeLayout, value]);
@@ -1631,7 +1701,12 @@ function TicketMessageBuilder({
   }, [layoutPreset]);
 
   useEffect(() => {
-    if (layoutPreset !== "captcha" && layoutPreset !== "suggestions") {
+    if (
+      layoutPreset !== "captcha" &&
+      layoutPreset !== "suggestions" &&
+      layoutPreset !== "bate_ponto" &&
+      layoutPreset !== "bate_ponto_log"
+    ) {
       return;
     }
 
@@ -1643,7 +1718,34 @@ function TicketMessageBuilder({
     const isUnset =
       layoutPreset === "captcha"
         ? isUnsetCaptchaPanelLayout(value)
-        : isUnsetSuggestionPanelLayout(value);
+        : layoutPreset === "suggestions"
+          ? isUnsetSuggestionPanelLayout(value)
+          : layoutPreset === "bate_ponto"
+            ? isUnsetBatePontoPanelLayout(value)
+            : isUnsetBatePontoLogLayout(value);
+
+    if (
+      layoutPreset === "bate_ponto" ||
+      layoutPreset === "bate_ponto_log"
+    ) {
+      if (!isEmpty) {
+        didSyncPresetDefaultsRef.current = true;
+        return;
+      }
+
+      if (!isUnset) {
+        didSyncPresetDefaultsRef.current = true;
+        return;
+      }
+
+      didSyncPresetDefaultsRef.current = true;
+      onChange(
+        layoutPreset === "bate_ponto"
+          ? createDefaultBatePontoPanelLayout()
+          : createDefaultBatePontoLogLayout(),
+      );
+      return;
+    }
 
     if (!isEmpty && !isUnset) {
       didSyncPresetDefaultsRef.current = true;
@@ -1659,7 +1761,11 @@ function TicketMessageBuilder({
     onChange(
       layoutPreset === "captcha"
         ? createDefaultCaptchaPanelLayout()
-        : createDefaultSuggestionPanelLayout(),
+        : layoutPreset === "suggestions"
+          ? createDefaultSuggestionPanelLayout()
+          : layoutPreset === "bate_ponto"
+            ? createDefaultBatePontoPanelLayout()
+            : createDefaultBatePontoLogLayout(),
     );
   }, [layoutPreset, onChange, value]);
 
@@ -1693,6 +1799,8 @@ function TicketMessageBuilder({
   const [buttonEmojiSearchQuery, setButtonEmojiSearchQuery] = useState("");
   const [recentButtonEmojis, setRecentButtonEmojis] = useState<GuildEmojiSuggestion[]>([]);
   const [viewerAvatarUrl, setViewerAvatarUrl] = useState<string | null>(null);
+  const [viewerUsername, setViewerUsername] = useState<string | null>(null);
+  const [viewerDiscordId, setViewerDiscordId] = useState<string | null>(null);
   const contentTextareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
   const buttonEmojiTriggerRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const layoutRef = useRef(layout);
@@ -1749,10 +1857,6 @@ function TicketMessageBuilder({
   }, [guildId]);
 
   useEffect(() => {
-    if (thumbnailPreviewUrl) {
-      return;
-    }
-
     let isMounted = true;
     const controller = new AbortController();
 
@@ -1760,15 +1864,32 @@ function TicketMessageBuilder({
       .then((response) => response.json())
       .then((payload) => {
         if (!isMounted) return;
-        const avatarUrl =
-          typeof payload?.authenticatedUser?.avatarUrl === "string"
-            ? payload.authenticatedUser.avatarUrl
-            : null;
-        setViewerAvatarUrl(avatarUrl);
+        const authenticatedUser = payload?.authenticatedUser;
+        if (!thumbnailPreviewUrl) {
+          const avatarUrl =
+            typeof authenticatedUser?.avatarUrl === "string"
+              ? authenticatedUser.avatarUrl
+              : null;
+          setViewerAvatarUrl(avatarUrl);
+        }
+        setViewerUsername(
+          typeof authenticatedUser?.username === "string"
+            ? authenticatedUser.username
+            : null,
+        );
+        setViewerDiscordId(
+          typeof authenticatedUser?.discordUserId === "string"
+            ? authenticatedUser.discordUserId
+            : null,
+        );
       })
       .catch(() => {
         if (!isMounted) return;
-        setViewerAvatarUrl(null);
+        if (!thumbnailPreviewUrl) {
+          setViewerAvatarUrl(null);
+        }
+        setViewerUsername(null);
+        setViewerDiscordId(null);
       });
 
     return () => {
@@ -1776,6 +1897,14 @@ function TicketMessageBuilder({
       controller.abort();
     };
   }, [thumbnailPreviewUrl]);
+
+  const batePontoLogMentionMap = useMemo(() => {
+    if (!viewerDiscordId || !viewerUsername) {
+      return undefined;
+    }
+
+    return { [viewerDiscordId]: viewerUsername };
+  }, [viewerDiscordId, viewerUsername]);
 
   const resolvedThumbnailPreviewUrl =
     thumbnailPreviewUrl ?? viewerAvatarUrl ?? DEFAULT_USER_THUMBNAIL_PREVIEW_URL;
@@ -3369,8 +3498,14 @@ function TicketMessageBuilder({
     }}>{renderMarkdownPreview(
       layoutPreset === "suggestion_publish"
         ? resolveSuggestionPublishedPreviewMarkdown(item.markdown)
-        : item.markdown,
+        : layoutPreset === "bate_ponto_log"
+          ? resolveBatePontoLogPreviewMarkdown(item.markdown, {
+              username: viewerUsername ?? undefined,
+              memberId: viewerDiscordId ?? undefined,
+            })
+          : item.markdown,
       guildId,
+      layoutPreset === "bate_ponto_log" ? batePontoLogMentionMap : undefined,
     )}</div>{item.accessory ? <div className="justify-self-start min-[520px]:justify-self-end">{previewAccessory(item.accessory, handlePreviewLinkIntent, resolvedThumbnailPreviewUrl, guildId)}</div> : null}</div>;
     if (item.type === "container") return <div key={item.id} className="relative overflow-hidden rounded-[20px] border border-[#2B2D31] bg-[#15171B]">{item.accentColor ? <div className="absolute bottom-0 left-0 top-0 w-[4px]" style={{ backgroundColor: item.accentColor }} /> : null}<div className={cn("space-y-[14px] px-[18px] py-[16px]", item.accentColor ? "pl-[20px]" : "pl-[18px]")}>{item.children.length ? renderPreview(item.children, true) : <div className="rounded-[16px] border border-dashed border-[#2E3136] bg-[#111216] px-[14px] py-[16px] text-[12px] leading-[1.55] text-[#8D9198]">Container vazio. Adicione conteudos, botoes ou separadores para montar o embed final.</div>}</div></div>;
     if (item.type === "image") return <div key={item.id} className="overflow-hidden rounded-[18px] border border-[#2B2D31] bg-[#17181B]">{item.url ? <img src={item.url} alt="" className="max-h-[240px] w-full object-cover" /> : <div className="flex h-[180px] items-center justify-center text-[#73767D]"><ImageIcon className="h-[28px] w-[28px]" /></div>}</div>;
