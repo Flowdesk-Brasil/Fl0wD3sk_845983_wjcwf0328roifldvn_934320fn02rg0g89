@@ -28,7 +28,7 @@ type ConfigStepMultiSelectProps = {
 export function ConfigStepMultiSelect({
   label,
   placeholder,
-  options,
+  options = [],
   values,
   onChange,
   disabled = false,

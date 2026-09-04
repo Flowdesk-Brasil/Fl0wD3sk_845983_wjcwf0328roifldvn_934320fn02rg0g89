@@ -80,11 +80,19 @@ export function useLiveDiscordGuildResources(
   const lastRefreshAtRef = useRef(0);
   const lastForceFreshAtRef = useRef(0);
 
-  const applyResourceSnapshot = useCallback((snapshot: ResourceSnapshot) => {
-    setTextChannelOptions(snapshot.textChannelOptions);
-    setVoiceChannelOptions(snapshot.voiceChannelOptions);
-    setCategoryOptions(snapshot.categoryOptions);
-    setRoleOptions(snapshot.roleOptions);
+  const applyResourceSnapshot = useCallback((snapshot: Partial<ResourceSnapshot>) => {
+    if (snapshot.textChannelOptions) {
+      setTextChannelOptions(snapshot.textChannelOptions);
+    }
+    if (snapshot.voiceChannelOptions) {
+      setVoiceChannelOptions(snapshot.voiceChannelOptions);
+    }
+    if (snapshot.categoryOptions) {
+      setCategoryOptions(snapshot.categoryOptions);
+    }
+    if (snapshot.roleOptions) {
+      setRoleOptions(snapshot.roleOptions);
+    }
   }, []);
 
   const refreshResources = useCallback(

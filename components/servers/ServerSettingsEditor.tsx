@@ -2795,6 +2795,10 @@ export function ServerSettingsEditor({
         id: channel.id,
         name: `# ${channel.name}`,
       }));
+      const voice = (payload.channels.voice || []).map((channel) => ({
+        id: channel.id,
+        name: channel.name,
+      }));
       const categories = payload.channels.categories.map((channel) => ({
         id: channel.id,
         name: channel.name,
@@ -2803,11 +2807,13 @@ export function ServerSettingsEditor({
 
       applyResourceSnapshot({
         textChannelOptions: text,
+        voiceChannelOptions: voice,
         categoryOptions: categories,
         roleOptions: roleList,
       });
 
       const textSet = new Set(text.map((item) => item.id));
+      const voiceSet = new Set(voice.map((item) => item.id));
       const categorySet = new Set(categories.map((item) => item.id));
       const roleSet = new Set(roleList.map((item) => item.id));
 
@@ -3059,7 +3065,7 @@ export function ServerSettingsEditor({
       const nextBatePontoRequiredVoiceChannelIds = hasBatePontoSettings
         ? Array.isArray(payload.batePontoSettings?.requiredVoiceChannelIds)
           ? payload.batePontoSettings.requiredVoiceChannelIds.filter((id) =>
-              textSet.has(id),
+              voiceSet.has(id),
             )
           : []
         : [];
@@ -8750,7 +8756,7 @@ export function ServerSettingsEditor({
                           <ConfigStepMultiSelect
                             label="Calls autorizadas (opcional)"
                             placeholder="Qualquer call do servidor"
-                            options={voiceChannelOptions}
+                            options={voiceChannelOptions ?? []}
                             values={batePontoRequiredVoiceChannelIds}
                             onChange={setBatePontoRequiredVoiceChannelIds}
                             disabled={

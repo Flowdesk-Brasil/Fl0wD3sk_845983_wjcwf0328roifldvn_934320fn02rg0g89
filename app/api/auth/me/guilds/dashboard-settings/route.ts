@@ -1471,6 +1471,7 @@ export async function GET(request: Request) {
       },
       channels: {
         text: textChannels,
+        voice: voiceChannels,
         categories,
       },
       roles,
