@@ -16,6 +16,7 @@ type ServerDashboardSettingsPayload = {
   };
   channels: {
     text: Array<{ id: string; name: string; type: number; position: number }>;
+    voice?: Array<{ id: string; name: string; type: number; position: number }>;
     categories: Array<{ id: string; name: string; type: number; position: number }>;
   };
   roles: Array<{ id: string; name: string; color: number; position: number }>;
@@ -110,6 +111,8 @@ type ServerDashboardSettingsPayload = {
     timezone: string;
     autoFinishOpenSessions: boolean;
     maxOpenHours: number;
+    requireVoiceChannel?: boolean;
+    requiredVoiceChannelIds?: string[];
     updatedAt: string | null;
   } | null;
   antiLinkSettings: {

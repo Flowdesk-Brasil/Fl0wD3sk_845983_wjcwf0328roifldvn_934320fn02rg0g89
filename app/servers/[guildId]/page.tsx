@@ -30,5 +30,5 @@ export default async function ServersByGuildPage({
     await searchParams;
   }
 
-  redirect(`/servers/${safeGuildId}/tickets/overview/`);
+  redirect(`/servers/${safeGuildId}/overview/`);
 }

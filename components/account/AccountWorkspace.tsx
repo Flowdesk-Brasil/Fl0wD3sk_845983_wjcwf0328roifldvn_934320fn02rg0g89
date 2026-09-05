@@ -3,31 +3,22 @@
 import {
   useCallback,
   useMemo,
-  useRef,
   useState,
   useEffect,
   useTransition,
-  type RefObject,
 } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   BadgePercent,
   ChevronDown,
   ChevronLeft,
-  ChevronRight,
-  CircleHelp,
   Contact,
-  Cog,
   CreditCard,
   History,
   Key,
   LifeBuoy,
-  LogOut,
   MonitorSmartphone,
-  Palette,
-  Plus,
   Search,
   Settings2,
   ShieldAlert,
@@ -41,7 +32,6 @@ import {
 import { OFFICIAL_DISCORD_INVITE_URL } from "@/lib/discordLink/config";
 import { LandingReveal } from "@/components/landing/LandingReveal";
 import { setWorkspaceShellReadyState } from "@/components/workspace/WorkspaceRouteAdaptiveLoading";
-import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { useAccountStatus } from "@/hooks/useAccountData";
 import { AccountTabLoadingState } from "@/components/account/TabRegistry";
 
@@ -61,6 +51,12 @@ import {
 } from "@/lib/routing/browserWarmup";
 import { useLatchedPendingKey } from "@/lib/ui/useLatchedPendingKey";
 import { useLiveAccountProfile } from "@/hooks/useLiveAccountProfile";
+import {
+  PanelShell,
+  fdNavGroupClass,
+  fdNavItemClass,
+  type PanelQuickLink,
+} from "@/components/panel-shell";
 export { validateTab };
 export type { AccountTab };
 
@@ -176,11 +172,6 @@ function readStoredCollapsedGroups() {
   }
 }
 
-function accountInitial(name: string, username: string) {
-  const source = name.trim() || username.trim();
-  return source ? source.charAt(0).toUpperCase() : "F";
-}
-
 function normalizeSavedPanelAccounts(input: unknown) {
   if (!Array.isArray(input)) return [];
 
@@ -233,45 +224,6 @@ function mergeSavedPanelAccounts(
     .slice(0, 3);
 }
 
-// ─── Sub-components ────────────────────────────────────────────────────────────
-
-function AccountAvatar({
-  avatarUrl,
-  displayName,
-  username,
-  size = 38,
-  className = "",
-}: {
-  avatarUrl: string | null;
-  displayName: string;
-  username: string;
-  size?: number;
-  className?: string;
-}) {
-  if (avatarUrl) {
-    return (
-      <Image
-        src={avatarUrl}
-        alt={displayName}
-        width={size}
-        height={size}
-        className={`rounded-full object-cover ${className}`.trim()}
-        style={{ width: size, height: size }}
-      />
-    );
-  }
-
-  return (
-    <div
-      className={`relative flex items-center justify-center rounded-full bg-[radial-gradient(circle_at_top,#7D3BFF_0%,#3C0F6D_54%,#170822_100%)] font-semibold text-[#F0F0F0] shadow-[0_0_28px_rgba(125,59,255,0.14)] ${className}`.trim()}
-      style={{ width: size, height: size, fontSize: size * 0.36 }}
-    >
-      {accountInitial(displayName, username)}
-      <span className="absolute bottom-[2px] right-[2px] h-[8px] w-[8px] rounded-full bg-[#0062FF]" />
-    </div>
-  );
-}
-
 // ─── Main Workspace Shell ──────────────────────────────────────────────────────
 
 type AccountWorkspaceProps = {
@@ -292,6 +244,7 @@ export function AccountWorkspace({
   children,
 }: AccountWorkspaceProps) {
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [sidebarSearch, setSidebarSearch] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(() => buildDefaultCollapsedGroups());
@@ -316,8 +269,6 @@ export function AccountWorkspace({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const desktopProfileMenuRef = useRef<HTMLDivElement | null>(null);
-  const mobileProfileMenuRef = useRef<HTMLDivElement | null>(null);
   const initialAccountProfile = useMemo(
     () => ({
       authUserId,
@@ -361,6 +312,7 @@ export function AccountWorkspace({
 
   const navigateToHref = useCallback((href: string, nextTab?: AccountTab | null) => {
     setIsProfileMenuOpen(false);
+    setIsMobileNavOpen(false);
     const target = warmBrowserRoute(href, {
       router,
       prefetchDocument: true,
@@ -460,33 +412,6 @@ export function AccountWorkspace({
 
     setReturnPath(resolvedReturnPath);
   }, [searchParams]);
-
-  useEffect(() => {
-    function handleOutsideClick(event: MouseEvent) {
-      const target = event.target as Node | null;
-      if (!target) return;
-
-      const clickedInsideDesktop = desktopProfileMenuRef.current?.contains(target);
-      const clickedInsideMobile = mobileProfileMenuRef.current?.contains(target);
-      if (!clickedInsideDesktop && !clickedInsideMobile) {
-        setIsProfileMenuOpen(false);
-      }
-    }
-
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setIsProfileMenuOpen(false);
-      }
-    }
-
-    document.addEventListener("mousedown", handleOutsideClick);
-    document.addEventListener("keydown", handleEscape);
-
-    return () => {
-      document.removeEventListener("mousedown", handleOutsideClick);
-      document.removeEventListener("keydown", handleEscape);
-    };
-  }, []);
 
   async function handleLogout() {
     if (isLoggingOut) return;
@@ -668,24 +593,17 @@ export function AccountWorkspace({
   const shouldShowAccountContentLoading = Boolean(latchedPendingTab);
   const returnLabel = getAccountReturnLabel(returnPath);
 
-  const sidebarShellClass =
-    "border border-[#111111] bg-[#060606] flex flex-col overflow-hidden";
-
-  const renderSidebarContent = (profileMenuRef: RefObject<HTMLDivElement | null>) => (
-    <div className="flex h-full flex-col px-[14px] pb-[14px] pt-[20px]">
-      <div className="flex items-center gap-[10px] rounded-[16px] border border-[#141414] bg-[#080808] px-[14px] py-[12px]">
-        <Search className="h-[18px] w-[18px] shrink-0 text-[#6F6F6F]" strokeWidth={1.85} aria-hidden="true" />
+  const renderSidebarContent = () => (
+    <div className="fd-sidebar-inner">
+      <div className="fd-sidebar-search">
+        <Search className="h-[16px] w-[16px] shrink-0 text-[#8b8b90]" strokeWidth={1.85} aria-hidden="true" />
         <input
           type="text"
           value={sidebarSearch}
           onChange={(e) => setSidebarSearch(e.target.value)}
-          placeholder="Buscar..."
+          placeholder="Filtrar navegacao..."
           autoComplete="off"
-          className="min-w-0 flex-1 bg-transparent text-[15px] text-[#D5D5D5] outline-none placeholder:text-[#5A5A5A]"
         />
-        <span className="inline-flex h-[28px] min-w-[28px] items-center justify-center rounded-[9px] border border-[#1A1A1A] bg-[#101010] px-[8px] text-[12px] font-medium text-[#A7A7A7]">
-          F
-        </span>
       </div>
 
       <div className="mt-[14px] space-y-[4px]">
@@ -694,8 +612,11 @@ export function AccountWorkspace({
             onMouseEnter={() => prefetchHref(returnPath || "/dashboard")}
             onFocus={() => prefetchHref(returnPath || "/dashboard")}
             onPointerDown={() => prefetchHref(returnPath || "/dashboard")}
-            onClick={handleReturnToPreviousPage}
-            className="group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#B5B5B5] transition-all duration-200 hover:bg-[#111111] hover:text-[#E3E3E3]"
+            onClick={() => {
+              setIsMobileNavOpen(false);
+              handleReturnToPreviousPage();
+            }}
+            className={fdNavItemClass()}
           >
           <span className="inline-flex h-[22px] w-[22px] items-center justify-center text-[#8A8A8A] group-hover:text-[#DADADA]">
             <ChevronLeft className="h-[18px] w-[18px] shrink-0" strokeWidth={1.85} aria-hidden="true" />
@@ -725,13 +646,7 @@ export function AccountWorkspace({
                 <button
                   type="button"
                   onClick={() => toggleGroup(groupKey)}
-                  className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-all duration-200 ${
-                    isGroupActive
-                      ? "bg-[#1E1E1E] text-[#F0F0F0] font-semibold"
-                      : isGroupOpen
-                        ? "bg-[#121212] text-[#D6D6D6]"
-                        : "text-[#B5B5B5] hover:bg-[#111111] hover:text-[#E3E3E3]"
-                  }`}
+                  className={fdNavGroupClass({ active: isGroupActive, open: isGroupOpen })}
                 >
                   <span className={`inline-flex h-[22px] w-[22px] items-center justify-center ${
                     isGroupActive
@@ -762,7 +677,7 @@ export function AccountWorkspace({
               )}
 
               {(!isCollapsed || normalizedSearch) && (
-                <div className="mt-[6px] space-y-[4px] pl-[12px]">
+                <div className="fd-nav-children">
                   {visibleItems.map((item) => {
                     const isActive = highlightedTab === item.id;
                     const Icon = item.icon;
@@ -776,15 +691,7 @@ export function AccountWorkspace({
                         onMouseEnter={() => prefetchTab(item.id)}
                         onFocus={() => prefetchTab(item.id)}
                         onPointerDown={() => prefetchTab(item.id)}
-                        className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[10px] text-left transition-all duration-200 ${
-                          isActive
-                            ? isDanger
-                              ? "bg-[rgba(219,70,70,0.08)] text-[#F0A0A0]"
-                              : "bg-[#1A1A1A] text-[#F0F0F0]"
-                            : isDanger
-                              ? "text-[#B07070] hover:bg-[rgba(219,70,70,0.06)] hover:text-[#F0A0A0]"
-                              : "text-[#AFAFAF] hover:bg-[#101010] hover:text-[#E3E3E3]"
-                        }`}
+                        className={fdNavItemClass({ active: isActive, danger: isDanger })}
                       >
                         <span
                           className={`inline-flex h-[20px] w-[20px] items-center justify-center ${
@@ -809,195 +716,62 @@ export function AccountWorkspace({
           );
         })}
       </div>
-
-      <div ref={profileMenuRef} className="mt-[14px]">
-        <div className="relative">
-          {isProfileMenuOpen && (
-            <div
-              className="absolute inset-x-0 bottom-[calc(100%+10px)] z-[140] overflow-hidden rounded-[22px] border border-[#151515] bg-[#070707] p-[12px] shadow-[0_26px_80px_rgba(0,0,0,0.54)]"
-              onMouseDown={(e) => e.stopPropagation()}
-            >
-              <div className="space-y-[8px]">
-                <button
-                  type="button"
-                  onClick={handleAddAnotherAccount}
-                  className="flex w-full items-center gap-[12px] rounded-[16px] border border-[#171717] bg-[#0D0D0D] px-[12px] py-[12px] text-left text-[#D8D8D8] transition-colors hover:border-[#222222] hover:bg-[#111111]"
-                >
-                  <span className="inline-flex h-[32px] w-[32px] items-center justify-center rounded-[11px] border border-[#1A1A1A] bg-[#101010] text-[#CFCFCF]">
-                    <Plus className="h-[18px] w-[18px] shrink-0" strokeWidth={2.2} aria-hidden="true" />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[14px] leading-none font-medium tracking-[-0.03em]">
-                      Adicionar outra conta
-                    </span>
-                    <span className="mt-[6px] block truncate text-[11px] leading-none text-[#686868]">
-                      Ate 3 contas salvas neste navegador
-                    </span>
-                  </span>
-                </button>
-
-                <div className="border-t border-[#121212] pt-[12px]">
-                  <p className="px-[4px] text-[11px] uppercase tracking-[0.16em] text-[#5F5F5F]">
-                    Contas salvas
-                  </p>
-                  <div className="mt-[10px] space-y-[6px]">
-                    {savedAccounts.map((account) => {
-                      const isCurrent =
-                        resolveSavedAccountKey(account) ===
-                        resolveSavedAccountKey(currentAccount);
-
-                      return (
-                        <button
-                          key={resolveSavedAccountKey(account)}
-                          type="button"
-                          onClick={() => handleSwitchSavedAccount(account)}
-                          className={`flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-colors ${
-                            isCurrent
-                              ? "bg-[#141414] text-[#ECECEC]"
-                              : "text-[#A7A7A7] hover:bg-[#111111] hover:text-[#E6E6E6]"
-                          }`}
-                        >
-                          <AccountAvatar
-                            avatarUrl={account.avatarUrl}
-                            displayName={account.displayName}
-                            username={account.username}
-                            size={36}
-                            className="shrink-0"
-                          />
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-[14px] leading-none font-medium tracking-[-0.03em]">
-                              {account.displayName}
-                            </span>
-                            <span className="mt-[6px] block truncate text-[11px] leading-none text-[#666666]">
-                              @{account.username}
-                            </span>
-                          </span>
-                          {isCurrent ? (
-                            <span className="inline-flex rounded-full border border-[rgba(0,98,255,0.28)] bg-[rgba(0,98,255,0.1)] px-[8px] py-[5px] text-[10px] leading-none font-medium text-[#8AB6FF]">
-                              ativa
-                            </span>
-                          ) : null}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="border-t border-[#121212] pt-[12px]">
-                  <div className="space-y-[4px]">
-                    <button
-                      type="button"
-                      onClick={handleOpenMyAccount}
-                      className="flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#B7B7B7] transition-colors hover:bg-[#111111] hover:text-[#ECECEC]"
-                    >
-                      <UserRound className="h-[18px] w-[18px] shrink-0" strokeWidth={1.9} />
-                      <span className="text-[14px] leading-none font-medium">Minha conta</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleOpenAccountSettings}
-                      className="flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#B7B7B7] transition-colors hover:bg-[#111111] hover:text-[#ECECEC]"
-                    >
-                      <Cog className="h-[18px] w-[18px] shrink-0" strokeWidth={1.9} />
-                      <span className="text-[14px] leading-none font-medium">Configuracoes</span>
-                    </button>
-                    <button
-                      type="button"
-                      disabled
-                      className="flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#656565]"
-                    >
-                      <Palette className="h-[18px] w-[18px] shrink-0" strokeWidth={1.9} />
-                      <span className="text-[14px] leading-none font-medium">Personalizacao</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleOpenHelp}
-                      className="flex w-full items-center justify-between gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#B7B7B7] transition-colors hover:bg-[#111111] hover:text-[#ECECEC]"
-                    >
-                      <span className="inline-flex items-center gap-[12px]">
-                        <CircleHelp className="h-[18px] w-[18px] shrink-0" strokeWidth={1.9} />
-                        <span className="text-[14px] leading-none font-medium">Ajuda</span>
-                      </span>
-                      <ChevronRight className="h-[14px] w-[14px] shrink-0" strokeWidth={1.9} aria-hidden="true" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { void handleLogout(); }}
-                      disabled={isLoggingOut}
-                      className="flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#DB9E9E] transition-colors hover:bg-[#111111] hover:text-[#F1C0C0] disabled:cursor-not-allowed disabled:opacity-70"
-                    >
-                      {isLoggingOut ? (
-                        <ButtonLoader size={16} colorClassName="text-[#DB8A8A]" />
-                      ) : (
-                        <LogOut className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />
-                      )}
-                      <span className="text-[14px] leading-none font-medium">Sair</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          <button
-            type="button"
-            onClick={() => setIsProfileMenuOpen((current) => !current)}
-            className="flex w-full items-center justify-between gap-[12px] rounded-[18px] border border-[#111111] bg-[#080808] px-[10px] py-[10px] text-left transition-colors hover:border-[#1A1A1A] hover:bg-[#0B0B0B]"
-            aria-expanded={isProfileMenuOpen}
-            aria-haspopup="menu"
-          >
-            <div className="flex min-w-0 items-center gap-[10px]">
-              <AccountAvatar
-                avatarUrl={currentAccount.avatarUrl}
-                displayName={currentAccount.displayName}
-                username={currentAccount.username}
-                size={38}
-              />
-              <div className="min-w-0">
-                <p className="truncate text-[15px] leading-none font-medium tracking-[-0.03em] text-[#E5E5E5]">
-                  {currentAccount.displayName}
-                </p>
-                <p className="mt-[5px] truncate text-[12px] leading-none text-[#686868]">
-                  @{currentAccount.username}
-                </p>
-              </div>
-            </div>
-            <span className="inline-flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded-[10px] text-[#7E7E7E] transition-colors hover:bg-[#101010] hover:text-[#D8D8D8]">
-              <ChevronDown className="h-[14px] w-[14px] shrink-0" strokeWidth={1.9} aria-hidden="true" />
-            </span>
-          </button>
-        </div>
-      </div>
     </div>
   );
 
+  const paletteLinks: PanelQuickLink[] = ACCOUNT_NAV_GROUPS.flatMap((group) =>
+    group.items.map((item) => ({
+      id: item.id,
+      label: item.label,
+      group: group.category === "Conta" && group.items[0]?.id === "status" ? "Avancado" : group.category,
+      icon: item.icon,
+      onSelect: () => {
+        setIsProfileMenuOpen(false);
+        setIsMobileNavOpen(false);
+        navigateToTab(item.id);
+      },
+    })),
+  );
+
   return (
-    <div className="relative min-h-screen overflow-x-clip bg-[#040404] text-white">
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05)_0%,rgba(255,255,255,0.012)_28%,transparent_68%)]"
-      />
-
-      <div className="hidden xl:block">
-        <aside className="fixed inset-y-0 left-0 z-20 w-[318px]">
-          <div className={`${sidebarShellClass} h-full rounded-none border-y-0 border-l-0 border-r-[#151515]`}>
-            <LandingReveal delay={24} duration={240} className="h-full">
-              {renderSidebarContent(desktopProfileMenuRef)}
-            </LandingReveal>
-          </div>
-        </aside>
-      </div>
-
-      <main className="relative px-[20px] pt-[32px] pb-[56px] md:px-6 lg:px-8 xl:min-h-screen xl:pl-[358px] xl:pr-[42px]">
-        <div className="mx-auto w-full max-w-[1220px]">
-          <aside className="mb-[20px] min-w-0 xl:hidden">
-            <LandingReveal delay={24} duration={240}>
-              <div className={`${sidebarShellClass} rounded-[28px]`}>
-                {renderSidebarContent(mobileProfileMenuRef)}
-              </div>
-            </LandingReveal>
-          </aside>
-
+    <PanelShell
+      className="flowdesk-account-ui"
+      crumb="FlowDesk"
+      title={meta.title}
+      account={{
+        displayName: currentAccount.displayName,
+        username: currentAccount.username,
+        avatarUrl: currentAccount.avatarUrl,
+        discordUserId: currentAccount.discordUserId,
+      }}
+      savedAccounts={savedAccounts}
+      links={paletteLinks}
+      actions={{
+        onAddAccount: handleAddAnotherAccount,
+        onSwitchAccount: (account) =>
+          handleSwitchSavedAccount({
+            authUserId: account.authUserId ?? currentAccount.authUserId,
+            discordUserId: account.discordUserId,
+            displayName: account.displayName,
+            username: account.username,
+            avatarUrl: account.avatarUrl,
+            lastSeenAt: Date.now(),
+          }),
+        onOpenMyAccount: handleOpenMyAccount,
+        onOpenSettings: handleOpenAccountSettings,
+        onOpenApiDocs: () => navigateToTab("api_keys"),
+        onOpenHelp: handleOpenHelp,
+        onLogout: () => {
+          void handleLogout();
+        },
+        isLoggingOut,
+      }}
+      isPaletteOpen={isProfileMenuOpen}
+      onPaletteOpenChange={setIsProfileMenuOpen}
+      isMobileNavOpen={isMobileNavOpen}
+      onMobileNavOpenChange={setIsMobileNavOpen}
+      sidebar={renderSidebarContent()}
+    >
           <section className="min-w-0">
             <LandingReveal delay={36} duration={240}>
               <div className="flex flex-col gap-[14px] md:flex-row md:items-end md:justify-between">
@@ -1044,8 +818,6 @@ export function AccountWorkspace({
               </div>
             </LandingReveal>
           </section>
-        </div>
-      </main>
-    </div>
+    </PanelShell>
   );
 }

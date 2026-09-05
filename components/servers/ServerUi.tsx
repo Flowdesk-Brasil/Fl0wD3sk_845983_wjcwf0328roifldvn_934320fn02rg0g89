@@ -26,9 +26,9 @@ export function ServerSurface({
   return (
     <section
       className={cn(
-        "flowdesk-server-surface rounded-[24px] border border-[#171717] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] shadow-[0_24px_80px_rgba(0,0,0,0.22)]",
+        "flowdesk-server-surface rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D]",
         interactive &&
-          "transition-[border-color,background-color,box-shadow,transform] duration-200 hover:border-[#242424] hover:bg-[linear-gradient(180deg,#0D0D0D_0%,#090909_100%)]",
+          "transition-[border-color,background-color,transform] duration-200 hover:border-[#2A2A2E] hover:bg-[#111111]",
         className,
       )}
     >
@@ -94,7 +94,7 @@ export function ServerIconFrame({
   return (
     <span
       className={cn(
-        "inline-flex h-[48px] w-[48px] shrink-0 items-center justify-center rounded-[15px] border border-[#232323] bg-[#111] text-[#EAEAEA]",
+        "inline-flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[12px] border border-[#1C1C1C] bg-[#141414] text-[#C4C4C8]",
         className,
       )}
     >
@@ -134,15 +134,15 @@ export function ServerSectionHeading({
       <div className="flex flex-col gap-[16px] lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
           {eyebrow ? (
-            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
+            <p className="text-[12px] font-medium text-[#8B8B90]">
               {eyebrow}
             </p>
           ) : null}
-          <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#E4E4E4]">
+          <h3 className="mt-[10px] text-[22px] leading-[1.1] font-semibold tracking-[-0.04em] text-[#F2F2F3]">
             {title}
           </h3>
           {description ? (
-            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#8B8B90]">
               {description}
             </p>
           ) : null}

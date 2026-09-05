@@ -63,6 +63,25 @@ const OPTIONAL_DISCORD_SNOWFLAKE_TEXT = flowSecureDto.string({
 const CAPTCHA_SETTINGS_SELECT =
   "guild_id, enabled, panel_channel_id, logs_channel_id, verified_role_ids, bypass_role_ids, panel_layout, panel_title, panel_description, panel_button_label, panel_message_id, challenge_title, challenge_description, max_attempts, timeout_seconds, kick_on_fail, success_message, updated_at";
 
+type CaptchaSettingsRow = {
+  enabled: boolean;
+  panel_channel_id: string | null;
+  logs_channel_id: string | null;
+  verified_role_ids: unknown;
+  bypass_role_ids: unknown;
+  panel_layout: unknown;
+  panel_title: string | null;
+  panel_description: string | null;
+  panel_button_label: string | null;
+  challenge_title: string | null;
+  challenge_description: string | null;
+  max_attempts: number | null;
+  timeout_seconds: number | null;
+  kick_on_fail: boolean | null;
+  success_message: string | null;
+  updated_at: string | null;
+};
+
 type CaptchaSecureSnapshot = {
   enabled: boolean;
   panelChannelId: string | null;
@@ -275,28 +294,29 @@ export async function GET(request: Request) {
       );
     }
 
-    if (!result.data) {
+    const captchaRow = (result.data || null) as CaptchaSettingsRow | null;
+    if (!captchaRow) {
       return applyNoStoreHeaders(
         NextResponse.json({ ok: true, settings: null }),
       );
     }
 
     const canonicalSnapshot = normalizeCaptchaSecureSnapshot({
-      enabled: result.data.enabled,
-      panelChannelId: result.data.panel_channel_id,
-      logsChannelId: result.data.logs_channel_id,
-      verifiedRoleIds: result.data.verified_role_ids,
-      bypassRoleIds: result.data.bypass_role_ids,
-      panelLayout: result.data.panel_layout,
-      panelTitle: result.data.panel_title,
-      panelDescription: result.data.panel_description,
-      panelButtonLabel: result.data.panel_button_label,
-      challengeTitle: result.data.challenge_title,
-      challengeDescription: result.data.challenge_description,
-      maxAttempts: result.data.max_attempts,
-      timeoutSeconds: result.data.timeout_seconds,
-      kickOnFail: result.data.kick_on_fail,
-      successMessage: result.data.success_message,
+      enabled: captchaRow.enabled,
+      panelChannelId: captchaRow.panel_channel_id,
+      logsChannelId: captchaRow.logs_channel_id,
+      verifiedRoleIds: captchaRow.verified_role_ids,
+      bypassRoleIds: captchaRow.bypass_role_ids,
+      panelLayout: captchaRow.panel_layout,
+      panelTitle: captchaRow.panel_title,
+      panelDescription: captchaRow.panel_description,
+      panelButtonLabel: captchaRow.panel_button_label,
+      challengeTitle: captchaRow.challenge_title,
+      challengeDescription: captchaRow.challenge_description,
+      maxAttempts: captchaRow.max_attempts,
+      timeoutSeconds: captchaRow.timeout_seconds,
+      kickOnFail: captchaRow.kick_on_fail,
+      successMessage: captchaRow.success_message,
     });
 
     if (canonicalSnapshot && secureSnapshotResult?.recovery?.unreadable) {
@@ -313,7 +333,7 @@ export async function GET(request: Request) {
       NextResponse.json({
         ok: true,
         settings: canonicalSnapshot
-          ? buildCaptchaResponse(canonicalSnapshot, result.data.updated_at)
+          ? buildCaptchaResponse(canonicalSnapshot, captchaRow.updated_at)
           : null,
       }),
     );

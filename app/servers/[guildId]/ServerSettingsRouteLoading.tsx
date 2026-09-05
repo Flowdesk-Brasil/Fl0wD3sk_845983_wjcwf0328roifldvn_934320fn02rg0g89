@@ -1,4 +1,5 @@
 type ServerSettingsSection =
+  | "home"
   | "overview"
   | "message"
   | "sales_overview"

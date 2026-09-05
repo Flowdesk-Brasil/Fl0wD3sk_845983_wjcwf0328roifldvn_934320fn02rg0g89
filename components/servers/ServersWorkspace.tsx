@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { motion } from "motion/react";
 import type { RefObject } from "react";
 import Image from "next/image";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -21,10 +22,9 @@ import {
   FolderKanban,
   Grid2x2,
   HardDrive,
+  LayoutDashboard,
   LifeBuoy,
   List as ListLucide,
-  LogOut,
-  Palette,
   Plus as PlusLucide,
   PlugZap,
   Search as SearchLucide,
@@ -35,7 +35,6 @@ import {
   ShoppingBag,
   SlidersHorizontal,
   Ticket,
-  UserRound,
   Users,
   WalletCards,
   Workflow,
@@ -43,11 +42,11 @@ import {
 } from "lucide-react";
 import { OFFICIAL_DISCORD_INVITE_URL } from "@/lib/discordLink/config";
 import { LandingActionButton } from "@/components/landing/LandingActionButton";
-import { LandingGlowTag } from "@/components/landing/LandingGlowTag";
 import { LandingReveal } from "@/components/landing/LandingReveal";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { useNotificationEffect } from "@/components/notifications/NotificationsProvider";
 import { ServerDiscordLinkModal } from "@/components/servers/ServerUi";
+import { ServerHomeOverview } from "@/components/servers/ServerHomeOverview";
 import { ServerSettingsEditor } from "@/components/servers/ServerSettingsEditor";
 import { ServerSettingsEditorSkeleton } from "@/components/servers/ServerSettingsEditorSkeleton";
 import { PermissionDeniedState } from "@/components/servers/PermissionDeniedState";
@@ -95,6 +94,12 @@ import {
 import { useLatchedPendingKey } from "@/lib/ui/useLatchedPendingKey";
 import { fetchClientData } from "@/lib/performance/clientData";
 import { useLiveAccountProfile } from "@/hooks/useLiveAccountProfile";
+import {
+  PanelShell,
+  fdNavGroupClass,
+  fdNavItemClass,
+  type PanelQuickLink,
+} from "@/components/panel-shell";
 
 type ServersWorkspaceProps = {
   displayName: string;
@@ -116,6 +121,7 @@ type ServersWorkspaceProps = {
 
 type ServerEditorTab = "settings" | "payments" | "methods" | "plans";
 type ServerSettingsSection =
+  | "home"
   | "overview"
   | "message"
   | "sales_overview"
@@ -192,7 +198,7 @@ const FILTER_LABEL: Record<FilterOption, string> = {
 
 type SidebarItem = {
   label: string;
-  kind: "overview" | "settings" | "sales" | "ticket" | "entry_exit" | "captcha" | "suggestions" | "bate_ponto" | "security" | "dashboard";
+  kind: "home" | "overview" | "settings" | "sales" | "ticket" | "entry_exit" | "captcha" | "suggestions" | "bate_ponto" | "security" | "dashboard";
   tab?: ServerEditorTab | null;
   settingsSection?: ServerSettingsSection | null;
   disabled?: boolean;
@@ -203,16 +209,17 @@ type SidebarItem = {
 
 const PROJECTS_SIDEBAR_ITEMS: SidebarItem[] = [
   {
-    label: "Dashboard",
-    kind: "dashboard",
-    tab: null,
-    searchAliases: ["dashboard", "painel"],
+    label: "Visão Geral",
+    kind: "home",
+    tab: "settings",
+    settingsSection: "home",
+    searchAliases: ["dashboard", "visao geral", "visão geral", "home", "inicio", "painel"],
   },
   {
     label: "Projetos",
     kind: "overview",
     tab: null,
-    searchAliases: ["overview", "servidores", "dashboard", "inicio"],
+    searchAliases: ["overview", "servidores", "projetos", "inicio"],
   },
 ];
 
@@ -548,10 +555,10 @@ const SECURITY_SIDEBAR_ITEMS: SidebarItem[] = [
   },
 ];
 const shellClass =
-  "flowdesk-server-surface rounded-[28px] border border-[#0E0E0E] bg-[#0A0A0A] shadow-[0_24px_80px_rgba(0,0,0,0.38)]";
-
-const sidebarShellClass =
-  "flowdesk-server-surface relative overflow-hidden border border-[#0E0E0E] bg-[#050505] shadow-[0_24px_80px_rgba(0,0,0,0.42)]";
+  "rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D]";
+const projectCardClass =
+  "rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] transition-colors hover:border-[#2A2A2E] hover:bg-[#111111]";
+const projectEase = [0.22, 1, 0.36, 1] as const;
 
 const SAVED_PANEL_ACCOUNTS_KEY = "flowdesk_saved_panel_accounts_v1";
 const editorPanelRevealClass =
@@ -646,7 +653,7 @@ function parseWorkspaceRoute(pathname: string | null): {
   const fallback = {
     guildId: null,
     tab: "settings" as const,
-    settingsSection: "overview" as const,
+    settingsSection: "home" as const,
   };
 
   if (!pathname) return fallback;
@@ -670,7 +677,7 @@ function parseWorkspaceRoute(pathname: string | null): {
     }
 
     if (
-      /^\/\d{10,25}(?:\/(?:sales\/(?:overview|categories(?:\/create)?|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|captcha\/(?:overview|message)|suggestions\/(?:overview|message)|bate-ponto\/(?:overview|message|ranking|history)|security\/(?:antilink|autorole|logs))?)?$/.test(
+      /^\/\d{10,25}(?:\/(?:overview|sales\/(?:overview|categories(?:\/create)?|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|captcha\/(?:overview|message)|suggestions\/(?:overview|message)|bate-ponto\/(?:overview|message|ranking|history)|security\/(?:antilink|autorole|logs))?)?$/.test(
         comparablePathname,
       )
     ) {
@@ -680,12 +687,21 @@ function parseWorkspaceRoute(pathname: string | null): {
     return comparablePathname;
   })();
 
+  const homeMatch = normalizedPathname.match(/^\/servers\/(\d{10,25})\/overview\/?$/);
+  if (homeMatch) {
+    return {
+      guildId: homeMatch[1],
+      tab: "settings",
+      settingsSection: "home",
+    };
+  }
+
   const bareMatch = normalizedPathname.match(/^\/servers\/(\d{10,25})\/?$/);
   if (bareMatch) {
     return {
       guildId: bareMatch[1],
       tab: "settings",
-      settingsSection: "overview",
+      settingsSection: "home",
     };
   }
 
@@ -846,7 +862,7 @@ function isServersWorkspacePath(pathname: string) {
     return true;
   }
 
-  return /^\/\d{10,25}(?:\/(?:sales\/(?:overview|categories|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|captcha\/(?:overview|message)|suggestions\/(?:overview|message)|bate-ponto\/(?:overview|message|ranking|history)|security\/(?:antilink|autorole|logs))?)?\/?$/.test(
+  return /^\/\d{10,25}(?:\/(?:overview|sales\/(?:overview|categories|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|captcha\/(?:overview|message)|suggestions\/(?:overview|message)|bate-ponto\/(?:overview|message|ranking|history)|security\/(?:antilink|autorole|logs))?)?\/?$/.test(
     pathname,
   );
 }
@@ -994,18 +1010,18 @@ function ServersEmptyState({
       : "Ajuste a busca ou os filtros para encontrar um servidor.");
 
   return (
-    <div className="flex flex-col items-center justify-center rounded-[18px] border border-[#141414] bg-[#090909] px-[20px] py-[48px] text-center">
-      <div className="flex h-[48px] w-[48px] items-center justify-center rounded-full bg-[#111111]">
+    <div className="flex flex-col items-center justify-center rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[20px] py-[48px] text-center">
+      <div className="flex h-[34px] w-[34px] items-center justify-center rounded-[12px] border border-[#1C1C1C] bg-[#141414]">
         {syncContent ? (
-          <Shield className="h-[24px] w-[24px] text-[#8AB6FF]" />
+          <Shield className="h-[16px] w-[16px] text-[#C4C4C8]" />
         ) : (
-          <FolderKanban className="h-[24px] w-[24px] text-[#888888]" />
+          <FolderKanban className="h-[16px] w-[16px] text-[#C4C4C8]" />
         )}
       </div>
-      <p className="mt-[16px] text-[15px] font-medium text-[#E5E5E5]">
+      <p className="mt-[16px] text-[16px] font-semibold tracking-[-0.03em] text-[#F2F2F3]">
         {title}
       </p>
-      <p className="mt-[4px] max-w-[360px] text-[14px] text-[#777777]">
+      <p className="mt-[8px] max-w-[400px] text-[13px] leading-[1.6] text-[#8B8B90]">
         {description}
       </p>
       {syncContent && onPrimaryAction ? (
@@ -1222,10 +1238,6 @@ function SidebarSearchShortcutIcon() {
   );
 }
 
-function SidebarLogoutIcon() {
-  return <LogOut className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />;
-}
-
 function SidebarNavIcon({
   kind,
   active = false,
@@ -1234,6 +1246,7 @@ function SidebarNavIcon({
   active?: boolean;
 }) {
   const Icon: LucideIcon = {
+    home: LayoutDashboard,
     overview: FolderKanban,
     settings: Settings2,
     ticket: Ticket,
@@ -1275,7 +1288,11 @@ function StatusRing({ status }: { status: ManagedServerStatus }) {
 }
 
 function FallbackServerIcon() {
-  return <div className="flex h-[54px] w-[54px] items-center justify-center rounded-[16px] bg-[#131313] text-[15px] font-semibold text-[#7A7A7A]">FD</div>;
+  return (
+    <div className="flex h-[48px] w-[48px] items-center justify-center rounded-[14px] border border-[#1C1C1C] bg-[#141414] text-[13px] font-semibold text-[#C4C4C8]">
+      FD
+    </div>
+  );
 }
 
 const SERVER_SKELETON_OPACITY_LEVELS = [1, 0.76, 0.58] as const;
@@ -1292,7 +1309,7 @@ function ServerOverviewSkeletonCard({ index }: { index: number }) {
 
   return (
     <article
-      className="overflow-hidden rounded-[26px] border border-[#151515] bg-[#0A0A0A] p-[18px]"
+      className="p-[6px]"
       style={{
         opacity,
         animationDelay: `${index * 36}ms`,
@@ -1301,31 +1318,16 @@ function ServerOverviewSkeletonCard({ index }: { index: number }) {
     >
       <div className="flex items-start justify-between gap-[14px]">
         <div className="flex min-w-0 items-start gap-[14px]">
-          <ServerSkeletonBlock className="h-[56px] w-[56px] rounded-[16px] bg-[#121212]" />
+          <ServerSkeletonBlock className="h-[48px] w-[48px] rounded-full bg-[#171717]" />
           <div className="min-w-0 flex-1">
-            <ServerSkeletonBlock className="h-[18px] w-[160px] max-w-full rounded-full bg-[#151515]" />
-            <ServerSkeletonBlock className="mt-[10px] h-[14px] w-[122px] max-w-full rounded-full bg-[#111111]" />
+            <ServerSkeletonBlock className="h-[16px] w-[160px] max-w-full rounded-full bg-[#171717]" />
+            <ServerSkeletonBlock className="mt-[10px] h-[12px] w-[122px] max-w-full rounded-full bg-[#171717]" />
           </div>
         </div>
-
-        <div className="flex items-center gap-[10px]">
-          <div className="flex h-[42px] w-[42px] items-center justify-center rounded-full border border-[#1A1A1A] bg-[#0D0D0D]">
-            <ServerSkeletonBlock className="h-[10px] w-[10px] rounded-full bg-[#1B1B1B]" />
-          </div>
-          <ServerSkeletonBlock className="h-[40px] w-[40px] rounded-[14px] bg-[#111111]" />
-        </div>
+        <ServerSkeletonBlock className="h-[28px] w-[72px] rounded-full bg-[#171717]" />
       </div>
-
-      <ServerSkeletonBlock className="mt-[18px] h-[34px] w-[150px] max-w-full rounded-full bg-[#101010]" />
-
-      <div className="mt-[18px] rounded-[20px] border border-[#141414] bg-[#080808] px-[16px] py-[16px]">
-        <div className="flex items-center justify-between gap-[12px]">
-          <ServerSkeletonBlock className="h-[12px] w-[84px] rounded-full bg-[#131313]" />
-          <ServerSkeletonBlock className="h-[24px] w-[88px] rounded-full bg-[#101010]" />
-        </div>
-        <ServerSkeletonBlock className="mt-[14px] h-[18px] w-[92%] rounded-full bg-[#151515]" />
-        <ServerSkeletonBlock className="mt-[10px] h-[14px] w-[68%] rounded-full bg-[#111111]" />
-      </div>
+      <ServerSkeletonBlock className="mt-[18px] h-[12px] w-[92%] rounded-full bg-[#171717]" />
+      <ServerSkeletonBlock className="mt-[10px] h-[12px] w-[68%] rounded-full bg-[#171717]" />
     </article>
   );
 }
@@ -1338,40 +1340,20 @@ function ServerListSkeletonRow({ index }: { index: number }) {
 
   return (
     <article
-      className="border-b border-[#141414] bg-[#0A0A0A] px-[18px] py-[18px]"
+      className="px-[4px] py-[14px]"
       style={{
         opacity,
         animationDelay: `${index * 36}ms`,
       }}
       aria-hidden="true"
     >
-      <div className="flex flex-col gap-[18px] xl:flex-row xl:items-center xl:justify-between">
-        <div className="flex min-w-0 items-center gap-[16px]">
-          <ServerSkeletonBlock className="h-[56px] w-[56px] rounded-[16px] bg-[#121212]" />
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-x-[12px] gap-y-[8px]">
-              <ServerSkeletonBlock className="h-[18px] w-[160px] max-w-full rounded-full bg-[#151515]" />
-              <ServerSkeletonBlock className="h-[24px] w-[84px] rounded-full bg-[#101010]" />
-            </div>
-            <div className="mt-[10px] flex flex-wrap items-center gap-x-[14px] gap-y-[8px]">
-              <ServerSkeletonBlock className="h-[13px] w-[132px] rounded-full bg-[#111111]" />
-              <ServerSkeletonBlock className="h-[13px] w-[92px] rounded-full bg-[#111111]" />
-            </div>
-          </div>
+      <div className="flex items-center gap-[14px]">
+        <ServerSkeletonBlock className="h-[40px] w-[40px] rounded-full bg-[#171717]" />
+        <div className="min-w-0 flex-1 space-y-[8px]">
+          <ServerSkeletonBlock className="h-[14px] w-[160px] max-w-full rounded-full bg-[#171717]" />
+          <ServerSkeletonBlock className="h-[11px] w-[110px] rounded-full bg-[#171717]" />
         </div>
-
-        <div className="grid gap-[8px] xl:min-w-[250px] xl:justify-items-start">
-          <ServerSkeletonBlock className="h-[16px] w-[156px] rounded-full bg-[#151515]" />
-          <ServerSkeletonBlock className="h-[13px] w-[224px] max-w-full rounded-full bg-[#111111]" />
-        </div>
-
-        <div className="flex flex-wrap items-center justify-end gap-[12px] xl:ml-[18px]">
-          <ServerSkeletonBlock className="h-[32px] w-[122px] rounded-full bg-[#101010]" />
-          <div className="flex h-[42px] w-[42px] items-center justify-center rounded-full border border-[#1A1A1A] bg-[#0D0D0D]">
-            <ServerSkeletonBlock className="h-[10px] w-[10px] rounded-full bg-[#1B1B1B]" />
-          </div>
-          <ServerSkeletonBlock className="h-[40px] w-[40px] rounded-[14px] bg-[#111111]" />
-        </div>
+        <ServerSkeletonBlock className="h-[12px] w-[88px] rounded-full bg-[#171717]" />
       </div>
     </article>
   );
@@ -1389,12 +1371,68 @@ function ServersOverviewSkeletonGrid() {
 
 function ServersListSkeleton() {
   return (
-    <div className="px-[18px] py-[24px]">
-      <div className="space-y-[12px]">
-        {Array.from({ length: 3 }, (_, index) => (
-          <ServerListSkeletonRow key={index} index={index} />
-        ))}
-      </div>
+    <div className="space-y-[12px]">
+      {Array.from({ length: 3 }, (_, index) => (
+        <ServerListSkeletonRow key={index} index={index} />
+      ))}
+    </div>
+  );
+}
+
+function ServerCardMenu({
+  guildId,
+  isOpen,
+  onOpen,
+  onToggleMenu,
+  onCopyFromMenu,
+}: {
+  guildId: string;
+  isOpen: boolean;
+  onOpen: (guildId: string) => void;
+  onToggleMenu: (guildId: string) => void;
+  onCopyFromMenu: (guildId: string) => void;
+}) {
+  return (
+    <div
+      className={`relative ${isOpen ? "z-[80]" : "z-0"}`}
+      data-server-card-menu-root="true"
+    >
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggleMenu(guildId);
+        }}
+        className="flex h-[34px] w-[34px] items-center justify-center rounded-[12px] border border-[#1C1C1C] bg-[#141414] text-[#8B8B90] transition-colors hover:border-[#2A2A2E] hover:text-[#F2F2F3]"
+        aria-label="Abrir menu do servidor"
+      >
+        <MenuDotsIcon />
+      </button>
+      {isOpen ? (
+        <div className="absolute right-0 top-[42px] z-[160] min-w-[188px] rounded-[14px] border border-[#1C1C1C] bg-[#141414] p-[6px]">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpen(guildId);
+              onToggleMenu(guildId);
+            }}
+            className="flex w-full items-center rounded-[10px] px-[12px] py-[10px] text-left text-[13px] text-[#D4D4D8] transition-colors hover:bg-[#1A1A1A]"
+          >
+            Abrir visao geral
+          </button>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onCopyFromMenu(guildId);
+            }}
+            className="mt-[2px] flex w-full items-center rounded-[10px] px-[12px] py-[10px] text-left text-[13px] text-[#D4D4D8] transition-colors hover:bg-[#1A1A1A]"
+          >
+            Copiar ID
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1425,50 +1463,66 @@ function ServerListRow({
   const style = statusStyle(server.status);
 
   return (
-    <LandingReveal delay={Math.min(index, 10) * 18} duration={220}>
-      <article className={`flowdesk-landing-soft-motion relative cursor-pointer border-b border-[#141414] bg-[#0A0A0A] px-[18px] py-[18px] transition-[background-color,border-color] duration-250 hover:border-[#1E1E1E] hover:bg-[#0D0D0D] ${isSelected ? "bg-[#101010]" : ""}`} onClick={() => onOpen(server.guildId)} onMouseEnter={() => onPrefetch(server.guildId)} onFocus={() => onPrefetch(server.guildId)} onPointerDown={() => onPrefetch(server.guildId)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpen(server.guildId); } }} role="button" tabIndex={0}>
-        <div className="flex flex-col gap-[18px] xl:flex-row xl:items-center xl:justify-between">
-          <div className="flex min-w-0 items-center gap-[16px]">
-            {server.iconUrl ? <Image src={server.iconUrl} alt={server.guildName} width={56} height={56} className="h-[56px] w-[56px] rounded-[16px] object-cover" /> : <FallbackServerIcon />}
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-x-[12px] gap-y-[8px]">
-                <h3 className="truncate text-[18px] leading-none font-medium tracking-[-0.03em] text-[#E5E5E5]">{server.guildName}</h3>
-                <span className={`inline-flex items-center rounded-full px-[10px] py-[6px] text-[11px] leading-none font-medium ${style.badgeClass}`}>{style.badgeText}</span>
-              </div>
-              <div className="mt-[10px] flex flex-wrap items-center gap-x-[14px] gap-y-[8px] text-[13px] text-[#6F6F6F]">
-                <span className="truncate">ID {server.guildId}</span>
-                <button type="button" onClick={(event) => { event.stopPropagation(); onCopy(server.guildId); }} className={`inline-flex items-center gap-[7px] transition-colors ${isCopied ? "text-[#8AB6FF]" : "hover:text-[#C4C4C4]"}`} aria-label="Copiar ID do servidor">
-                  <span className="relative inline-flex h-[15px] w-[15px] items-center justify-center">
-                    <span className={`absolute inset-0 inline-flex items-center justify-center transition-all duration-200 ${isCopied ? "scale-75 opacity-0" : "scale-100 opacity-100"}`}><CopyIcon /></span>
-                    <span className={`inline-flex items-center justify-center transition-all duration-200 ${isCopied ? "scale-100 opacity-100" : "scale-75 opacity-0"}`}><CheckIcon /></span>
-                  </span>
-                  <span>{isCopied ? "Copiado" : "Copiar ID"}</span>
-                </button>
-              </div>
+    <motion.article
+      initial={{ opacity: 0, y: 14 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.38, delay: Math.min(index, 8) * 0.04, ease: projectEase }}
+      className={`${projectCardClass} relative cursor-pointer px-[16px] py-[14px] ${isSelected ? "border-[#2A2A2E] bg-[#111111]" : ""}`}
+      onClick={() => onOpen(server.guildId)}
+      onMouseEnter={() => onPrefetch(server.guildId)}
+      onFocus={() => onPrefetch(server.guildId)}
+      onPointerDown={() => onPrefetch(server.guildId)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen(server.guildId);
+        }
+      }}
+      role="button"
+      tabIndex={0}
+    >
+      <div className="flex flex-col gap-[14px] xl:flex-row xl:items-center xl:justify-between">
+        <div className="flex min-w-0 items-center gap-[14px]">
+          {server.iconUrl ? (
+            <Image src={server.iconUrl} alt={server.guildName} width={48} height={48} className="h-[48px] w-[48px] rounded-[14px] object-cover" />
+          ) : (
+            <FallbackServerIcon />
+          )}
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-x-[10px] gap-y-[6px]">
+              <h3 className="truncate text-[16px] leading-none font-semibold tracking-[-0.03em] text-[#F2F2F3]">{server.guildName}</h3>
+              <span className={`inline-flex items-center rounded-full px-[8px] py-[4px] text-[11px] font-medium ${style.badgeClass}`}>{style.badgeText}</span>
             </div>
-          </div>
-          <div className="grid gap-[8px] xl:min-w-[250px] xl:justify-items-start">
-            <p className="text-[17px] leading-none font-medium text-[#DADADA]">{serverMetaLabel(server)}</p>
-            <p className="text-[13px] leading-[1.45] text-[#777777]">{statusDescription(server)}</p>
-          </div>
-          <div className="flex flex-wrap items-center justify-end gap-[12px] xl:ml-[18px]">
-            <span className="inline-flex items-center rounded-full border border-[#1B1B1B] bg-[#111111] px-[12px] py-[8px] text-[12px] leading-none text-[#D0D0D0]">
-              {serverAccountChipLabel(server)}
-            </span>
-            <StatusRing status={server.status} />
-            <div
-              className={`relative ${
-                openCardMenuGuildId === server.guildId ? "z-[80]" : "z-0"
-              }`}
-              data-server-card-menu-root="true"
-            >
-              <button type="button" onClick={(event) => { event.stopPropagation(); onToggleMenu(server.guildId); }} className="flex h-[40px] w-[40px] items-center justify-center rounded-[14px] border border-[#171717] bg-[#101010] text-[#7B7B7B] transition-colors hover:border-[#222222] hover:text-[#D0D0D0]" aria-label="Abrir menu do servidor"><MenuDotsIcon /></button>
-              {openCardMenuGuildId === server.guildId ? <div className="absolute right-0 top-[48px] z-[160] min-w-[186px] rounded-[16px] border border-[#171717] bg-[#0A0A0A] p-[8px] shadow-[0_22px_60px_rgba(0,0,0,0.44)]"><button type="button" onClick={(event) => { event.stopPropagation(); onOpen(server.guildId); onToggleMenu(server.guildId); }} className="flex w-full items-center rounded-[12px] px-[12px] py-[10px] text-left text-[13px] text-[#D0D0D0] transition-colors hover:bg-[#111111]">Abrir configuracoes</button><button type="button" onClick={(event) => { event.stopPropagation(); onCopyFromMenu(server.guildId); }} className="mt-[4px] flex w-full items-center rounded-[12px] px-[12px] py-[10px] text-left text-[13px] text-[#D0D0D0] transition-colors hover:bg-[#111111]">Copiar ID</button></div> : null}
-            </div>
+            <p className="mt-[8px] truncate text-[12px] text-[#8B8B90]">{serverMetaLabel(server)}</p>
           </div>
         </div>
-      </article>
-    </LandingReveal>
+        <div className="flex flex-wrap items-center gap-[10px] xl:justify-end">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onCopy(server.guildId);
+            }}
+            className={`inline-flex items-center gap-[6px] rounded-full border px-[10px] py-[6px] text-[12px] transition-colors ${
+              isCopied
+                ? "border-[#2A2A2E] bg-[#141414] text-[#C4C4C8]"
+                : "border-[#1C1C1C] bg-[#141414] text-[#8B8B90] hover:text-[#F2F2F3]"
+            }`}
+          >
+            {isCopied ? "Copiado" : "Copiar ID"}
+          </button>
+          <span className="text-[12px] text-[#8B8B90]">{serverAccessBadgeLabel(server)}</span>
+          <ArrowUpRight className="h-[15px] w-[15px] text-[#5A5A5E]" strokeWidth={2} />
+          <ServerCardMenu
+            guildId={server.guildId}
+            isOpen={openCardMenuGuildId === server.guildId}
+            onOpen={onOpen}
+            onToggleMenu={onToggleMenu}
+            onCopyFromMenu={onCopyFromMenu}
+          />
+        </div>
+      </div>
+    </motion.article>
   );
 }
 
@@ -1495,147 +1549,86 @@ function ServerGridCard({
   onToggleMenu: (guildId: string) => void;
   onCopyFromMenu: (guildId: string) => void;
 }) {
-  const style = statusStyle(server.status);
-
   return (
-    <LandingReveal delay={Math.min(index, 8) * 20} duration={220}>
-      <article
-        className={`flowdesk-landing-soft-motion relative cursor-pointer rounded-[26px] border border-[#151515] bg-[#0A0A0A] p-[18px] transition-[border-color,background-color,transform] duration-250 hover:border-[#1E1E1E] hover:bg-[#0D0D0D] ${isSelected ? "border-[rgba(0,98,255,0.28)] bg-[#0E0E0E]" : ""}`}
-        onClick={() => onOpen(server.guildId)}
-        onMouseEnter={() => onPrefetch(server.guildId)}
-        onFocus={() => onPrefetch(server.guildId)}
-        onPointerDown={() => onPrefetch(server.guildId)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            onOpen(server.guildId);
-          }
-        }}
-        role="button"
-        tabIndex={0}
-      >
-        <div className="flex items-start justify-between gap-[14px]">
-          <div className="flex min-w-0 items-start gap-[14px]">
-            {server.iconUrl ? (
-              <Image
-                src={server.iconUrl}
-                alt={server.guildName}
-                width={56}
-                height={56}
-                className="h-[56px] w-[56px] rounded-[16px] object-cover"
-              />
-            ) : (
-              <FallbackServerIcon />
-            )}
-            <div className="min-w-0">
-              <div className="flex items-center gap-[10px]">
-                <h3 className="truncate text-[18px] leading-none font-medium tracking-[-0.04em] text-[#E7E7E7]">
-                  {server.guildName}
-                </h3>
-              </div>
-              <p className="mt-[10px] truncate text-[14px] leading-none text-[#8D8D8D]">
-                {serverMetaLabel(server)}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-[10px]">
-            <StatusRing status={server.status} />
-            <div
-              className={`relative ${
-                openCardMenuGuildId === server.guildId ? "z-[80]" : "z-0"
-              }`}
-              data-server-card-menu-root="true"
-            >
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onToggleMenu(server.guildId);
-                }}
-                className="flex h-[40px] w-[40px] items-center justify-center rounded-[14px] border border-[#171717] bg-[#101010] text-[#7B7B7B] transition-colors hover:border-[#222222] hover:text-[#D0D0D0]"
-                aria-label="Abrir menu do servidor"
-              >
-                <MenuDotsIcon />
-              </button>
-              {openCardMenuGuildId === server.guildId ? (
-                <div className="absolute right-0 top-[48px] z-[160] min-w-[186px] rounded-[16px] border border-[#171717] bg-[#0A0A0A] p-[8px] shadow-[0_22px_60px_rgba(0,0,0,0.44)]">
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onOpen(server.guildId);
-                      onToggleMenu(server.guildId);
-                    }}
-                    className="flex w-full items-center rounded-[12px] px-[12px] py-[10px] text-left text-[13px] text-[#D0D0D0] transition-colors hover:bg-[#111111]"
-                  >
-                    Abrir configuracoes
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onCopyFromMenu(server.guildId);
-                    }}
-                    className="mt-[4px] flex w-full items-center rounded-[12px] px-[12px] py-[10px] text-left text-[13px] text-[#D0D0D0] transition-colors hover:bg-[#111111]"
-                  >
-                    Copiar ID
-                  </button>
-                </div>
-              ) : null}
-            </div>
+    <motion.article
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.42, delay: Math.min(index, 8) * 0.05, ease: projectEase }}
+      whileHover={{ y: -3 }}
+      className={`${projectCardClass} group relative cursor-pointer px-[18px] py-[16px] ${isSelected ? "border-[#2A2A2E] bg-[#111111]" : ""}`}
+      onClick={() => onOpen(server.guildId)}
+      onMouseEnter={() => onPrefetch(server.guildId)}
+      onFocus={() => onPrefetch(server.guildId)}
+      onPointerDown={() => onPrefetch(server.guildId)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen(server.guildId);
+        }
+      }}
+      role="button"
+      tabIndex={0}
+    >
+      <div className="flex items-start justify-between gap-[12px]">
+        <div className="flex min-w-0 items-center gap-[12px]">
+          {server.iconUrl ? (
+            <Image
+              src={server.iconUrl}
+              alt={server.guildName}
+              width={48}
+              height={48}
+              className="h-[48px] w-[48px] rounded-[14px] object-cover"
+            />
+          ) : (
+            <FallbackServerIcon />
+          )}
+          <div className="min-w-0">
+            <h3 className="truncate text-[20px] leading-none font-semibold tracking-[-0.04em] text-[#F2F2F3]">
+              {server.guildName}
+            </h3>
+            <p className="mt-[8px] truncate text-[12px] text-[#8B8B90]">
+              {serverMetaLabel(server)}
+            </p>
           </div>
         </div>
+        <ServerCardMenu
+          guildId={server.guildId}
+          isOpen={openCardMenuGuildId === server.guildId}
+          onOpen={onOpen}
+          onToggleMenu={onToggleMenu}
+          onCopyFromMenu={onCopyFromMenu}
+        />
+      </div>
 
+      <div className="mt-[16px]">
         <button
           type="button"
           onClick={(event) => {
             event.stopPropagation();
             onCopy(server.guildId);
           }}
-          className={`mt-[18px] inline-flex max-w-full items-center gap-[8px] rounded-full border px-[12px] py-[8px] text-[13px] leading-none transition-colors ${
+          className={`inline-flex min-w-0 max-w-full items-center gap-[6px] rounded-full border px-[10px] py-[6px] text-[12px] transition-colors ${
             isCopied
-              ? "border-[rgba(0,98,255,0.3)] bg-[rgba(0,98,255,0.09)] text-[#9CC0FF]"
-              : "border-[#1A1A1A] bg-[#101010] text-[#D8D8D8] hover:border-[#262626] hover:bg-[#131313]"
+              ? "border-[#2A2A2E] bg-[#141414] text-[#C4C4C8]"
+              : "border-[#1C1C1C] bg-[#141414] text-[#8B8B90] hover:text-[#F2F2F3]"
           }`}
         >
-          <span className="relative inline-flex h-[15px] w-[15px] items-center justify-center">
-            <span
-              className={`absolute inset-0 inline-flex items-center justify-center transition-all duration-200 ${
-                isCopied ? "scale-75 opacity-0" : "scale-100 opacity-100"
-              }`}
-            >
-              <CopyIcon />
-            </span>
-            <span
-              className={`inline-flex items-center justify-center transition-all duration-200 ${
-                isCopied ? "scale-100 opacity-100" : "scale-75 opacity-0"
-              }`}
-            >
-              <CheckIcon />
-            </span>
-          </span>
-          <span className="truncate">{isCopied ? "Copiado" : `${server.guildId.slice(0, 18)}...`}</span>
+          <span className="truncate">{isCopied ? "ID copiado" : server.guildId}</span>
         </button>
+      </div>
 
-        <div className="mt-[18px] rounded-[20px] border border-[#141414] bg-[#080808] px-[16px] py-[16px]">
-          <div className="flex items-center justify-between gap-[12px]">
-            <p className="text-[12px] leading-none font-medium uppercase tracking-[0.18em] text-[#686868]">
-              {style.badgeText}
-            </p>
-            <span className={`inline-flex items-center rounded-full px-[10px] py-[6px] text-[11px] leading-none font-medium ${style.badgeClass}`}>
-              {serverAccessBadgeLabel(server)}
-            </span>
-          </div>
-          <p className="mt-[14px] text-[17px] leading-[1.28] font-medium tracking-[-0.03em] text-[#E9E9E9]">
+      <div className="mt-[16px] flex items-end justify-between gap-[12px]">
+        <div className="min-w-0">
+          <p className="truncate text-[13px] font-medium text-[#F2F2F3]">
             {statusDescription(server)}
           </p>
-          <p className="mt-[10px] text-[14px] leading-[1.45] text-[#8C8C8C]">
-            {serverMetaLabel(server)}
+          <p className="mt-[6px] text-[12px] text-[#6F6F74]">
+            {serverAccessBadgeLabel(server)} · {serverAccountChipLabel(server)}
           </p>
         </div>
-      </article>
-    </LandingReveal>
+        <ArrowUpRight className="h-[15px] w-[15px] shrink-0 text-[#5A5A5E] transition-transform group-hover:translate-x-[1px] group-hover:-translate-y-[1px] group-hover:text-[#D4D4D8]" strokeWidth={2} />
+      </div>
+    </motion.article>
   );
 }
 
@@ -1710,6 +1703,7 @@ export function ServersWorkspace({
   const [memberDraftIds, setMemberDraftIds] = useState<string[]>([""]);
   const [savedAccounts, setSavedAccounts] = useState<SavedPanelAccount[]>([]);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [isDiscordReconnectModalOpen, setIsDiscordReconnectModalOpen] = useState(
     !currentAccount.discordUserId,
   );
@@ -1736,10 +1730,7 @@ export function ServersWorkspace({
   const statusRef = useRef<HTMLDivElement | null>(null);
   const desktopTeamMenuRef = useRef<HTMLDivElement | null>(null);
   const mobileTeamMenuRef = useRef<HTMLDivElement | null>(null);
-  const desktopProfileMenuRef = useRef<HTMLDivElement | null>(null);
-  const mobileProfileMenuRef = useRef<HTMLDivElement | null>(null);
   const desktopSidebarSearchInputRef = useRef<HTMLInputElement | null>(null);
-  const mobileSidebarSearchInputRef = useRef<HTMLInputElement | null>(null);
   const lastServersRecoveryAtRef = useRef(0);
   const selectedServerRecoveryRef = useRef<{
     guildId: string | null;
@@ -2366,17 +2357,6 @@ export function ServersWorkspace({
       if (!clickedInsideDesktopMenu && !clickedInsideMobileMenu) {
         setIsTeamMenuOpen(false);
       }
-      const clickedInsideDesktopProfile =
-        target && desktopProfileMenuRef.current
-          ? desktopProfileMenuRef.current.contains(target)
-          : false;
-      const clickedInsideMobileProfile =
-        target && mobileProfileMenuRef.current
-          ? mobileProfileMenuRef.current.contains(target)
-          : false;
-      if (!clickedInsideDesktopProfile && !clickedInsideMobileProfile) {
-        setIsProfileMenuOpen(false);
-      }
     }
     function handleEscape(event: KeyboardEvent) {
       if (event.key === "Escape") {
@@ -2395,59 +2375,6 @@ export function ServersWorkspace({
       document.removeEventListener("keydown", handleEscape);
     };
   }, []);
-
-  const focusSidebarSearchInput = useCallback(() => {
-    const inputCandidates = [
-      desktopSidebarSearchInputRef.current,
-      mobileSidebarSearchInputRef.current,
-    ].filter((input): input is HTMLInputElement => Boolean(input));
-
-    const visibleInput = inputCandidates.find((input) => {
-      const style = window.getComputedStyle(input);
-      const rect = input.getBoundingClientRect();
-      return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
-    });
-
-    const targetInput = visibleInput ?? inputCandidates[0] ?? null;
-    if (!targetInput) return;
-
-    targetInput.focus();
-    targetInput.select();
-  }, []);
-
-  useEffect(() => {
-    function handleSidebarSearchShortcut(event: KeyboardEvent) {
-      if (event.defaultPrevented || event.repeat || event.ctrlKey || event.metaKey || event.altKey) {
-        return;
-      }
-      if (typeof event.key !== "string" || event.key.toLowerCase() !== "f") {
-        return;
-      }
-
-      const target = event.target;
-      if (target instanceof HTMLElement) {
-        const tagName = target.tagName;
-        const isEditable =
-          target.isContentEditable ||
-          tagName === "INPUT" ||
-          tagName === "TEXTAREA" ||
-          tagName === "SELECT" ||
-          Boolean(target.closest("[contenteditable='true']"));
-
-        if (isEditable) {
-          return;
-        }
-      }
-
-      event.preventDefault();
-      focusSidebarSearchInput();
-    }
-
-    document.addEventListener("keydown", handleSidebarSearchShortcut);
-    return () => {
-      document.removeEventListener("keydown", handleSidebarSearchShortcut);
-    };
-  }, [focusSidebarSearchInput]);
 
   const normalizedQuery = useMemo(() => normalizeSearchText(searchText), [searchText]);
   const normalizedSidebarQuery = useMemo(
@@ -2553,6 +2480,12 @@ export function ServersWorkspace({
       )
       .map((item) => item.server);
   }, [normalizedQuery, visibleServers, statusFilter]);
+  const projectStats = useMemo(() => {
+    const paid = visibleServers.filter((server) => server.status === "paid").length;
+    const pending = visibleServers.filter((server) => server.status === "pending_payment").length;
+    const expired = visibleServers.filter((server) => server.status === "expired" || server.status === "off").length;
+    return { total: visibleServers.length, paid, pending, expired };
+  }, [visibleServers]);
   const filteredProjectsSidebarItems = useMemo(() => {
     if (!normalizedSidebarQuery) return PROJECTS_SIDEBAR_ITEMS;
 
@@ -2784,6 +2717,8 @@ export function ServersWorkspace({
     }
 
     switch (selectedSettingsSectionForConfig) {
+      case "home":
+        break;
       case "overview":
       case "message":
       case "ticket_ai":
@@ -2861,7 +2796,7 @@ export function ServersWorkspace({
       guildIdsToWarm.forEach((guildId) => {
         void prefetchServerDashboardSettings(guildId);
         warmBrowserRoute(
-          `/servers/${encodeURIComponent(guildId)}/tickets/overview/`,
+          `/servers/${encodeURIComponent(guildId)}/overview/`,
           {
             router,
             prefetchDocument: true,
@@ -2983,11 +2918,16 @@ export function ServersWorkspace({
     if (settingsSection === "security_logs") {
       return `/servers/${encodedGuildId}/security/logs/`;
     }
+    if (settingsSection === "home") {
+      return `/servers/${encodedGuildId}/overview/`;
+    }
     return `/servers/${encodedGuildId}/tickets/overview/`;
   }, [pathname]);
 
   const navigateToUrl = useCallback((nextUrl: string, mode: "push" | "replace" = "push") => {
     if (typeof window === "undefined") return;
+    setIsMobileNavOpen(false);
+    setIsProfileMenuOpen(false);
     const target = warmBrowserRoute(nextUrl, {
       router,
       prefetchDocument: true,
@@ -3097,6 +3037,7 @@ export function ServersWorkspace({
   const prefetchWorkspaceSections = useCallback((guildId: string) => {
     void prefetchServerDashboardSettings(guildId);
     [
+      buildServerConfigUrl(guildId, "settings", "home"),
       buildServerConfigUrl(guildId, "settings", "overview"),
       buildServerConfigUrl(guildId, "settings", "message"),
       buildServerConfigUrl(guildId, "settings", "ticket_ai"),
@@ -3539,7 +3480,7 @@ export function ServersWorkspace({
   );
 
   const handleOpenServerConfig = useCallback((guildId: string, tab: ServerEditorTab = "settings") => {
-    const nextSettingsSection: ServerSettingsSection = "overview";
+    const nextSettingsSection: ServerSettingsSection = "home";
     const isSameSelection =
       selectedGuildIdForConfig === guildId &&
       selectedEditorTabForConfig === tab &&
@@ -3621,6 +3562,7 @@ export function ServersWorkspace({
     const perms = new Set(currentDashboardPermissions);
     const section = selectedSettingsSectionForConfig;
 
+    if (section === "home") return true;
     if (section === "overview") {
       return perms.has("server_manage_tickets_overview");
     }
@@ -3747,18 +3689,14 @@ export function ServersWorkspace({
 
   const panelTitle = isEditingServer
     ? `Servidor ${selectedServer?.guildName || ""}`.trim()
-    : viewMode === "overview"
-      ? "Overview"
-      : "Servidores em lista";
+    : selectedTeam
+      ? selectedTeam.name
+      : "Seus projetos";
   const panelDescription = isEditingServer
     ? "Gerencie tickets, canais e cargos do servidor em um fluxo unico, mais limpo e mais atual."
-    : viewMode === "overview"
-      ? selectedTeam
-        ? `Servidores vinculados a equipe ${selectedTeam.name}, com visao mais limpa para moderacao, cobranca da conta e operacao do painel.`
-        : "Encontre servidores, acompanhe as cobrancas da conta e abra configuracoes rapidas."
-      : selectedTeam
-        ? `Modo lista da equipe ${selectedTeam.name}, com todos os servidores vinculados organizados no mesmo fluxo.`
-        : "Modo lista para navegar mais rapido entre todos os servidores e estados da conta.";
+    : selectedTeam
+      ? `Servidores da equipe ${selectedTeam.name}. Abra um projeto para ver vendas, tickets e a saude da operacao.`
+      : "Abra um servidor para a visao geral de vendas e tickets, ou gerencie a equipe pelo seletor ao lado.";
   const teamSummaryLabel = isTeamsLoading
     ? "Carregando equipes..."
     : selectedTeam
@@ -3770,10 +3708,9 @@ export function ServersWorkspace({
           : "Nenhuma equipe criada";
   const renderSidebarContent = (
     teamDropdownRef: RefObject<HTMLDivElement | null>,
-    profileDropdownRef: RefObject<HTMLDivElement | null>,
     sidebarSearchInputRef: RefObject<HTMLInputElement | null>,
   ) => (
-    <div className="flex h-full flex-col px-[14px] py-[14px]">
+    <div className="fd-sidebar-inner">
       <div ref={teamDropdownRef} className="relative">
         <button
           type="button"
@@ -3781,7 +3718,7 @@ export function ServersWorkspace({
             setIsProfileMenuOpen(false);
             setIsTeamMenuOpen((current) => !current);
           }}
-          className="flex w-full items-center justify-between gap-[12px] rounded-[18px] border border-[#111111] bg-[#080808] px-[10px] py-[10px] text-left transition-colors hover:border-[#1A1A1A] hover:bg-[#0B0B0B]"
+          className="fd-team-trigger"
           aria-expanded={isTeamMenuOpen}
           aria-haspopup="dialog"
         >
@@ -3811,7 +3748,7 @@ export function ServersWorkspace({
         </button>
         {isTeamMenuOpen ? (
           <div
-            className="absolute left-0 right-0 top-[calc(100%+10px)] z-[120] overflow-hidden rounded-[22px] border border-[#151515] bg-[#070707] p-[12px] shadow-[0_26px_80px_rgba(0,0,0,0.54)]"
+            className="absolute left-0 right-0 top-[calc(100%+8px)] z-[120] overflow-hidden rounded-[12px] border border-[#222226] bg-[#161618] p-[10px]"
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="space-y-[8px]">
@@ -3949,21 +3886,19 @@ export function ServersWorkspace({
         ) : null}
       </div>
 
-      <div className="mt-[14px] flex items-center gap-[10px] rounded-[16px] border border-[#141414] bg-[#080808] px-[14px] py-[12px]">
+      <div className="fd-sidebar-search">
         <SearchIcon />
         <input
           ref={sidebarSearchInputRef}
           type="text"
           value={typeof sidebarSearchText === "string" ? sidebarSearchText : ""}
           onChange={(event) => setSidebarSearchText(String(event.currentTarget.value ?? ""))}
-          placeholder="Buscar..."
+          placeholder="Filtrar navegacao..."
           autoComplete="off"
-          className="min-w-0 flex-1 bg-transparent text-[15px] text-[#D5D5D5] outline-none placeholder:text-[#5A5A5A]"
         />
-        <SidebarSearchShortcutIcon />
       </div>
 
-      <div className="mt-[14px] min-h-0 flex-1 overflow-y-auto pr-[2px] thin-scrollbar">
+      <div className="fd-nav-scroll thin-scrollbar">
         {filteredProjectsSidebarItems.length ||
         filteredSalesSidebarItems.length ||
         filteredTicketSidebarItems.length ||
@@ -3974,26 +3909,38 @@ export function ServersWorkspace({
         filteredSecuritySidebarItems.length ? (
           <>
             {filteredProjectsSidebarItems.length ? (
-              <div className="space-y-[4px]">
+              <div className="space-y-[2px]">
+                <p className="fd-nav-label">Workspace</p>
                 {filteredProjectsSidebarItems.map((item) => {
-                  const isActive = item.kind === "overview" && !isEditingServer;
+                  const isHomeLocked = item.kind === "home" && !selectedServer;
+                  const isActive =
+                    item.kind === "home"
+                      ? isEditingServer && selectedSettingsSectionForConfig === "home"
+                      : item.kind === "overview" && !isEditingServer;
 
                   return (
                       <button
                         key={item.label}
                         type="button"
+                        disabled={isHomeLocked}
                         onClick={() => {
+                          setIsMobileNavOpen(false);
+                          if (item.kind === "home") {
+                            if (!selectedServer) return;
+                            handleSidebarSettingsSectionNavigation({
+                              guildId: selectedServer.guildId,
+                              tab: "settings",
+                              settingsSection: "home",
+                            });
+                            return;
+                          }
                           if (item.kind === "dashboard") {
                             redirectToDashboardRoot();
-                          } else {
-                            openProjectsOverview("push");
+                            return;
                           }
+                          openProjectsOverview("push");
                         }}
-                        className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-all duration-200 ${
-                          isActive
-                          ? "bg-[#1E1E1E] text-[#F0F0F0]"
-                          : "text-[#B5B5B5] hover:bg-[#111111] hover:text-[#E3E3E3]"
-                      }`}
+                        className={fdNavItemClass({ active: isActive, disabled: isHomeLocked })}
                     >
                       <span className={`inline-flex h-[22px] w-[22px] items-center justify-center ${isActive ? "text-[#F0F0F0]" : "text-[#8A8A8A] group-hover:text-[#DADADA]"}`}>
                         <SidebarNavIcon kind={item.kind} active={isActive} />
@@ -4006,7 +3953,7 @@ export function ServersWorkspace({
             ) : null}
 
             {isEditingServer ? (
-              <div className="my-[12px] h-px rounded-full bg-[#202020]" />
+              <p className="fd-nav-label">Modulos</p>
             ) : null}
 
             {filteredSalesSidebarItems.length ? (
@@ -4014,13 +3961,7 @@ export function ServersWorkspace({
                 <button
                   type="button"
                   onClick={() => setIsSalesSidebarOpen((current) => !current)}
-                  className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-all duration-200 ${
-                    isSalesGroupActive
-                      ? "bg-[#1E1E1E] text-[#F0F0F0]"
-                      : isSalesSidebarOpen
-                        ? "bg-[#121212] text-[#D6D6D6]"
-                        : "text-[#B5B5B5] hover:bg-[#111111] hover:text-[#E3E3E3]"
-                  }`}
+                  className={fdNavGroupClass({ active: isSalesGroupActive, open: isSalesSidebarOpen })}
                 >
                   <span className={`inline-flex h-[22px] w-[22px] items-center justify-center ${isSalesGroupActive ? "text-[#F0F0F0]" : isSalesSidebarOpen ? "text-[#C7C7C7]" : "text-[#8A8A8A] group-hover:text-[#DADADA]"}`}>
                     <SidebarNavIcon kind="sales" active={isSalesGroupActive} />
@@ -4040,7 +3981,7 @@ export function ServersWorkspace({
                 </button>
 
                 {isSalesSidebarOpen || normalizedSidebarQuery ? (
-                  <div className="mt-[6px] space-y-[4px] pl-[12px]">
+                  <div className="fd-nav-children">
                     {filteredSalesSidebarItems.map((item) => {
                       const isDisabled = item.disabled || !selectedServer || !item.tab;
                       const isActive =
@@ -4082,13 +4023,7 @@ export function ServersWorkspace({
                             });
                           }}
                           disabled={isDisabled}
-                          className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[10px] text-left transition-all duration-200 ${
-                            isActive
-                              ? "bg-[#1A1A1A] text-[#F0F0F0]"
-                              : isDisabled
-                                ? "text-[#585858]"
-                                : "text-[#AFAFAF] hover:bg-[#101010] hover:text-[#E3E3E3]"
-                          }`}
+                          className={fdNavItemClass({ active: isActive, disabled: isDisabled })}
                         >
                           <span className={`inline-flex h-[20px] w-[20px] items-center justify-center ${isActive ? "text-[#F0F0F0]" : isDisabled ? "text-[#4A4A4A]" : "text-[#7F7F7F] group-hover:text-[#DADADA]"}`}>
                             <SidebarNavIcon kind={item.kind} active={isActive} />
@@ -4109,13 +4044,7 @@ export function ServersWorkspace({
                 <button
                   type="button"
                   onClick={() => setIsTicketSidebarOpen((current) => !current)}
-                  className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-all duration-200 ${
-                    isTicketGroupActive
-                      ? "bg-[#1E1E1E] text-[#F0F0F0]"
-                      : isTicketSidebarOpen
-                        ? "bg-[#121212] text-[#D6D6D6]"
-                        : "text-[#B5B5B5] hover:bg-[#111111] hover:text-[#E3E3E3]"
-                  }`}
+                  className={fdNavGroupClass({ active: isTicketGroupActive, open: isTicketSidebarOpen })}
                 >
                   <span className={`inline-flex h-[22px] w-[22px] items-center justify-center ${isTicketGroupActive ? "text-[#F0F0F0]" : isTicketSidebarOpen ? "text-[#C7C7C7]" : "text-[#8A8A8A] group-hover:text-[#DADADA]"}`}>
                     <SidebarNavIcon kind="ticket" active={isTicketGroupActive} />
@@ -4135,7 +4064,7 @@ export function ServersWorkspace({
                 </button>
 
                 {isTicketSidebarOpen || normalizedSidebarQuery ? (
-                  <div className="mt-[6px] space-y-[4px] pl-[12px]">
+                  <div className="fd-nav-children">
                     {filteredTicketSidebarItems.map((item) => {
                       const isDisabled = item.disabled || !selectedServer || !item.tab;
                       const isActive =
@@ -4162,13 +4091,7 @@ export function ServersWorkspace({
                             });
                           }}
                           disabled={isDisabled}
-                          className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[10px] text-left transition-all duration-200 ${
-                            isActive
-                              ? "bg-[#1A1A1A] text-[#F0F0F0]"
-                              : isDisabled
-                                ? "text-[#585858]"
-                                : "text-[#AFAFAF] hover:bg-[#101010] hover:text-[#E3E3E3]"
-                          }`}
+                          className={fdNavItemClass({ active: isActive, disabled: isDisabled })}
                         >
                           <span className={`inline-flex h-[20px] w-[20px] items-center justify-center ${isActive ? "text-[#F0F0F0]" : isDisabled ? "text-[#4A4A4A]" : "text-[#7F7F7F] group-hover:text-[#DADADA]"}`}>
                             <SidebarNavIcon kind={item.kind} active={isActive} />
@@ -4189,13 +4112,7 @@ export function ServersWorkspace({
                 <button
                   type="button"
                   onClick={() => setIsEntryExitSidebarOpen((current) => !current)}
-                  className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-all duration-200 ${
-                    isEntryExitGroupActive
-                      ? "bg-[#1E1E1E] text-[#F0F0F0]"
-                      : isEntryExitSidebarOpen
-                        ? "bg-[#121212] text-[#D6D6D6]"
-                        : "text-[#B5B5B5] hover:bg-[#111111] hover:text-[#E3E3E3]"
-                  }`}
+                  className={fdNavGroupClass({ active: isEntryExitGroupActive, open: isEntryExitSidebarOpen })}
                 >
                   <span className={`inline-flex h-[22px] w-[22px] items-center justify-center ${isEntryExitGroupActive ? "text-[#F0F0F0]" : isEntryExitSidebarOpen ? "text-[#C7C7C7]" : "text-[#8A8A8A] group-hover:text-[#DADADA]"}`}>
                     <SidebarNavIcon kind="entry_exit" active={isEntryExitGroupActive} />
@@ -4215,7 +4132,7 @@ export function ServersWorkspace({
                 </button>
 
                 {isEntryExitSidebarOpen || normalizedSidebarQuery ? (
-                  <div className="mt-[6px] space-y-[4px] pl-[12px]">
+                  <div className="fd-nav-children">
                     {filteredEntryExitSidebarItems.map((item) => {
                       const isDisabled = item.disabled || !selectedServer || !item.tab;
                       const isActive =
@@ -4242,13 +4159,7 @@ export function ServersWorkspace({
                             });
                           }}
                           disabled={isDisabled}
-                          className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[10px] text-left transition-all duration-200 ${
-                            isActive
-                              ? "bg-[#1A1A1A] text-[#F0F0F0]"
-                              : isDisabled
-                                ? "text-[#585858]"
-                                : "text-[#AFAFAF] hover:bg-[#101010] hover:text-[#E3E3E3]"
-                          }`}
+                          className={fdNavItemClass({ active: isActive, disabled: isDisabled })}
                         >
                           <span className={`inline-flex h-[20px] w-[20px] items-center justify-center ${isActive ? "text-[#F0F0F0]" : isDisabled ? "text-[#4A4A4A]" : "text-[#7F7F7F] group-hover:text-[#DADADA]"}`}>
                             <SidebarNavIcon kind={item.kind} active={isActive} />
@@ -4269,13 +4180,7 @@ export function ServersWorkspace({
                 <button
                   type="button"
                   onClick={() => setIsCaptchaSidebarOpen((current) => !current)}
-                  className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-all duration-200 ${
-                    isCaptchaGroupActive
-                      ? "bg-[#1E1E1E] text-[#F0F0F0]"
-                      : isCaptchaSidebarOpen
-                        ? "bg-[#121212] text-[#D6D6D6]"
-                        : "text-[#B5B5B5] hover:bg-[#111111] hover:text-[#E3E3E3]"
-                  }`}
+                  className={fdNavGroupClass({ active: isCaptchaGroupActive, open: isCaptchaSidebarOpen })}
                 >
                   <span className={`inline-flex h-[22px] w-[22px] items-center justify-center ${isCaptchaGroupActive ? "text-[#F0F0F0]" : isCaptchaSidebarOpen ? "text-[#C7C7C7]" : "text-[#8A8A8A] group-hover:text-[#DADADA]"}`}>
                     <SidebarNavIcon kind="captcha" active={isCaptchaGroupActive} />
@@ -4295,7 +4200,7 @@ export function ServersWorkspace({
                 </button>
 
                 {isCaptchaSidebarOpen || normalizedSidebarQuery ? (
-                  <div className="mt-[6px] space-y-[4px] pl-[12px]">
+                  <div className="fd-nav-children">
                     {filteredCaptchaSidebarItems.map((item) => {
                       const isDisabled = item.disabled || !selectedServer || !item.tab;
                       const isActive =
@@ -4322,13 +4227,7 @@ export function ServersWorkspace({
                             });
                           }}
                           disabled={isDisabled}
-                          className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[10px] text-left transition-all duration-200 ${
-                            isActive
-                              ? "bg-[#1A1A1A] text-[#F0F0F0]"
-                              : isDisabled
-                                ? "text-[#585858]"
-                                : "text-[#AFAFAF] hover:bg-[#101010] hover:text-[#E3E3E3]"
-                          }`}
+                          className={fdNavItemClass({ active: isActive, disabled: isDisabled })}
                         >
                           <span className={`inline-flex h-[20px] w-[20px] items-center justify-center ${isActive ? "text-[#F0F0F0]" : isDisabled ? "text-[#4A4A4A]" : "text-[#7F7F7F] group-hover:text-[#DADADA]"}`}>
                             <SidebarNavIcon kind={item.kind} active={isActive} />
@@ -4349,13 +4248,7 @@ export function ServersWorkspace({
                 <button
                   type="button"
                   onClick={() => setIsSuggestionsSidebarOpen((current) => !current)}
-                  className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-all duration-200 ${
-                    isSuggestionsGroupActive
-                      ? "bg-[#1E1E1E] text-[#F0F0F0]"
-                      : isSuggestionsSidebarOpen
-                        ? "bg-[#121212] text-[#D6D6D6]"
-                        : "text-[#B5B5B5] hover:bg-[#111111] hover:text-[#E3E3E3]"
-                  }`}
+                  className={fdNavGroupClass({ active: isSuggestionsGroupActive, open: isSuggestionsSidebarOpen })}
                 >
                   <span className={`inline-flex h-[22px] w-[22px] items-center justify-center ${isSuggestionsGroupActive ? "text-[#F0F0F0]" : isSuggestionsSidebarOpen ? "text-[#C7C7C7]" : "text-[#8A8A8A] group-hover:text-[#DADADA]"}`}>
                     <SidebarNavIcon kind="suggestions" active={isSuggestionsGroupActive} />
@@ -4375,7 +4268,7 @@ export function ServersWorkspace({
                 </button>
 
                 {isSuggestionsSidebarOpen || normalizedSidebarQuery ? (
-                  <div className="mt-[6px] space-y-[4px] pl-[12px]">
+                  <div className="fd-nav-children">
                     {filteredSuggestionsSidebarItems.map((item) => {
                       const isDisabled = item.disabled || !selectedServer || !item.tab;
                       const isActive =
@@ -4402,13 +4295,7 @@ export function ServersWorkspace({
                             });
                           }}
                           disabled={isDisabled}
-                          className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[10px] text-left transition-all duration-200 ${
-                            isActive
-                              ? "bg-[#1A1A1A] text-[#F0F0F0]"
-                              : isDisabled
-                                ? "text-[#585858]"
-                                : "text-[#AFAFAF] hover:bg-[#101010] hover:text-[#E3E3E3]"
-                          }`}
+                          className={fdNavItemClass({ active: isActive, disabled: isDisabled })}
                         >
                           <span className={`inline-flex h-[20px] w-[20px] items-center justify-center ${isActive ? "text-[#F0F0F0]" : isDisabled ? "text-[#4A4A4A]" : "text-[#7F7F7F] group-hover:text-[#DADADA]"}`}>
                             <SidebarNavIcon kind={item.kind} active={isActive} />
@@ -4429,13 +4316,7 @@ export function ServersWorkspace({
                 <button
                   type="button"
                   onClick={() => setIsBatePontoSidebarOpen((current) => !current)}
-                  className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-all duration-200 ${
-                    isBatePontoGroupActive
-                      ? "bg-[#1E1E1E] text-[#F0F0F0]"
-                      : isBatePontoSidebarOpen
-                        ? "bg-[#121212] text-[#D6D6D6]"
-                        : "text-[#B5B5B5] hover:bg-[#111111] hover:text-[#E3E3E3]"
-                  }`}
+                  className={fdNavGroupClass({ active: isBatePontoGroupActive, open: isBatePontoSidebarOpen })}
                 >
                   <span className={`inline-flex h-[22px] w-[22px] items-center justify-center ${isBatePontoGroupActive ? "text-[#F0F0F0]" : isBatePontoSidebarOpen ? "text-[#C7C7C7]" : "text-[#8A8A8A] group-hover:text-[#DADADA]"}`}>
                     <SidebarNavIcon kind="bate_ponto" active={isBatePontoGroupActive} />
@@ -4455,7 +4336,7 @@ export function ServersWorkspace({
                 </button>
 
                 {isBatePontoSidebarOpen || normalizedSidebarQuery ? (
-                  <div className="mt-[6px] space-y-[4px] pl-[12px]">
+                  <div className="fd-nav-children">
                     {filteredBatePontoSidebarItems.map((item) => {
                       const isDisabled = item.disabled || !selectedServer || !item.tab;
                       const isActive =
@@ -4482,13 +4363,7 @@ export function ServersWorkspace({
                             });
                           }}
                           disabled={isDisabled}
-                          className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[10px] text-left transition-all duration-200 ${
-                            isActive
-                              ? "bg-[#1A1A1A] text-[#F0F0F0]"
-                              : isDisabled
-                                ? "text-[#585858]"
-                                : "text-[#AFAFAF] hover:bg-[#101010] hover:text-[#E3E3E3]"
-                          }`}
+                          className={fdNavItemClass({ active: isActive, disabled: isDisabled })}
                         >
                           <span className={`inline-flex h-[20px] w-[20px] items-center justify-center ${isActive ? "text-[#F0F0F0]" : isDisabled ? "text-[#4A4A4A]" : "text-[#7F7F7F] group-hover:text-[#DADADA]"}`}>
                             <SidebarNavIcon kind={item.kind} active={isActive} />
@@ -4509,13 +4384,7 @@ export function ServersWorkspace({
                 <button
                   type="button"
                   onClick={() => setIsSecuritySidebarOpen((current) => !current)}
-                  className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-all duration-200 ${
-                    isSecurityGroupActive
-                      ? "bg-[#1E1E1E] text-[#F0F0F0]"
-                      : isSecuritySidebarOpen
-                        ? "bg-[#121212] text-[#D6D6D6]"
-                        : "text-[#B5B5B5] hover:bg-[#111111] hover:text-[#E3E3E3]"
-                  }`}
+                  className={fdNavGroupClass({ active: isSecurityGroupActive, open: isSecuritySidebarOpen })}
                 >
                   <span className={`inline-flex h-[22px] w-[22px] items-center justify-center ${isSecurityGroupActive ? "text-[#F0F0F0]" : isSecuritySidebarOpen ? "text-[#C7C7C7]" : "text-[#8A8A8A] group-hover:text-[#DADADA]"}`}>
                     <SidebarNavIcon kind="security" active={isSecurityGroupActive} />
@@ -4535,7 +4404,7 @@ export function ServersWorkspace({
                 </button>
 
                 {isSecuritySidebarOpen || normalizedSidebarQuery ? (
-                  <div className="mt-[6px] space-y-[4px] pl-[12px]">
+                  <div className="fd-nav-children">
                     {filteredSecuritySidebarItems.map((item) => {
                       const isDisabled = item.disabled || !selectedServer || !item.tab;
                       const isActive =
@@ -4562,13 +4431,7 @@ export function ServersWorkspace({
                             });
                           }}
                           disabled={isDisabled}
-                          className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[10px] text-left transition-all duration-200 ${
-                            isActive
-                              ? "bg-[#1A1A1A] text-[#F0F0F0]"
-                              : isDisabled
-                                ? "text-[#585858]"
-                                : "text-[#AFAFAF] hover:bg-[#101010] hover:text-[#E3E3E3]"
-                          }`}
+                          className={fdNavItemClass({ active: isActive, disabled: isDisabled })}
                         >
                           <span className={`inline-flex h-[20px] w-[20px] items-center justify-center ${isActive ? "text-[#F0F0F0]" : isDisabled ? "text-[#4A4A4A]" : "text-[#7F7F7F] group-hover:text-[#DADADA]"}`}>
                             <SidebarNavIcon kind={item.kind} active={isActive} />
@@ -4592,169 +4455,110 @@ export function ServersWorkspace({
           </div>
         )}
       </div>
-
-      <div ref={profileDropdownRef} className="mt-auto shrink-0 pt-[14px]">
-        <div className="relative">
-          {isProfileMenuOpen ? (
-            <div className="absolute inset-x-0 bottom-[calc(100%+10px)] z-[140] overflow-hidden rounded-[22px] border border-[#151515] bg-[#070707] p-[12px] shadow-[0_26px_80px_rgba(0,0,0,0.54)]">
-              <div className="space-y-[8px]">
-                <button
-                  type="button"
-                  onClick={handleAddAnotherAccount}
-                  className="flex w-full items-center gap-[12px] rounded-[16px] border border-[#171717] bg-[#0D0D0D] px-[12px] py-[12px] text-left text-[#D8D8D8] transition-colors hover:border-[#222222] hover:bg-[#111111]"
-                >
-                  <span className="inline-flex h-[32px] w-[32px] items-center justify-center rounded-[11px] border border-[#1A1A1A] bg-[#101010] text-[#CFCFCF]">
-                    <PlusIcon />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[14px] leading-none font-medium tracking-[-0.03em]">
-                      Adicionar outra conta
-                    </span>
-                    <span className="mt-[6px] block truncate text-[11px] leading-none text-[#686868]">
-                      Ate 3 contas salvas neste navegador
-                    </span>
-                  </span>
-                </button>
-
-                <div className="border-t border-[#121212] pt-[12px]">
-                  <p className="px-[4px] text-[11px] uppercase tracking-[0.16em] text-[#5F5F5F]">
-                    Contas salvas
-                  </p>
-                  <div className="mt-[10px] space-y-[6px]">
-                    {savedAccounts.map((account) => {
-                      const isCurrent = account.discordUserId === currentAccount.discordUserId;
-                      return (
-                        <button
-                          key={account.discordUserId}
-                          type="button"
-                          onClick={() => handleSwitchSavedAccount(account)}
-                          className={`flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-colors ${
-                            isCurrent
-                              ? "bg-[#141414] text-[#ECECEC]"
-                              : "text-[#A7A7A7] hover:bg-[#111111] hover:text-[#E6E6E6]"
-                          }`}
-                        >
-                          <AccountAvatar
-                            avatarUrl={account.avatarUrl}
-                            displayName={account.displayName}
-                            username={account.username}
-                            className="h-[36px] w-[36px] shrink-0"
-                          />
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-[14px] leading-none font-medium tracking-[-0.03em]">
-                              {account.displayName}
-                            </span>
-                            <span className="mt-[6px] block truncate text-[11px] leading-none text-[#666666]">
-                              @{account.username}
-                            </span>
-                          </span>
-                          {isCurrent ? (
-                            <span className="inline-flex rounded-full border border-[rgba(0,98,255,0.28)] bg-[rgba(0,98,255,0.1)] px-[8px] py-[5px] text-[10px] leading-none font-medium text-[#8AB6FF]">
-                              ativa
-                            </span>
-                          ) : null}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="border-t border-[#121212] pt-[12px]">
-                  <div className="space-y-[4px]">
-                    <button
-                      type="button"
-                      onClick={handleOpenMyAccount}
-                      className="flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#B7B7B7] transition-colors hover:bg-[#111111] hover:text-[#ECECEC]"
-                    >
-                      <UserRound className="h-[18px] w-[18px] shrink-0" strokeWidth={1.9} />
-                      <span className="text-[14px] leading-none font-medium">Minha conta</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleOpenAccountSettings}
-                      className="flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#B7B7B7] transition-colors hover:bg-[#111111] hover:text-[#ECECEC]"
-                    >
-                      <Cog className="h-[18px] w-[18px] shrink-0" strokeWidth={1.9} />
-                      <span className="text-[14px] leading-none font-medium">Configuracoes</span>
-                    </button>
-                    <button
-                      type="button"
-                      disabled
-                      className="flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#656565]"
-                    >
-                      <Palette className="h-[18px] w-[18px] shrink-0" strokeWidth={1.9} />
-                      <span className="text-[14px] leading-none font-medium">Personalizacao</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleOpenHelp}
-                      className="flex w-full items-center justify-between gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#B7B7B7] transition-colors hover:bg-[#111111] hover:text-[#ECECEC]"
-                    >
-                      <span className="inline-flex items-center gap-[12px]">
-                        <CircleHelp className="h-[18px] w-[18px] shrink-0" strokeWidth={1.9} />
-                        <span className="text-[14px] leading-none font-medium">Ajuda</span>
-                      </span>
-                      <SidebarChevronRightIcon />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void handleLogout();
-                      }}
-                      disabled={isLoggingOut}
-                      className="flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#DB9E9E] transition-colors hover:bg-[#111111] hover:text-[#F1C0C0] disabled:cursor-not-allowed disabled:opacity-70"
-                    >
-                      {isLoggingOut ? (
-                        <ButtonLoader size={16} colorClassName="text-[#DB8A8A]" />
-                      ) : (
-                        <SidebarLogoutIcon />
-                      )}
-                      <span className="text-[14px] leading-none font-medium">Sair</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          <button
-            type="button"
-            onClick={() => {
-              setIsTeamMenuOpen(false);
-              setIsProfileMenuOpen((current) => !current);
-            }}
-            className="flex w-full items-center justify-between gap-[12px] rounded-[18px] border border-[#111111] bg-[#080808] px-[10px] py-[10px] text-left transition-colors hover:border-[#1A1A1A] hover:bg-[#0B0B0B]"
-            aria-expanded={isProfileMenuOpen}
-            aria-haspopup="menu"
-          >
-            <div className="flex min-w-0 items-center gap-[10px]">
-              <AccountAvatar
-                avatarUrl={currentAccount.avatarUrl}
-                displayName={currentAccount.displayName}
-                username={currentAccount.username}
-                className="h-[38px] w-[38px] shrink-0"
-              />
-              <div className="min-w-0">
-                <p className="truncate text-[15px] leading-none font-medium tracking-[-0.03em] text-[#E5E5E5]">
-                  {currentAccount.displayName}
-                </p>
-                <p className="mt-[5px] truncate text-[12px] leading-none text-[#686868]">
-                  @{currentAccount.username}
-                </p>
-              </div>
-            </div>
-            <span className="inline-flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded-[10px] text-[#7E7E7E] transition-colors hover:bg-[#101010] hover:text-[#D8D8D8]">
-              <SidebarDropdownChevronIcon />
-            </span>
-          </button>
-        </div>
-      </div>
     </div>
   );
+
+  const closePanelChrome = () => {
+    setIsProfileMenuOpen(false);
+    setIsMobileNavOpen(false);
+  };
+
+  const mapServerPaletteItem = (
+    group: string,
+    item: (typeof PROJECTS_SIDEBAR_ITEMS)[number],
+  ): PanelQuickLink => ({
+    id: `${group}-${item.kind}-${item.settingsSection || item.label}`,
+    label: item.label,
+    group,
+    onSelect: () => {
+      closePanelChrome();
+      if (item.kind === "home") {
+        if (!selectedServer) return;
+        handleSidebarSettingsSectionNavigation({
+          guildId: selectedServer.guildId,
+          tab: "settings",
+          settingsSection: "home",
+        });
+        return;
+      }
+      if (item.kind === "dashboard") {
+        redirectToDashboardRoot();
+        return;
+      }
+      if (item.kind === "overview") {
+        openProjectsOverview("push");
+        return;
+      }
+      if (!selectedServer || !item.tab) return;
+      handleSidebarSettingsSectionNavigation({
+        guildId: selectedServer.guildId,
+        tab: item.tab,
+        settingsSection: item.settingsSection || "overview",
+      });
+    },
+  });
+
+  const paletteLinks: PanelQuickLink[] = [
+    ...PROJECTS_SIDEBAR_ITEMS.map((item) => mapServerPaletteItem("Workspace", item)),
+    ...(isEditingServer
+      ? [
+          ...SALES_SIDEBAR_ITEMS.map((item) => mapServerPaletteItem("Vendas", item)),
+          ...TICKET_SIDEBAR_ITEMS.map((item) => mapServerPaletteItem("Ticket", item)),
+          ...ENTRY_EXIT_SIDEBAR_ITEMS.map((item) => mapServerPaletteItem("Entrada e saida", item)),
+          ...CAPTCHA_SIDEBAR_ITEMS.map((item) => mapServerPaletteItem("Captcha", item)),
+          ...SUGGESTIONS_SIDEBAR_ITEMS.map((item) => mapServerPaletteItem("Sugestoes", item)),
+          ...BATE_PONTO_SIDEBAR_ITEMS.map((item) => mapServerPaletteItem("Bate ponto", item)),
+          ...SECURITY_SIDEBAR_ITEMS.map((item) => mapServerPaletteItem("Seguranca", item)),
+        ]
+      : []),
+  ];
+
   return (
-    <div className="flowdesk-servers-ui relative min-h-screen overflow-x-clip bg-[#040404] text-white">
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05)_0%,rgba(255,255,255,0.012)_28%,transparent_68%)]" />
-      {workspaceAlertMessage ? (
+    <PanelShell
+      className="flowdesk-servers-ui"
+      hasAlert={hasWorkspaceAlert}
+      crumb="FlowDesk"
+      title={isEditingServer ? "Servidores" : panelTitle}
+      account={{
+        displayName: currentAccount.displayName,
+        username: currentAccount.username,
+        avatarUrl: currentAccount.avatarUrl,
+        discordUserId: currentAccount.discordUserId,
+      }}
+      savedAccounts={savedAccounts}
+      links={paletteLinks}
+      actions={{
+        onAddAccount: handleAddAnotherAccount,
+        onSwitchAccount: (account) => {
+          if (!account.discordUserId) return;
+          handleSwitchSavedAccount({
+            authUserId: account.authUserId ?? currentAccount.authUserId,
+            discordUserId: account.discordUserId,
+            displayName: account.displayName,
+            username: account.username,
+            avatarUrl: account.avatarUrl,
+            lastSeenAt: Date.now(),
+          });
+        },
+        onOpenMyAccount: handleOpenMyAccount,
+        onOpenSettings: handleOpenAccountSettings,
+        onOpenApiDocs: () => navigateToUrl("/account/api_keys"),
+        onOpenHelp: handleOpenHelp,
+        onLogout: () => {
+          void handleLogout();
+        },
+        isLoggingOut,
+      }}
+      isPaletteOpen={isProfileMenuOpen}
+      onPaletteOpenChange={setIsProfileMenuOpen}
+      isMobileNavOpen={isMobileNavOpen}
+      onMobileNavOpenChange={setIsMobileNavOpen}
+      sidebar={renderSidebarContent(
+        desktopTeamMenuRef,
+        desktopSidebarSearchInputRef,
+      )}
+      alert={
+        workspaceAlertMessage ? (
         <button
           type="button"
           onMouseEnter={() => warmBrowserRoute("/servers/plans", { router, prefetchDocument: true })}
@@ -4763,15 +4567,9 @@ export function ServersWorkspace({
           onClick={() => {
             navigateToUrl("/servers/plans");
           }}
-          className="fixed inset-x-0 top-0 z-[1400] h-[42px] overflow-hidden bg-[linear-gradient(90deg,#731015_0%,#971D22_10%,#BC2D32_24%,#D94141_40%,#E45555_50%,#D94141_60%,#BC2D32_76%,#971D22_90%,#731015_100%)] text-white transition-opacity hover:opacity-95 md:h-[46px]"
+          className="fixed inset-x-0 top-0 z-[1400] h-[42px] overflow-hidden bg-[#971D22] text-white transition-opacity hover:opacity-95 md:h-[46px]"
           aria-label={`${workspaceAlertMessage} Abrir pagina de planos.`}
         >
-          <span className="pointer-events-none absolute inset-x-0 top-0 h-[1px] bg-[linear-gradient(90deg,transparent_0%,rgba(255,214,214,0.24)_14%,rgba(255,214,214,0.12)_50%,rgba(255,214,214,0.24)_86%,transparent_100%)]" />
-          <span className="pointer-events-none absolute inset-0 opacity-[0.14] bg-[radial-gradient(circle_at_50%_50%,rgba(255,240,240,0.18)_0%,rgba(255,240,240,0.06)_34%,transparent_62%)]" />
-          <span className="pointer-events-none absolute inset-y-0 left-0 w-[220px] bg-[linear-gradient(90deg,rgba(44,0,0,0.28)_0%,rgba(44,0,0,0.16)_32%,rgba(44,0,0,0.05)_64%,transparent_100%)]" />
-          <span className="pointer-events-none absolute inset-y-0 right-0 w-[220px] bg-[linear-gradient(270deg,rgba(44,0,0,0.28)_0%,rgba(44,0,0,0.16)_32%,rgba(44,0,0,0.05)_64%,transparent_100%)]" />
-          <WorkspaceAlertPixelAccent side="left" />
-          <WorkspaceAlertPixelAccent side="right" />
           <div className="relative mx-auto flex h-full w-full max-w-[1280px] items-center justify-center px-[16px] md:px-[22px]">
             <span className="inline-flex min-w-0 max-w-full items-center justify-center gap-[8px] text-center md:gap-[12px]">
               <span className="text-[12px] font-medium tracking-[-0.02em] text-white md:text-[13px]">
@@ -4785,53 +4583,30 @@ export function ServersWorkspace({
             </span>
           </div>
         </button>
-      ) : null}
-      <div className="hidden lg:block">
-        <aside
-          className={`fixed left-0 z-20 w-[318px] ${
-            hasWorkspaceAlert ? "top-[42px] bottom-0 md:top-[46px]" : "inset-y-0"
-          }`}
-        >
-          <div className={`${sidebarShellClass} h-full rounded-none border-y-0 border-l-0 border-r-[#151515]`}>
-            <LandingReveal delay={24} duration={240} className="h-full">
-              {renderSidebarContent(desktopTeamMenuRef, desktopProfileMenuRef, desktopSidebarSearchInputRef)}
-            </LandingReveal>
-          </div>
-        </aside>
-      </div>
-      <main
-        className={`relative px-[20px] pb-[56px] md:px-6 lg:min-h-screen lg:pl-[358px] lg:pr-[42px] ${
-          hasWorkspaceAlert ? "pt-[56px] md:pt-[60px]" : "pt-[32px]"
-        }`}
-      >
-        <div className="mx-auto w-full max-w-[1220px]">
-          <aside className="mb-[20px] min-w-0 lg:hidden">
-            <LandingReveal delay={24} duration={240}>
-              <div className={`${sidebarShellClass} rounded-[28px]`}>
-                {renderSidebarContent(mobileTeamMenuRef, mobileProfileMenuRef, mobileSidebarSearchInputRef)}
-              </div>
-            </LandingReveal>
-          </aside>
+        ) : null
+      }
+    >
           <section className="min-w-0">
             <LandingReveal delay={36} duration={240}>
               <div className="relative z-[700] flex flex-col gap-[18px]">
                 <div className="flex flex-col gap-[14px] md:flex-row md:items-end md:justify-between">
                   <div>
                     {shouldShowEditorHeaderSkeleton ? (
-                      <div className="space-y-[14px]" aria-hidden="true">
-                        <div className="flowdesk-shimmer h-[42px] w-[210px] rounded-full bg-[#111111]" />
-                        <div className="flowdesk-shimmer h-[42px] w-[min(460px,78vw)] max-w-full rounded-[18px] bg-[#131313]" />
-                        <div className="flowdesk-shimmer h-[14px] w-[min(620px,82vw)] max-w-full rounded-[12px] bg-[#111111]" />
+                      <div className="space-y-[12px]" aria-hidden="true">
+                        <div className="flowdesk-shimmer h-[12px] w-[88px] rounded-full bg-[#171717]" />
+                        <div className="flowdesk-shimmer h-[28px] w-[min(320px,70vw)] max-w-full rounded-full bg-[#171717]" />
+                        <div className="flowdesk-shimmer h-[12px] w-[min(520px,80vw)] max-w-full rounded-full bg-[#171717]" />
                       </div>
-                    ) : shouldHideEditorHeaderDueToPermissions ? null : (
+                    ) : shouldHideEditorHeaderDueToPermissions ||
+                      selectedSettingsSectionForConfig === "home" ? null : (
                       <>
-                        <LandingGlowTag className="px-[24px]">
-                          {isEditingServer ? "Configurando servidor" : "Central de servidores"}
-                        </LandingGlowTag>
-                        <h1 className="mt-[18px] bg-[linear-gradient(90deg,#DADADA_0%,#C1C1C1_100%)] bg-clip-text text-[34px] leading-[1.02] font-normal tracking-[-0.05em] text-transparent md:text-[42px]">
+                        <p className="text-[12px] font-medium tracking-[0.02em] text-[#8B8B90]">
+                          {isEditingServer ? "Configurando servidor" : "Projetos"}
+                        </p>
+                        <h1 className="mt-[10px] text-[32px] leading-[1.05] font-semibold tracking-[-0.045em] text-[#F2F2F3] md:text-[40px]">
                           {panelTitle}
                         </h1>
-                        <p className="mt-[14px] max-w-[760px] text-[14px] leading-[1.55] text-[#7D7D7D] md:text-[15px]">
+                        <p className="mt-[12px] max-w-[720px] text-[14px] leading-[1.6] text-[#8B8B90] md:text-[15px]">
                           {panelDescription}
                         </p>
                       </>
@@ -4840,7 +4615,7 @@ export function ServersWorkspace({
                   {!isEditingServer ? (
                     <LandingActionButton
                       variant="light"
-                      className="h-[44px] rounded-[14px] px-[18px] text-[15px]"
+                      className="h-[42px] rounded-[14px] px-[16px] text-[14px]"
                       disabled={isResolvingAddServer}
                       onClick={() => {
                         void handleStartAddServer();
@@ -4865,11 +4640,40 @@ export function ServersWorkspace({
                   />
                 ) : null}
                 {!isEditingServer ? (
-                  <div
-                    className={`${shellClass} relative z-[900] overflow-visible px-[14px] py-[14px] sm:px-[18px] sm:py-[18px]`}
-                  >
+                  <div className="relative z-[900] space-y-[12px]">
+                    <div className="grid gap-[12px] md:grid-cols-2 xl:grid-cols-4">
+                      {[
+                        { label: "Projetos", value: String(projectStats.total), hint: "Servidores visiveis", icon: FolderKanban },
+                        { label: "Em dia", value: String(projectStats.paid), hint: "Assinatura ativa", icon: ShieldCheck },
+                        { label: "Pendentes", value: String(projectStats.pending), hint: "Cobranca em aberto", icon: Clock },
+                        { label: "Criticos", value: String(projectStats.expired), hint: "Expirados ou off", icon: Shield },
+                      ].map((stat, index) => {
+                        const Icon = stat.icon;
+                        return (
+                          <motion.div
+                            key={stat.label}
+                            initial={{ opacity: 0, y: 14 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.4, delay: 0.05 + index * 0.04, ease: projectEase }}
+                            className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]"
+                          >
+                            <div className="flex items-start justify-between gap-[12px]">
+                              <p className="text-[12px] font-medium text-[#8B8B90]">{stat.label}</p>
+                              <span className="flex h-[34px] w-[34px] items-center justify-center rounded-[12px] border border-[#1C1C1C] bg-[#141414] text-[#C4C4C8]">
+                                <Icon className="h-[16px] w-[16px]" strokeWidth={1.85} />
+                              </span>
+                            </div>
+                            <p className="mt-[14px] text-[26px] leading-none font-semibold tracking-[-0.04em] text-[#F2F2F3]">
+                              {stat.value}
+                            </p>
+                            <p className="mt-[10px] text-[12px] text-[#6F6F74]">{stat.hint}</p>
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+                    <div className={`${shellClass} overflow-visible px-[14px] py-[12px]`}>
                     <div className="flex flex-col gap-[12px] xl:flex-row xl:items-center">
-                      <div className="flex min-w-0 flex-1 items-center rounded-[18px] border border-[#151515] bg-[#080808] px-[16px] py-[14px]">
+                      <div className="fd-pill-search">
                         <SearchIcon />
                         <input
                           type="text"
@@ -4877,19 +4681,19 @@ export function ServersWorkspace({
                           onChange={(event) => setSearchText(String(event.currentTarget.value ?? ""))}
                           placeholder="Pesquisar servidor..."
                           autoComplete="off"
-                          className="ml-[12px] w-full bg-transparent text-[15px] text-[#D8D8D8] outline-none placeholder:text-[#4F4F4F]"
+                          spellCheck={false}
                         />
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-[10px] xl:justify-end">
+                      <div className="flex flex-wrap items-center gap-[8px] xl:justify-end">
                         <div ref={statusRef} className="relative z-[1200]">
                           <button
                             type="button"
                             onClick={() => setIsStatusOpen((current) => !current)}
-                            className={`flex h-[52px] w-[52px] items-center justify-center rounded-[16px] border transition-colors ${
-                              isStatusOpen
-                                ? "border-[rgba(0,98,255,0.28)] bg-[rgba(0,98,255,0.08)] text-[#DADADA]"
-                                : "border-[#171717] bg-[#0D0D0D] text-[#9C9C9C] hover:border-[#242424] hover:text-[#DADADA]"
+                            className={`flex h-[42px] w-[42px] items-center justify-center rounded-[12px] border transition-colors ${
+                              isStatusOpen || statusFilter !== "all"
+                                ? "border-[#2A2A2E] bg-[#141414] text-[#F2F2F3]"
+                                : "border-[#1C1C1C] bg-[#141414] text-[#8B8B90] hover:text-[#F2F2F3]"
                             }`}
                             aria-label="Filtrar por status"
                           >
@@ -4898,7 +4702,7 @@ export function ServersWorkspace({
 
                           {isStatusOpen ? (
                             <div
-                              className="absolute right-0 top-[60px] z-[2000] min-w-[190px] rounded-[18px] border border-[#171717] bg-[#0A0A0A] p-[8px] shadow-[0_22px_60px_rgba(0,0,0,0.44)]"
+                              className="absolute right-0 top-[50px] z-[2000] min-w-[190px] rounded-[14px] border border-[#1C1C1C] bg-[#141414] p-[6px]"
                               onMouseDown={(event) => event.stopPropagation()}
                             >
                               {(["all", "paid", "pending_payment", "expired", "off"] as const).map((option) => (
@@ -4909,15 +4713,15 @@ export function ServersWorkspace({
                                     setStatusFilter(option);
                                     setIsStatusOpen(false);
                                   }}
-                                  className={`flex w-full items-center justify-between rounded-[12px] px-[12px] py-[10px] text-left text-[13px] transition-colors ${
+                                  className={`flex w-full items-center justify-between rounded-[10px] px-[12px] py-[10px] text-left text-[13px] transition-colors ${
                                     statusFilter === option
-                                      ? "bg-[#111111] text-[#E5E5E5]"
-                                      : "text-[#9B9B9B] hover:bg-[#111111] hover:text-[#D5D5D5]"
+                                      ? "bg-[#1A1A1A] text-[#F2F2F3]"
+                                      : "text-[#8B8B90] hover:bg-[#1A1A1A] hover:text-[#F2F2F3]"
                                   }`}
                                 >
                                   <span>{FILTER_LABEL[option]}</span>
                                   {statusFilter === option ? (
-                                    <span className="h-[7px] w-[7px] rounded-full bg-[#0062FF]" />
+                                    <span className="h-[6px] w-[6px] rounded-full bg-[#C4C4C8]" />
                                   ) : null}
                                 </button>
                               ))}
@@ -4925,14 +4729,14 @@ export function ServersWorkspace({
                           ) : null}
                         </div>
 
-                        <div className="inline-flex items-center gap-[8px] rounded-[18px] border border-[#171717] bg-[#0D0D0D] p-[6px]">
+                        <div className="inline-flex items-center gap-[4px] rounded-[12px] border border-[#1C1C1C] bg-[#141414] p-[4px]">
                           <button
                             type="button"
                             onClick={() => setViewMode("overview")}
-                            className={`flex h-[40px] w-[40px] items-center justify-center rounded-[12px] transition-colors ${
+                            className={`flex h-[34px] w-[34px] items-center justify-center rounded-[10px] transition-colors ${
                               viewMode === "overview"
-                                ? "bg-[#131313] text-[#E5E5E5]"
-                                : "text-[#7C7C7C] hover:text-[#D5D5D5]"
+                                ? "bg-[#1A1A1A] text-[#F2F2F3]"
+                                : "text-[#8B8B90] hover:text-[#F2F2F3]"
                             }`}
                             aria-label="Visual overview"
                           >
@@ -4941,10 +4745,10 @@ export function ServersWorkspace({
                           <button
                             type="button"
                             onClick={() => setViewMode("list")}
-                            className={`flex h-[40px] w-[40px] items-center justify-center rounded-[12px] transition-colors ${
+                            className={`flex h-[34px] w-[34px] items-center justify-center rounded-[10px] transition-colors ${
                               viewMode === "list"
-                                ? "bg-[#131313] text-[#E5E5E5]"
-                                : "text-[#7C7C7C] hover:text-[#D5D5D5]"
+                                ? "bg-[#1A1A1A] text-[#F2F2F3]"
+                                : "text-[#8B8B90] hover:text-[#F2F2F3]"
                             }`}
                             aria-label="Visual lista"
                           >
@@ -4952,6 +4756,7 @@ export function ServersWorkspace({
                           </button>
                         </div>
                       </div>
+                    </div>
                     </div>
                   </div>
                 ) : null}
@@ -4980,7 +4785,32 @@ export function ServersWorkspace({
                     </div>
                   )}
                 </LandingReveal>
-              ) : selectedServer ? (
+              ) : selectedServer && selectedSettingsSectionForConfig === "home" ? (
+                <LandingReveal delay={52} duration={240}>
+                  <div className={editorPanelRevealClass}>
+                    <ServerHomeOverview
+                      guildId={selectedServer.guildId}
+                      guildName={selectedServer.guildName}
+                      displayName={currentAccount.displayName}
+                      servers={panelVisibleServers}
+                      onOpenSales={() => {
+                        handleSidebarSettingsSectionNavigation({
+                          guildId: selectedServer.guildId,
+                          tab: "settings",
+                          settingsSection: "sales_overview",
+                        });
+                      }}
+                      onOpenTickets={() => {
+                        handleSidebarSettingsSectionNavigation({
+                          guildId: selectedServer.guildId,
+                          tab: "settings",
+                          settingsSection: "overview",
+                        });
+                      }}
+                    />
+                  </div>
+                </LandingReveal>
+              ) : selectedServer && selectedSettingsSectionForConfig !== "home" ? (
                 <LandingReveal delay={52} duration={240}>
                   <div className={editorPanelRevealClass}>
                     <ServerSettingsEditor
@@ -5066,14 +4896,14 @@ export function ServersWorkspace({
                 <LandingReveal delay={52} duration={240}>
                   {viewMode === "overview" ? (
                     <div className={workspacePaneRevealClass}>
-                      <div className="mb-[18px] flex flex-col gap-[10px] sm:flex-row sm:items-center sm:justify-between">
+                      <div className="mb-[16px] flex flex-col gap-[8px] sm:flex-row sm:items-end sm:justify-between">
                         <div>
-                          <p className="text-[12px] uppercase tracking-[0.18em] text-[#666666]">Projetos</p>
-                          <h2 className="mt-[10px] text-[26px] leading-none font-medium tracking-[-0.04em] text-[#E5E5E5]">Servidores em destaque</h2>
+                          <p className="text-[12px] font-medium text-[#8B8B90]">Projetos</p>
+                          <h2 className="mt-[8px] text-[20px] font-semibold tracking-[-0.03em] text-[#F2F2F3]">Servidores em destaque</h2>
                         </div>
-                          <p className="text-[13px] leading-[1.5] text-[#6F6F6F]">
-                          {filteredServers.length} resultado(s) exibidos de {activeTeamServerCount} servidor(es).
-                        </p>
+                          <p className="text-[12px] text-[#6F6F74]">
+                            {filteredServers.length} de {activeTeamServerCount} visiveis
+                          </p>
                       </div>
                       {isLoading ? (
                         <div>
@@ -5112,17 +4942,57 @@ export function ServersWorkspace({
                       )}
                     </div>
                   ) : (
-                    <div className={`${shellClass} ${workspacePaneRevealClass} overflow-visible`}>
-                      <div className="border-b border-[#141414] px-[18px] py-[18px]"><div className="flex flex-col gap-[10px] sm:flex-row sm:items-center sm:justify-between"><div><p className="text-[12px] uppercase tracking-[0.18em] text-[#666666]">Projetos</p><h2 className="mt-[10px] text-[26px] leading-none font-medium tracking-[-0.04em] text-[#E5E5E5]">{selectedTeam ? `Servidores da equipe ${selectedTeam.name}` : "Todos os servidores"}</h2></div><p className="text-[13px] leading-[1.5] text-[#6F6F6F]">{filteredServers.length} resultado(s) exibidos de {activeTeamServerCount} servidor(es).</p></div></div>
-                      {isLoading ? <ServersListSkeleton /> : errorMessage ? <div className="px-[18px] py-[34px] text-center text-[13px] text-[#C2C2C2]">{errorMessage}</div> : filteredServers.length ? <div>{filteredServers.map((server, index) => <ServerListRow key={server.guildId} server={server} index={index} isSelected={selectedGuildIdForConfig === server.guildId} isCopied={copiedGuildId === server.guildId} openCardMenuGuildId={openCardMenuGuildId} onOpen={handleOpenServerConfig} onPrefetch={prefetchServerConfig} onCopy={(guildId) => { void handleCopyGuildId(guildId); }} onToggleMenu={(guildId) => { setOpenCardMenuGuildId((current) => current === guildId ? null : guildId); }} onCopyFromMenu={handleCardMenuCopyId} />)}</div> : <div className="px-[18px] py-[24px]"><ServersEmptyState onPrimaryAction={emptyStateSyncContent ? handleServersSyncAction : null} selectedTeamName={selectedTeam?.name} syncContent={emptyStateSyncContent} /></div>}
+                    <div className={workspacePaneRevealClass}>
+                      <div className="mb-[16px] flex flex-col gap-[8px] sm:flex-row sm:items-end sm:justify-between">
+                        <div>
+                          <p className="text-[12px] font-medium text-[#8B8B90]">Projetos</p>
+                          <h2 className="mt-[8px] text-[20px] font-semibold tracking-[-0.03em] text-[#F2F2F3]">
+                            {selectedTeam ? `Equipe ${selectedTeam.name}` : "Todos os servidores"}
+                          </h2>
+                        </div>
+                        <p className="text-[12px] text-[#6F6F74]">
+                          {filteredServers.length} de {activeTeamServerCount} visiveis
+                        </p>
+                      </div>
+                      {isLoading ? (
+                        <ServersListSkeleton />
+                      ) : errorMessage ? (
+                        <div className="py-[34px] text-center text-[13px] text-[#C2C2C2]">{errorMessage}</div>
+                      ) : filteredServers.length ? (
+                        <div className="space-y-[10px]">
+                          {filteredServers.map((server, index) => (
+                            <ServerListRow
+                              key={server.guildId}
+                              server={server}
+                              index={index}
+                              isSelected={selectedGuildIdForConfig === server.guildId}
+                              isCopied={copiedGuildId === server.guildId}
+                              openCardMenuGuildId={openCardMenuGuildId}
+                              onOpen={handleOpenServerConfig}
+                              onPrefetch={prefetchServerConfig}
+                              onCopy={(guildId) => {
+                                void handleCopyGuildId(guildId);
+                              }}
+                              onToggleMenu={(guildId) => {
+                                setOpenCardMenuGuildId((current) => current === guildId ? null : guildId);
+                              }}
+                              onCopyFromMenu={handleCardMenuCopyId}
+                            />
+                          ))}
+                        </div>
+                      ) : (
+                        <ServersEmptyState
+                          onPrimaryAction={emptyStateSyncContent ? handleServersSyncAction : null}
+                          selectedTeamName={selectedTeam?.name}
+                          syncContent={emptyStateSyncContent}
+                        />
+                      )}
                     </div>
                   )}
                 </LandingReveal>
               )}
             </div>
           </section>
-        </div>
-      </main>
       <ServerDiscordLinkModal
         diagnosticsFingerprint={serversSync.diagnosticsFingerprint}
         open={isDiscordReconnectModalOpen}
@@ -5132,11 +5002,11 @@ export function ServersWorkspace({
       />
 
       {isCreateTeamModalOpen ? (
-        <div className="fixed inset-y-0 left-0 right-0 z-[5000] isolate overflow-y-auto overscroll-contain xl:left-[318px]">
+        <div className="fixed inset-y-0 left-0 right-0 z-[5000] isolate overflow-y-auto overscroll-contain lg:left-[278px]">
           <button
             type="button"
             aria-label="Fechar modal de equipe"
-            className="absolute inset-0 bg-[rgba(0,0,0,0.84)] backdrop-blur-[7px]"
+            className="absolute inset-0 bg-[rgba(0,0,0,0.62)]"
             onClick={() => {
               setIsCreateTeamModalOpen(false);
               setIsMemberSubmodalOpen(false);
@@ -5149,29 +5019,13 @@ export function ServersWorkspace({
               role="dialog"
               aria-modal="true"
               aria-label="Criar equipe"
-              className="relative w-full max-w-[760px] overflow-hidden rounded-[32px] bg-transparent px-[22px] py-[22px] shadow-[0_34px_110px_rgba(0,0,0,0.52)] sm:px-[28px] sm:py-[28px]"
+              className="relative w-full max-w-[760px] overflow-hidden rounded-[20px] border border-[#222226] bg-[#141416] px-[22px] py-[22px] sm:px-[28px] sm:py-[28px]"
               >
-              <span
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-0 rounded-[32px] border border-[#0E0E0E]"
-              />
-              <span
-                aria-hidden="true"
-                className="flowdesk-tag-border-glow pointer-events-none absolute inset-[-2px] rounded-[32px]"
-              />
-              <span
-                aria-hidden="true"
-                className="flowdesk-tag-border-core pointer-events-none absolute inset-[-1px] rounded-[32px]"
-              />
-              <span
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-[1px] rounded-[31px] bg-[linear-gradient(180deg,rgba(8,8,8,0.985)_0%,rgba(4,4,4,0.985)_100%)]"
-              />
               <div className="relative z-10">
                 <div className="flex flex-col gap-[14px] sm:flex-row sm:items-start sm:justify-between">
                   <div>
-                    <LandingGlowTag className="px-[18px]">Criar equipe</LandingGlowTag>
-                    <h2 className="mt-[18px] bg-[linear-gradient(90deg,#DADADA_0%,#C1C1C1_100%)] bg-clip-text text-[30px] leading-[0.98] font-normal tracking-[-0.05em] text-transparent sm:text-[36px]">
+                    <p className="fd-kicker">Criar equipe</p>
+                    <h2 className="mt-[10px] text-[28px] leading-[1.15] font-semibold tracking-[-0.04em] text-[#F0F0F2] sm:text-[34px]">
                       Monte uma equipe
                       <br />
                       para seus servidores
@@ -5475,14 +5329,14 @@ export function ServersWorkspace({
               <button
                 type="button"
                 aria-label="Fechar submodal de membros"
-                className="absolute inset-0 bg-[rgba(0,0,0,0.72)] backdrop-blur-[4px]"
+                className="absolute inset-0 bg-[rgba(0,0,0,0.62)]"
                 onClick={() => {
                   setIsMemberSubmodalOpen(false);
                   setTeamActionError(null);
                 }}
               />
               <div className="relative z-[40] mx-auto flex min-h-full items-center justify-center">
-                <div className="w-full max-w-[520px] overflow-hidden rounded-[26px] border border-[#151515] bg-[#070707] p-[18px] shadow-[0_24px_70px_rgba(0,0,0,0.5)]">
+                <div className="w-full max-w-[520px] overflow-hidden rounded-[16px] border border-[#222226] bg-[#161618] p-[18px]">
                 <div className="flex items-start justify-between gap-[14px]">
                   <div>
                     <p className="text-[12px] uppercase tracking-[0.16em] text-[#666666]">
@@ -5574,6 +5428,6 @@ export function ServersWorkspace({
           ) : null}
         </div>
       ) : null}
-    </div>
+    </PanelShell>
   );
 }

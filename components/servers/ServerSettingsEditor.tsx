@@ -5,15 +5,21 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from "react-dom";
 import {
   CircleHelp,
+  Clock,
+  Hash,
   ImageUp,
   LogIn,
   LogOut,
+  MessageSquare,
   MicOff,
   PencilLine,
   Settings2,
+  Shield,
   ShieldCheck,
   ShieldX,
+  ShoppingBag,
   Signature,
+  Ticket,
   TimerOff,
   Trash2,
   UserRoundX,
@@ -32,6 +38,15 @@ import { TicketMessageBuilder } from "@/components/servers/TicketMessageBuilder"
 import { BatePontoHistoryPanel } from "@/components/servers/BatePontoHistoryPanel";
 import { BatePontoRankingPanel } from "@/components/servers/BatePontoRankingPanel";
 import { PermissionDeniedState } from "@/components/servers/PermissionDeniedState";
+import {
+  ModuleCard,
+  ModuleHero,
+  ModulePage,
+  ModuleSetting,
+  ModuleStat,
+  optionLabel,
+  optionLabels,
+} from "@/components/servers/module-ui/ModuleUi";
 import { serversScale } from "@/components/servers/serversScale";
 import {
   SalesCategoryEditPanel,
@@ -7874,21 +7889,13 @@ export function ServerSettingsEditor({
                       readOnly={settingsReadOnly}
                     />
                   ) : settingsSection === "sales_overview" ? (
-                    <div className="space-y-[14px]">
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
-                              Modulo Vendas
-                            </p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Mantenha a loja do servidor em operacao
-                            </h3>
-                            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              O Flowdesk libera criacao de carrinho, logs de pagamento e comprovantes personalizados quando o modulo estiver ativo.
-                            </p>
-                          </div>
-
+                    <ModulePage>
+                      <ModuleHero
+                        label="Modulo Vendas"
+                        title="Loja do servidor em operacao"
+                        description="Carrinhos, logs de pagamento e comprovantes ficam prontos quando o modulo estiver ativo. Salve para aplicar no Discord."
+                        icon={ShoppingBag}
+                        action={
                           <DashboardInlineSwitch
                             checked={salesEnabled}
                             onChange={() => {
@@ -7898,72 +7905,32 @@ export function ServerSettingsEditor({
                             disabled={isSaving || settingsReadOnly}
                             ariaLabel="Ativar ou desativar modulo de vendas"
                           />
-                        </div>
+                        }
+                      />
+                      <div className="grid gap-[12px] md:grid-cols-2 xl:grid-cols-4">
+                        <ModuleStat label="Status" value={salesEnabled ? "Ativo" : "Desligado"} hint="Loja e checkout" icon={ShoppingBag} delay={0.06} />
+                        <ModuleStat label="Categoria" value={optionLabel(categoryOptions, salesCartsCategoryId)} hint="Onde o carrinho nasce" icon={Hash} delay={0.1} />
+                        <ModuleStat label="Log aprovado" value={optionLabel(textChannelOptions, salesPaymentApprovedLogChannelId)} hint="Pagamentos confirmados" icon={Hash} delay={0.14} />
+                        <ModuleStat label="Comprovante" value={salesReceiptCompanyName.trim() || "Sem marca"} hint="Identidade do recibo" icon={Signature} delay={0.18} />
                       </div>
-
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Configurando vendas</p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Carrinhos e logs fixas
-                            </h3>
-                            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              Defina a categoria onde cada carrinho nasce e os canais que recebem pagamentos aprovados, pendentes e recusados.
-                            </p>
-                          </div>
+                      <ModuleCard label="Operacao" title="Carrinhos e logs" description="Cada valor abaixo mostra o destino atual. Troque o canal sem perder o contexto do que ja esta configurado." delay={0.16}>
+                        <div className="grid grid-cols-1 gap-[12px] xl:grid-cols-2">
+                          <ModuleSetting label="Categoria do carrinho" value={optionLabel(categoryOptions, salesCartsCategoryId)} hint="Canal-categoria onde o pedido e criado" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha uma categoria" options={categoryOptions} value={salesCartsCategoryId} onChange={setSalesCartsCategoryId} disabled={salesControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Log aprovado" value={optionLabel(textChannelOptions, salesPaymentApprovedLogChannelId)} hint="Pagamento confirmado" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal de logs" options={textChannelOptions} value={salesPaymentApprovedLogChannelId} onChange={setSalesPaymentApprovedLogChannelId} disabled={salesControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Log pendente" value={optionLabel(textChannelOptions, salesPaymentPendingLogChannelId)} hint="Aguardando pagamento" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal de logs" options={textChannelOptions} value={salesPaymentPendingLogChannelId} onChange={setSalesPaymentPendingLogChannelId} disabled={salesControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Log recusado" value={optionLabel(textChannelOptions, salesPaymentRejectedLogChannelId)} hint="Falha ou cancelamento" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal de logs" options={textChannelOptions} value={salesPaymentRejectedLogChannelId} onChange={setSalesPaymentRejectedLogChannelId} disabled={salesControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
                         </div>
+                      </ModuleCard>
 
-                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
-                          <ConfigStepSelect
-                            label="Categoria onde o carrinho sera gerado"
-                            placeholder="Escolha uma categoria"
-                            options={categoryOptions}
-                            value={salesCartsCategoryId}
-                            onChange={setSalesCartsCategoryId}
-                            disabled={salesControlsDisabled}
-                            controlHeightPx={serverSettingsControlHeight}
-                          />
-                          <ConfigStepSelect
-                            label="Log de pagamento aprovado"
-                            placeholder="Escolha o canal de logs"
-                            options={textChannelOptions}
-                            value={salesPaymentApprovedLogChannelId}
-                            onChange={setSalesPaymentApprovedLogChannelId}
-                            disabled={salesControlsDisabled}
-                            controlHeightPx={serverSettingsControlHeight}
-                          />
-                          <ConfigStepSelect
-                            label="Log de pagamento pendente"
-                            placeholder="Escolha o canal de logs"
-                            options={textChannelOptions}
-                            value={salesPaymentPendingLogChannelId}
-                            onChange={setSalesPaymentPendingLogChannelId}
-                            disabled={salesControlsDisabled}
-                            controlHeightPx={serverSettingsControlHeight}
-                          />
-                          <ConfigStepSelect
-                            label="Log de pagamento recusado"
-                            placeholder="Escolha o canal de logs"
-                            options={textChannelOptions}
-                            value={salesPaymentRejectedLogChannelId}
-                            onChange={setSalesPaymentRejectedLogChannelId}
-                            disabled={salesControlsDisabled}
-                            controlHeightPx={serverSettingsControlHeight}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div>
-                          <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Comprovante</p>
-                          <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                            Identidade do recibo
-                          </h3>
-                          <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                            Personalize o nome exibido no comprovante, documento/identificador e a mensagem de suporte enviada ao cliente.
-                          </p>
-                        </div>
+                      <ModuleCard label="Comprovante" title="Identidade do recibo" description="O cliente ve esses dados no comprovante. Salve para sincronizar a marca da loja." delay={0.2}>
 
                         <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
                           <div>
@@ -8003,11 +7970,11 @@ export function ServerSettingsEditor({
                             />
                           </div>
                         </div>
-                      </div>
-                    </div>
+                      </ModuleCard>
+                    </ModulePage>
                   ) : salesPlaceholderContent ? (
                     <div className="space-y-[14px]">
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                      <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div>
                           <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
                             {salesPlaceholderContent.tag}
@@ -8022,21 +7989,13 @@ export function ServerSettingsEditor({
                       </div>
                     </div>
                   ) : settingsSection === "overview" ? (
-                    <div className="space-y-[14px]">
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
-                              Modulo Ticket
-                            </p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Mantenha a central de atendimento em operacao
-                            </h3>
-                            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              O Flowdesk libera painel, abertura de tickets, logs e permissoes quando o modulo estiver ativo.
-                            </p>
-                          </div>
-
+                    <ModulePage>
+                      <ModuleHero
+                        label="Modulo Ticket"
+                        title="Central de atendimento"
+                        description="Painel, abertura, logs e permissoes ficam prontos quando o modulo estiver ativo. Salve para publicar no servidor."
+                        icon={Ticket}
+                        action={
                           <DashboardInlineSwitch
                             checked={ticketEnabled}
                             onChange={() => {
@@ -8046,100 +8005,71 @@ export function ServerSettingsEditor({
                             disabled={isSaving || settingsReadOnly}
                             ariaLabel="Ativar ou desativar modulo de tickets"
                           />
-                        </div>
+                        }
+                      />
+                      <div className="grid gap-[12px] md:grid-cols-2 xl:grid-cols-4">
+                        <ModuleStat label="Status" value={ticketEnabled ? "Ativo" : "Desligado"} hint="Atendimento ao vivo" icon={Ticket} delay={0.06} />
+                        <ModuleStat label="Menu" value={optionLabel(textChannelOptions, menuChannelId)} hint="Canal do painel" icon={Hash} delay={0.1} />
+                        <ModuleStat label="Categoria" value={optionLabel(categoryOptions, ticketsCategoryId)} hint="Onde os tickets abrem" icon={Hash} delay={0.14} />
+                        <ModuleStat label="Staff" value={optionLabel(roleOptions, adminRoleId)} hint="Cargo administrador" icon={Users} delay={0.18} />
                       </div>
-
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Ticket</p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Canais e logs
-                            </h3>
-                            <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              Defina o canal principal, a categoria dos tickets e os logs que sustentam a operacao do servidor.
-                            </p>
-                          </div>
+                      <ModuleCard label="Operacao" title="Canais e logs" description="O valor grande e o destino atual. O seletor so entra quando voce precisa trocar." delay={0.16}>
+                        <div className="grid grid-cols-1 gap-[12px] xl:grid-cols-2">
+                          <ModuleSetting label="Canal do menu" value={optionLabel(textChannelOptions, menuChannelId)} hint="Painel principal de tickets" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal" options={textChannelOptions} value={menuChannelId} onChange={setMenuChannelId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Categoria dos tickets" value={optionLabel(categoryOptions, ticketsCategoryId)} hint="Onde cada ticket e criado" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha uma categoria" options={categoryOptions} value={ticketsCategoryId} onChange={setTicketsCategoryId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Log de criacao" value={optionLabel(textChannelOptions, logsCreatedChannelId)} hint="Abertura registrada" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal de logs" options={textChannelOptions} value={logsCreatedChannelId} onChange={setLogsCreatedChannelId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Log de fechamento" value={optionLabel(textChannelOptions, logsClosedChannelId)} hint="Encerramento registrado" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal de logs" options={textChannelOptions} value={logsClosedChannelId} onChange={setLogsClosedChannelId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
                         </div>
-
-                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
-                          <ConfigStepSelect label="Canal do menu principal de tickets" placeholder="Escolha o canal" options={textChannelOptions} value={menuChannelId} onChange={setMenuChannelId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          <ConfigStepSelect label="Categoria onde os tickets serao abertos" placeholder="Escolha uma categoria" options={categoryOptions} value={ticketsCategoryId} onChange={setTicketsCategoryId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          <ConfigStepSelect label="Canal de logs de criacao" placeholder="Escolha o canal de logs" options={textChannelOptions} value={logsCreatedChannelId} onChange={setLogsCreatedChannelId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          <ConfigStepSelect label="Canal de logs de fechamento" placeholder="Escolha o canal de logs" options={textChannelOptions} value={logsClosedChannelId} onChange={setLogsClosedChannelId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                        </div>
-                      </div>
-
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <button
-                          type="button"
-                          onClick={() => setIsStaffCardCollapsed((current) => !current)}
-                          className="group flex w-full items-start justify-between gap-[16px] text-left"
-                          aria-expanded={!isStaffCardCollapsed}
-                          aria-controls="server-staff-settings-panel"
-                        >
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Ticket</p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Permissoes e cargos
-                            </h3>
-                            <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              Controle quem administra, assume, fecha e recebe notificacoes dos tickets dentro do painel.
-                            </p>
-                          </div>
-
-                          <span className="inline-flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-[14px] border border-[#1A1A1A] bg-[#0D0D0D] text-[#B9B9B9] transition-colors duration-200 group-hover:border-[#2A2A2A] group-hover:bg-[#111111] group-hover:text-[#F0F0F0]">
-                            <svg
-                              viewBox="0 0 20 20"
-                              aria-hidden="true"
-                              className={`h-[18px] w-[18px] transition-transform duration-300 ease-out ${
-                                isStaffCardCollapsed ? "rotate-0" : "rotate-180"
-                              }`}
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2.1"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            >
-                              <path d="M5.5 7.75 10 12.25l4.5-4.5" />
-                            </svg>
-                          </span>
-                        </button>
-
-                        {!isStaffCardCollapsed ? (
-                          <div
-                            id="server-staff-settings-panel"
-                            className="mt-[18px] flowdesk-fade-up-soft"
+                      </ModuleCard>
+                      <ModuleCard
+                        label="Staff"
+                        title="Permissoes e cargos"
+                        description="Quem administra, assume, fecha e recebe aviso. Salve para aplicar no Discord."
+                        delay={0.2}
+                        action={
+                          <button
+                            type="button"
+                            onClick={() => setIsStaffCardCollapsed((current) => !current)}
+                            className="inline-flex h-[34px] items-center rounded-[12px] border border-[#1C1C1C] bg-[#141414] px-[12px] text-[12px] text-[#C4C4C8]"
                           >
-                            <div className="grid grid-cols-1 gap-[16px] xl:grid-cols-2">
-                              <ConfigStepSelect label="Cargo administrador do ticket" placeholder="Escolha o cargo" options={roleOptions} value={adminRoleId} onChange={setAdminRoleId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                              <ConfigStepMultiSelect label="Cargos que podem assumir tickets" placeholder="Escolha os cargos" options={roleOptions} values={claimRoleIds} onChange={setClaimRoleIds} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                              <ConfigStepMultiSelect label="Cargos que podem fechar tickets" placeholder="Escolha os cargos" options={roleOptions} values={closeRoleIds} onChange={setCloseRoleIds} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                              <ConfigStepMultiSelect label="Cargos que podem enviar notificacao" placeholder="Escolha os cargos" options={roleOptions} values={notifyRoleIds} onChange={setNotifyRoleIds} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                            </div>
+                            {isStaffCardCollapsed ? "Mostrar" : "Ocultar"}
+                          </button>
+                        }
+                      >
+                        {!isStaffCardCollapsed ? (
+                          <div className="grid grid-cols-1 gap-[12px] xl:grid-cols-2">
+                            <ModuleSetting label="Administrador" value={optionLabel(roleOptions, adminRoleId)} hint="Cargo com controle total" icon={Users}>
+                              <ConfigStepSelect label="" placeholder="Escolha o cargo" options={roleOptions} value={adminRoleId} onChange={setAdminRoleId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                            </ModuleSetting>
+                            <ModuleSetting label="Assumir" value={optionLabels(roleOptions, claimRoleIds)} hint="Quem pega o ticket" icon={Users}>
+                              <ConfigStepMultiSelect label="" placeholder="Escolha os cargos" options={roleOptions} values={claimRoleIds} onChange={setClaimRoleIds} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                            </ModuleSetting>
+                            <ModuleSetting label="Fechar" value={optionLabels(roleOptions, closeRoleIds)} hint="Quem encerra o ticket" icon={Users}>
+                              <ConfigStepMultiSelect label="" placeholder="Escolha os cargos" options={roleOptions} values={closeRoleIds} onChange={setCloseRoleIds} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                            </ModuleSetting>
+                            <ModuleSetting label="Notificar" value={optionLabels(roleOptions, notifyRoleIds)} hint="Quem recebe aviso" icon={Users}>
+                              <ConfigStepMultiSelect label="" placeholder="Escolha os cargos" options={roleOptions} values={notifyRoleIds} onChange={setNotifyRoleIds} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                            </ModuleSetting>
                           </div>
                         ) : null}
-                      </div>
-                    </div>
+                      </ModuleCard>
+                    </ModulePage>
                   ) : settingsSection === "ticket_ai" ? (
                     <div className="space-y-[14px]">
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
-                              Modulo FlowAI
-                            </p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Otimize seu atendimento com IA
-                            </h3>
-                            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              O FlowAI entende sua empresa, aplica suas regras e conduz reembolsos de forma segura quando o modulo estiver ativo.
-                            </p>
-                            <p className="mt-[10px] text-[12px] uppercase tracking-[0.14em] text-[#5B5B5B]">
-                              {flowAiHeaderDescription}
-                            </p>
-                          </div>
-
+                      <ModuleHero
+                        label="Modulo FlowAI"
+                        title="Atendimento com IA"
+                        description={`${flowAiHeaderDescription} O FlowAI aplica as regras da empresa e conduz reembolsos quando o modulo estiver ativo.`}
+                        icon={Settings2}
+                        action={
                           <DashboardInlineSwitch
                             checked={aiEnabled}
                             onChange={() => {
@@ -8180,8 +8110,8 @@ export function ServerSettingsEditor({
                             }
                             ariaLabel="Ativar ou desativar modulo FlowAI"
                           />
-                        </div>
-                      </div>
+                        }
+                      />
 
                       <div className="grid grid-cols-1 gap-[10px] sm:grid-cols-2 xl:grid-cols-4">
                         {flowAiChecklist.map((item) => (
@@ -8212,7 +8142,7 @@ export function ServerSettingsEditor({
                         ))}
                       </div>
 
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                      <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div>
                           <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Identidade da Empresa</p>
                           <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
@@ -8261,7 +8191,7 @@ export function ServerSettingsEditor({
                         </div>
                       </div>
 
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                      <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div>
                           <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Personalizacao FlowAI</p>
                           <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
@@ -8374,7 +8304,7 @@ export function ServerSettingsEditor({
                         </div>
                       </div>
 
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                      <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
                           <div>
                             <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Processamento de Reembolso</p>
@@ -8530,21 +8460,13 @@ export function ServerSettingsEditor({
                       onSendEmbed={handleSendEmbed}
                     />
                   ) : settingsSection === "entry_exit_overview" ? (
-                    <div className="space-y-[14px]">
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
-                              Mensagem Entrada/Saida
-                            </p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Automatize recepcao e despedida do servidor
-                            </h3>
-                            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              O Flowdesk envia a mensagem publica, registra logs privados e libera o builder quando o modulo estiver ativo.
-                            </p>
-                          </div>
-
+                    <ModulePage>
+                      <ModuleHero
+                        label="Entrada e saida"
+                        title="Recepcao automatica"
+                        description="Mensagem publica e log privado para quem entra e sai. Salve para ativar no servidor."
+                        icon={LogIn}
+                        action={
                           <DashboardInlineSwitch
                             checked={welcomeEnabled}
                             onChange={() => {
@@ -8554,69 +8476,43 @@ export function ServerSettingsEditor({
                             disabled={isSaving || settingsReadOnly}
                             ariaLabel="Ativar ou desativar modulo de entrada e saida"
                           />
-                        </div>
+                        }
+                      />
+                      <div className="grid gap-[12px] md:grid-cols-2 xl:grid-cols-4">
+                        <ModuleStat label="Status" value={welcomeEnabled ? "Ativo" : "Desligado"} hint="Mensagens automaticas" icon={MessageSquare} delay={0.06} />
+                        <ModuleStat label="Entrada publica" value={optionLabel(textChannelOptions, entryPublicChannelId)} hint="Boas-vindas" icon={LogIn} delay={0.1} />
+                        <ModuleStat label="Saida publica" value={optionLabel(textChannelOptions, exitPublicChannelId)} hint="Despedida" icon={LogOut} delay={0.14} />
+                        <ModuleStat label="Logs" value={[entryLogChannelId, exitLogChannelId].filter(Boolean).length === 2 ? "Completos" : "Pendentes"} hint="Registro privado" icon={Hash} delay={0.18} />
                       </div>
-
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Mensagem Entrada/Saida</p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Canais e logs de entrada
-                            </h3>
-                            <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              Escolha onde a mensagem publica aparece e qual canal privado recebe o log de entrada.
-                            </p>
-                          </div>
-                          <span className="inline-flex h-[30px] items-center justify-center rounded-full border border-[#151515] bg-[#0B0B0B] px-[12px] text-[11px] uppercase tracking-[0.16em] text-[#686868]">
-                            Entrada
-                          </span>
+                      <ModuleCard label="Entrada" title="Canais de entrada" description="Onde o membro e recebido e onde a equipe ve o log." delay={0.16}>
+                        <div className="grid grid-cols-1 gap-[12px] xl:grid-cols-2">
+                          <ModuleSetting label="Canal publico" value={optionLabel(textChannelOptions, entryPublicChannelId)} hint="Mensagem de boas-vindas" icon={LogIn}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal" options={textChannelOptions} value={entryPublicChannelId} onChange={setEntryPublicChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Log privado" value={optionLabel(textChannelOptions, entryLogChannelId)} hint="Auditoria de entrada" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal" options={textChannelOptions} value={entryLogChannelId} onChange={setEntryLogChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
                         </div>
-
-                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
-                          <ConfigStepSelect label="Canal de entrada publico" placeholder="Escolha o canal" options={textChannelOptions} value={entryPublicChannelId} onChange={setEntryPublicChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          <ConfigStepSelect label="Log privado de entrada" placeholder="Escolha o canal" options={textChannelOptions} value={entryLogChannelId} onChange={setEntryLogChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                      </ModuleCard>
+                      <ModuleCard label="Saida" title="Canais de saida" description="Onde o servidor se despede e onde o log e gravado." delay={0.2}>
+                        <div className="grid grid-cols-1 gap-[12px] xl:grid-cols-2">
+                          <ModuleSetting label="Canal publico" value={optionLabel(textChannelOptions, exitPublicChannelId)} hint="Mensagem de saida" icon={LogOut}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal" options={textChannelOptions} value={exitPublicChannelId} onChange={setExitPublicChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Log privado" value={optionLabel(textChannelOptions, exitLogChannelId)} hint="Auditoria de saida" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal" options={textChannelOptions} value={exitLogChannelId} onChange={setExitLogChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
                         </div>
-                      </div>
-
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Mensagem Entrada/Saida</p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Canais e logs de saida
-                            </h3>
-                            <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              Defina o canal publico de saida e o log privado para eventos de desligamento.
-                            </p>
-                          </div>
-                          <span className="inline-flex h-[30px] items-center justify-center rounded-full border border-[#151515] bg-[#0B0B0B] px-[12px] text-[11px] uppercase tracking-[0.16em] text-[#686868]">
-                            Saida
-                          </span>
-                        </div>
-
-                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
-                          <ConfigStepSelect label="Canal de saida publico" placeholder="Escolha o canal" options={textChannelOptions} value={exitPublicChannelId} onChange={setExitPublicChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          <ConfigStepSelect label="Log privado de saida" placeholder="Escolha o canal" options={textChannelOptions} value={exitLogChannelId} onChange={setExitLogChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                        </div>
-                      </div>
-                    </div>
+                      </ModuleCard>
+                    </ModulePage>
                   ) : settingsSection === "suggestions_overview" ? (
                     <div className="space-y-[14px]">
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
-                              Modulo Sugestoes
-                            </p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Colete ideias e publique votacoes
-                            </h3>
-                            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              Configure canais do painel, publicacao e logs, alem do template exibido quando uma sugestao for enviada.
-                            </p>
-                          </div>
-
+                      <ModuleHero
+                        label="Modulo Sugestoes"
+                        title="Ideias e votacoes"
+                        description="Painel, publicacao e logs. Salve para publicar o fluxo de sugestoes."
+                        icon={MessageSquare}
+                        action={
                           <DashboardInlineSwitch
                             checked={suggestionsEnabled}
                             onChange={() => {
@@ -8626,26 +8522,26 @@ export function ServerSettingsEditor({
                             disabled={isSaving || settingsReadOnly}
                             ariaLabel="Ativar ou desativar modulo de sugestoes"
                           />
-                        </div>
+                        }
+                      />
+                      <div className="grid gap-[12px] md:grid-cols-3">
+                        <ModuleStat label="Painel" value={optionLabel(textChannelOptions, suggestionsPanelChannelId)} hint="Onde o membro envia" icon={Hash} delay={0.08} />
+                        <ModuleStat label="Publicacao" value={optionLabel(textChannelOptions, suggestionsPublishChannelId)} hint="Onde a ideia aparece" icon={Hash} delay={0.12} />
+                        <ModuleStat label="Logs" value={optionLabel(textChannelOptions, suggestionsLogsChannelId, "Opcional")} hint="Auditoria interna" icon={Hash} delay={0.16} />
                       </div>
-
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div>
-                          <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Sugestoes</p>
-                          <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                            Canais do modulo
-                          </h3>
-                          <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                            Defina onde o painel sera publicado, onde as sugestoes aprovadas aparecem e onde os logs serao enviados.
-                          </p>
+                      <ModuleCard label="Canais" title="Destinos do modulo" description="Cada card mostra o canal atual antes do seletor." delay={0.18}>
+                        <div className="grid grid-cols-1 gap-[12px] xl:grid-cols-2">
+                          <ModuleSetting label="Canal do painel" value={optionLabel(textChannelOptions, suggestionsPanelChannelId)} hint="Formulario de envio" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal" options={textChannelOptions} value={suggestionsPanelChannelId} onChange={setSuggestionsPanelChannelId} disabled={suggestionsControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Canal de publicacao" value={optionLabel(textChannelOptions, suggestionsPublishChannelId)} hint="Sugestao publicada" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal" options={textChannelOptions} value={suggestionsPublishChannelId} onChange={setSuggestionsPublishChannelId} disabled={suggestionsControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Canal de logs" value={optionLabel(textChannelOptions, suggestionsLogsChannelId, "Opcional")} hint="Registro interno" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal de logs" options={textChannelOptions} value={suggestionsLogsChannelId} onChange={setSuggestionsLogsChannelId} disabled={suggestionsControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
                         </div>
-
-                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
-                          <ConfigStepSelect label="Canal do painel" placeholder="Escolha o canal" options={textChannelOptions} value={suggestionsPanelChannelId} onChange={setSuggestionsPanelChannelId} disabled={suggestionsControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          <ConfigStepSelect label="Canal de publicacao" placeholder="Escolha o canal" options={textChannelOptions} value={suggestionsPublishChannelId} onChange={setSuggestionsPublishChannelId} disabled={suggestionsControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          <ConfigStepSelect label="Canal de logs (opcional)" placeholder="Escolha o canal de logs" options={textChannelOptions} value={suggestionsLogsChannelId} onChange={setSuggestionsLogsChannelId} disabled={suggestionsControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                        </div>
-                      </div>
+                      </ModuleCard>
 
                       <TicketMessageBuilder
                         guildId={guildId}
@@ -8681,20 +8577,12 @@ export function ServerSettingsEditor({
                     />
                   ) : settingsSection === "bate_ponto_overview" ? (
                     <div className="space-y-[14px]">
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
-                              Modulo Bate Ponto
-                            </p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Controle expediente e banco de horas
-                            </h3>
-                            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              Configure canais do painel e logs, cargos autorizados, banco de horas e regras de encerramento automatico.
-                            </p>
-                          </div>
-
+                      <ModuleHero
+                        label="Modulo Bate Ponto"
+                        title="Expediente e banco de horas"
+                        description="Painel, logs, cargos e regras de encerramento. Salve para aplicar na equipe."
+                        icon={Clock}
+                        action={
                           <DashboardInlineSwitch
                             checked={batePontoEnabled}
                             onChange={() => {
@@ -8704,10 +8592,10 @@ export function ServerSettingsEditor({
                             disabled={isSaving || settingsReadOnly}
                             ariaLabel="Ativar ou desativar modulo de bate ponto"
                           />
-                        </div>
-                      </div>
+                        }
+                      />
 
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                      <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div>
                           <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Bate Ponto</p>
                           <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
@@ -8727,7 +8615,7 @@ export function ServerSettingsEditor({
                         </div>
                       </div>
 
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                      <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
                           <div>
                             <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
@@ -8770,7 +8658,7 @@ export function ServerSettingsEditor({
                         </div>
                       </div>
 
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                      <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
                           <div>
                             <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Banco de horas</p>
@@ -8836,7 +8724,7 @@ export function ServerSettingsEditor({
                         </div>
                       </div>
 
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                      <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
                           <div>
                             <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Sessoes abertas</p>
@@ -8922,20 +8810,12 @@ export function ServerSettingsEditor({
                     <BatePontoHistoryPanel guildId={guildId} />
                   ) : settingsSection === "captcha_overview" ? (
                     <div className="space-y-[14px]">
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
-                              Modulo Captcha
-                            </p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Proteja a entrada do servidor com verificacao
-                            </h3>
-                            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              O Flowdesk libera painel, cargos verificados, logs e desafio visual quando o modulo estiver ativo.
-                            </p>
-                          </div>
-
+                      <ModuleHero
+                        label="Modulo Captcha"
+                        title="Verificacao na entrada"
+                        description="Painel, cargos e desafio visual. Salve para proteger o servidor."
+                        icon={ShieldCheck}
+                        action={
                           <DashboardInlineSwitch
                             checked={captchaEnabled}
                             onChange={() => {
@@ -8945,31 +8825,32 @@ export function ServerSettingsEditor({
                             disabled={isSaving || settingsReadOnly}
                             ariaLabel="Ativar ou desativar modulo de captcha"
                           />
-                        </div>
+                        }
+                      />
+                      <div className="grid gap-[12px] md:grid-cols-2 xl:grid-cols-4">
+                        <ModuleStat label="Status" value={captchaEnabled ? "Ativo" : "Desligado"} hint="Protecao de entrada" icon={ShieldCheck} delay={0.06} />
+                        <ModuleStat label="Painel" value={optionLabel(textChannelOptions, captchaPanelChannelId)} hint="Canal principal" icon={Hash} delay={0.1} />
+                        <ModuleStat label="Verificados" value={optionLabels(roleOptions, captchaVerifiedRoleIds)} hint="Cargos apos o desafio" icon={Users} delay={0.14} />
+                        <ModuleStat label="Tentativas" value={String(captchaMaxAttempts)} hint="Limite do desafio" icon={Shield} delay={0.18} />
                       </div>
-
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Captcha</p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Canais e cargos
-                            </h3>
-                            <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              Defina o canal principal do painel, logs opcionais e quem recebe acesso apos a verificacao.
-                            </p>
-                          </div>
+                      <ModuleCard label="Acesso" title="Canais e cargos" description="Destinos atuais e quem passa na verificacao." delay={0.16}>
+                        <div className="grid grid-cols-1 gap-[12px] xl:grid-cols-2">
+                          <ModuleSetting label="Canal principal" value={optionLabel(textChannelOptions, captchaPanelChannelId)} hint="Painel do captcha" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal" options={textChannelOptions} value={captchaPanelChannelId} onChange={setCaptchaPanelChannelId} disabled={captchaControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Canal de logs" value={optionLabel(textChannelOptions, captchaLogsChannelId, "Opcional")} hint="Auditoria" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal de logs" options={textChannelOptions} value={captchaLogsChannelId} onChange={setCaptchaLogsChannelId} disabled={captchaControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Cargos verificados" value={optionLabels(roleOptions, captchaVerifiedRoleIds)} hint="Acesso liberado" icon={Users}>
+                            <ConfigStepMultiSelect label="" placeholder="Escolha os cargos" options={roleOptions} values={captchaVerifiedRoleIds} onChange={setCaptchaVerifiedRoleIds} disabled={captchaControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Bypass" value={optionLabels(roleOptions, captchaBypassRoleIds, "Nenhum")} hint="Pula o desafio" icon={Users}>
+                            <ConfigStepMultiSelect label="" placeholder="Escolha os cargos" options={roleOptions} values={captchaBypassRoleIds} onChange={setCaptchaBypassRoleIds} disabled={captchaControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
                         </div>
+                      </ModuleCard>
 
-                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
-                          <ConfigStepSelect label="Canal Principal" placeholder="Escolha o canal" options={textChannelOptions} value={captchaPanelChannelId} onChange={setCaptchaPanelChannelId} disabled={captchaControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          <ConfigStepSelect label="Canal de Logs" placeholder="Escolha o canal de logs" options={textChannelOptions} value={captchaLogsChannelId} onChange={setCaptchaLogsChannelId} disabled={captchaControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          <ConfigStepMultiSelect label="Cargos verificados" placeholder="Escolha os cargos" options={roleOptions} values={captchaVerifiedRoleIds} onChange={setCaptchaVerifiedRoleIds} disabled={captchaControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          <ConfigStepMultiSelect label="Cargos bypass (opcional)" placeholder="Escolha os cargos" options={roleOptions} values={captchaBypassRoleIds} onChange={setCaptchaBypassRoleIds} disabled={captchaControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                        </div>
-                      </div>
-
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                      <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div>
                           <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Desafio</p>
                           <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
@@ -9094,20 +8975,12 @@ export function ServerSettingsEditor({
                     />
                   ) : settingsSection === "security_antilink" ? (
                     <div className="space-y-[14px]">
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
-                              Modulo AntiLink
-                            </p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Proteja o servidor automaticamente
-                            </h3>
-                            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              O Flowdesk bloqueia links externos, convites do Discord e tentativas de ofuscacao sempre que o evento acontecer.
-                            </p>
-                          </div>
-
+                      <ModuleHero
+                        label="Modulo AntiLink"
+                        title="Protecao automatica"
+                        description="Bloqueia links externos, convites e ofuscacao assim que o evento acontece. Salve para aplicar no servidor."
+                        icon={ShieldX}
+                        action={
                           <DashboardInlineSwitch
                             checked={antiLinkEnabled}
                             onChange={() => {
@@ -9118,10 +8991,10 @@ export function ServerSettingsEditor({
                             disabled={isSaving || settingsReadOnly}
                             ariaLabel="Ativar ou desativar modulo AntiLink"
                           />
-                        </div>
-                      </div>
+                        }
+                      />
 
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                      <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
                           <div>
                             <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Configuracao AntiLink</p>
@@ -9212,20 +9085,12 @@ export function ServerSettingsEditor({
                     </div>
                   ) : settingsSection === "security_autorole" ? (
                     <div className="space-y-[14px]">
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
-                              Modulo AutoRole
-                            </p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Aplique cargos automaticamente
-                            </h3>
-                            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              Selecione cargos para o bot adicionar em novos membros e, se quiser, sincronize quem ja esta no servidor.
-                            </p>
-                          </div>
-
+                      <ModuleHero
+                        label="Modulo AutoRole"
+                        title="Cargos automaticos"
+                        description="O bot adiciona os cargos em novos membros. Se quiser, sincronize quem ja esta no servidor."
+                        icon={Users}
+                        action={
                           <DashboardInlineSwitch
                             checked={autoRoleEnabled}
                             onChange={() => {
@@ -9241,10 +9106,10 @@ export function ServerSettingsEditor({
                             disabled={isSaving || settingsReadOnly}
                             ariaLabel="Ativar ou desativar modulo AutoRole"
                           />
-                        </div>
-                      </div>
+                        }
+                      />
 
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                      <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
                           <div>
                             <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
@@ -9508,7 +9373,7 @@ export function ServerSettingsEditor({
                   ) : settingsSection === "security_logs" ? (
                     <>
                       <div className="space-y-[14px]">
-                        <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                        <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                           <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
                             <div>
                               <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
@@ -9531,7 +9396,7 @@ export function ServerSettingsEditor({
                           </div>
                         </div>
 
-                        <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                        <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                           <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
                             <div>
                               <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
@@ -9718,7 +9583,7 @@ export function ServerSettingsEditor({
                     </>
                   ) : (
                     <>
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                      <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
                           <div>
                             <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Mensagem Entrada/Saida</p>

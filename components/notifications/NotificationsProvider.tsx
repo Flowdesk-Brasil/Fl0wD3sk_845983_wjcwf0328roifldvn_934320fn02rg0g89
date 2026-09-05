@@ -38,6 +38,15 @@ type NotificationOptions = {
   durationMs?: number;
 };
 
+export type NotificationInboxItem = {
+  id: string;
+  tone: NotificationTone;
+  title: string | null;
+  message: string;
+  createdAt: number;
+  read: boolean;
+};
+
 type NotificationApi = {
   notify: (payload: NotificationPayload) => string;
   show: (message: string, options?: NotificationOptions & { tone?: NotificationTone }) => string;
@@ -45,6 +54,9 @@ type NotificationApi = {
   error: (message: string, options?: NotificationOptions) => string;
   dismiss: (id: string) => void;
   clear: () => void;
+  inbox: NotificationInboxItem[];
+  unreadCount: number;
+  markAllRead: () => void;
 };
 
 type NotificationsProviderProps = {
@@ -62,6 +74,8 @@ type NotificationCollections = {
   queued: NotificationItem[];
 };
 
+const NOTIFICATION_INBOX_KEY = "flowdesk_notification_inbox_v1";
+const MAX_INBOX_NOTIFICATIONS = 20;
 const MAX_VISIBLE_NOTIFICATIONS = 3;
 const DEFAULT_NOTIFICATION_DURATION_MS = 5200;
 const MINIMUM_RESUME_DURATION_MS = 180;
@@ -81,6 +95,31 @@ const STACK_EASE = [0.22, 1, 0.36, 1] as const;
 
 const NotificationContext = createContext<NotificationApi | null>(null);
 const recentNotificationEffectFingerprints = new Map<string, number>();
+
+function readStoredInbox(): NotificationInboxItem[] {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const raw = window.sessionStorage.getItem(NOTIFICATION_INBOX_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as NotificationInboxItem[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item) => item && typeof item.id === "string" && typeof item.message === "string")
+      .slice(0, MAX_INBOX_NOTIFICATIONS);
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredInbox(items: NotificationInboxItem[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(NOTIFICATION_INBOX_KEY, JSON.stringify(items.slice(0, MAX_INBOX_NOTIFICATIONS)));
+  } catch {
+    // ignore quota
+  }
+}
 
 function createNotificationId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -342,6 +381,8 @@ function NotificationCard({
 
 export function NotificationsProvider({ children }: NotificationsProviderProps) {
   const [visibleItems, setVisibleItems] = useState<NotificationItem[]>([]);
+  const [inbox, setInbox] = useState<NotificationInboxItem[]>([]);
+  const [inboxReady, setInboxReady] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [forceExpanded, setForceExpanded] = useState(false);
   const trayRef = useRef<HTMLDivElement | null>(null);
@@ -352,6 +393,16 @@ export function NotificationsProvider({ children }: NotificationsProviderProps) 
   const forceExpandedRef = useRef(false);
   const expandedRef = useRef(false);
   const [providerMountedAt] = useState(() => Date.now());
+
+  useEffect(() => {
+    setInbox(readStoredInbox());
+    setInboxReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!inboxReady) return;
+    writeStoredInbox(inbox);
+  }, [inbox, inboxReady]);
 
   const syncCollections = useCallback((collections: NotificationCollections) => {
     visibleItemsRef.current = collections.visible;
@@ -599,6 +650,22 @@ export function NotificationsProvider({ children }: NotificationsProviderProps) 
         };
       });
 
+      if (targetId) {
+        setInbox((current) =>
+          [
+            {
+              id: targetId,
+              tone,
+              title,
+              message,
+              createdAt: now,
+              read: false,
+            },
+            ...current,
+          ].slice(0, MAX_INBOX_NOTIFICATIONS),
+        );
+      }
+
       droppedIds.forEach((id) => {
         clearDismissTimer(id);
       });
@@ -636,6 +703,12 @@ export function NotificationsProvider({ children }: NotificationsProviderProps) 
     setVisibleItems([]);
   }, []);
 
+  const markAllRead = useCallback(() => {
+    setInbox((current) => current.map((item) => ({ ...item, read: true })));
+  }, []);
+
+  const unreadCount = useMemo(() => inbox.filter((item) => !item.read).length, [inbox]);
+
   const api = useMemo<NotificationApi>(
     () => ({
       notify,
@@ -662,8 +735,11 @@ export function NotificationsProvider({ children }: NotificationsProviderProps) 
         }),
       dismiss,
       clear,
+      inbox,
+      unreadCount,
+      markAllRead,
     }),
-    [clear, dismiss, notify],
+    [clear, dismiss, inbox, markAllRead, notify, unreadCount],
   );
 
   const renderedItems = visibleItems;
@@ -729,6 +805,15 @@ export function useNotifications() {
   }
 
   return context;
+}
+
+export function useNotificationInbox() {
+  const notifications = useNotifications();
+  return {
+    items: notifications.inbox,
+    unreadCount: notifications.unreadCount,
+    markAllRead: notifications.markAllRead,
+  };
 }
 
 export function useNotificationEffect(

@@ -63,6 +63,21 @@ const OPTIONAL_DISCORD_SNOWFLAKE_TEXT = flowSecureDto.string({
 const SUGGESTIONS_SETTINGS_SELECT =
   "guild_id, enabled, panel_channel_id, publish_channel_id, logs_channel_id, panel_layout, panel_title, panel_description, panel_button_label, panel_message_id, suggestion_layout, published_header, published_footer, thread_name_prefix, updated_at";
 
+type SuggestionsSettingsRow = {
+  enabled: boolean;
+  panel_channel_id: string | null;
+  publish_channel_id: string | null;
+  logs_channel_id: string | null;
+  panel_layout: unknown;
+  panel_title: string | null;
+  panel_description: string | null;
+  panel_button_label: string | null;
+  suggestion_layout: unknown;
+  published_header: string | null;
+  published_footer: string | null;
+  updated_at: string | null;
+};
+
 type SuggestionsSecureSnapshot = {
   enabled: boolean;
   panelChannelId: string | null;
@@ -262,24 +277,25 @@ export async function GET(request: Request) {
       );
     }
 
-    if (!result.data) {
+    const suggestionsRow = (result.data || null) as SuggestionsSettingsRow | null;
+    if (!suggestionsRow) {
       return applyNoStoreHeaders(
         NextResponse.json({ ok: true, settings: null }),
       );
     }
 
     const canonicalSnapshot = normalizeSuggestionsSecureSnapshot({
-      enabled: result.data.enabled,
-      panelChannelId: result.data.panel_channel_id,
-      publishChannelId: result.data.publish_channel_id,
-      logsChannelId: result.data.logs_channel_id,
-      panelLayout: result.data.panel_layout,
-      panelTitle: result.data.panel_title,
-      panelDescription: result.data.panel_description,
-      panelButtonLabel: result.data.panel_button_label,
-      suggestionLayout: result.data.suggestion_layout,
-      publishedHeader: result.data.published_header,
-      publishedFooter: result.data.published_footer,
+      enabled: suggestionsRow.enabled,
+      panelChannelId: suggestionsRow.panel_channel_id,
+      publishChannelId: suggestionsRow.publish_channel_id,
+      logsChannelId: suggestionsRow.logs_channel_id,
+      panelLayout: suggestionsRow.panel_layout,
+      panelTitle: suggestionsRow.panel_title,
+      panelDescription: suggestionsRow.panel_description,
+      panelButtonLabel: suggestionsRow.panel_button_label,
+      suggestionLayout: suggestionsRow.suggestion_layout,
+      publishedHeader: suggestionsRow.published_header,
+      publishedFooter: suggestionsRow.published_footer,
     });
 
     if (canonicalSnapshot && secureSnapshotResult?.recovery?.unreadable) {
@@ -296,7 +312,7 @@ export async function GET(request: Request) {
       NextResponse.json({
         ok: true,
         settings: canonicalSnapshot
-          ? buildSuggestionsResponse(canonicalSnapshot, result.data.updated_at)
+          ? buildSuggestionsResponse(canonicalSnapshot, suggestionsRow.updated_at)
           : null,
       }),
     );

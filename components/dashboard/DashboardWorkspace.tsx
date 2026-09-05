@@ -18,22 +18,18 @@ import {
   Grid2x2,
   HardDrive,
   List as ListLucide,
-  LogOut,
-  Palette,
   Plus,
   PlugZap,
   Search as SearchLucide,
   Server,
   ShieldAlert,
   Sparkles,
-  UserRound,
   Users,
   WalletCards,
   Workflow,
   X,
   type LucideIcon,
 } from "lucide-react";
-import { LandingGlowTag } from "@/components/landing/LandingGlowTag";
 import { LandingReveal } from "@/components/landing/LandingReveal";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { useNotificationEffect } from "@/components/notifications/NotificationsProvider";
@@ -77,6 +73,12 @@ import {
 import { useLatchedPendingKey } from "@/lib/ui/useLatchedPendingKey";
 import { useBodyScrollLock } from "@/lib/ui/useBodyScrollLock";
 import { useLiveAccountProfile } from "@/hooks/useLiveAccountProfile";
+import {
+  PanelShell,
+  fdNavGroupClass,
+  fdNavItemClass,
+  type PanelQuickLink,
+} from "@/components/panel-shell";
 
 type DashboardWorkspaceProps = {
   currentAccount: {
@@ -194,8 +196,6 @@ type DashboardRecentActivity = {
   icon: LucideIcon;
 };
 
-const sidebarShellClass =
-  "relative overflow-hidden border border-[#0E0E0E] bg-[#050505] shadow-[0_24px_80px_rgba(0,0,0,0.42)]";
 const SAVED_PANEL_ACCOUNTS_KEY = "flowdesk_saved_panel_accounts_v1";
 const DASHBOARD_DISMISSED_TASKS_KEY = "flowdesk_dashboard_dismissed_tasks_v1";
 const HOSTING_ONBOARDING_STORAGE_KEY = "flowdesk_hosting_onboarding_v1";
@@ -578,7 +578,7 @@ function DashboardRecentActivityList({
         </span>
       </div>
 
-      <div className="overflow-hidden rounded-[24px] border border-[#161616] bg-[#050505] shadow-[0_24px_80px_rgba(0,0,0,0.28)]">
+                      <div className="overflow-hidden rounded-[16px] border border-[#222226] bg-[#111113]">
         {items.map((item, index) => {
           const Icon = item.icon;
           return (
@@ -719,10 +719,6 @@ function WorkspaceAlertPixelAccent({ side }: { side: "left" | "right" }) {
   );
 }
 
-function SidebarLogoutIcon() {
-  return <LogOut className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />;
-}
-
 function isLocalWorkspaceFeatureHost() {
   if (typeof window === "undefined") return false;
   const hostname = window.location.hostname.toLowerCase();
@@ -756,11 +752,7 @@ function DashboardNavButton({
       onFocus={() => onPrefetch?.(item)}
       onPointerDown={() => onPrefetch?.(item)}
       onClick={() => onNavigate(item)}
-      className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-all duration-200 ${
-        active
-          ? "bg-[#1E1E1E] text-[#F0F0F0]"
-          : "text-[#B5B5B5] hover:bg-[#111111] hover:text-[#E3E3E3]"
-      }`}
+      className={fdNavItemClass({ active })}
     >
       <span
         className={`inline-flex h-[22px] w-[22px] items-center justify-center ${
@@ -878,6 +870,7 @@ export function DashboardWorkspace({
   const [memberDraftIds, setMemberDraftIds] = useState<string[]>([""]);
   const [savedAccounts, setSavedAccounts] = useState<SavedPanelAccount[]>([]);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [teamActionMessage, setTeamActionMessage] = useState<string | null>(null);
   const [teamActionError, setTeamActionError] = useState<string | null>(null);
@@ -893,8 +886,6 @@ export function DashboardWorkspace({
   });
   const desktopTeamMenuRef = useRef<HTMLDivElement | null>(null);
   const mobileTeamMenuRef = useRef<HTMLDivElement | null>(null);
-  const desktopProfileMenuRef = useRef<HTMLDivElement | null>(null);
-  const mobileProfileMenuRef = useRef<HTMLDivElement | null>(null);
   const previousPathnameRef = useRef(pathname);
   const currentView = useMemo(
     () => resolveDashboardViewFromPathname(pathname) ?? getDashboardViewById("home"),
@@ -1798,11 +1789,6 @@ export function DashboardWorkspace({
         setIsTeamMenuOpen(false);
       }
 
-      const desktopInside = desktopProfileMenuRef.current?.contains(target);
-      const mobileInside = mobileProfileMenuRef.current?.contains(target);
-      if (!desktopInside && !mobileInside) {
-        setIsProfileMenuOpen(false);
-      }
     }
 
     function handleEscape(event: KeyboardEvent) {
@@ -1826,6 +1812,7 @@ export function DashboardWorkspace({
     (href: string, nextViewId?: DashboardViewId | null) => {
       setIsTeamMenuOpen(false);
       setIsProfileMenuOpen(false);
+      setIsMobileNavOpen(false);
       const target = warmBrowserRoute(href, {
         router,
         prefetchDocument: true,
@@ -2198,170 +2185,8 @@ export function DashboardWorkspace({
     window.open(OFFICIAL_DISCORD_INVITE_URL, "_blank", "noopener,noreferrer");
   }, []);
 
-  const renderProfileCard = (profileDropdownRef: RefObject<HTMLDivElement | null>) => (
-    <div ref={profileDropdownRef} className="mt-[14px]">
-      <div className="relative">
-        {isProfileMenuOpen ? (
-          <div className="absolute inset-x-0 bottom-[calc(100%+10px)] z-[140] overflow-hidden rounded-[22px] border border-[#151515] bg-[#070707] p-[12px] shadow-[0_26px_80px_rgba(0,0,0,0.54)]">
-            <div className="space-y-[8px]">
-              <button
-                type="button"
-                onClick={handleAddAnotherAccount}
-                className="flex w-full items-center gap-[12px] rounded-[16px] border border-[#171717] bg-[#0D0D0D] px-[12px] py-[12px] text-left text-[#D8D8D8] transition-colors hover:border-[#222222] hover:bg-[#111111]"
-              >
-                <span className="inline-flex h-[32px] w-[32px] items-center justify-center rounded-[11px] border border-[#1A1A1A] bg-[#101010] text-[#CFCFCF]">
-                  <Plus className="h-[18px] w-[18px] shrink-0" strokeWidth={2.2} aria-hidden="true" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[14px] leading-none font-medium tracking-[-0.03em]">
-                    Adicionar outra conta
-                  </span>
-                  <span className="mt-[6px] block truncate text-[11px] leading-none text-[#686868]">
-                    Ate 3 contas salvas neste navegador
-                  </span>
-                </span>
-              </button>
-
-              <div className="border-t border-[#121212] pt-[12px]">
-                <p className="px-[4px] text-[11px] uppercase tracking-[0.16em] text-[#5F5F5F]">
-                  Contas salvas
-                </p>
-                <div className="mt-[10px] space-y-[6px]">
-                  {savedAccounts.map((account) => {
-                    const isCurrent = account.discordUserId === currentAccount.discordUserId;
-                    return (
-                      <button
-                        key={account.discordUserId}
-                        type="button"
-                        onClick={() => handleSwitchSavedAccount(account)}
-                        className={`flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-colors ${
-                          isCurrent
-                            ? "bg-[#141414] text-[#ECECEC]"
-                            : "text-[#A7A7A7] hover:bg-[#111111] hover:text-[#E6E6E6]"
-                        }`}
-                      >
-                        <AccountAvatar
-                          avatarUrl={account.avatarUrl}
-                          displayName={account.displayName}
-                          username={account.username}
-                          className="h-[36px] w-[36px] shrink-0"
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[14px] leading-none font-medium tracking-[-0.03em]">
-                            {account.displayName}
-                          </span>
-                          <span className="mt-[6px] block truncate text-[11px] leading-none text-[#666666]">
-                            @{account.username}
-                          </span>
-                        </span>
-                        {isCurrent ? (
-                          <span className="inline-flex rounded-full border border-[rgba(0,98,255,0.28)] bg-[rgba(0,98,255,0.1)] px-[8px] py-[5px] text-[10px] leading-none font-medium text-[#8AB6FF]">
-                            ativa
-                          </span>
-                        ) : null}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="border-t border-[#121212] pt-[12px]">
-                <div className="space-y-[4px]">
-                  <button
-                    type="button"
-                    onClick={handleOpenMyAccount}
-                    className="flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#B7B7B7] transition-colors hover:bg-[#111111] hover:text-[#ECECEC]"
-                  >
-                    <UserRound className="h-[18px] w-[18px] shrink-0" strokeWidth={1.9} />
-                    <span className="text-[14px] leading-none font-medium">Minha conta</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleOpenAccountSettings}
-                    className="flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#B7B7B7] transition-colors hover:bg-[#111111] hover:text-[#ECECEC]"
-                  >
-                    <Cog className="h-[18px] w-[18px] shrink-0" strokeWidth={1.9} />
-                    <span className="text-[14px] leading-none font-medium">Configuracoes</span>
-                  </button>
-                  <button
-                    type="button"
-                    disabled
-                    className="flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#656565]"
-                  >
-                    <Palette className="h-[18px] w-[18px] shrink-0" strokeWidth={1.9} />
-                    <span className="text-[14px] leading-none font-medium">Personalizacao</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleOpenHelp}
-                    className="flex w-full items-center justify-between gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#B7B7B7] transition-colors hover:bg-[#111111] hover:text-[#ECECEC]"
-                  >
-                    <span className="inline-flex items-center gap-[12px]">
-                      <CircleHelp className="h-[18px] w-[18px] shrink-0" strokeWidth={1.9} />
-                      <span className="text-[14px] leading-none font-medium">Ajuda</span>
-                    </span>
-                    <SidebarChevronRightIcon />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void handleLogout();
-                    }}
-                    disabled={isLoggingOut}
-                    className="flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#DB9E9E] transition-colors hover:bg-[#111111] hover:text-[#F1C0C0] disabled:cursor-not-allowed disabled:opacity-70"
-                  >
-                    {isLoggingOut ? (
-                      <ButtonLoader size={16} colorClassName="text-[#DB8A8A]" />
-                    ) : (
-                      <SidebarLogoutIcon />
-                    )}
-                    <span className="text-[14px] leading-none font-medium">Sair</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : null}
-
-        <button
-          type="button"
-          onClick={() => {
-            setIsTeamMenuOpen(false);
-            setIsProfileMenuOpen((current) => !current);
-          }}
-          className="flex w-full items-center justify-between gap-[12px] rounded-[18px] border border-[#111111] bg-[#080808] px-[10px] py-[10px] text-left transition-colors hover:border-[#1A1A1A] hover:bg-[#0B0B0B]"
-          aria-expanded={isProfileMenuOpen}
-          aria-haspopup="menu"
-        >
-          <div className="flex min-w-0 items-center gap-[10px]">
-            <AccountAvatar
-              avatarUrl={currentAccount.avatarUrl}
-              displayName={currentAccount.displayName}
-              username={currentAccount.username}
-              className="h-[38px] w-[38px] shrink-0"
-            />
-            <div className="min-w-0">
-              <p className="truncate text-[15px] leading-none font-medium tracking-[-0.03em] text-[#E5E5E5]">
-                {currentAccount.displayName}
-              </p>
-              <p className="mt-[5px] truncate text-[12px] leading-none text-[#686868]">
-                @{currentAccount.username}
-              </p>
-            </div>
-          </div>
-          <span className="inline-flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded-[10px] text-[#7E7E7E] transition-colors hover:bg-[#101010] hover:text-[#D8D8D8]">
-            <SidebarDropdownChevronIcon />
-          </span>
-        </button>
-      </div>
-    </div>
-  );
-
-  const renderSidebarContent = (
-    teamRef: RefObject<HTMLDivElement | null>,
-    profileRef: RefObject<HTMLDivElement | null>,
-  ) => (
-    <div className="flex h-full flex-col px-[14px] py-[14px]">
+  const renderSidebarContent = (teamRef: RefObject<HTMLDivElement | null>) => (
+    <div className="fd-sidebar-inner">
       <div ref={teamRef} className="relative">
         <button
           type="button"
@@ -2369,7 +2194,7 @@ export function DashboardWorkspace({
             setIsProfileMenuOpen(false);
             setIsTeamMenuOpen((current) => !current);
           }}
-          className="flex w-full items-center justify-between gap-[12px] rounded-[18px] border border-[#111111] bg-[#080808] px-[10px] py-[10px] text-left transition-colors hover:border-[#1A1A1A] hover:bg-[#0B0B0B]"
+          className="fd-team-trigger"
           aria-expanded={isTeamMenuOpen}
           aria-haspopup="dialog"
         >
@@ -2399,7 +2224,7 @@ export function DashboardWorkspace({
         </button>
         {isTeamMenuOpen ? (
           <div
-            className="absolute left-0 right-0 top-[calc(100%+10px)] z-[120] overflow-hidden rounded-[22px] border border-[#151515] bg-[#070707] p-[12px] shadow-[0_26px_80px_rgba(0,0,0,0.54)]"
+            className="absolute left-0 right-0 top-[calc(100%+8px)] z-[120] overflow-hidden rounded-[12px] border border-[#222226] bg-[#161618] p-[10px]"
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="space-y-[8px]">
@@ -2537,21 +2362,20 @@ export function DashboardWorkspace({
         ) : null}
       </div>
 
-      <div className="mt-[14px] flex items-center gap-[10px] rounded-[16px] border border-[#141414] bg-[#080808] px-[14px] py-[12px]">
+      <div className="fd-sidebar-search">
         <SearchIcon />
         <input
           type="text"
           value={typeof sidebarSearchText === "string" ? sidebarSearchText : ""}
           onChange={(event) => setSidebarSearchText(String(event.currentTarget.value ?? ""))}
-          placeholder="Buscar..."
+          placeholder="Filtrar navegacao..."
           autoComplete="off"
-          className="min-w-0 flex-1 bg-transparent text-[15px] text-[#D5D5D5] outline-none placeholder:text-[#5A5A5A]"
         />
-        <SidebarSearchShortcutIcon />
       </div>
 
-      <div className="mt-[14px] min-h-0 flex-1 overflow-y-auto pr-[2px] thin-scrollbar">
-        <div className="space-y-[4px]">
+      <div className="fd-nav-scroll thin-scrollbar">
+        <p className="fd-nav-label">Workspace</p>
+        <div className="space-y-[2px]">
           {filteredPrimaryItems.map((item) => (
             <DashboardNavButton
               key={item.id}
@@ -2602,7 +2426,7 @@ export function DashboardWorkspace({
             </button>
 
             {isSearchingSidebar || isDomainsOpen ? (
-              <div className="mt-[6px] space-y-[4px] pl-[12px]">
+              <div className="fd-nav-children">
                 {filteredDomainItems.map((item) => (
                   <DashboardNavButton
                     key={item.id}
@@ -2670,7 +2494,7 @@ export function DashboardWorkspace({
             </button>
 
             {isSearchingSidebar || isBillingOpen ? (
-              <div className="mt-[6px] space-y-[4px] pl-[12px]">
+              <div className="fd-nav-children">
                 {filteredBillingItems.map((item) => (
                   <DashboardNavButton
                     key={item.id}
@@ -2693,21 +2517,70 @@ export function DashboardWorkspace({
           </div>
         ) : null}
       </div>
-
-      <div className="mt-auto shrink-0 pt-[14px]">
-        {renderProfileCard(profileRef)}
-      </div>
     </div>
   );
 
-  return (
-    <div className="relative min-h-screen overflow-x-clip bg-[#040404] text-white">
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05)_0%,rgba(255,255,255,0.012)_28%,transparent_68%)]"
-      />
+  const mapDashboardPaletteItem = (group: string, item: (typeof PRIMARY_ITEMS)[number]): PanelQuickLink => ({
+    id: `${group}-${item.id}`,
+    label: item.label,
+    group,
+    icon: item.icon,
+    onSelect: () => {
+      setIsProfileMenuOpen(false);
+      setIsMobileNavOpen(false);
+      handleNavigateItem(item);
+    },
+  });
 
-      {resolvedWorkspaceAlertMessage ? (
+  const paletteLinks: PanelQuickLink[] = [
+    ...PRIMARY_ITEMS.map((item) => mapDashboardPaletteItem("Workspace", item)),
+    ...visibleDomainItems.map((item) => mapDashboardPaletteItem("Dominios", item)),
+    ...visibleSecondaryItems.map((item) => mapDashboardPaletteItem("Ferramentas", item)),
+    ...BILLING_ITEMS.map((item) => mapDashboardPaletteItem("Cobrancas", item)),
+  ];
+
+  return (
+    <PanelShell
+      className="flowdesk-dashboard-ui"
+      hasAlert={hasWorkspaceAlert}
+      crumb="FlowDesk"
+      title={displayView.title || "Dashboard"}
+      account={{
+        displayName: currentAccount.displayName,
+        username: currentAccount.username,
+        avatarUrl: currentAccount.avatarUrl,
+        discordUserId: currentAccount.discordUserId,
+        email: currentAccount.email,
+      }}
+      savedAccounts={savedAccounts}
+      links={paletteLinks}
+      actions={{
+        onAddAccount: handleAddAnotherAccount,
+        onSwitchAccount: (account) =>
+          handleSwitchSavedAccount({
+            authUserId: account.authUserId ?? currentAccount.authUserId,
+            discordUserId: account.discordUserId,
+            displayName: account.displayName,
+            username: account.username,
+            avatarUrl: account.avatarUrl,
+            lastSeenAt: Date.now(),
+          }),
+        onOpenMyAccount: handleOpenMyAccount,
+        onOpenSettings: handleOpenAccountSettings,
+        onOpenApiDocs: () => navigateToHref("/account/api_keys"),
+        onOpenHelp: handleOpenHelp,
+        onLogout: () => {
+          void handleLogout();
+        },
+        isLoggingOut,
+      }}
+      isPaletteOpen={isProfileMenuOpen}
+      onPaletteOpenChange={setIsProfileMenuOpen}
+      isMobileNavOpen={isMobileNavOpen}
+      onMobileNavOpenChange={setIsMobileNavOpen}
+      sidebar={renderSidebarContent(desktopTeamMenuRef)}
+      alert={
+        resolvedWorkspaceAlertMessage ? (
           <button
             type="button"
             onMouseEnter={() => prefetchRoute("/servers/plans")}
@@ -2716,58 +2589,25 @@ export function DashboardWorkspace({
             onClick={() => {
               navigateToHref("/servers/plans");
             }}
-          className="fixed inset-x-0 top-0 z-[1400] h-[42px] overflow-hidden bg-[linear-gradient(90deg,#731015_0%,#971D22_10%,#BC2D32_24%,#D94141_40%,#E45555_50%,#D94141_60%,#BC2D32_76%,#971D22_90%,#731015_100%)] text-white transition-opacity hover:opacity-95 md:h-[46px]"
-          aria-label={`${resolvedWorkspaceAlertMessage} Abrir pagina de planos.`}
-        >
-          <span className="pointer-events-none absolute inset-x-0 top-0 h-[1px] bg-[linear-gradient(90deg,transparent_0%,rgba(255,214,214,0.24)_14%,rgba(255,214,214,0.12)_50%,rgba(255,214,214,0.24)_86%,transparent_100%)]" />
-          <span className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,rgba(255,240,240,0.18)_0%,rgba(255,240,240,0.06)_34%,transparent_62%)] opacity-[0.14]" />
-          <span className="pointer-events-none absolute inset-y-0 left-0 w-[220px] bg-[linear-gradient(90deg,rgba(44,0,0,0.28)_0%,rgba(44,0,0,0.16)_32%,rgba(44,0,0,0.05)_64%,transparent_100%)]" />
-          <span className="pointer-events-none absolute inset-y-0 right-0 w-[220px] bg-[linear-gradient(270deg,rgba(44,0,0,0.28)_0%,rgba(44,0,0,0.16)_32%,rgba(44,0,0,0.05)_64%,transparent_100%)]" />
-          <WorkspaceAlertPixelAccent side="left" />
-          <WorkspaceAlertPixelAccent side="right" />
-          <div className="relative mx-auto flex h-full w-full max-w-[1280px] items-center justify-center px-[16px] md:px-[22px]">
-            <span className="inline-flex min-w-0 max-w-full items-center justify-center gap-[8px] text-center md:gap-[12px]">
-              <span className="text-[12px] font-medium tracking-[-0.02em] text-white md:text-[13px]">
-                {resolvedWorkspaceAlertMessage}
+            className="fixed inset-x-0 top-0 z-[1400] h-[42px] overflow-hidden bg-[#971D22] text-white transition-opacity hover:opacity-95 md:h-[46px]"
+            aria-label={`${resolvedWorkspaceAlertMessage} Abrir pagina de planos.`}
+          >
+            <div className="relative mx-auto flex h-full w-full max-w-[1280px] items-center justify-center px-[16px] md:px-[22px]">
+              <span className="inline-flex min-w-0 max-w-full items-center justify-center gap-[8px] text-center md:gap-[12px]">
+                <span className="text-[12px] font-medium tracking-[-0.02em] text-white md:text-[13px]">
+                  {resolvedWorkspaceAlertMessage}
+                </span>
+                <span className="hidden items-center gap-[6px] rounded-full border border-[rgba(255,255,255,0.18)] bg-[rgba(22,0,0,0.16)] px-[11px] py-[5px] text-[11px] leading-none font-semibold text-[rgba(255,255,255,0.94)] md:inline-flex">
+                  Ver planos
+                  <ArrowUpRight className="h-[14px] w-[14px] shrink-0" strokeWidth={2.4} aria-hidden="true" />
+                </span>
+                <ArrowUpRight className="h-[15px] w-[15px] shrink-0 md:hidden" strokeWidth={2.5} aria-hidden="true" />
               </span>
-              <span className="hidden items-center gap-[6px] rounded-full border border-[rgba(255,255,255,0.18)] bg-[rgba(22,0,0,0.16)] px-[11px] py-[5px] text-[11px] leading-none font-semibold text-[rgba(255,255,255,0.94)] md:inline-flex">
-                Ver planos
-                <ArrowUpRight className="h-[14px] w-[14px] shrink-0" strokeWidth={2.4} aria-hidden="true" />
-              </span>
-              <ArrowUpRight className="h-[15px] w-[15px] shrink-0 md:hidden" strokeWidth={2.5} aria-hidden="true" />
-            </span>
-          </div>
-        </button>
-      ) : null}
-
-      <div className="hidden lg:block">
-        <aside
-          className={`fixed left-0 z-20 w-[318px] ${
-            hasWorkspaceAlert ? "top-[42px] bottom-0 md:top-[46px]" : "inset-y-0"
-          }`}
-        >
-          <div className={`${sidebarShellClass} h-full rounded-none border-y-0 border-l-0 border-r-[#151515]`}>
-            <LandingReveal delay={24} duration={240} className="h-full">
-              {renderSidebarContent(desktopTeamMenuRef, desktopProfileMenuRef)}
-            </LandingReveal>
-          </div>
-        </aside>
-      </div>
-
-      <main
-        className={`relative px-[20px] pb-[56px] md:px-6 lg:min-h-screen lg:pl-[358px] lg:pr-[42px] ${
-          hasWorkspaceAlert ? "pt-[56px] md:pt-[60px]" : "pt-[32px]"
-        }`}
-      >
-        <div className="mx-auto w-full max-w-[1220px]">
-          <aside className="mb-[20px] min-w-0 lg:hidden">
-            <LandingReveal delay={24} duration={240}>
-              <div className={`${sidebarShellClass} rounded-[28px]`}>
-                {renderSidebarContent(mobileTeamMenuRef, mobileProfileMenuRef)}
-              </div>
-            </LandingReveal>
-          </aside>
-
+            </div>
+          </button>
+        ) : null
+      }
+    >
           <section className="min-w-0">
             {!isHostingOnboardingRoute ? (
               isHomeView ? (
@@ -2838,10 +2678,8 @@ export function DashboardWorkspace({
                   <div className="relative z-[700] flex flex-col gap-[18px]">
                     <div className="flex flex-col gap-[14px] md:flex-row md:items-end md:justify-between">
                       <div>
-                        <LandingGlowTag className="px-[24px]">
-                          Dashboard
-                        </LandingGlowTag>
-                        <h1 className="mt-[18px] bg-[linear-gradient(90deg,#DADADA_0%,#C1C1C1_100%)] bg-clip-text text-[34px] leading-[1.02] font-normal tracking-[-0.05em] text-transparent md:text-[42px]">
+                        <p className="fd-kicker">Dashboard</p>
+                        <h1 className="mt-[10px] text-[28px] leading-[1.15] font-semibold tracking-[-0.04em] text-[#F0F0F2] md:text-[34px]">
                           {displayView.title}
                         </h1>
                         <p className="mt-[14px] max-w-[760px] text-[14px] leading-[1.55] text-[#7D7D7D] md:text-[15px]">
@@ -2880,7 +2718,7 @@ export function DashboardWorkspace({
                         </button>
                       </div>
 
-                      <div className="overflow-hidden rounded-[24px] border border-[#161616] bg-[#050505] shadow-[0_24px_80px_rgba(0,0,0,0.22)]">
+                      <div className="overflow-hidden rounded-[16px] border border-[#222226] bg-[#111113]">
                         {dashboardTasks.map((task, index) => (
                           <DashboardTaskCard
                             key={task.key}
@@ -2912,15 +2750,13 @@ export function DashboardWorkspace({
 
             {children}
           </section>
-        </div>
-      </main>
 
       {isCreateTeamModalOpen ? (
-        <div className="fixed inset-y-0 left-0 right-0 z-[5000] isolate overflow-y-auto overscroll-contain lg:left-[318px]">
+        <div className="fixed inset-y-0 left-0 right-0 z-[5000] isolate overflow-y-auto overscroll-contain lg:left-[278px]">
           <button
             type="button"
             aria-label="Fechar modal de equipe"
-            className="absolute inset-0 bg-[rgba(0,0,0,0.84)] backdrop-blur-[7px]"
+            className="absolute inset-0 bg-[rgba(0,0,0,0.62)]"
             onClick={() => {
               setIsCreateTeamModalOpen(false);
               setIsMemberSubmodalOpen(false);
@@ -2933,7 +2769,7 @@ export function DashboardWorkspace({
                 role="dialog"
                 aria-modal="true"
                 aria-label="Criar equipe"
-                className="relative w-full max-w-[760px] overflow-hidden rounded-[32px] bg-transparent px-[22px] py-[22px] shadow-[0_34px_110px_rgba(0,0,0,0.52)] sm:px-[28px] sm:py-[28px]"
+                className="relative w-full max-w-[760px] overflow-hidden rounded-[20px] border border-[#222226] bg-[#141416] px-[22px] py-[22px] sm:px-[28px] sm:py-[28px]"
               >
                 <span
                   aria-hidden="true"
@@ -2954,8 +2790,8 @@ export function DashboardWorkspace({
                 <div className="relative z-10">
                   <div className="flex flex-col gap-[14px] sm:flex-row sm:items-start sm:justify-between">
                     <div>
-                      <LandingGlowTag className="px-[18px]">Criar equipe</LandingGlowTag>
-                      <h2 className="mt-[18px] bg-[linear-gradient(90deg,#DADADA_0%,#C1C1C1_100%)] bg-clip-text text-[30px] leading-[0.98] font-normal tracking-[-0.05em] text-transparent sm:text-[36px]">
+                    <p className="fd-kicker">Criar equipe</p>
+                    <h2 className="mt-[10px] text-[28px] leading-[1.15] font-semibold tracking-[-0.04em] text-[#F0F0F2] sm:text-[34px]">
                         Monte uma equipe
                         <br />
                         para seus servidores
@@ -3257,14 +3093,14 @@ export function DashboardWorkspace({
               <button
                 type="button"
                 aria-label="Fechar submodal de membros"
-                className="absolute inset-0 bg-[rgba(0,0,0,0.72)] backdrop-blur-[4px]"
+                className="absolute inset-0 bg-[rgba(0,0,0,0.62)]"
                 onClick={() => {
                   setIsMemberSubmodalOpen(false);
                   setTeamActionError(null);
                 }}
               />
               <div className="relative z-[40] mx-auto flex min-h-full items-center justify-center">
-                <div className="w-full max-w-[520px] overflow-hidden rounded-[26px] border border-[#151515] bg-[#070707] p-[18px] shadow-[0_24px_70px_rgba(0,0,0,0.5)]">
+                <div className="w-full max-w-[520px] overflow-hidden rounded-[16px] border border-[#222226] bg-[#161618] p-[18px]">
                   <div className="flex items-start justify-between gap-[14px]">
                     <div>
                       <p className="text-[12px] uppercase tracking-[0.16em] text-[#666666]">
@@ -3356,6 +3192,6 @@ export function DashboardWorkspace({
         onClose={() => setIsDiscordRequiredModalOpen(false)}
         onConnect={handleConnectRequiredDiscord}
       />
-    </div>
+    </PanelShell>
   );
 }

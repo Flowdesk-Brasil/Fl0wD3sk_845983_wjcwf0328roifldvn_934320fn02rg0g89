@@ -1436,7 +1436,7 @@ export async function GET(request: Request) {
     );
     const textSet = new Set(textChannels.map((channel) => channel.id));
     const voiceChannels = sortChannels(
-      rawChannels
+      (rawChannels || [])
         .filter(
           (channel) =>
             channel.type === GUILD_VOICE || channel.type === GUILD_STAGE,

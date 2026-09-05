@@ -37,14 +37,14 @@ type ResourceSnapshot = {
 };
 
 type PreserveResourceIds = {
-  channelIds?: string[];
-  categoryIds?: string[];
-  roleIds?: string[];
+  channelIds?: Array<string | null | undefined>;
+  categoryIds?: Array<string | null | undefined>;
+  roleIds?: Array<string | null | undefined>;
 };
 
-function uniqueIds(values: Array<string | null | undefined>) {
+function uniqueIds(values?: Array<string | null | undefined>) {
   return Array.from(
-    new Set(values.filter((value): value is string => Boolean(value))),
+    new Set((values || []).filter((value): value is string => Boolean(value))),
   );
 }
 
