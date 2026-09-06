@@ -407,7 +407,7 @@ export function ConfigStepThree({
             onChange={setAdminRoleId}
             loading={isLoadingRoles}
             disabled={isSaving || isPlanLocked}
-            variant="immersive"
+            variant="config"
           />
         </ConfigFieldCard>
 
@@ -425,7 +425,7 @@ export function ConfigStepThree({
             onChange={setClaimRoleIds}
             loading={isLoadingRoles}
             disabled={isSaving || isPlanLocked}
-            variant="immersive"
+            variant="config"
           />
         </ConfigFieldCard>
 
@@ -443,7 +443,7 @@ export function ConfigStepThree({
             onChange={setCloseRoleIds}
             loading={isLoadingRoles}
             disabled={isSaving || isPlanLocked}
-            variant="immersive"
+            variant="config"
           />
         </ConfigFieldCard>
 
@@ -461,7 +461,7 @@ export function ConfigStepThree({
             onChange={setNotifyRoleIds}
             loading={isLoadingRoles}
             disabled={isSaving || isPlanLocked}
-            variant="immersive"
+            variant="config"
           />
         </ConfigFieldCard>
       </div>

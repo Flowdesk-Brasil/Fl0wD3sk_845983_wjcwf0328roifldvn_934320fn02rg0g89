@@ -393,7 +393,7 @@ export async function getServerDashboardSettings(
 ) {
   const preferCache = options?.preferCache ?? true;
   if (preferCache) {
-    const cached = readFreshCachedPayload(guildId);
+    const cached = readCachedServerDashboardSettings(guildId);
     if (cached) {
       return cached;
     }

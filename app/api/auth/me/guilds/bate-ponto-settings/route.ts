@@ -12,6 +12,10 @@ import {
 } from "@/lib/teams/userTeams";
 import { getGuildLicenseStatusForUser } from "@/lib/payments/licenseStatus";
 import {
+  arePersistSnapshotsEqual,
+  buildUnchangedPersistResponse,
+} from "@/lib/servers/serverSettingsPersistGuard";
+import {
   createServerSaveDiagnosticContext,
   recordServerSaveDiagnostic,
   resolveServerSaveAccessMode,
@@ -595,6 +599,85 @@ export async function POST(request: Request) {
     }
 
     const supabase = getSupabaseAdminClientOrThrow();
+    const [existingRowResult, secureSnapshotResult] = await Promise.all([
+      supabase
+        .from("guild_bate_ponto_settings")
+        .select(BATE_PONTO_SETTINGS_SELECT.replace("guild_id, ", ""))
+        .eq("guild_id", guildId)
+        .maybeSingle(),
+      readServerSettingsVaultSnapshot<BatePontoSecureSnapshot>({
+        guildId,
+        moduleKey: "bate_ponto_settings",
+      }),
+    ]);
+
+    if (existingRowResult.error) {
+      const code =
+        typeof existingRowResult.error.code === "string"
+          ? existingRowResult.error.code
+          : "";
+      const message = String(existingRowResult.error.message || "").toLowerCase();
+      if (code !== "42P01" && !message.includes("guild_bate_ponto_settings")) {
+        throw new Error(existingRowResult.error.message);
+      }
+    }
+
+    const existingSnapshotFromVault = normalizeBatePontoSecureSnapshot(
+      secureSnapshotResult?.payload,
+    );
+    const existingRow = existingRowResult.data as Record<string, unknown> | null;
+    const existingSnapshotFromRow = existingRow
+      ? normalizeBatePontoSecureSnapshot({
+          enabled: existingRow.enabled,
+          panelChannelId: existingRow.panel_channel_id,
+          logsChannelId: existingRow.logs_channel_id,
+          panelLayout: existingRow.panel_layout,
+          panelTitle: existingRow.panel_title,
+          panelDescription: existingRow.panel_description,
+          panelButtonLabel: existingRow.panel_button_label,
+          logLayout: existingRow.log_layout,
+          allowedRoleIds: existingRow.allowed_role_ids,
+          hourBankEnabled: existingRow.hour_bank_enabled,
+          dailyTargetMinutes: existingRow.daily_target_minutes,
+          timezone: existingRow.timezone,
+          autoFinishOpenSessions: existingRow.auto_finish_open_sessions,
+          maxOpenHours: existingRow.max_open_hours,
+          requireVoiceChannel: existingRow.require_voice_channel,
+          requiredVoiceChannelIds: existingRow.required_voice_channel_ids,
+        })
+      : null;
+    const existingSnapshot = existingSnapshotFromVault || existingSnapshotFromRow;
+
+    if (
+      existingSnapshot &&
+      arePersistSnapshotsEqual(existingSnapshot, snapshot)
+    ) {
+      recordServerSaveDiagnostic({
+        context: diagnostic,
+        authUserId,
+        accessMode,
+        licenseStatus,
+        outcome: "normalized",
+        httpStatus: 200,
+        detail: "settings_unchanged",
+        meta: { skippedDbWrite: true },
+      });
+
+      return applyNoStoreHeaders(
+        NextResponse.json(
+          buildUnchangedPersistResponse(
+            buildBatePontoResponse(
+              existingSnapshot,
+              secureSnapshotResult?.updatedAt ||
+                (typeof existingRow?.updated_at === "string"
+                  ? existingRow.updated_at
+                  : null),
+            ),
+          ),
+        ),
+      );
+    }
+
     const upsertResult = await supabase
       .from("guild_bate_ponto_settings")
       .upsert(

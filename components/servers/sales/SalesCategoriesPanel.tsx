@@ -21,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
+import { PanelSelectMenu } from "@/components/servers/PanelSelectMenu";
 import {
   ServerButton,
   ServerDeleteConfirmModal,
@@ -324,7 +325,7 @@ export function SalesCategoriesListPanel({
             {Array.from({ length: 4 }).map((_, index) => (
               <div
                 key={index}
-                className="flex items-center gap-[14px] bg-[#0B0B0B] px-[18px] py-[16px] sm:px-[22px]"
+                className="flex items-center gap-[14px] bg-[#141414] px-[18px] py-[16px] sm:px-[22px]"
               >
                 <div className="h-[46px] w-[46px] animate-pulse rounded-[14px] bg-[#171717]" />
                 <div className="min-w-0 flex-1 space-y-[8px]">
@@ -460,117 +461,6 @@ function areCategoryEditorSnapshotsEqual(
   right: CategoryEditorSnapshot,
 ) {
   return Boolean(left) && JSON.stringify(left) === JSON.stringify(right);
-}
-
-function SelectMenu<T extends string>({
-  value,
-  options,
-  onChange,
-  disabled,
-  maxVisibleItems,
-}: {
-  value: T;
-  options: Array<[T, string]>;
-  onChange: (value: T) => void;
-  disabled?: boolean;
-  maxVisibleItems?: number;
-}) {
-  const [open, setOpen] = useState(false);
-  const [openDirection, setOpenDirection] = useState<"down" | "up">("down");
-  const menuRef = useRef<HTMLDivElement | null>(null);
-
-  const resolveOpenDirection = useCallback(() => {
-    const bounds = menuRef.current?.getBoundingClientRect();
-    if (!bounds) return "down";
-    const availableBelow = window.innerHeight - bounds.bottom;
-    const availableAbove = bounds.top;
-    const estimatedHeight =
-      Math.min(options.length, maxVisibleItems || options.length) * 42 + 16;
-    return availableBelow < estimatedHeight && availableAbove > availableBelow
-      ? "up"
-      : "down";
-  }, [maxVisibleItems, options.length]);
-
-  useEffect(() => {
-    if (!open) return;
-
-    function handlePointer(event: MouseEvent) {
-      if (
-        menuRef.current &&
-        event.target instanceof Node &&
-        !menuRef.current.contains(event.target)
-      ) {
-        setOpen(false);
-      }
-    }
-
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
-    }
-
-    document.addEventListener("mousedown", handlePointer);
-    document.addEventListener("keydown", handleEscape);
-    return () => {
-      document.removeEventListener("mousedown", handlePointer);
-      document.removeEventListener("keydown", handleEscape);
-    };
-  }, [open]);
-
-  return (
-    <div ref={menuRef} className={open ? "relative z-[520]" : "relative z-[1]"}>
-      <button
-        type="button"
-        onClick={() => {
-          if (!open) setOpenDirection(resolveOpenDirection());
-          setOpen((current) => !current);
-        }}
-        disabled={disabled}
-        className="flowdesk-server-button flex h-[42px] w-full items-center justify-between rounded-[14px] border border-[#292929] bg-[#0D0D0D] px-[14px] text-left text-[13px] text-[#EDEDED] transition hover:border-[#444] disabled:cursor-not-allowed disabled:opacity-55"
-        aria-expanded={open}
-      >
-        {options.find(([option]) => option === value)?.[1] || "Selecionar"}
-        <ChevronDown
-          strokeWidth={1.9}
-          className={`h-[16px] w-[16px] shrink-0 bg-transparent text-[#9A9A9A] transition ${open ? "rotate-180 text-[#DADADA]" : ""}`}
-        />
-      </button>
-      {open ? (
-        <div
-          className={`flowdesk-scale-in-soft absolute left-0 right-0 z-[520] rounded-[18px] border border-[#1E1E1E] bg-[#080808] p-[8px] shadow-[0_24px_70px_rgba(0,0,0,0.48)] ${
-            openDirection === "up" ? "bottom-[50px]" : "top-[50px]"
-          }`}
-        >
-          <div
-            className="thin-scrollbar overflow-y-auto pr-[2px]"
-            style={
-              maxVisibleItems
-                ? { maxHeight: `${maxVisibleItems * 42 + 10}px` }
-                : undefined
-            }
-          >
-            {options.map(([option, label]) => (
-              <button
-                key={option}
-                type="button"
-                onClick={() => {
-                  onChange(option);
-                  setOpen(false);
-                }}
-                className={`flex w-full items-center justify-between rounded-[13px] px-[12px] py-[10px] text-left text-[13px] transition ${
-                  option === value
-                    ? "bg-[#151515] text-[#F1F1F1]"
-                    : "text-[#AFAFAF] hover:bg-[#111] hover:text-white"
-                }`}
-              >
-                {label}
-                {option === value ? <Check className="h-[15px] w-[15px]" /> : null}
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 function CategoryEditorSkeleton() {
@@ -1277,7 +1167,7 @@ export function SalesCategoryCreatePanel({
                   Procurar
                 </ServerButton>
                 <div className="min-w-[210px]">
-                  <SelectMenu
+                  <PanelSelectMenu
                     value={productSort}
                     options={productSortMenuOptions}
                     onChange={setProductSort}
@@ -1291,7 +1181,7 @@ export function SalesCategoryCreatePanel({
                 {Array.from({ length: 3 }).map((_, index) => (
                   <div
                     key={index}
-                    className="flex items-center gap-[12px] bg-[#0B0B0B] px-[18px] py-[14px] sm:px-[22px]"
+                    className="flex items-center gap-[12px] bg-[#141414] px-[18px] py-[14px] sm:px-[22px]"
                   >
                     <div className="h-[42px] w-[42px] animate-pulse rounded-[14px] bg-[#171717]" />
                     <div className="min-w-0 flex-1 space-y-[8px]">
@@ -1522,7 +1412,7 @@ export function SalesCategoryCreatePanel({
             {discordPublicationMode === "channel" ? (
               <div className="mt-[10px]">
                 <div className="relative">
-                  <SelectMenu
+                  <PanelSelectMenu
                     value={discordChannelId}
                     options={discordChannelOptions}
                     onChange={(nextChannelId) => {

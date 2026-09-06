@@ -1047,7 +1047,7 @@ function Menu<T extends string>({ items, onSelect, align = "left", anchor }: { i
       ref={menuRef}
       data-ticket-menu="true"
       className={cn(
-        "flowdesk-scale-in-soft fixed z-[420] w-[300px] rounded-[20px] border border-[#171717] bg-[#090909] p-[10px] shadow-[0_28px_70px_rgba(0,0,0,0.52)]",
+        "flowdesk-scale-in-soft fixed z-[420] w-[300px] rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] p-[10px] shadow-[0_28px_70px_rgba(0,0,0,0.52)]",
         (position?.placement ?? "bottom") === "top" ? "origin-bottom" : "origin-top",
       )}
       style={position ? { top: position.top, left: position.left } : { top: anchor.bottom + 8, left: anchor.left }}
@@ -1056,7 +1056,7 @@ function Menu<T extends string>({ items, onSelect, align = "left", anchor }: { i
         {items.map((item) => {
           const Icon = item.icon;
           return (
-            <button key={item.value} type="button" onClick={() => onSelect(item.value)} className="group flex w-full items-start gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-colors duration-200 hover:bg-[#101010] active:bg-[#141414]">
+            <button key={item.value} type="button" onClick={() => onSelect(item.value)} className="group flex w-full items-start gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-colors duration-200 hover:bg-[#171717] active:bg-[#1A1A1A]">
               <span className="mt-[2px] inline-flex shrink-0 items-center justify-center text-[#8B8B8B] transition-all duration-300 group-hover:text-[#E8E8E8]"><Icon className="h-[18px] w-[18px]" strokeWidth={2.2} /></span>
               <span className="min-w-0">
                 <span className="block text-[14px] font-medium text-[#E8E8E8]">{item.label}</span>
@@ -1154,7 +1154,7 @@ function EmojiAutocompleteMenu({
       ref={menuRef}
       data-ticket-emoji="true"
       className={cn(
-        "flowdesk-scale-in-soft fixed z-[425] overflow-hidden rounded-[22px] border border-[#171717] bg-[#090909] shadow-[0_28px_70px_rgba(0,0,0,0.52)]",
+        "flowdesk-scale-in-soft fixed z-[425] overflow-hidden rounded-[22px] border border-[#1C1C1C] bg-[#0D0D0D] shadow-[0_28px_70px_rgba(0,0,0,0.52)]",
         (position?.placement ?? "bottom") === "top" ? "origin-bottom" : "origin-top",
       )}
       style={
@@ -1183,7 +1183,7 @@ function EmojiAutocompleteMenu({
               onClick={() => onSelect(emoji)}
               className={cn(
                 "flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[10px] text-left transition-colors duration-200",
-                index === activeIndex ? "bg-[#111111]" : "hover:bg-[#101010] active:bg-[#141414]",
+                index === activeIndex ? "bg-[#111111]" : "hover:bg-[#171717] active:bg-[#141414]",
               )}
             >
               <img
@@ -1476,7 +1476,7 @@ function ButtonEmojiPickerMenu({
       ref={menuRef}
       data-ticket-button-emoji="true"
       className={cn(
-        "flowdesk-scale-in-soft fixed z-[426] overflow-hidden rounded-[22px] border border-[#171717] bg-[#090909] shadow-[0_28px_70px_rgba(0,0,0,0.52)]",
+        "flowdesk-scale-in-soft fixed z-[426] overflow-hidden rounded-[22px] border border-[#1C1C1C] bg-[#0D0D0D] shadow-[0_28px_70px_rgba(0,0,0,0.52)]",
         (position?.placement ?? "bottom") === "top" ? "origin-bottom" : "origin-top",
       )}
       style={
@@ -1494,10 +1494,10 @@ function ButtonEmojiPickerMenu({
               value={searchQuery}
               onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
               placeholder="Buscar emoji do servidor"
-              className="h-[40px] w-full rounded-[14px] border border-[#171717] bg-[#080808] pl-[36px] pr-[12px] text-[13px] text-[#E6E6E6] outline-none transition-colors placeholder:text-[#555555] focus:border-[#262626]"
+              className="fd-field h-[40px] w-full rounded-[14px] pl-[36px] pr-[12px] text-[13px] outline-none transition-colors"
             />
           </div>
-          <div className="inline-flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-[14px] border border-[#171717] bg-[#0A0A0A]">
+          <div className="inline-flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-[14px] border border-[#1C1C1C] bg-[#141414]">
             {previewEmoji ? (
               <img
                 src={previewEmoji.url}
@@ -1523,7 +1523,7 @@ function ButtonEmojiPickerMenu({
               "inline-flex h-[40px] shrink-0 items-center justify-center rounded-[14px] border px-[12px] text-[12px] font-medium transition-colors duration-200",
               hasCurrentEmoji
                 ? "border-[#262626] bg-[#111111] text-[#EDEDED] hover:bg-[#151515]"
-                : "cursor-not-allowed border-[#171717] bg-[#0A0A0A] text-[#555555]",
+                : "cursor-not-allowed border-[#1C1C1C] bg-[#141414] text-[#555555]",
             )}
           >
             {hasCurrentEmoji ? "Remover emoji" : "Adicionar emoji"}
@@ -1563,7 +1563,7 @@ function ButtonEmojiPickerMenu({
 }
 
 function Field({ value, onChange, placeholder, textarea = false, disabled, rows = 4 }: { value: string; onChange: (value: string) => void; placeholder: string; textarea?: boolean; disabled?: boolean; rows?: number }) {
-  const className = "w-full rounded-[16px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#E2E2E2] outline-none transition-colors duration-200 placeholder:text-[#4F4F4F] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-55";
+  const className = "fd-field w-full rounded-[16px] px-[14px] text-[14px] outline-none transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-55";
   if (textarea) {
     return <textarea value={value} onChange={(event) => onChange(event.currentTarget.value)} placeholder={placeholder} rows={rows} disabled={disabled} className={cn(className, "min-h-[118px] resize-y py-[12px] leading-[1.55]")} />;
   }
@@ -1585,7 +1585,7 @@ function ActionButton({ children, onClick, disabled, className }: { children: Re
       <span
         aria-hidden="true"
         className={cn(
-          "absolute inset-0 rounded-[14px] border border-[#171717] bg-[#0C0C0C] transition-transform duration-150 ease-out",
+          "absolute inset-0 rounded-[14px] border border-[#1C1C1C] bg-[#141414] transition-transform duration-150 ease-out",
           !disabled ? "group-hover:scale-[1.02] group-active:scale-[0.985]" : "",
         )}
       />
@@ -1597,7 +1597,7 @@ function ActionButton({ children, onClick, disabled, className }: { children: Re
 }
 
 function IconButton({ label, onClick, disabled, children, draggable, onDragStart, onDragEnd, dataTicketButtonEmojiTrigger = false }: { label: string; onClick?: React.MouseEventHandler<HTMLButtonElement>; disabled?: boolean; children: React.ReactNode; draggable?: boolean; onDragStart?: React.DragEventHandler<HTMLButtonElement>; onDragEnd?: React.DragEventHandler<HTMLButtonElement>; dataTicketButtonEmojiTrigger?: boolean }) {
-  return <button type="button" aria-label={label} title={label} onClick={onClick} disabled={disabled} draggable={draggable} onDragStart={onDragStart} onDragEnd={onDragEnd} data-ticket-button-emoji-trigger={dataTicketButtonEmojiTrigger ? "true" : undefined} className="inline-flex h-[34px] w-[34px] items-center justify-center rounded-[12px] border border-[#171717] bg-[#0C0C0C] text-[#AFAFAF] transition-colors duration-200 hover:bg-[#111111] hover:text-[#F1F1F1] disabled:cursor-not-allowed disabled:opacity-45">{children}</button>;
+  return <button type="button" aria-label={label} title={label} onClick={onClick} disabled={disabled} draggable={draggable} onDragStart={onDragStart} onDragEnd={onDragEnd} data-ticket-button-emoji-trigger={dataTicketButtonEmojiTrigger ? "true" : undefined} className="inline-flex h-[34px] w-[34px] items-center justify-center rounded-[12px] border border-[#1C1C1C] bg-[#141414] text-[#AFAFAF] transition-colors duration-200 hover:bg-[#111111] hover:text-[#F1F1F1] disabled:cursor-not-allowed disabled:opacity-45">{children}</button>;
 }
 
 function renderButtonLabelContent(
@@ -2512,7 +2512,7 @@ function TicketMessageBuilder({
                 "inline-flex h-[42px] w-[42px] items-center justify-center rounded-[14px] border transition-colors duration-200",
                 content.accessory
                   ? "border-[#F2F2F2] bg-[#111111] text-[#F2F2F2]"
-                  : "border-[#171717] bg-[#0C0C0C] text-[#B7B7B7] hover:bg-[#111111] hover:text-[#EDEDED]",
+                  : "border-[#1C1C1C] bg-[#141414] text-[#B7B7B7] hover:bg-[#111111] hover:text-[#EDEDED]",
                 disabled && "cursor-not-allowed opacity-50",
               )}
               aria-label={content.accessory ? "Trocar acessorio" : "Adicionar acessorio"}
@@ -2573,12 +2573,12 @@ function TicketMessageBuilder({
           }}
           className={cn(
             "space-y-[12px] rounded-[16px] border p-[12px] xl:col-span-2",
-            content.accessory ? "bg-[#080808]" : "bg-[#070707]",
+            content.accessory ? "bg-[#141414]" : "bg-[#0D0D0D]",
             isAccessoryDropActive
               ? "border-[rgba(255,255,255,0.4)] shadow-[0_0_0_1px_rgba(255,255,255,0.08)]"
               : content.accessory
-                ? "border-[#171717]"
-                : "border-dashed border-[#1D1D1D]",
+                ? "border-[#1C1C1C]"
+                : "border-dashed border-[#1C1C1C]",
           )}
         >
           <div className="flex items-center justify-between gap-[12px]">
@@ -2694,7 +2694,7 @@ function TicketMessageBuilder({
                 </div>
               ) : null}
               {content.accessory.type === "user_thumbnail" ? (
-                <div className="rounded-[14px] border border-[#141414] bg-[#0A0A0A] px-[12px] py-[12px]">
+                <div className="rounded-[14px] border border-[#1C1C1C] bg-[#141414] px-[12px] py-[12px]">
                   <p className="text-[12px] leading-[1.6] text-[#7A7A7A]">
                     A miniatura sera puxada automaticamente da foto do usuario que disparar o evento, sem precisar de link manual.
                   </p>
@@ -2775,7 +2775,7 @@ function TicketMessageBuilder({
                           content.accessory?.type === "button" &&
                             content.accessory.style === style.value
                             ? "border-[#F2F2F2] bg-[#111111] text-[#F2F2F2]"
-                            : "border-[#171717] bg-[#0A0A0A] text-[#818181] hover:bg-[#101010]",
+                            : "border-[#1C1C1C] bg-[#141414] text-[#818181] hover:bg-[#171717]",
                         )}
                       >
                         {style.label}
@@ -2858,8 +2858,8 @@ function TicketMessageBuilder({
               className={cn(
                 "rounded-[14px] border border-dashed px-[12px] py-[14px] text-[12px] leading-[1.6] text-[#7B7B7B]",
                 isAccessoryDropActive
-                  ? "border-[rgba(255,255,255,0.35)] bg-[#0A0A0A] text-[#D8D8D8]"
-                  : "border-[#1B1B1B] bg-[#090909]",
+                  ? "border-[rgba(255,255,255,0.35)] bg-[#141414] text-[#D8D8D8]"
+                  : "border-[#1C1C1C] bg-[#141414]",
               )}
             >
               Solte aqui para transformar o item em acessorio lateral do texto. Se preferir, use o botao acima para escolher miniatura, foto do usuario, botao ou link.
@@ -2871,9 +2871,9 @@ function TicketMessageBuilder({
   };
 
   const renderSelectOptions = (component: TicketPanelSelectComponent, scope: Scope) => (
-    <div className="space-y-[10px] rounded-[18px] border border-[#171717] bg-[#0B0B0B] p-[14px]">
+    <div className="space-y-[10px] rounded-[18px] border border-[#1C1C1C] bg-[#141414] p-[14px]">
       <div className="flex items-center justify-between gap-[12px]"><div><p className="text-[12px] font-medium uppercase tracking-[0.18em] text-[#646464]">Opcoes</p><p className="mt-[5px] text-[13px] leading-[1.55] text-[#7F7F7F]">Configure as escolhas que vao aparecer no menu.</p></div><ActionButton disabled={disabled} onClick={() => { const nextOption = { id: createTicketPanelComponentId("opt"), label: `Opcao ${component.options.length + 1}`, description: "Explique rapidamente o que acontece ao selecionar esta opcao." }; if (scope.parentId) updateChild(scope.parentId, scope.componentId, (current) => current.type === "select" ? { ...current, options: [...current.options, nextOption] } : current); else updateRoot(scope.componentId, (current) => current.type === "select" ? { ...current, options: [...current.options, nextOption] } : current); }} className="h-[38px] rounded-[12px] px-[12px] text-[12px]"><Plus className="h-[14px] w-[14px]" />Adicionar opcao</ActionButton></div>
-      <div className="space-y-[10px]">{component.options.map((option, index) => <div key={option.id} className="rounded-[16px] border border-[#171717] bg-[#080808] p-[12px]"><div className="flex items-center justify-between gap-[12px]"><p className="text-[12px] font-medium uppercase tracking-[0.14em] text-[#6A6A6A]">Opcao {index + 1}</p><IconButton label="Remover opcao" disabled={disabled} onClick={() => { if (scope.parentId) updateChild(scope.parentId, scope.componentId, (current) => current.type === "select" ? { ...current, options: current.options.filter((item) => item.id !== option.id) } : current); else updateRoot(scope.componentId, (current) => current.type === "select" ? { ...current, options: current.options.filter((item) => item.id !== option.id) } : current); }}><Trash2 className="h-[15px] w-[15px]" strokeWidth={2.1} /></IconButton></div><div className="mt-[10px] grid gap-[10px]"><Field value={option.label} onChange={(next) => { const update = (options: TicketPanelSelectOption[]) => options.map((item) => item.id === option.id ? { ...item, label: next.slice(0, 80) } : item); if (scope.parentId) updateChild(scope.parentId, scope.componentId, (current) => current.type === "select" ? { ...current, options: update(current.options) } : current); else updateRoot(scope.componentId, (current) => current.type === "select" ? { ...current, options: update(current.options) } : current); }} placeholder="Titulo da opcao" disabled={disabled} /><Field value={option.description} onChange={(next) => { const update = (options: TicketPanelSelectOption[]) => options.map((item) => item.id === option.id ? { ...item, description: next.slice(0, 160) } : item); if (scope.parentId) updateChild(scope.parentId, scope.componentId, (current) => current.type === "select" ? { ...current, options: update(current.options) } : current); else updateRoot(scope.componentId, (current) => current.type === "select" ? { ...current, options: update(current.options) } : current); }} placeholder="Descricao curta da opcao" disabled={disabled} /></div></div>)}</div>
+      <div className="space-y-[10px]">{component.options.map((option, index) => <div key={option.id} className="rounded-[16px] fd-field border border-[#1C1C1C] bg-[#141414] p-[12px]"><div className="flex items-center justify-between gap-[12px]"><p className="text-[12px] font-medium uppercase tracking-[0.14em] text-[#6A6A6A]">Opcao {index + 1}</p><IconButton label="Remover opcao" disabled={disabled} onClick={() => { if (scope.parentId) updateChild(scope.parentId, scope.componentId, (current) => current.type === "select" ? { ...current, options: current.options.filter((item) => item.id !== option.id) } : current); else updateRoot(scope.componentId, (current) => current.type === "select" ? { ...current, options: current.options.filter((item) => item.id !== option.id) } : current); }}><Trash2 className="h-[15px] w-[15px]" strokeWidth={2.1} /></IconButton></div><div className="mt-[10px] grid gap-[10px]"><Field value={option.label} onChange={(next) => { const update = (options: TicketPanelSelectOption[]) => options.map((item) => item.id === option.id ? { ...item, label: next.slice(0, 80) } : item); if (scope.parentId) updateChild(scope.parentId, scope.componentId, (current) => current.type === "select" ? { ...current, options: update(current.options) } : current); else updateRoot(scope.componentId, (current) => current.type === "select" ? { ...current, options: update(current.options) } : current); }} placeholder="Titulo da opcao" disabled={disabled} /><Field value={option.description} onChange={(next) => { const update = (options: TicketPanelSelectOption[]) => options.map((item) => item.id === option.id ? { ...item, description: next.slice(0, 160) } : item); if (scope.parentId) updateChild(scope.parentId, scope.componentId, (current) => current.type === "select" ? { ...current, options: update(current.options) } : current); else updateRoot(scope.componentId, (current) => current.type === "select" ? { ...current, options: update(current.options) } : current); }} placeholder="Descricao curta da opcao" disabled={disabled} /></div></div>)}</div>
     </div>
   );
 
@@ -2929,7 +2929,7 @@ function TicketMessageBuilder({
   );
 
   const renderSuggestionMemberSlotEditor = () => (
-    <div className="rounded-[16px] border border-[#232323] bg-[#0A0A0A] p-[14px]">
+    <div className="rounded-[16px] border border-[#1C1C1C] bg-[#141414] p-[14px]">
       <p className="text-[12px] font-medium uppercase tracking-[0.16em] text-[#666666]">
         Campos fixos do membro
       </p>
@@ -2945,7 +2945,7 @@ function TicketMessageBuilder({
             readOnly
             value={SUGGESTION_PUBLISHED_TITLE_PREVIEW}
             rows={2}
-            className="min-h-[56px] w-full resize-none rounded-[14px] border border-[#1A1A1A] bg-[#070707] px-[14px] py-[10px] text-[14px] leading-[1.55] text-[#9A9A9A] outline-none"
+            className="fd-field min-h-[56px] w-full resize-none rounded-[14px] px-[14px] py-[10px] text-[14px] leading-[1.55] text-[#9A9A9A]"
           />
         </div>
         <div>
@@ -2956,7 +2956,7 @@ function TicketMessageBuilder({
             readOnly
             value={SUGGESTION_PUBLISHED_BODY_PREVIEW}
             rows={2}
-            className="min-h-[56px] w-full resize-none rounded-[14px] border border-[#1A1A1A] bg-[#070707] px-[14px] py-[10px] text-[14px] leading-[1.55] text-[#9A9A9A] outline-none"
+            className="fd-field min-h-[56px] w-full resize-none rounded-[14px] px-[14px] py-[10px] text-[14px] leading-[1.55] text-[#9A9A9A]"
           />
         </div>
       </div>
@@ -2997,13 +2997,13 @@ function TicketMessageBuilder({
           }
           rows={nested ? 7 : 9}
           disabled={disabled}
-          className="min-h-[118px] w-full resize-y rounded-[16px] border border-[#171717] bg-[#080808] px-[14px] py-[12px] text-[14px] leading-[1.55] text-[#E2E2E2] outline-none transition-colors duration-200 placeholder:text-[#4F4F4F] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-55"
+          className="min-h-[118px] w-full resize-y rounded-[16px] fd-field border border-[#1C1C1C] bg-[#141414] px-[14px] py-[12px] text-[14px] leading-[1.55] text-[#E2E2E2] outline-none transition-colors duration-200 placeholder:text-[#4F4F4F] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-55"
         />
         <div className="flex flex-wrap gap-[8px]">
           {["#", "##", "###", "-#", "**negrito**", ":emoji"].map((token) => (
             <span
               key={token}
-              className="inline-flex h-[28px] items-center rounded-full border border-[#171717] bg-[#0A0A0A] px-[10px] text-[11px] font-medium text-[#8A8A8A]"
+              className="inline-flex h-[28px] items-center rounded-full border border-[#1C1C1C] bg-[#141414] px-[10px] text-[11px] font-medium text-[#8A8A8A]"
             >
               {token}
             </span>
@@ -3027,8 +3027,8 @@ function TicketMessageBuilder({
     }
     if (component.type === "image") return <div className="grid gap-[12px]"><Field value={component.url} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "image" ? { ...current, url: next.slice(0, 1000), alt: "" } : current) : updateRoot(scope.componentId, (current) => current.type === "image" ? { ...current, url: next.slice(0, 1000), alt: "" } : current)} placeholder="URL da imagem" disabled={disabled} /></div>;
     if (component.type === "file") return <div className="grid gap-[12px] xl:grid-cols-2"><Field value={component.name} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "file" ? { ...current, name: next.slice(0, 120) } : current) : updateRoot(scope.componentId, (current) => current.type === "file" ? { ...current, name: next.slice(0, 120) } : current)} placeholder="Nome do arquivo" disabled={disabled} /><Field value={component.sizeLabel} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "file" ? { ...current, sizeLabel: next.slice(0, 60) } : current) : updateRoot(scope.componentId, (current) => current.type === "file" ? { ...current, sizeLabel: next.slice(0, 60) } : current)} placeholder="Ex.: PDF | 1.2 MB" disabled={disabled} /></div>;
-    if (component.type === "separator") return <div className="grid grid-cols-3 gap-[8px]">{(["sm", "md", "lg"] as TicketPanelSeparatorComponent["spacing"][]).map((spacing) => <button key={spacing} type="button" disabled={disabled} onClick={() => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "separator" ? { ...current, spacing } : current) : updateRoot(scope.componentId, (current) => current.type === "separator" ? { ...current, spacing } : current)} className={cn("rounded-[14px] border px-[12px] py-[11px] text-[12px] font-medium transition-colors duration-200", component.spacing === spacing ? "border-[#F2F2F2] bg-[#111111] text-[#F2F2F2]" : "border-[#171717] bg-[#0A0A0A] text-[#818181] hover:bg-[#101010]")}>{spacing === "sm" ? "Espaco curto" : spacing === "md" ? "Espaco medio" : "Espaco amplo"}</button>)}</div>;
-    if (component.type === "button") return <div className="space-y-[12px]"><Field value={component.label} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "button" ? { ...current, label: next.slice(0, 80) } : current) : updateRoot(scope.componentId, (current) => current.type === "button" ? { ...current, label: next.slice(0, 80) } : current)} placeholder="Texto do botao funcional" disabled={disabled} /><p className="text-[12px] leading-[1.55] text-[#787878]">Use este CTA como o botao principal que abre o ticket. O builder aceita apenas um desse tipo.</p><div className="grid grid-cols-2 gap-[8px] min-[920px]:grid-cols-4">{BUTTON_STYLES.map((style) => <button key={style.value} type="button" disabled={disabled} onClick={() => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "button" ? { ...current, style: style.value } : current) : updateRoot(scope.componentId, (current) => current.type === "button" ? { ...current, style: style.value } : current)} className={cn("rounded-[14px] border px-[10px] py-[10px] text-[12px] font-medium transition-colors duration-200", component.style === style.value ? "border-[#F2F2F2] bg-[#111111] text-[#F2F2F2]" : "border-[#171717] bg-[#0A0A0A] text-[#818181] hover:bg-[#101010]")}>{style.label}</button>)}</div></div>;
+    if (component.type === "separator") return <div className="grid grid-cols-3 gap-[8px]">{(["sm", "md", "lg"] as TicketPanelSeparatorComponent["spacing"][]).map((spacing) => <button key={spacing} type="button" disabled={disabled} onClick={() => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "separator" ? { ...current, spacing } : current) : updateRoot(scope.componentId, (current) => current.type === "separator" ? { ...current, spacing } : current)} className={cn("rounded-[14px] border px-[12px] py-[11px] text-[12px] font-medium transition-colors duration-200", component.spacing === spacing ? "border-[#F2F2F2] bg-[#111111] text-[#F2F2F2]" : "border-[#1C1C1C] bg-[#141414] text-[#818181] hover:bg-[#171717]")}>{spacing === "sm" ? "Espaco curto" : spacing === "md" ? "Espaco medio" : "Espaco amplo"}</button>)}</div>;
+    if (component.type === "button") return <div className="space-y-[12px]"><Field value={component.label} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "button" ? { ...current, label: next.slice(0, 80) } : current) : updateRoot(scope.componentId, (current) => current.type === "button" ? { ...current, label: next.slice(0, 80) } : current)} placeholder="Texto do botao funcional" disabled={disabled} /><p className="text-[12px] leading-[1.55] text-[#787878]">Use este CTA como o botao principal que abre o ticket. O builder aceita apenas um desse tipo.</p><div className="grid grid-cols-2 gap-[8px] min-[920px]:grid-cols-4">{BUTTON_STYLES.map((style) => <button key={style.value} type="button" disabled={disabled} onClick={() => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "button" ? { ...current, style: style.value } : current) : updateRoot(scope.componentId, (current) => current.type === "button" ? { ...current, style: style.value } : current)} className={cn("rounded-[14px] border px-[10px] py-[10px] text-[12px] font-medium transition-colors duration-200", component.style === style.value ? "border-[#F2F2F2] bg-[#111111] text-[#F2F2F2]" : "border-[#1C1C1C] bg-[#141414] text-[#818181] hover:bg-[#171717]")}>{style.label}</button>)}</div></div>;
     if (component.type === "link_button") return <div className="grid gap-[12px] xl:grid-cols-2"><Field value={component.label} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "link_button" ? { ...current, label: next.slice(0, 80) } : current) : updateRoot(scope.componentId, (current) => current.type === "link_button" ? { ...current, label: next.slice(0, 80) } : current)} placeholder="Texto do botao" disabled={disabled} /><Field value={component.url} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "link_button" ? { ...current, url: next.slice(0, 1000) } : current) : updateRoot(scope.componentId, (current) => current.type === "link_button" ? { ...current, url: next.slice(0, 1000) } : current)} placeholder="https://seu-link.com" disabled={disabled} /></div>;
     return <div className="space-y-[12px]"><Field value={component.placeholder} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "select" ? { ...current, placeholder: next.slice(0, 100) } : current) : updateRoot(scope.componentId, (current) => current.type === "select" ? { ...current, placeholder: next.slice(0, 100) } : current)} placeholder="Placeholder do menu" disabled={disabled} />{renderSelectOptions(component, scope)}</div>;
   };
@@ -3071,8 +3071,8 @@ function TicketMessageBuilder({
           applyDropSlot(slot);
         }}
         className={cn(
-          "overflow-visible rounded-[24px] border border-[#141414] bg-[#090909] p-[18px] shadow-[0_20px_60px_rgba(0,0,0,0.28)] transition-colors duration-200",
-          nested && "rounded-[20px] bg-[#0B0B0B] p-[16px]",
+          "overflow-visible rounded-[24px] border border-[#1C1C1C] bg-[#0D0D0D] p-[18px] shadow-[0_20px_60px_rgba(0,0,0,0.28)] transition-colors duration-200",
+          nested && "rounded-[20px] bg-[#141414] p-[16px]",
         )}
       >
         <div className="flex items-start justify-between gap-[14px]">
@@ -3249,7 +3249,7 @@ function TicketMessageBuilder({
                 "inline-flex h-[34px] items-center justify-center rounded-full border px-[12px] text-[11px] font-medium uppercase tracking-[0.12em] transition-colors duration-200",
                 container.accentColor === ""
                   ? "border-[#F2F2F2] bg-[#111111] text-[#F2F2F2]"
-                  : "border-[#171717] bg-[#0A0A0A] text-[#818181] hover:bg-[#101010]",
+                  : "border-[#1C1C1C] bg-[#141414] text-[#818181] hover:bg-[#171717]",
               )}
             >
               Default
@@ -3295,7 +3295,7 @@ function TicketMessageBuilder({
                 "inline-flex h-[34px] items-center justify-center rounded-full border px-[12px] text-[11px] font-medium uppercase tracking-[0.12em] transition-colors duration-200",
                 isCustomAccentOpen
                   ? "border-[#F2F2F2] bg-[#111111] text-[#F2F2F2]"
-                  : "border-[#171717] bg-[#0A0A0A] text-[#818181] hover:bg-[#101010]",
+                  : "border-[#1C1C1C] bg-[#141414] text-[#818181] hover:bg-[#171717]",
               )}
             >
               RGB
@@ -3303,10 +3303,10 @@ function TicketMessageBuilder({
           </div>
 
           {isCustomAccentOpen ? (
-            <div className="mt-[12px] flex flex-col gap-[10px] rounded-[16px] border border-[#171717] bg-[#0A0A0A] p-[12px] sm:flex-row sm:items-center">
+            <div className="mt-[12px] flex flex-col gap-[10px] rounded-[16px] border border-[#1C1C1C] bg-[#141414] p-[12px] sm:flex-row sm:items-center">
               <div className="flex min-w-0 flex-1 items-center gap-[10px]">
                 <span
-                  className="inline-flex h-[34px] w-[34px] shrink-0 rounded-full border border-[#171717]"
+                  className="inline-flex h-[34px] w-[34px] shrink-0 rounded-full border border-[#1C1C1C]"
                   style={{
                     backgroundColor: isValidHexColor(customAccentDraft)
                       ? customAccentDraft
@@ -3367,7 +3367,7 @@ function TicketMessageBuilder({
               event.stopPropagation();
               applyDropSlot({ parentId: container.id, index: container.children.length });
             }}
-            className="overflow-visible rounded-[22px] border border-[#171717] bg-[#070707] p-[14px]"
+            className="overflow-visible rounded-[22px] border border-[#1C1C1C] bg-[#141414] p-[14px]"
           >
             {renderDropSlot(
               { parentId: container.id, index: 0 },
@@ -3423,9 +3423,9 @@ function TicketMessageBuilder({
               applyDropSlot(emptyContainerDropSlot);
             }}
             className={cn(
-              "rounded-[22px] border border-dashed bg-[#070707] px-[18px] py-[24px] text-center transition-colors duration-150",
+              "rounded-[22px] border border-dashed border-[#1C1C1C] bg-[#141414] px-[18px] py-[24px] text-center transition-colors duration-150",
               isEmptyContainerDropActive
-                ? "border-[rgba(255,255,255,0.4)] bg-[#0A0A0A]"
+                ? "border-[rgba(255,255,255,0.4)] bg-[#141414]"
                 : "border-[#1E1E1E]",
             )}
           >
@@ -3519,7 +3519,7 @@ function TicketMessageBuilder({
   return (
     <section className="relative isolate space-y-[20px] overflow-visible">
       {showHeader ? (
-        <div className="relative isolate overflow-visible rounded-[30px] border border-[#121212] bg-[#080808] p-[22px] shadow-[0_26px_70px_rgba(0,0,0,0.3)]">
+        <div className="relative isolate overflow-visible rounded-[30px] border border-[#1C1C1C] bg-[#0D0D0D] p-[22px] shadow-[0_26px_70px_rgba(0,0,0,0.3)]">
           <div className="flex flex-col gap-[18px] lg:flex-row lg:items-end lg:justify-between">
             <div className="max-w-[720px]">
               {eyebrow ? (
@@ -3674,7 +3674,7 @@ function TicketMessageBuilder({
                 ) : null}
               </div>
 
-              <div className="rounded-[30px] border border-dashed border-[#1B1B1B] bg-[#090909] px-[24px] py-[34px] text-center">
+              <div className="rounded-[30px] border border-dashed border-[#1C1C1C] bg-[#0D0D0D] px-[24px] py-[34px] text-center">
                 <p className="text-[16px] font-medium text-[#E4E4E4]">Nenhum componente adicionado ainda</p>
                 <p className="mt-[8px] text-[14px] leading-[1.65] text-[#7A7A7A]">
                   Comece por um conteudo ou por um container vazio e monte o embed do seu jeito.
@@ -3686,7 +3686,7 @@ function TicketMessageBuilder({
 
         <div className={cn("min-w-0 xl:self-start", !layout.length && "pt-[60px]")}>
           <div className="xl:sticky xl:top-[24px]">
-            <div className="rounded-[30px] border border-[#121212] bg-[#080808] p-[20px] shadow-[0_26px_70px_rgba(0,0,0,0.3)]">
+            <div className="rounded-[30px] border border-[#1C1C1C] bg-[#0D0D0D] p-[20px] shadow-[0_26px_70px_rgba(0,0,0,0.3)]">
               <div>
                 <div className="flex items-start gap-[12px]">
                   <div className="flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-full bg-[#060606] text-[18px] font-semibold text-[#F3F4F6]">
@@ -3768,14 +3768,14 @@ function TicketMessageBuilder({
                 <span aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-[26px] border border-[#0E0E0E]" />
                 <span aria-hidden="true" className="pointer-events-none absolute inset-[-2px] rounded-[26px] flowdesk-tag-border-glow" />
                 <span aria-hidden="true" className="pointer-events-none absolute inset-[-1px] rounded-[26px] flowdesk-tag-border-core" />
-                <span aria-hidden="true" className="pointer-events-none absolute inset-[1px] rounded-[25px] bg-[#070707]" />
+                <span aria-hidden="true" className="pointer-events-none absolute inset-[1px] rounded-[25px] bg-[#0D0D0D]" />
 
                 <div className="relative z-10 px-[20px] py-[20px] sm:px-[24px] sm:py-[24px]">
                   <div className="relative inline-flex overflow-hidden rounded-full">
                     <span aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-full border border-[#0E0E0E]" />
                     <span aria-hidden="true" className="pointer-events-none absolute inset-[-2px] rounded-full flowdesk-tag-border-glow" />
                     <span aria-hidden="true" className="pointer-events-none absolute inset-[-1px] rounded-full flowdesk-tag-border-core" />
-                    <span aria-hidden="true" className="pointer-events-none absolute inset-[1px] rounded-full bg-[#070707]" />
+                    <span aria-hidden="true" className="pointer-events-none absolute inset-[1px] rounded-full bg-[#0D0D0D]" />
                     <span className="relative z-10 inline-flex h-[30px] items-center px-[13px] text-[11px] font-medium uppercase tracking-[0.2em] text-[#8C8C8C]">
                       Link externo
                     </span>
@@ -3787,7 +3787,7 @@ function TicketMessageBuilder({
                     Vamos abrir <span className="text-[#D6D6D6]">{pendingPreviewLink.label || "este link"}</span> em uma nova aba. Confirme para continuar.
                   </p>
 
-                  <div className="mt-[18px] rounded-[18px] border border-[#171717] bg-[#090909] px-[14px] py-[13px] text-[13px] leading-[1.6] text-[#A9A9A9]">
+                  <div className="mt-[18px] rounded-[18px] border border-[#1C1C1C] bg-[#0D0D0D] px-[14px] py-[13px] text-[13px] leading-[1.6] text-[#A9A9A9]">
                     <span className="break-all text-[#E0E0E0]">{pendingPreviewLink.url}</span>
                   </div>
 

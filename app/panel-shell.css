@@ -155,6 +155,57 @@
   color: #6f6f74;
 }
 
+.fd-field,
+.flowdesk-server-input {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid #1c1c1c;
+  background: #141414;
+  color: #f2f2f3;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.fd-field:focus,
+.fd-field:focus-visible,
+.fd-field:active,
+.flowdesk-server-input:focus,
+.flowdesk-server-input:focus-visible,
+.flowdesk-server-input:active {
+  border-color: #2a2a2e;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.fd-field::placeholder,
+.flowdesk-server-input::placeholder {
+  color: #6f6f74;
+}
+
+.fd-select-trigger {
+  border: 1px solid #1c1c1c;
+  background: #141414;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.fd-select-trigger:hover:not(:disabled) {
+  border-color: #2a2a2e;
+}
+
+.fd-select-trigger:focus,
+.fd-select-trigger:focus-visible,
+.fd-select-trigger:active {
+  outline: none !important;
+  box-shadow: none !important;
+  border-color: #2a2a2e;
+}
+
+.fd-select-menu {
+  border: 1px solid #1c1c1c;
+  background: #0d0d0d;
+}
+
 .fd-nav-scroll {
   margin-top: 14px;
   min-height: 0;
@@ -198,6 +249,22 @@
 .fd-nav-group.is-active {
   background: var(--fd-active);
   color: var(--fd-text);
+}
+
+.fd-nav-group.is-current {
+  background: var(--fd-hover);
+  color: var(--fd-text);
+}
+
+.fd-nav-children .fd-nav-item {
+  border-radius: 8px;
+  padding: 7px 10px;
+}
+
+.fd-nav-children .fd-nav-item.is-active {
+  background: var(--fd-active);
+  color: var(--fd-text);
+  box-shadow: none;
 }
 
 .fd-nav-item.is-active::before {

@@ -428,7 +428,7 @@ export function SalesCouponsGiftsListPanel({
         {isLoading ? (
           <div className="space-y-[1px] bg-[#171717]">
             {Array.from({ length: 4 }).map((_, index) => (
-              <div key={index} className="flex items-center gap-[14px] bg-[#0B0B0B] px-[18px] py-[16px] sm:px-[22px]">
+              <div key={index} className="flex items-center gap-[14px] bg-[#141414] px-[18px] py-[16px] sm:px-[22px]">
                 <div className="h-[48px] w-[48px] animate-pulse rounded-[15px] bg-[#171717]" />
                 <div className="min-w-0 flex-1 space-y-[8px]">
                   <div className="h-[12px] w-[180px] animate-pulse rounded-full bg-[#171717]" />

@@ -2,11 +2,17 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import { configStepTwoScale } from "@/components/config/configStepTwoScale";
 import { resolveConfigStepDropdownRect } from "@/components/config/configStepDropdownPosition";
 import { useDiscordGuildResourcesRefreshOnMenuOpen } from "@/components/config/discordGuildResourcesRefreshContext";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
+import {
+  panelSelectItemClassName,
+  panelSelectMenuClassName,
+  panelSelectTriggerClassName,
+} from "@/components/servers/PanelSelectMenu";
+import { panelSelectMenuScale } from "@/components/servers/panelSelectMenuScale";
 
 type SelectOption = {
   id: string;
@@ -22,7 +28,7 @@ type ConfigStepMultiSelectProps = {
   disabled?: boolean;
   loading?: boolean;
   controlHeightPx?: number;
-  variant?: "default" | "immersive";
+  variant?: "default" | "immersive" | "config";
 };
 
 export function ConfigStepMultiSelect({
@@ -50,13 +56,16 @@ export function ConfigStepMultiSelect({
   const refreshResourcesOnMenuOpen = useDiscordGuildResourcesRefreshOnMenuOpen();
   const isBlocked = disabled || loading;
   const isDropdownOpen = isOpen && !isBlocked;
+  const isConfigVariant = variant === "config";
   const isImmersive = variant === "immersive";
   const shouldRenderLabel = Boolean(String(label || "").trim()) && !isImmersive;
+  const scale = isConfigVariant ? configStepTwoScale : panelSelectMenuScale;
   const visibleRows = Math.min(
     Math.max(options.length, 1),
-    configStepTwoScale.maxVisibleOptions,
+    scale.maxVisibleOptions,
   );
-  const dropdownHeight = visibleRows * configStepTwoScale.optionHeight;
+  const dropdownHeight =
+    visibleRows * scale.optionHeight + (isConfigVariant ? 0 : panelSelectMenuScale.menuPadding * 2);
 
   useEffect(() => {
     if (!isDropdownOpen) return;
@@ -71,9 +80,15 @@ export function ConfigStepMultiSelect({
       }
     }
 
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setIsOpen(false);
+    }
+
     window.addEventListener("mousedown", handleOutsideClick);
+    window.addEventListener("keydown", handleEscape);
     return () => {
       window.removeEventListener("mousedown", handleOutsideClick);
+      window.removeEventListener("keydown", handleEscape);
     };
   }, [isDropdownOpen]);
 
@@ -119,34 +134,36 @@ export function ConfigStepMultiSelect({
     if (selectedNames.length === 1) return selectedNames[0];
     return `${selectedNames.length} cargos selecionados`;
   }, [placeholder, selectedNames]);
+
   const labelClassName = isImmersive
     ? "mb-[12px] text-[11px] font-medium tracking-[0.18em] uppercase text-[#6E6E6E]"
-    : "mb-[10px] font-medium tracking-[-0.02em] text-[#A7A7A7]";
-  const triggerClassName = isImmersive
-    ? `flex w-full border border-[#181818] bg-[linear-gradient(180deg,#0D0D0D_0%,#080808_100%)] text-left shadow-[inset_0_1px_0_rgba(255,255,255,0.02)] transition-[border-color,background-color,box-shadow] disabled:cursor-not-allowed disabled:opacity-65 ${
-        loading ? "justify-center" : "items-center hover:border-[#242424]"
-      }`
-    : `flex w-full border border-[#141414] bg-[#080808] text-left transition-colors disabled:cursor-not-allowed disabled:opacity-65 ${
+    : "mb-[8px] block text-[12px] font-medium text-[#5F5F5F]";
+
+  const triggerClassName = isConfigVariant
+    ? `fd-select-trigger flex w-full text-left transition-colors disabled:cursor-not-allowed disabled:opacity-65 ${
         loading ? "justify-center" : "items-center"
-      }`;
-  const triggerPaddingLeft = isImmersive ? 16 : 14;
-  const triggerPaddingRight = isImmersive ? 14 : 12;
-  const triggerRadius = isImmersive ? 18 : 16;
-  const dropdownClassName = isImmersive
-    ? "flowdesk-selectmenu-scrollbar flowdesk-scale-in-soft fixed z-[6200] overflow-y-auto overscroll-contain border border-[#1A1A1A] bg-[#070707] shadow-[0_28px_80px_rgba(0,0,0,0.56)] backdrop-blur-[16px] transition-all duration-200 ease-out [touch-action:pan-y]"
-    : "flowdesk-selectmenu-scrollbar flowdesk-scale-in-soft fixed z-[6200] overflow-y-auto overscroll-contain border bg-[#080808] shadow-[0_24px_64px_rgba(0,0,0,0.5)] backdrop-blur-[12px] transition-all duration-200 ease-out [touch-action:pan-y]";
-  const optionClassName = (selected: boolean) =>
-    isImmersive
-      ? `mx-[6px] my-[4px] flex w-[calc(100%-12px)] items-center gap-3 rounded-[14px] border px-[14px] text-left transition-colors ${
-          selected
-            ? "border-[rgba(128,184,255,0.22)] bg-[rgba(16,23,34,0.92)] text-[#EAF2FF]"
-            : "border-transparent text-[#BABABA] hover:border-[#1E1E1E] hover:bg-[#101010] hover:text-[#E7E7E7]"
-        }`
-      : `mx-[6px] my-[4px] flex w-[calc(100%-12px)] items-center gap-3 rounded-[12px] px-[14px] text-left transition-colors ${
-          selected
-            ? "bg-[#101010] text-[#E1E1E1]"
-            : "text-[#B5B5B5] hover:bg-[#101010] hover:text-[#E1E1E1]"
-        }`;
+      }`
+    : `${panelSelectTriggerClassName(isBlocked)} ${loading ? "justify-center" : ""}`;
+
+  const triggerStyle = isConfigVariant
+    ? {
+        height: `${controlHeightPx ?? configStepTwoScale.controlHeight}px`,
+        borderRadius: `${isImmersive ? 18 : 16}px`,
+        paddingLeft: `${isImmersive ? 16 : 14}px`,
+        paddingRight: `${isImmersive ? 14 : 12}px`,
+      }
+    : undefined;
+
+  const dropdownShellClassName = isConfigVariant
+    ? "fd-select-menu flowdesk-selectmenu-scrollbar flowdesk-scale-in-soft fixed z-[6200] overflow-y-auto overscroll-contain shadow-[0_24px_64px_rgba(0,0,0,0.5)] transition-all duration-200 ease-out [touch-action:pan-y]"
+    : `${panelSelectMenuClassName()} flowdesk-selectmenu-scrollbar fixed z-[6200] overflow-hidden transition-all duration-200 ease-out [touch-action:pan-y]`;
+
+  const configOptionClassName = (selected: boolean) =>
+    `mx-[6px] my-[4px] flex w-[calc(100%-12px)] items-center gap-3 rounded-[12px] px-[14px] text-left transition-colors ${
+      selected
+        ? "bg-[#141414] text-[#F2F2F3]"
+        : "text-[#C4C4C8] hover:bg-[#141414] hover:text-[#F2F2F3]"
+    }`;
 
   function toggleValue(roleId: string) {
     const isSelected = values.includes(roleId);
@@ -164,7 +181,14 @@ export function ConfigStepMultiSelect({
       className={`relative w-full ${isDropdownOpen ? "z-[260]" : "z-[1]"}`}
     >
       {shouldRenderLabel ? (
-        <p className={labelClassName} style={{ fontSize: `${configStepTwoScale.labelSize}px` }}>
+        <p
+          className={labelClassName}
+          style={
+            isConfigVariant
+              ? { fontSize: `${configStepTwoScale.labelSize}px` }
+              : undefined
+          }
+        >
           {label}
         </p>
       ) : null}
@@ -179,12 +203,7 @@ export function ConfigStepMultiSelect({
         disabled={isBlocked}
         aria-busy={loading}
         className={triggerClassName}
-        style={{
-          height: `${controlHeightPx ?? configStepTwoScale.controlHeight}px`,
-          borderRadius: `${triggerRadius}px`,
-          paddingLeft: `${triggerPaddingLeft}px`,
-          paddingRight: `${triggerPaddingRight}px`,
-        }}
+        style={triggerStyle}
       >
         {loading ? (
           <ButtonLoader size={20} />
@@ -193,23 +212,29 @@ export function ConfigStepMultiSelect({
             <span
               className={`truncate pr-3 ${
                 selectedNames.length
-                  ? isImmersive
-                    ? "text-[#EFEFEF]"
-                    : "text-[#D5D5D5]"
-                  : isImmersive
-                    ? "text-[#616161]"
-                    : "text-[#5A5A5A]"
+                  ? isConfigVariant
+                    ? "text-[#F2F2F3]"
+                    : "text-[#EDEDED]"
+                  : isConfigVariant
+                    ? "text-[#6F6F74]"
+                    : "text-[#9A9A9A]"
               }`}
-              style={{ fontSize: `${configStepTwoScale.controlTextSize}px` }}
+              style={
+                isConfigVariant
+                  ? { fontSize: `${configStepTwoScale.controlTextSize}px` }
+                  : { fontSize: `${panelSelectMenuScale.controlTextSize}px` }
+              }
             >
               {selectedLabel}
             </span>
 
             <ChevronDown
-              className={`ml-auto h-[18px] w-[18px] shrink-0 text-[#8B8B8B] transition-transform duration-300 ease-out ${
-                isDropdownOpen ? "rotate-180" : "rotate-0"
+              className={`ml-auto shrink-0 transition-transform duration-300 ease-out ${
+                isConfigVariant
+                  ? `h-[18px] w-[18px] text-[#8B8B8B] ${isDropdownOpen ? "rotate-180" : "rotate-0"}`
+                  : `h-[16px] w-[16px] bg-transparent text-[#9A9A9A] ${isDropdownOpen ? "rotate-180 text-[#DADADA]" : ""}`
               }`}
-              strokeWidth={2.2}
+              strokeWidth={isConfigVariant ? 2.2 : 1.9}
             />
           </>
         )}
@@ -219,7 +244,7 @@ export function ConfigStepMultiSelect({
         ? createPortal(
             <div
               ref={dropdownRef}
-              className={dropdownClassName}
+              className={dropdownShellClassName}
               style={{
                 top: `${dropdownRect.top}px`,
                 left: `${dropdownRect.left}px`,
@@ -229,59 +254,87 @@ export function ConfigStepMultiSelect({
                 transform: "translateY(0)",
                 transformOrigin:
                   dropdownRect.placement === "top" ? "bottom center" : "top center",
-                borderColor: isImmersive ? "#1A1A1A" : "#141414",
-                borderRadius: `${triggerRadius}px`,
+                borderRadius: isConfigVariant
+                  ? `${isImmersive ? 18 : 16}px`
+                  : undefined,
               }}
             >
-              {options.length ? (
-                options.map((option) => {
-                  const selected = values.includes(option.id);
+              <div
+                className={isConfigVariant ? undefined : "thin-scrollbar overflow-y-auto pr-[2px]"}
+                style={
+                  isConfigVariant
+                    ? undefined
+                    : { maxHeight: `${dropdownRect.maxHeight}px` }
+                }
+              >
+                {options.length ? (
+                  options.map((option) => {
+                    const selected = values.includes(option.id);
 
-                  return (
-                    <button
-                      key={option.id}
-                      type="button"
-                      onClick={() => toggleValue(option.id)}
-                      className={optionClassName(selected)}
-                      style={{
-                        height: `${configStepTwoScale.optionHeight}px`,
-                        fontSize: `${configStepTwoScale.optionTextSize}px`,
-                      }}
-                    >
-                      <span
-                        className={`inline-flex h-[16px] w-[16px] shrink-0 items-center justify-center rounded-[3px] border ${
-                          selected
-                            ? "border-[#D8D8D8] bg-[#D8D8D8] text-black"
-                            : "border-[#242424] bg-transparent text-transparent"
-                        }`}
-                      >
-                        {selected ? (
-                          <svg
-                            viewBox="0 0 16 16"
-                            aria-hidden="true"
-                            className="h-[11px] w-[11px]"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2.2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
+                    if (isConfigVariant) {
+                      return (
+                        <button
+                          key={option.id}
+                          type="button"
+                          onClick={() => toggleValue(option.id)}
+                          className={configOptionClassName(selected)}
+                          style={{
+                            height: `${configStepTwoScale.optionHeight}px`,
+                            fontSize: `${configStepTwoScale.optionTextSize}px`,
+                          }}
+                        >
+                          <span
+                            className={`inline-flex h-[16px] w-[16px] shrink-0 items-center justify-center rounded-[3px] border ${
+                              selected
+                                ? "border-[#D8D8D8] bg-[#D8D8D8] text-black"
+                                : "border-[#242424] bg-transparent text-transparent"
+                            }`}
                           >
-                            <path d="M3 8.5l3.1 3.1L13 4.7" />
-                          </svg>
-                        ) : null}
-                      </span>
-                      <span className="truncate">{option.name}</span>
-                    </button>
-                  );
-                })
-              ) : (
-                <div
-                  className="flex h-full items-center justify-center px-4 text-center text-[#8A8A8A]"
-                  style={{ fontSize: `${configStepTwoScale.optionTextSize}px` }}
-                >
-                  Nenhuma opcao disponivel
-                </div>
-              )}
+                            {selected ? (
+                              <svg
+                                viewBox="0 0 16 16"
+                                aria-hidden="true"
+                                className="h-[11px] w-[11px]"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2.2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path d="M3 8.5l3.1 3.1L13 4.7" />
+                              </svg>
+                            ) : null}
+                          </span>
+                          <span className="truncate">{option.name}</span>
+                        </button>
+                      );
+                    }
+
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onClick={() => toggleValue(option.id)}
+                        className={panelSelectItemClassName(selected)}
+                      >
+                        <span className="truncate">{option.name}</span>
+                        {selected ? <Check className="h-[15px] w-[15px] shrink-0" /> : null}
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div
+                    className={`flex items-center justify-center px-4 py-[10px] text-center text-[#8A8A8A] ${
+                      isConfigVariant ? "h-full" : ""
+                    }`}
+                    style={{
+                      fontSize: `${isConfigVariant ? configStepTwoScale.optionTextSize : panelSelectMenuScale.optionTextSize}px`,
+                    }}
+                  >
+                    Nenhuma opcao disponivel
+                  </div>
+                )}
+              </div>
             </div>,
             document.body,
           )

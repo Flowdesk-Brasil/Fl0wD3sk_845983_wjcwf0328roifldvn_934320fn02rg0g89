@@ -10,7 +10,7 @@ import {
   type TeamRolePermission,
 } from "@/lib/teams/userTeams";
 import { getGuildLicenseStatusForUser } from "@/lib/payments/licenseStatus";
-import { cleanupExpiredUnpaidServerSetups } from "@/lib/payments/setupCleanup";
+import { cleanupExpiredUnpaidServerSetupsBackground } from "@/lib/payments/setupCleanup";
 import {
   createServerSaveDiagnosticContext,
   recordServerSaveDiagnostic,
@@ -229,7 +229,7 @@ export async function GET(request: Request) {
     const access = await ensureGuildAccess(guildId, "server_manage_tickets_overview");
     if (!access.ok) return access.response;
 
-    await cleanupExpiredUnpaidServerSetups({
+    cleanupExpiredUnpaidServerSetupsBackground({
       userId: access.context.sessionData.authSession.user.id,
       guildId,
       source: "guild_sales_settings_get",
@@ -449,7 +449,7 @@ export async function POST(request: Request) {
       );
     }
 
-    await cleanupExpiredUnpaidServerSetups({
+    cleanupExpiredUnpaidServerSetupsBackground({
       userId: authUserId,
       guildId,
       source: "guild_sales_settings_post",

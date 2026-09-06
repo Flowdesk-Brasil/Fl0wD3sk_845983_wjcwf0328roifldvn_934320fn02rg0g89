@@ -1,15 +1,12 @@
 import { NextResponse } from "next/server";
-import {
-  assertUserAdminInGuildOrNull,
-  isGuildId,
-  resolveSessionAccessToken,
-} from "@/lib/auth/discordGuildAccess";
-import {
-  getEffectiveDashboardPermissions,
-  type TeamRolePermission,
-} from "@/lib/teams/userTeams";
+import { isGuildId } from "@/lib/auth/discordGuildAccess";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { applyNoStoreHeaders } from "@/lib/security/http";
+import { ensureDashboardModuleAccess } from "@/lib/servers/dashboardModuleAccess";
+import {
+  readPanelResponseCache,
+  writePanelResponseCache,
+} from "@/lib/servers/panelResponseCache";
 import {
   attachBatePontoMemberProfile,
   enrichBatePontoMemberProfiles,
@@ -56,66 +53,7 @@ function isMissingBatePontoTableError(error: {
   );
 }
 
-async function ensureGuildAccess(
-  guildId: string,
-  requiredPermission: TeamRolePermission,
-) {
-  const sessionData = await resolveSessionAccessToken();
-  if (!sessionData?.authSession) {
-    return {
-      ok: false as const,
-      response: NextResponse.json(
-        { ok: false, message: "Nao autenticado." },
-        { status: 401 },
-      ),
-    };
-  }
-
-  if (!sessionData.accessToken) {
-    return {
-      ok: false as const,
-      response: NextResponse.json(
-        { ok: false, message: "Token OAuth ausente na sessao." },
-        { status: 401 },
-      ),
-    };
-  }
-
-  const { permissions: dashboardPerms, isTeamServer } =
-    await getEffectiveDashboardPermissions({
-      authUserId: sessionData.authSession.user.id,
-      guildId,
-    });
-
-  const accessibleGuild = await assertUserAdminInGuildOrNull(
-    {
-      authSession: sessionData.authSession,
-      accessToken: sessionData.accessToken,
-    },
-    guildId,
-  );
-
-  const hasFullAccess = dashboardPerms === "full";
-  const hasSpecificPerm =
-    dashboardPerms instanceof Set && dashboardPerms.has(requiredPermission);
-  const canManage =
-    hasFullAccess || hasSpecificPerm || (!isTeamServer && accessibleGuild);
-
-  if (!canManage) {
-    return {
-      ok: false as const,
-      response: NextResponse.json(
-        {
-          ok: false,
-          message: "Voce nao possui permissao para gerenciar este modulo.",
-        },
-        { status: 403 },
-      ),
-    };
-  }
-
-  return { ok: true as const };
-}
+const HISTORY_CACHE_TTL_MS = 15_000;
 
 function normalizeHistoryRow(row: Record<string, unknown>): BatePontoHistoryEvent {
   const sessionValue = row.session;
@@ -186,11 +124,22 @@ export async function GET(request: Request) {
       );
     }
 
-    const access = await ensureGuildAccess(
+    const access = await ensureDashboardModuleAccess(
       guildId,
       "server_manage_bate_ponto_history",
     );
-    if (!access.ok) return access.response;
+    if (!access.ok) return applyNoStoreHeaders(access.response);
+
+    const cacheKey = `bate-ponto-history:${guildId}:${userId}:${limit}:${offset}`;
+    const cached = readPanelResponseCache<{
+      ok: true;
+      events: BatePontoHistoryEvent[];
+      limit: number;
+      offset: number;
+    }>(cacheKey);
+    if (cached) {
+      return applyNoStoreHeaders(NextResponse.json(cached));
+    }
 
     const supabase = getSupabaseAdminClientOrThrow();
     let query = supabase
@@ -227,18 +176,17 @@ export async function GET(request: Request) {
       guildId,
       events.map((event) => event.userId),
     );
-    const enrichedEvents = events.map((event) =>
-      attachBatePontoMemberProfile(event, profileMap),
-    );
+    const payload = {
+      ok: true as const,
+      events: events.map((event) =>
+        attachBatePontoMemberProfile(event, profileMap),
+      ),
+      limit,
+      offset,
+    };
+    writePanelResponseCache(cacheKey, payload, HISTORY_CACHE_TTL_MS);
 
-    return applyNoStoreHeaders(
-      NextResponse.json({
-        ok: true,
-        events: enrichedEvents,
-        limit,
-        offset,
-      }),
-    );
+    return applyNoStoreHeaders(NextResponse.json(payload));
   } catch (error) {
     return applyNoStoreHeaders(
       NextResponse.json(

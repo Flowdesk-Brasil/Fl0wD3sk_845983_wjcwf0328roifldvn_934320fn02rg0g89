@@ -740,3 +740,9 @@ export async function cleanupExpiredUnpaidServerSetups(input: {
   cleanupResultInflight.set(cacheKey, loadPromise);
   return cloneCleanupSummary(await loadPromise);
 }
+
+export function cleanupExpiredUnpaidServerSetupsBackground(
+  input: Parameters<typeof cleanupExpiredUnpaidServerSetups>[0],
+) {
+  void cleanupExpiredUnpaidServerSetups(input).catch(() => undefined);
+}

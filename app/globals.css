@@ -658,11 +658,19 @@ html.lenis body {
   -webkit-tap-highlight-color: transparent;
 }
 
-.flowdesk-servers-ui :where(button, a, input, textarea, select, [role="button"]):focus-visible {
+.flowdesk-servers-ui :where(button, a, [role="button"]):not(.fd-select-trigger):focus-visible {
   outline: 2px solid rgba(245, 245, 245, 0.58);
   outline-offset: 3px;
 }
 
+.flowdesk-servers-ui :where(input, textarea, select):focus,
+.flowdesk-servers-ui :where(input, textarea, select):focus-visible,
+.flowdesk-servers-ui .fd-field:focus,
+.flowdesk-servers-ui .fd-field:focus-visible,
+.flowdesk-servers-ui .flowdesk-server-input:focus,
+.flowdesk-servers-ui .flowdesk-server-input:focus-visible,
+.flowdesk-servers-ui .fd-select-trigger:focus,
+.flowdesk-servers-ui .fd-select-trigger:focus-visible,
 .flowdesk-servers-ui .fd-pill-search input:focus,
 .flowdesk-servers-ui .fd-pill-search input:focus-visible,
 .flowdesk-servers-ui .fd-sidebar-search input:focus,
@@ -690,7 +698,7 @@ html.lenis body {
 }
 
 .flowdesk-servers-ui :where(.flowdesk-server-input:focus, textarea:focus, select:focus) {
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.035);
+  box-shadow: none;
 }
 
 .flowdesk-servers-ui :where(

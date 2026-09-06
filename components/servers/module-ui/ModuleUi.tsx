@@ -3,7 +3,6 @@
 import type { ReactNode } from "react";
 import { motion } from "motion/react";
 import type { LucideIcon } from "lucide-react";
-import { ArrowUpRight } from "lucide-react";
 
 export const moduleEase = [0.22, 1, 0.36, 1] as const;
 
@@ -158,38 +157,11 @@ export function ModuleCard({
   );
 }
 
-export function ModuleSetting({
-  label,
-  value,
-  hint,
-  icon: Icon,
-  children,
-}: {
-  label: string;
-  value: string;
-  hint?: string;
-  icon?: LucideIcon;
-  children: ReactNode;
-}) {
-  return (
-    <div className={`${MODULE_CARD_CLASS} bg-[#0B0B0B]`}>
-      <div className="flex items-start justify-between gap-[12px]">
-        <p className="text-[12px] font-medium text-[#8B8B90]">{label}</p>
-        {Icon ? (
-          <span className="flex h-[30px] w-[30px] items-center justify-center rounded-[10px] border border-[#1C1C1C] bg-[#141414] text-[#C4C4C8]">
-            <Icon className="h-[14px] w-[14px]" strokeWidth={1.85} />
-          </span>
-        ) : (
-          <ArrowUpRight className="h-[14px] w-[14px] text-[#5A5A5E]" strokeWidth={2} />
-        )}
-      </div>
-      <p className="mt-[12px] truncate text-[18px] leading-none font-semibold tracking-[-0.03em] text-[#F2F2F3]">
-        {value}
-      </p>
-      {hint ? <p className="mt-[8px] text-[12px] text-[#6F6F74]">{hint}</p> : null}
-      <div className="mt-[14px]">{children}</div>
-    </div>
-  );
+export const MODULE_FIELDS_GRID_CLASS =
+  "grid grid-cols-1 gap-[16px] xl:grid-cols-2";
+
+export function ModuleFieldsGrid({ children }: { children: ReactNode }) {
+  return <div className={MODULE_FIELDS_GRID_CLASS}>{children}</div>;
 }
 
 export function ModuleSkel({

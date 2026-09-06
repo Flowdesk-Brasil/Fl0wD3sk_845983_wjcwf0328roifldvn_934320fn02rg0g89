@@ -26,5 +26,5 @@ export function fdNavGroupClass({
   active?: boolean;
   open?: boolean;
 } = {}) {
-  return `group fd-nav-group${active ? " is-active" : open ? " is-open" : ""}`;
+  return `group fd-nav-group${active ? " is-current" : open ? " is-open" : ""}`;
 }

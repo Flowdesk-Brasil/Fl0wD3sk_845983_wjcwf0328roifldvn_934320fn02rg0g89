@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 import type { RefObject } from "react";
 import Image from "next/image";
@@ -72,6 +72,7 @@ import {
 } from "@/lib/servers/licensePresentation";
 import { resolveServersWorkspaceAlertMessage } from "@/lib/servers/workspaceAlerts";
 import { prefetchServerDashboardSettings } from "@/lib/servers/serverDashboardSettingsClient";
+import { prefetchBatePontoPanels } from "@/lib/servers/batePontoPanelCache";
 import {
   readCachedManagedServers,
   readManagedServersMemoryCache,
@@ -1740,8 +1741,6 @@ export function ServersWorkspace({
   const [teamsReloadToken, setTeamsReloadToken] = useState(0);
   const previousRouteGuildIdRef = useRef<string | null>(null);
   const serversRef = useRef<ManagedServer[]>(initialServersSnapshot ?? []);
-  const [, startOpenServerTransition] = useTransition();
-
   const isEditingServer = Boolean(selectedGuildIdForConfig);
 
   const routeState = useMemo(() => parseWorkspaceRoute(pathname), [pathname]);
@@ -3020,13 +3019,11 @@ export function ServersWorkspace({
   }, [syncBrowserHistoryServerRoute]);
 
   const openProjectsOverview = useCallback((mode: "push" | "replace" = "push") => {
+    applySelectedServerRouteState(null, "settings", "overview");
+    setErrorMessage(null);
     setPendingWorkspacePaneKey(buildWorkspacePaneKey(null, "settings", "overview"));
     navigateToUrl("/servers/", mode);
-    startOpenServerTransition(() => {
-      applySelectedServerRouteState(null, "settings", "overview");
-      setErrorMessage(null);
-    });
-  }, [applySelectedServerRouteState, navigateToUrl, startOpenServerTransition]);
+  }, [applySelectedServerRouteState, navigateToUrl]);
 
   const redirectToDashboardRoot = useCallback(() => {
     if (typeof window === "undefined") return;
@@ -3036,6 +3033,7 @@ export function ServersWorkspace({
 
   const prefetchWorkspaceSections = useCallback((guildId: string) => {
     void prefetchServerDashboardSettings(guildId);
+    prefetchBatePontoPanels(guildId);
     [
       buildServerConfigUrl(guildId, "settings", "home"),
       buildServerConfigUrl(guildId, "settings", "overview"),
@@ -3112,9 +3110,9 @@ export function ServersWorkspace({
       }
 
       prefetchWorkspaceSections(input.guildId);
-      setPendingWorkspacePaneKey(
-        buildWorkspacePaneKey(input.guildId, input.tab, input.settingsSection),
-      );
+      applySelectedServerRouteState(input.guildId, input.tab, input.settingsSection);
+      setErrorMessage(null);
+      setPendingWorkspacePaneKey(null);
       navigateToUrl(
         buildServerConfigUrl(
           input.guildId,
@@ -3123,10 +3121,6 @@ export function ServersWorkspace({
         ),
         "replace",
       );
-      startOpenServerTransition(() => {
-        applySelectedServerRouteState(input.guildId, input.tab, input.settingsSection);
-        setErrorMessage(null);
-      });
     },
     [
       applySelectedServerRouteState,
@@ -3137,7 +3131,6 @@ export function ServersWorkspace({
       prefetchWorkspaceSections,
       selectedEditorTabForConfig,
       selectedSettingsSectionForConfig,
-      startOpenServerTransition,
     ],
   );
 
@@ -3490,6 +3483,8 @@ export function ServersWorkspace({
     }
 
     prefetchWorkspaceSections(guildId);
+    applySelectedServerRouteState(guildId, tab, nextSettingsSection);
+    setErrorMessage(null);
     setPendingWorkspacePaneKey(
       buildWorkspacePaneKey(guildId, tab, nextSettingsSection),
     );
@@ -3497,10 +3492,6 @@ export function ServersWorkspace({
       buildServerConfigUrl(guildId, tab, nextSettingsSection),
       "push",
     );
-    startOpenServerTransition(() => {
-      applySelectedServerRouteState(guildId, tab, nextSettingsSection);
-      setErrorMessage(null);
-    });
   }, [
     applySelectedServerRouteState,
     buildServerConfigUrl,
@@ -3509,7 +3500,6 @@ export function ServersWorkspace({
     selectedEditorTabForConfig,
     selectedGuildIdForConfig,
     selectedSettingsSectionForConfig,
-    startOpenServerTransition,
   ]);
 
   const prefetchServerConfig = useCallback((guildId: string, tab: ServerEditorTab = "settings") => {
@@ -3634,7 +3624,10 @@ export function ServersWorkspace({
     Boolean(errorMessage || servers.length > 0);
   const shouldShowEditorHeaderSkeleton =
     Boolean(selectedGuildIdForConfig) && !selectedServer;
-  const shouldShowWorkspacePaneSkeleton = Boolean(latchedPendingWorkspacePaneKey);
+  const shouldShowWorkspacePaneSkeleton = Boolean(
+    latchedPendingWorkspacePaneKey &&
+      latchedPendingWorkspacePaneKey !== resolvedWorkspacePaneKey,
+  );
   const shouldShowOverviewPaneSkeleton =
     latchedPendingWorkspacePaneKey === "overview";
 
@@ -4448,7 +4441,7 @@ export function ServersWorkspace({
             ) : null}
           </>
         ) : (
-          <div className="rounded-[18px] border border-[#131313] bg-[#080808] px-[14px] py-[16px]">
+          <div className="rounded-[18px] border border-[#131313] bg-[#0D0D0D] px-[14px] py-[16px]">
             <p className="text-[13px] leading-[1.55] text-[#767676]">
               Nenhuma area encontrada para essa busca.
             </p>
@@ -4847,7 +4840,7 @@ export function ServersWorkspace({
               ) : shouldShowEditorUnavailableState ? (
                 <LandingReveal delay={52} duration={240}>
                   <div className={`${editorPanelRevealClass} ${shellClass} px-[22px] py-[24px]`}>
-                    <div className="rounded-[22px] border border-[#141414] bg-[#090909] px-[20px] py-[20px]">
+                    <div className="rounded-[22px] border border-[#1C1C1C] bg-[#0D0D0D] px-[20px] py-[20px]">
                       {errorMessage === "Acesso negado." ? (
                         <div className="py-[60px]">
                           <PermissionDeniedState 

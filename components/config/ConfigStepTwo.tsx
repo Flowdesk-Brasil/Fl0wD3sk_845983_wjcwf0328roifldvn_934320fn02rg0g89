@@ -348,7 +348,7 @@ export function ConfigStepTwo({
             onChange={setMenuChannelId}
             loading={isLoadingChannels}
             disabled={isSaving || isPlanLocked}
-            variant="immersive"
+            variant="config"
           />
         </ConfigFieldCard>
 
@@ -366,7 +366,7 @@ export function ConfigStepTwo({
             onChange={setTicketsCategoryId}
             loading={isLoadingChannels}
             disabled={isSaving || isPlanLocked}
-            variant="immersive"
+            variant="config"
           />
         </ConfigFieldCard>
 
@@ -384,7 +384,7 @@ export function ConfigStepTwo({
             onChange={setLogsCreatedChannelId}
             loading={isLoadingChannels}
             disabled={isSaving || isPlanLocked}
-            variant="immersive"
+            variant="config"
           />
         </ConfigFieldCard>
 
@@ -402,7 +402,7 @@ export function ConfigStepTwo({
             onChange={setLogsClosedChannelId}
             loading={isLoadingChannels}
             disabled={isSaving || isPlanLocked}
-            variant="immersive"
+            variant="config"
           />
         </ConfigFieldCard>
       </div>

@@ -47,7 +47,7 @@ const GUILD_TEXT = 0;
 const GUILD_ANNOUNCEMENT = 5;
 const GUILD_VOICE = 2;
 const GUILD_STAGE = 13;
-const DASHBOARD_SETTINGS_CACHE_TTL_MS = 15_000;
+const DASHBOARD_SETTINGS_CACHE_TTL_MS = 90_000;
 const TICKET_SETTINGS_SELECT_BASE =
   "enabled, menu_channel_id, tickets_category_id, logs_created_channel_id, logs_closed_channel_id, panel_layout, panel_title, panel_description, panel_button_label, ai_rules, updated_at";
 const TICKET_SETTINGS_SELECT_WITH_DEDICATED_AI = `${TICKET_SETTINGS_SELECT_BASE}, ai_enabled, ai_company_name, ai_company_bio, ai_tone`;
@@ -1226,11 +1226,11 @@ export async function GET(request: Request) {
       return applyNoStoreHeaders(access.response);
     }
 
-    await cleanupExpiredUnpaidServerSetups({
+    void cleanupExpiredUnpaidServerSetups({
       userId: access.sessionData.authSession.user.id,
       guildId,
       source: "guild_dashboard_settings_get",
-    });
+    }).catch(() => undefined);
 
     const cacheKey = buildDashboardSettingsCacheKey({
       userId: access.sessionData.authSession.user.id,

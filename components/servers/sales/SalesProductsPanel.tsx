@@ -707,7 +707,7 @@ export function SalesProductsListPanel({
             {Array.from({ length: 4 }).map((_, index) => (
               <div
                 key={index}
-                className="flex items-center gap-[14px] bg-[#0B0B0B] px-[18px] py-[16px] sm:px-[22px]"
+                className="flex items-center gap-[14px] bg-[#141414] px-[18px] py-[16px] sm:px-[22px]"
               >
                 <div className="h-[46px] w-[46px] animate-pulse rounded-[14px] bg-[#171717]" />
                 <div className="min-w-0 flex-1 space-y-[8px]">
@@ -1476,7 +1476,7 @@ function ProductMediaLibraryModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="product-media-library-title"
-        className="flowdesk-scale-in-soft absolute left-1/2 top-1/2 flex h-[min(88vh,780px)] w-[min(1180px,calc(100vw-28px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[24px] border border-[#202020] bg-[#090909] shadow-[0_34px_120px_rgba(0,0,0,0.62)]"
+        className="flowdesk-scale-in-soft absolute left-1/2 top-1/2 flex h-[min(88vh,780px)] w-[min(1180px,calc(100vw-28px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[24px] border border-[#1C1C1C] bg-[#0D0D0D] shadow-[0_34px_120px_rgba(0,0,0,0.62)]"
       >
         <div className="flex items-center justify-between gap-[16px] border-b border-[#171717] px-[20px] py-[18px] sm:px-[24px]">
           <div className="min-w-0">
@@ -1660,7 +1660,7 @@ function ProductMediaLibraryModal({
                         if (!isAlreadyUsed) toggleUrl(item.url);
                       }}
                       disabled={isAlreadyUsed}
-                      className="flex w-full items-center gap-[12px] border-b border-[#151515] bg-[#0B0B0B] px-[14px] py-[12px] text-left last:border-b-0 hover:bg-[#101010] disabled:opacity-45"
+                      className="flex w-full items-center gap-[12px] border-b border-[#151515] bg-[#141414] px-[14px] py-[12px] text-left last:border-b-0 hover:bg-[#171717] disabled:opacity-45"
                     >
                       <span className={`flex h-[18px] w-[18px] items-center justify-center rounded-[5px] border ${isSelected ? "border-white bg-white" : "border-[#777]"}`}>
                         {isSelected ? <Check className="h-[15px] w-[15px] text-[#080808]" /> : null}

@@ -658,7 +658,7 @@ function StockItemActionsModal({
               </div>
 
               {isDuplicateOpen ? (
-                <div className="mt-[22px] rounded-[22px] border border-[#1C1C1C] bg-[#0B0B0B] p-[16px]">
+                <div className="mt-[22px] rounded-[22px] border border-[#1C1C1C] bg-[#141414] p-[16px]">
                   <div className="flex flex-col gap-[12px] sm:flex-row sm:items-end sm:justify-between">
                     <div className="min-w-0">
                       <p className="text-[13px] font-semibold text-[#EDEDED]">

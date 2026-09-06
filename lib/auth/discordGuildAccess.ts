@@ -19,8 +19,10 @@ import { getAcceptedTeamGuildIdsForUser } from "@/lib/teams/userTeams";
 const DISCORD_ADMINISTRATOR = BigInt(8);
 const DISCORD_MANAGE_GUILD = BigInt(32);
 const GUILD_CACHE_TTL_MS = 30 * 60 * 1000;
-const BOT_RESOURCE_FRESH_TTL_MS = 25 * 1000;
-const BOT_RESOURCE_STALE_TTL_MS = 5 * 60 * 1000;
+const BOT_RESOURCE_FRESH_TTL_MS = 2 * 60 * 1000;
+const BOT_RESOURCE_STALE_TTL_MS = 15 * 60 * 1000;
+const BOT_MEMBER_FRESH_TTL_MS = 10 * 60 * 1000;
+const BOT_MEMBER_STALE_TTL_MS = 60 * 60 * 1000;
 const BOT_RESOURCE_RETRY_DELAYS_MS = [180, 420, 900];
 
 export type DiscordGuildChannel = {
@@ -629,7 +631,7 @@ export async function fetchGuildMemberSummaryByBot(
   const freshCached = readBotResourceCache(
     botGuildMemberSummaryCache,
     cacheKey,
-    BOT_RESOURCE_FRESH_TTL_MS,
+    BOT_MEMBER_FRESH_TTL_MS,
   );
   if (freshCached) {
     return freshCached;
@@ -638,7 +640,7 @@ export async function fetchGuildMemberSummaryByBot(
   const staleCached = readBotResourceCache(
     botGuildMemberSummaryCache,
     cacheKey,
-    BOT_RESOURCE_STALE_TTL_MS,
+    BOT_MEMBER_STALE_TTL_MS,
   );
 
   try {

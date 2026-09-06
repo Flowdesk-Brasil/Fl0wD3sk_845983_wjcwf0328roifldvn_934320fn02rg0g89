@@ -7,7 +7,7 @@ export type BatePontoMemberProfile = {
   avatarUrl: string | null;
 };
 
-const MEMBER_FETCH_CHUNK_SIZE = 12;
+const MEMBER_FETCH_CHUNK_SIZE = 24;
 
 export async function enrichBatePontoMemberProfiles(
   guildId: string,

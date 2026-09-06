@@ -571,7 +571,7 @@ function CompactPlanSelect({
         disabled={disabled}
         loading={false}
         controlHeightPx={56}
-        variant="immersive"
+        variant="config"
       />
     </div>
   );
@@ -613,7 +613,7 @@ function BillingPeriodSwitcher({
         disabled={disabled || periods.length <= 1}
         loading={false}
         controlHeightPx={56}
-        variant="immersive"
+        variant="config"
       />
     </div>
   );

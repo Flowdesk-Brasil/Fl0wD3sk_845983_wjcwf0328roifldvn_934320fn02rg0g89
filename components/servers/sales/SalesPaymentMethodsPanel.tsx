@@ -258,7 +258,7 @@ function PaymentMethodModal({
           role="dialog"
           aria-modal="true"
           aria-label={`Editar ${method.title}`}
-          className="flowdesk-stage-fade relative w-full max-w-[680px] overflow-hidden rounded-[30px] border border-[#111] bg-[#070707] shadow-[0_34px_110px_rgba(0,0,0,0.52)]"
+          className="flowdesk-stage-fade relative w-full max-w-[680px] overflow-hidden rounded-[30px] border border-[#1C1C1C] bg-[#0D0D0D] shadow-[0_34px_110px_rgba(0,0,0,0.52)]"
         >
           <div className="flex items-start justify-between gap-[16px] border-b border-[#171717] px-[20px] py-[20px] sm:px-[24px]">
             <div className="flex min-w-0 items-start gap-[13px]">
@@ -615,7 +615,7 @@ export function SalesPaymentMethodsPanel({
                 <article
                   key={method.methodKey}
                   className={cn(
-                    "relative flex flex-col gap-[14px] bg-[#0B0B0B] px-[18px] py-[16px] transition hover:bg-[#0E0E0E] sm:px-[22px] lg:flex-row lg:items-center",
+                    "relative flex flex-col gap-[14px] bg-[#141414] px-[18px] py-[16px] transition hover:bg-[#171717] sm:px-[22px] lg:flex-row lg:items-center",
                     isActive ? "shadow-[inset_3px_0_0_#2F8F4E]" : "",
                   )}
                 >
