@@ -17,6 +17,7 @@ export type AdminNavIconKey =
   | "flowai"
   | "testVariables"
   | "audit"
+  | "affiliates"
   | "settings";
 
 export type AdminNavItem = {
@@ -144,6 +145,14 @@ export const ADMIN_NAV_SECTIONS: AdminNavSection[] = [
         href: "/admin/payments",
         icon: "payments",
         permission: "payments.read",
+        status: "active",
+      },
+      {
+        id: "admin-affiliates",
+        label: "Afiliados",
+        href: "/admin/affiliates",
+        icon: "affiliates",
+        permission: "affiliates.read",
         status: "active",
       },
       {
@@ -292,6 +301,15 @@ const ADMIN_PAGE_META_BY_PATH: Array<[path: string, meta: AdminPageMeta]> = [
       title: "Billing",
       description:
         "Estado atual de planos, vigencia e meios de pagamento persistidos no backend oficial da Flowdesk.",
+    },
+  ],
+  [
+    "/admin/affiliates",
+    {
+      eyebrow: "Financeiro",
+      title: "Afiliados",
+      description:
+        "Fila de saques, saldos e situacao dos afiliados. A chave PIX completa aparece so aqui, para quem transfere.",
     },
   ],
   [

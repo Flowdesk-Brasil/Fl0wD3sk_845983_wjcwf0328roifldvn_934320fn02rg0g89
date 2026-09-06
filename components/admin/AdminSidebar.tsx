@@ -17,6 +17,7 @@ import {
   Users,
   UserRound,
   type LucideIcon,
+  Share2,
 } from "lucide-react";
 import { LandingGlowTag } from "@/components/landing/LandingGlowTag";
 import { ADMIN_NAV_SECTIONS, type AdminNavIconKey } from "@/lib/admin/navigation";
@@ -53,6 +54,7 @@ const ADMIN_ICON_MAP: Record<AdminNavIconKey, LucideIcon> = {
   flowai: Sparkles,
   testVariables: LockKeyhole,
   audit: Shield,
+  affiliates: Share2,
   settings: Settings2,
 };
 

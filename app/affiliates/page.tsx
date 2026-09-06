@@ -7,6 +7,7 @@ import type { Metadata } from "next";
 import { buildFlowCwvMetadata } from "@/lib/seo/flowCwv";
 import { TopBetaBanner } from "@/components/landing/TopBetaBanner";
 import { resolveAuthUserAvatarUrl } from "@/lib/auth/avatar";
+import { getProgramRulesSummary } from "@/lib/affiliates/programRules";
 
 export const metadata: Metadata = buildFlowCwvMetadata({
   title: "Programa de Afiliados - Flowdesk",
@@ -39,7 +40,7 @@ export default async function AffiliatesPage() {
         <LandingFrameLines />
         <LandingHeader authenticatedUser={authenticatedUser} />
         <main className="w-full pb-20">
-          <AffiliatesLanding isAuthenticated={Boolean(user)} />
+          <AffiliatesLanding isAuthenticated={Boolean(user)} rules={getProgramRulesSummary()} />
         </main>
         <LandingFooter />
       </div>
