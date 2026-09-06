@@ -129,6 +129,7 @@ import { parseUtcTimestampMs } from "@/lib/time/utcTimestamp";
 import { runCoalescedPaymentRequest } from "@/lib/payments/requestCoalescing";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { resolveDomainPurchaseContext } from "@/lib/domains/checkout";
+import { buildOrderAffiliateStamp } from "@/lib/affiliates/checkoutAttribution";
 
 type CreatePixPaymentBody = {
   guildId?: unknown;
@@ -1405,6 +1406,10 @@ export async function createDraftOrderForCheckout(input: {
     producer: async () => {
       const supabase = getSupabaseAdminClientOrThrow();
 
+      // Indicacao de afiliado, lida do cookie e gravada no pedido. O webhook do
+      // provedor chega sem cookie, entao esta e a unica janela para captura-la.
+      const affiliateStamp = await buildOrderAffiliateStamp();
+
       const createdOrderResult = await supabase
         .from("payment_orders")
         .insert({
@@ -1436,6 +1441,7 @@ export async function createDraftOrderForCheckout(input: {
               },
             },
             ...(input.providerPayload || {}),
+            ...(affiliateStamp || {}),
           },
         })
         .select(PAYMENT_ORDER_SELECT_COLUMNS)

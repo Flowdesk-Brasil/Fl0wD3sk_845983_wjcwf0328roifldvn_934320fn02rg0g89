@@ -20,7 +20,10 @@ import {
 } from "lucide-react";
 
 import { AFFILIATE_LEVELS } from "@/lib/affiliates/affiliateLevels";
-import type { AffiliateLevel } from "@/lib/affiliates/affiliateTypes";
+import type {
+  AffiliateLevel,
+  AffiliateProgramRules,
+} from "@/lib/affiliates/affiliateTypes";
 import { LandingActionButton } from "@/components/landing/LandingActionButton";
 import { LandingReveal } from "@/components/landing/LandingReveal";
 import { LandingGlowTag } from "@/components/landing/LandingGlowTag";
@@ -124,12 +127,12 @@ const PRIMARY_AFFILIATE_FAQ_ITEMS = [
   {
     question: "Como funciona o pagamento de comissoes?",
     answer:
-      "Depois que a venda e aprovada, a comissao entra no seu saldo disponivel. A partir disso, voce pode solicitar saque conforme as regras do programa.",
+      "Depois que a venda e aprovada, a comissao entra no seu saldo em carencia. Cumprido o prazo de carencia, ela vira saldo disponivel e voce pode solicitar o saque via PIX.",
   },
   {
     question: "Qual e o prazo para receber apos solicitar o saque?",
     answer:
-      "Os saques sao processados em ate 2 dias uteis. Assim voce consegue acompanhar tudo pelo dashboard sem depender de atendimento manual.",
+      "Cada solicitacao passa por conferencia antes da transferencia. Voce acompanha a situacao do pedido pelo dashboard, do envio ate o comprovante.",
   },
   {
     question: "Como subo de nivel dentro do programa?",
@@ -463,7 +466,13 @@ function AffiliateFaqAccordion() {
   );
 }
 
-export function AffiliatesLanding({ isAuthenticated }: { isAuthenticated: boolean }) {
+export function AffiliatesLanding({
+  isAuthenticated,
+  rules,
+}: {
+  isAuthenticated: boolean;
+  rules: AffiliateProgramRules;
+}) {
   const router = useRouter();
   const statsRef = useRef<HTMLDivElement | null>(null);
 
@@ -572,10 +581,26 @@ export function AffiliatesLanding({ isAuthenticated }: { isAuthenticated: boolea
                     className="mt-[56px] grid w-full max-w-[1124px] grid-cols-2 gap-[1px] overflow-hidden rounded-[20px] border border-[#111111] bg-[#0C0C0C] sm:grid-cols-4"
                   >
                     {[
-                      { label: "Afiliados ativos", value: "1.200+" },
-                      { label: "Comissoes pagas", value: "R$ 480k+" },
-                      { label: "Taxa de conversao", value: "8,4%" },
-                      { label: "Saques processados", value: "3.700+" },
+                      {
+                        label: "Comissao por venda",
+                        value: `${AFFILIATE_LEVELS.bronze.commissionPct}% a ${AFFILIATE_LEVELS.diamond.commissionPct}%`,
+                      },
+                      {
+                        label: "Janela de indicacao",
+                        value: `${rules.attributionWindowDays} dias`,
+                      },
+                      {
+                        label: "Carencia ate o saque",
+                        value: `${rules.holdingPeriodDays} dias`,
+                      },
+                      {
+                        label: "Saque minimo",
+                        value: rules.withdrawalMinimum.toLocaleString("pt-BR", {
+                          style: "currency",
+                          currency: "BRL",
+                          maximumFractionDigits: 0,
+                        }),
+                      },
                     ].map((stat) => (
                       <div key={stat.label} className="flex flex-col items-center px-[24px] py-[20px]">
                         <span className="text-[22px] font-semibold tracking-[-0.04em] text-[#E5E5E5] md:text-[26px]">
@@ -655,6 +680,9 @@ export function AffiliatesLanding({ isAuthenticated }: { isAuthenticated: boolea
             </h2>
             <p className="mt-[14px] max-w-[560px] text-[15px] leading-[1.65] text-[#6A6A6A]">
               Todo mes rankeamos afiliados por volume de vendas. O Top 3 recebe % de bonus extra na comissao do mes seguinte.
+            </p>
+            <p className="mt-[10px] text-[12px] text-[#5A5A5A]">
+              Exemplo ilustrativo. O ranking real do mes fica no seu painel de afiliado.
             </p>
           </div>
         </LandingReveal>

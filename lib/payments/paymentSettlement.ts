@@ -18,6 +18,7 @@ import {
   logLedgerEvent,
 } from "@/lib/payments/refunds";
 import { finalizePaidDomainOrder } from "@/lib/domains/domainService";
+import { recordAffiliateConversionForOrderSafe } from "@/lib/affiliates/commissions";
 
 type PaymentOrderEventPayload = Record<string, unknown>;
 
@@ -351,6 +352,7 @@ async function markSettlementAsSettled<TOrder extends PaymentSettlementOrderReco
       },
     );
     void sendPaymentApprovedEmailForOrderSafe(updatedOrder);
+    void recordAffiliateConversionForOrderSafe(updatedOrder);
     return updatedOrder;
   } catch {
     await createPaymentOrderEventSafe(
@@ -363,6 +365,7 @@ async function markSettlementAsSettled<TOrder extends PaymentSettlementOrderReco
       },
     );
     void sendPaymentApprovedEmailForOrderSafe(input.order);
+    void recordAffiliateConversionForOrderSafe(input.order);
     return input.order;
   }
 }

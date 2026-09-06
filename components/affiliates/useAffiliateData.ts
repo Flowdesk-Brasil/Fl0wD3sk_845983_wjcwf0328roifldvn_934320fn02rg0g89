@@ -8,8 +8,11 @@ import {
 import type {
   AffiliateAIInsightCard,
   AffiliateCommission,
+  AffiliateEnrollmentStatus,
+  AffiliateLedgerEntry,
   AffiliateLink,
   AffiliateProfile,
+  AffiliateProgramRules,
   AffiliateRankEntry,
   AffiliateStats,
   AffiliateWithdrawal,
@@ -18,10 +21,22 @@ import type {
 export type AffiliateWorkspaceSettings = {
   notify_email?: boolean | null;
   notify_sms?: boolean | null;
+  notify_push?: boolean | null;
   webhook_url?: string | null;
+  webhook_enabled?: boolean | null;
+  webhook_events?: string[] | null;
+  webhook_secret_preview?: string | null;
+  email_address?: string | null;
+  sms_phone?: string | null;
 };
 
 export type AffiliateDataPayload = {
+  /** false quando o usuario ainda nao aderiu ao programa. */
+  enrolled: boolean;
+  status: AffiliateEnrollmentStatus;
+  /** Mensagem do servidor para os estados suspenso e termos vencidos. */
+  statusMessage: string | null;
+  rules: AffiliateProgramRules | null;
   profile: AffiliateProfile | null;
   stats: AffiliateStats | null;
   insight: AffiliateAIInsightCard | null;
@@ -30,6 +45,7 @@ export type AffiliateDataPayload = {
   conversions: AffiliateCommission[];
   withdrawals: AffiliateWithdrawal[];
   ranking: AffiliateRankEntry[];
+  ledger: AffiliateLedgerEntry[];
 };
 
 const CACHE_KEY = "affiliate-workspace:v1";
@@ -46,6 +62,10 @@ function isRetryableStatus(status: number) {
 }
 
 const EMPTY_DATA: AffiliateDataPayload = {
+  enrolled: false,
+  status: "not_enrolled",
+  statusMessage: null,
+  rules: null,
   profile: null,
   stats: null,
   insight: null,
@@ -54,6 +74,7 @@ const EMPTY_DATA: AffiliateDataPayload = {
   conversions: [],
   withdrawals: [],
   ranking: [],
+  ledger: [],
 };
 
 async function fetchAffiliatePayload(signal: AbortSignal) {
@@ -64,6 +85,10 @@ async function fetchAffiliatePayload(signal: AbortSignal) {
   });
   const json = (await response.json()) as {
     ok?: boolean;
+    enrolled?: boolean;
+    status?: AffiliateEnrollmentStatus;
+    message?: string;
+    rules?: AffiliateProgramRules | null;
     profile?: AffiliateProfile | null;
     stats?: AffiliateStats | null;
     insight?: AffiliateAIInsightCard | null;
@@ -72,6 +97,7 @@ async function fetchAffiliatePayload(signal: AbortSignal) {
     conversions?: AffiliateCommission[];
     withdrawals?: AffiliateWithdrawal[];
     ranking?: AffiliateRankEntry[];
+    ledger?: AffiliateLedgerEntry[];
   };
 
   return { response, json };
@@ -81,6 +107,10 @@ function normalizePayload(json: Awaited<ReturnType<typeof fetchAffiliatePayload>
   if (!json.ok) return null;
 
   return {
+    enrolled: json.enrolled === true,
+    status: json.status ?? (json.enrolled ? "active" : "not_enrolled"),
+    statusMessage: json.message ?? null,
+    rules: json.rules ?? null,
     profile: json.profile ?? null,
     stats: json.stats ?? null,
     insight: json.insight ?? null,
@@ -89,6 +119,7 @@ function normalizePayload(json: Awaited<ReturnType<typeof fetchAffiliatePayload>
     conversions: json.conversions ?? [],
     withdrawals: json.withdrawals ?? [],
     ranking: json.ranking ?? [],
+    ledger: json.ledger ?? [],
   };
 }
 
@@ -101,7 +132,13 @@ export function useAffiliateData() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const requestIdRef = useRef(0);
   const dataRef = useRef(data);
-  dataRef.current = data;
+
+  // Escrever no ref durante o render faz o React reclamar e pode dessincronizar.
+  // O ref so e lido dentro de load(), que roda em efeito ou evento, entao
+  // atualizar depois do render e suficiente.
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
 
   const load = useCallback(async (options?: { force?: boolean }) => {
     const requestId = ++requestIdRef.current;
