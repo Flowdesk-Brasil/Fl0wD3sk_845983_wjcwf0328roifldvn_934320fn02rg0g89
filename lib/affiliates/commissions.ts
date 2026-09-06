@@ -27,6 +27,7 @@ import {
 } from "./programRules";
 import { queueAffiliateWebhook } from "./notifications";
 import { readAffiliateCouponRedemption } from "./coupons";
+import { resolveRankTier } from "./ranking";
 
 const LEVEL_ORDER: AffiliateLevel[] = ["bronze", "silver", "gold", "diamond"];
 
@@ -186,7 +187,7 @@ export async function recordAffiliateConversionForOrder(
       return { recorded: false, reason: recurrenceCheck.reason };
     }
 
-    const rankTier = await resolveCurrentRankTier(affiliate.id);
+    const rankTier = await resolveRankTier(affiliate.id);
     const breakdown = calculateCommission({
       level: affiliate.level,
       saleAmount: toNumber(fullOrder.amount),
@@ -453,36 +454,6 @@ function isChargeEligible(chargeSequence: number): { eligible: boolean; reason: 
   return chargeSequence <= RECURRENCE_MAX_CHARGES
     ? { eligible: true, reason: "" }
     : { eligible: false, reason: `Limite de ${RECURRENCE_MAX_CHARGES} cobrancas atingido.` };
-}
-
-/** Posicao do afiliado no podio do mes corrente (1, 2, 3 ou null). */
-async function resolveCurrentRankTier(affiliateId: string): Promise<AffiliateRankTier> {
-  const startOfMonth = new Date();
-  startOfMonth.setUTCDate(1);
-  startOfMonth.setUTCHours(0, 0, 0, 0);
-
-  const { data, error } = await supabaseAdmin
-    .from("affiliate_conversions")
-    .select("affiliate_id, commission_amount")
-    .eq("status", "approved")
-    .is("reversed_at", null)
-    .gte("conversion_date", startOfMonth.toISOString());
-
-  if (error || !data) return null;
-
-  const totals = new Map<string, number>();
-  for (const row of data) {
-    const key = String(row.affiliate_id);
-    totals.set(key, (totals.get(key) ?? 0) + toNumber(row.commission_amount));
-  }
-
-  const ranked = [...totals.entries()].sort((left, right) => right[1] - left[1]);
-  const position = ranked.findIndex(([key]) => key === affiliateId);
-
-  if (position === 0) return 1;
-  if (position === 1) return 2;
-  if (position === 2) return 3;
-  return null;
 }
 
 // ─── Maturacao (carencia) ─────────────────────────────────────────────────────

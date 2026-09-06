@@ -36,6 +36,10 @@ const SUPPORTED_EVENTS: AffiliateWebhookEvent[] = [
   "withdrawal.paid",
   "withdrawal.rejected",
   "level.up",
+  // Emitido quando o nivel muda sem ser promocao (queda por volume menor no
+  // mes). Faltava aqui, entao quem escolhia uma lista explicita de eventos nao
+  // conseguia assinar e nunca receberia essa notificacao.
+  "level.changed",
 ];
 
 function json(status: number, body: Record<string, unknown>) {
@@ -89,6 +93,14 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Estado atual: o POST e parcial, entao decisoes como "pode ativar?" dependem
+  // do que ja estava gravado, nao so do que veio no corpo.
+  const { data: currentSettings } = await supabaseAdmin
+    .from("affiliate_settings")
+    .select("webhook_url, webhook_secret")
+    .eq("affiliate_id", gate.affiliate.id)
+    .maybeSingle();
+
   const payload = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
 
@@ -116,6 +128,22 @@ export async function POST(request: NextRequest) {
 
   if ("webhookEnabled" in payload) {
     patch.webhook_enabled = payload.webhookEnabled === true;
+  }
+
+  // Ativar exige destino. Sem esta checagem, enviar webhookUrl vazio junto de
+  // webhookEnabled true deixava o registro habilitado apontando para lugar
+  // nenhum, e ainda gerava um segredo de assinatura para esse estado.
+  const resolvedUrl =
+    "webhook_url" in patch ? patch.webhook_url : currentSettings?.webhook_url;
+
+  if (patch.webhook_enabled === true && !resolvedUrl) {
+    return attachRequestId(
+      json(400, {
+        ok: false,
+        message: "Informe o endereco do webhook antes de ativar as notificacoes.",
+      }),
+      requestContext.requestId,
+    );
   }
 
   if ("webhookEvents" in payload) {
@@ -163,15 +191,9 @@ export async function POST(request: NextRequest) {
     patch.sms_phone = phone || null;
   }
 
-  // Gera o segredo na primeira vez que o webhook e ativado, ou quando pedido.
-  const { data: current } = await supabaseAdmin
-    .from("affiliate_settings")
-    .select("webhook_secret")
-    .eq("affiliate_id", gate.affiliate.id)
-    .maybeSingle();
-
   const wantsRotation = payload.rotateWebhookSecret === true;
-  const needsSecret = patch.webhook_enabled === true && !current?.webhook_secret;
+  // Gera o segredo na primeira vez que o webhook e ativado, ou quando pedido.
+  const needsSecret = patch.webhook_enabled === true && !currentSettings?.webhook_secret;
 
   if (wantsRotation || needsSecret) {
     patch.webhook_secret = generateWebhookSecret();

@@ -18,6 +18,10 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { findAffiliateByUserId } from "@/lib/affiliates/account";
 import { listLedgerEntries } from "@/lib/affiliates/ledger";
 import { RANK_BONUS } from "@/lib/affiliates/affiliateLevels";
+import {
+  fetchMonthlyRanking,
+  type MonthlyRankingRow,
+} from "@/lib/affiliates/ranking";
 import { maskPixKey } from "@/lib/affiliates/withdrawals";
 import {
   PROGRAM_TERMS_VERSION,
@@ -158,7 +162,7 @@ export async function GET() {
     clicksTotalResult,
     clicksTodayResult,
     clicksMonthResult,
-    monthConversionsResult,
+    monthlyRanking,
     ledgerEntries,
   ] = await Promise.all([
     supabaseAdmin
@@ -205,13 +209,9 @@ export async function GET() {
       .eq("affiliate_id", profile.id)
       .eq("is_counted", true)
       .gte("clicked_at", monthStartIso),
-    // Base do ranking: so as conversoes aprovadas do mes, de todos os afiliados.
-    supabaseAdmin
-      .from("affiliate_conversions")
-      .select("affiliate_id, commission_amount")
-      .eq("status", "approved")
-      .is("reversed_at", null)
-      .gte("conversion_date", monthStartIso),
+    // Ranking agregado no banco: devolve so o topo, em vez de trazer todas as
+    // conversoes do mes para somar aqui.
+    fetchMonthlyRanking(monthStartIso, RANKING_SIZE),
     listLedgerEntries(profile.id, { limit: 50 }),
   ]);
 
@@ -240,7 +240,7 @@ export async function GET() {
   }, 0);
 
   const { ranking, currentRank } = await buildRanking({
-    monthRows: monthConversionsResult.data || [],
+    rows: monthlyRanking,
     currentAffiliateRowId: profile.id,
   });
 
@@ -355,36 +355,19 @@ export async function GET() {
 }
 
 /**
- * Monta o top do mes agregando as conversoes e carregando so os perfis do topo,
- * em vez de trazer a base inteira de afiliados.
+ * Monta o top do mes a partir do agregado do banco, carregando apenas os
+ * perfis que aparecem no topo.
  */
 async function buildRanking(input: {
-  monthRows: Array<{ affiliate_id: string; commission_amount: number | string | null }>;
+  rows: MonthlyRankingRow[];
   currentAffiliateRowId: string;
 }) {
-  const totals = new Map<string, { sales: number; commission: number }>();
-
-  for (const row of input.monthRows) {
-    const key = String(row.affiliate_id || "").trim();
-    if (!key) continue;
-
-    const current = totals.get(key) || { sales: 0, commission: 0 };
-    current.sales += 1;
-    current.commission += toNumber(row.commission_amount);
-    totals.set(key, current);
-  }
-
-  const ordered = [...totals.entries()].sort(
-    (left, right) =>
-      right[1].commission - left[1].commission ||
-      right[1].sales - left[1].sales ||
-      left[0].localeCompare(right[0]),
+  const ordered = input.rows;
+  const currentIndex = ordered.findIndex(
+    (row) => row.affiliateRowId === input.currentAffiliateRowId,
   );
-
-  const currentIndex = ordered.findIndex(([key]) => key === input.currentAffiliateRowId);
   const currentRank = currentIndex >= 0 ? currentIndex + 1 : null;
-
-  const topIds = ordered.slice(0, RANKING_SIZE).map(([key]) => key);
+  const topIds = ordered.map((row) => row.affiliateRowId);
 
   if (topIds.length === 0) {
     return { ranking: [], currentRank };
@@ -404,13 +387,12 @@ async function buildRanking(input: {
 
   const profilesById = new Map((data || []).map((row) => [row.id as string, row]));
 
-  const ranking = topIds
-    .map((id, index) => {
-      const row = profilesById.get(id);
+  const ranking = ordered
+    .map((entry, index) => {
+      const row = profilesById.get(entry.affiliateRowId);
       if (!row) return null;
 
       const userInfo = pickRankingUser(row.user as RankingUser | RankingUser[] | null);
-      const metrics = totals.get(id) || { sales: 0, commission: 0 };
 
       return {
         rank: index + 1,
@@ -421,8 +403,8 @@ async function buildRanking(input: {
           `Afiliado ${String(row.affiliate_id || "").slice(-4)}`,
         avatarUrl: buildDiscordAvatarUrl(userInfo),
         level: ((row.level as AffiliateLevel) || "bronze") as AffiliateLevel,
-        salesThisMonth: metrics.sales,
-        commissionThisMonth: metrics.commission,
+        salesThisMonth: entry.salesCount,
+        commissionThisMonth: entry.commissionTotal,
         // Vem da tabela unica de bonus, nao repetido a mao como na v1.
         bonusPct: index < 3 ? RANK_BONUS[(index + 1) as 1 | 2 | 3].bonusPct : 0,
       };
