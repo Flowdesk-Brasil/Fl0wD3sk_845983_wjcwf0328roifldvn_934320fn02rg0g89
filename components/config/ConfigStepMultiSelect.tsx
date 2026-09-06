@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { ChevronDown } from "lucide-react";
 import { configStepTwoScale } from "@/components/config/configStepTwoScale";
 import { resolveConfigStepDropdownRect } from "@/components/config/configStepDropdownPosition";
+import { useDiscordGuildResourcesRefreshOnMenuOpen } from "@/components/config/discordGuildResourcesRefreshContext";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 
 type SelectOption = {
@@ -27,7 +28,7 @@ type ConfigStepMultiSelectProps = {
 export function ConfigStepMultiSelect({
   label,
   placeholder,
-  options,
+  options = [],
   values,
   onChange,
   disabled = false,
@@ -46,6 +47,7 @@ export function ConfigStepMultiSelect({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const dropdownRef = useRef<HTMLDivElement | null>(null);
+  const refreshResourcesOnMenuOpen = useDiscordGuildResourcesRefreshOnMenuOpen();
   const isBlocked = disabled || loading;
   const isDropdownOpen = isOpen && !isBlocked;
   const isImmersive = variant === "immersive";
@@ -99,6 +101,11 @@ export function ConfigStepMultiSelect({
       window.removeEventListener("scroll", syncDropdownRect, true);
     };
   }, [dropdownHeight, isDropdownOpen]);
+
+  useEffect(() => {
+    if (!isDropdownOpen) return;
+    refreshResourcesOnMenuOpen?.();
+  }, [isDropdownOpen, refreshResourcesOnMenuOpen]);
 
   const selectedNames = useMemo(() => {
     const selectedSet = new Set(values);

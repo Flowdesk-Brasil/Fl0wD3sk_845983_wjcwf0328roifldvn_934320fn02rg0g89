@@ -1,5 +1,7 @@
 import {
+  applyUserAvatarThumbnailToLayout,
   DEFAULT_TICKET_PANEL_BUTTON_LABEL,
+  buildDiscordButtonEmojiPayload,
   deriveLegacyTicketPanelFields,
   normalizeTicketPanelLayout,
   type TicketPanelButtonComponent,
@@ -88,12 +90,15 @@ function buildButton(
     | Extract<TicketPanelContentAccessory, { type: "button" | "link_button" }>,
   state: BuildState,
 ): JsonRecord {
+  const emoji = buildDiscordButtonEmojiPayload(component.emoji);
+
   if (component.type === "link_button") {
     return {
       type: COMPONENT_TYPE.BUTTON,
       style: BUTTON_STYLE.LINK,
       label: component.label.trim() || "Abrir link",
       url: component.url.trim() || "https://flowdesk.com.br",
+      ...(emoji ? { emoji } : {}),
     };
   }
 
@@ -104,6 +109,7 @@ function buildButton(
     style: resolveButtonStyle(component.style),
     label: component.label.trim() || DEFAULT_TICKET_PANEL_BUTTON_LABEL,
     disabled: Boolean(component.disabled),
+    ...(emoji ? { emoji } : {}),
   };
 }
 
@@ -172,10 +178,26 @@ function addActionsToComponents(
   flushButtons();
 }
 
+function resolveThumbnailAccessoryUrl(
+  accessory: TicketPanelContentAccessory,
+  userAvatarUrl?: string | null,
+) {
+  if (accessory.type === "thumbnail") {
+    return accessory.imageUrl.trim();
+  }
+
+  if (accessory.type === "user_thumbnail") {
+    return (userAvatarUrl || "").trim();
+  }
+
+  return "";
+}
+
 function addContentComponent(
   target: JsonRecord[],
   content: TicketPanelContentComponent,
   state: BuildState,
+  userAvatarUrl?: string | null,
 ) {
   const textContent = buildTextContent(content.markdown);
 
@@ -184,14 +206,19 @@ function addContentComponent(
     return;
   }
 
-  if (content.accessory.type === "thumbnail" && content.accessory.imageUrl.trim()) {
+  const thumbnailUrl = resolveThumbnailAccessoryUrl(
+    content.accessory,
+    userAvatarUrl,
+  );
+
+  if (thumbnailUrl) {
     target.push({
       type: COMPONENT_TYPE.SECTION,
       components: [buildTextDisplay(textContent)],
       accessory: {
         type: COMPONENT_TYPE.THUMBNAIL,
         media: {
-          url: content.accessory.imageUrl.trim(),
+          url: thumbnailUrl,
         },
       },
     });
@@ -221,9 +248,10 @@ function addDisplayComponent(
     TicketPanelButtonComponent | TicketPanelLinkButtonComponent | TicketPanelSelectComponent | TicketPanelContainerComponent
   >,
   state: BuildState,
+  userAvatarUrl?: string | null,
 ) {
   if (component.type === "content") {
-    addContentComponent(target, component, state);
+    addContentComponent(target, component, state, userAvatarUrl);
     return;
   }
 
@@ -269,6 +297,7 @@ function mapSeparatorSpacing(spacing: "sm" | "md" | "lg") {
 function buildComponentList(
   components: AnyPanelComponent[],
   state: BuildState,
+  userAvatarUrl?: string | null,
 ) {
   const built: JsonRecord[] = [];
   let pendingActions: Array<
@@ -299,12 +328,12 @@ function buildComponentList(
         accent_color: component.accentColor.trim()
           ? Number.parseInt(component.accentColor.slice(1), 16)
           : undefined,
-        components: buildComponentList(component.children, state),
+        components: buildComponentList(component.children, state, userAvatarUrl),
       });
       continue;
     }
 
-    addDisplayComponent(built, component, state);
+    addDisplayComponent(built, component, state, userAvatarUrl);
   }
 
   flushPendingActions();
@@ -313,16 +342,22 @@ function buildComponentList(
 
 export function buildTicketPanelDispatchPayload(
   layoutInput: TicketPanelLayout,
-  options: { interactiveCustomId?: string } = {},
+  options: {
+    interactiveCustomId?: string;
+    userAvatarUrl?: string | null;
+  } = {},
 ) {
-  const layout = normalizeTicketPanelLayout(layoutInput);
+  let layout = normalizeTicketPanelLayout(layoutInput);
+  if (options.userAvatarUrl) {
+    layout = applyUserAvatarThumbnailToLayout(layout, options.userAvatarUrl);
+  }
   const derived = deriveLegacyTicketPanelFields(layout);
   const state: BuildState = {
     hasInteractiveOpenAction: false,
     interactiveCustomId: options.interactiveCustomId || OPEN_TICKET_CUSTOM_ID,
   };
 
-  const components = buildComponentList(layout, state);
+  const components = buildComponentList(layout, state, options.userAvatarUrl);
 
   if (!state.hasInteractiveOpenAction) {
     components.push({

@@ -5,15 +5,21 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from "react-dom";
 import {
   CircleHelp,
+  Clock,
+  Hash,
   ImageUp,
   LogIn,
   LogOut,
+  MessageSquare,
   MicOff,
   PencilLine,
   Settings2,
+  Shield,
   ShieldCheck,
   ShieldX,
+  ShoppingBag,
   Signature,
+  Ticket,
   TimerOff,
   Trash2,
   UserRoundX,
@@ -23,12 +29,24 @@ import { ClientErrorBoundary } from "@/components/common/ClientErrorBoundary";
 import { BotMissingModal } from "@/components/config/BotMissingModal";
 import { ConfigStepMultiSelect } from "@/components/config/ConfigStepMultiSelect";
 import { ConfigStepSelect } from "@/components/config/ConfigStepSelect";
+import { DiscordGuildResourcesRefreshProvider } from "@/components/config/discordGuildResourcesRefreshContext";
 import { LandingGlowTag } from "@/components/landing/LandingGlowTag";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { useNotificationEffect } from "@/components/notifications/NotificationsProvider";
 import { ServerSettingsEditorSkeleton } from "@/components/servers/ServerSettingsEditorSkeleton";
 import { TicketMessageBuilder } from "@/components/servers/TicketMessageBuilder";
+import { BatePontoHistoryPanel } from "@/components/servers/BatePontoHistoryPanel";
+import { BatePontoRankingPanel } from "@/components/servers/BatePontoRankingPanel";
 import { PermissionDeniedState } from "@/components/servers/PermissionDeniedState";
+import {
+  ModuleCard,
+  ModuleHero,
+  ModulePage,
+  ModuleSetting,
+  ModuleStat,
+  optionLabel,
+  optionLabels,
+} from "@/components/servers/module-ui/ModuleUi";
 import { serversScale } from "@/components/servers/serversScale";
 import {
   SalesCategoryEditPanel,
@@ -49,17 +67,35 @@ import { SalesPaymentMethodsPanel } from "@/components/servers/sales/SalesPaymen
 import { SalesStockPanel } from "@/components/servers/sales/SalesStockPanel";
 import {
   getServerDashboardSettings,
+  getServerDashboardSettingsFetchEpoch,
   invalidateCachedServerDashboardSettings,
+  markServerDashboardSettingsSaved,
+  patchCachedServerDashboardSettings,
   readCachedServerDashboardSettings,
 } from "@/lib/servers/serverDashboardSettingsClient";
 import type { ServerDashboardSettingsPayload } from "@/lib/servers/serverDashboardSettingsClient";
 import {
   countTicketPanelFunctionButtons,
   createDefaultTicketPanelLayout,
+  createDefaultCaptchaPanelLayout,
+  createDefaultSuggestionPanelLayout,
+  createDefaultSuggestionPublishedLayout,
+  createDefaultBatePontoPanelLayout,
+  createDefaultBatePontoLogLayout,
+  isUnsetSuggestionPublishedLayout,
+  normalizeCaptchaPanelLayout,
+  normalizeSuggestionPanelLayout,
+  normalizeSuggestionPublishedLayout,
+  normalizeBatePontoPanelLayout,
+  normalizeBatePontoLogLayout,
+  suggestionPublishedLayoutHasRequiredSlots,
+  SUGGESTION_PUBLISHED_BODY_PREVIEW,
+  SUGGESTION_PUBLISHED_TITLE_PREVIEW,
   deriveLegacyTicketPanelFields,
   normalizeTicketPanelLayout,
   ticketPanelLayoutHasAtMostOneFunctionButton,
   ticketPanelLayoutHasRequiredParts,
+  ticketPanelLayoutHasRenderableContent,
   type TicketPanelLayout,
 } from "@/lib/servers/ticketPanelBuilder";
 import {
@@ -82,6 +118,7 @@ import {
 } from "@/lib/payments/cardAvailability";
 import { isPlanCode, type PlanCode } from "@/lib/plans/catalog";
 import { useBodyScrollLock } from "@/lib/ui/useBodyScrollLock";
+import { useLiveDiscordGuildResources } from "@/lib/servers/useLiveDiscordGuildResources";
 
 type ManagedServerStatus = "paid" | "expired" | "off" | "pending_payment";
 type EditorTab = "settings" | "payments" | "methods" | "plans";
@@ -103,6 +140,14 @@ type ServerSettingsSection =
   | "sales_coupons_gifts_edit"
   | "entry_exit_overview"
   | "entry_exit_message"
+  | "captcha_overview"
+  | "captcha_message"
+  | "suggestions_overview"
+  | "suggestions_message"
+  | "bate_ponto_overview"
+  | "bate_ponto_message"
+  | "bate_ponto_ranking"
+  | "bate_ponto_history"
   | "security_antilink"
   | "security_autorole"
   | "security_logs"
@@ -216,6 +261,46 @@ type WelcomeSettingsDraft = {
   entryLogThumbnailMode: WelcomeThumbnailMode;
   exitPublicThumbnailMode: WelcomeThumbnailMode;
   exitLogThumbnailMode: WelcomeThumbnailMode;
+};
+
+type CaptchaSettingsDraft = {
+  enabled: boolean;
+  panelChannelId: string | null;
+  logsChannelId: string | null;
+  verifiedRoleIds: string[];
+  bypassRoleIds: string[];
+  panelLayout: TicketPanelLayout;
+  challengeTitle: string;
+  challengeDescription: string;
+  maxAttempts: number;
+  timeoutSeconds: number;
+  kickOnFail: boolean;
+  successMessage: string;
+};
+
+type SuggestionSettingsDraft = {
+  enabled: boolean;
+  panelChannelId: string | null;
+  publishChannelId: string | null;
+  logsChannelId: string | null;
+  panelLayout: TicketPanelLayout;
+  suggestionLayout: TicketPanelLayout;
+};
+
+type BatePontoSettingsDraft = {
+  enabled: boolean;
+  panelChannelId: string | null;
+  logsChannelId: string | null;
+  panelLayout: TicketPanelLayout;
+  logLayout: TicketPanelLayout;
+  allowedRoleIds: string[];
+  hourBankEnabled: boolean;
+  dailyTargetMinutes: number;
+  timezone: string;
+  autoFinishOpenSessions: boolean;
+  maxOpenHours: number;
+  requireVoiceChannel: boolean;
+  requiredVoiceChannelIds: string[];
 };
 
 type AntiLinkEnforcementAction = "delete_only" | "timeout" | "kick" | "ban";
@@ -775,6 +860,107 @@ function areWelcomeSettingsDraftsEqual(
   return JSON.stringify(normalizeWelcomeSettingsDraft(left)) === JSON.stringify(normalizeWelcomeSettingsDraft(right));
 }
 
+function normalizeCaptchaSettingsDraft(
+  draft: CaptchaSettingsDraft,
+): CaptchaSettingsDraft {
+  return {
+    enabled: draft.enabled,
+    panelChannelId: draft.panelChannelId,
+    logsChannelId: draft.logsChannelId,
+    verifiedRoleIds: normalizeDraftIds(draft.verifiedRoleIds),
+    bypassRoleIds: normalizeDraftIds(draft.bypassRoleIds),
+    panelLayout: normalizeTicketPanelLayout(draft.panelLayout),
+    challengeTitle:
+      typeof draft.challengeTitle === "string" ? draft.challengeTitle.trim() : "",
+    challengeDescription:
+      typeof draft.challengeDescription === "string"
+        ? draft.challengeDescription.trim()
+        : "",
+    maxAttempts: Math.max(1, Math.min(10, Number(draft.maxAttempts || 3))),
+    timeoutSeconds: Math.max(30, Math.min(600, Number(draft.timeoutSeconds || 120))),
+    kickOnFail: draft.kickOnFail === true,
+    successMessage:
+      typeof draft.successMessage === "string" ? draft.successMessage.trim() : "",
+  };
+}
+
+function areCaptchaSettingsDraftsEqual(
+  left: CaptchaSettingsDraft | null,
+  right: CaptchaSettingsDraft | null,
+) {
+  if (!left || !right) return left === right;
+
+  return (
+    JSON.stringify(normalizeCaptchaSettingsDraft(left)) ===
+    JSON.stringify(normalizeCaptchaSettingsDraft(right))
+  );
+}
+
+function normalizeSuggestionSettingsDraft(
+  draft: SuggestionSettingsDraft,
+): SuggestionSettingsDraft {
+  return {
+    enabled: draft.enabled,
+    panelChannelId: draft.panelChannelId,
+    publishChannelId: draft.publishChannelId,
+    logsChannelId: draft.logsChannelId,
+    panelLayout: normalizeSuggestionPanelLayout(draft.panelLayout),
+    suggestionLayout: isUnsetSuggestionPublishedLayout(draft.suggestionLayout)
+      ? ([] as TicketPanelLayout)
+      : normalizeSuggestionPublishedLayout(draft.suggestionLayout),
+  };
+}
+
+function areSuggestionSettingsDraftsEqual(
+  left: SuggestionSettingsDraft | null,
+  right: SuggestionSettingsDraft | null,
+) {
+  if (!left || !right) return left === right;
+
+  return (
+    JSON.stringify(normalizeSuggestionSettingsDraft(left)) ===
+    JSON.stringify(normalizeSuggestionSettingsDraft(right))
+  );
+}
+
+function normalizeBatePontoSettingsDraft(
+  draft: BatePontoSettingsDraft,
+): BatePontoSettingsDraft {
+  return {
+    enabled: draft.enabled,
+    panelChannelId: draft.panelChannelId,
+    logsChannelId: draft.logsChannelId,
+    panelLayout: normalizeBatePontoPanelLayout(draft.panelLayout),
+    logLayout: normalizeBatePontoLogLayout(draft.logLayout),
+    allowedRoleIds: normalizeDraftIds(draft.allowedRoleIds),
+    hourBankEnabled: draft.hourBankEnabled !== false,
+    dailyTargetMinutes: Math.max(
+      60,
+      Math.min(1440, Number(draft.dailyTargetMinutes || 480) || 480),
+    ),
+    timezone:
+      typeof draft.timezone === "string" && draft.timezone.trim()
+        ? draft.timezone.trim().slice(0, 64)
+        : "America/Sao_Paulo",
+    autoFinishOpenSessions: draft.autoFinishOpenSessions === true,
+    maxOpenHours: Math.max(1, Math.min(24, Number(draft.maxOpenHours || 12) || 12)),
+    requireVoiceChannel: draft.requireVoiceChannel === true,
+    requiredVoiceChannelIds: normalizeDraftIds(draft.requiredVoiceChannelIds),
+  };
+}
+
+function areBatePontoSettingsDraftsEqual(
+  left: BatePontoSettingsDraft | null,
+  right: BatePontoSettingsDraft | null,
+) {
+  if (!left || !right) return left === right;
+
+  return (
+    JSON.stringify(normalizeBatePontoSettingsDraft(left)) ===
+    JSON.stringify(normalizeBatePontoSettingsDraft(right))
+  );
+}
+
 function normalizeAntiLinkEnforcementAction(
   value: unknown,
 ): AntiLinkEnforcementAction {
@@ -1059,6 +1245,18 @@ function areSecurityLogsSettingsDraftsEqual(
   if (!left || !right) return left === right;
 
   return JSON.stringify(normalizeSecurityLogsSettingsDraft(left)) === JSON.stringify(normalizeSecurityLogsSettingsDraft(right));
+}
+
+function isSettingsDraftDirty<T>(
+  current: T | null | undefined,
+  saved: T | null | undefined,
+  areEqual: (left: T, right: T) => boolean,
+) {
+  if (current == null || saved == null) {
+    return false;
+  }
+
+  return !areEqual(current, saved);
 }
 
 type DashboardInlineSwitchProps = {
@@ -2071,10 +2269,6 @@ export function ServerSettingsEditor({
   const [isSaveBarExiting, setIsSaveBarExiting] = useState(false);
   const navigationBlockedFeedbackTimeoutRef = useRef<number | null>(null);
 
-  const [textChannelOptions, setTextChannelOptions] = useState<SelectOption[]>([]);
-  const [categoryOptions, setCategoryOptions] = useState<SelectOption[]>([]);
-  const [roleOptions, setRoleOptions] = useState<SelectOption[]>([]);
-
   const [menuChannelId, setMenuChannelId] = useState<string | null>(null);
   const [ticketsCategoryId, setTicketsCategoryId] = useState<string | null>(null);
   const [logsCreatedChannelId, setLogsCreatedChannelId] = useState<string | null>(null);
@@ -2108,6 +2302,65 @@ export function ServerSettingsEditor({
     createDefaultTicketPanelLayout(),
   );
   const [ticketEnabled, setTicketEnabled] = useState(false);
+  const [captchaEnabled, setCaptchaEnabled] = useState(false);
+  const [captchaPanelChannelId, setCaptchaPanelChannelId] = useState<string | null>(null);
+  const [captchaLogsChannelId, setCaptchaLogsChannelId] = useState<string | null>(null);
+  const [captchaVerifiedRoleIds, setCaptchaVerifiedRoleIds] = useState<string[]>([]);
+  const [captchaBypassRoleIds, setCaptchaBypassRoleIds] = useState<string[]>([]);
+  const [captchaPanelLayout, setCaptchaPanelLayout] = useState<TicketPanelLayout>(
+    createDefaultCaptchaPanelLayout(),
+  );
+  const [captchaChallengeTitle, setCaptchaChallengeTitle] = useState(
+    "Verificacao de seguranca",
+  );
+  const [captchaChallengeDescription, setCaptchaChallengeDescription] = useState(
+    "Selecione o codigo que aparece na imagem acima.",
+  );
+  const [captchaMaxAttempts, setCaptchaMaxAttempts] = useState(3);
+  const [captchaTimeoutSeconds, setCaptchaTimeoutSeconds] = useState(120);
+  const [captchaKickOnFail, setCaptchaKickOnFail] = useState(false);
+  const [captchaSuccessMessage, setCaptchaSuccessMessage] = useState(
+    "Verificacao concluida com sucesso. Bem-vindo ao servidor!",
+  );
+  const [suggestionsEnabled, setSuggestionsEnabled] = useState(false);
+  const [suggestionsPanelChannelId, setSuggestionsPanelChannelId] = useState<string | null>(
+    null,
+  );
+  const [suggestionsPublishChannelId, setSuggestionsPublishChannelId] = useState<
+    string | null
+  >(null);
+  const [suggestionsLogsChannelId, setSuggestionsLogsChannelId] = useState<string | null>(
+    null,
+  );
+  const [suggestionsPanelLayout, setSuggestionsPanelLayout] = useState<TicketPanelLayout>(
+    createDefaultSuggestionPanelLayout(),
+  );
+  const [suggestionsSuggestionLayout, setSuggestionsSuggestionLayout] =
+    useState<TicketPanelLayout>(createDefaultSuggestionPublishedLayout());
+  const [batePontoEnabled, setBatePontoEnabled] = useState(false);
+  const [batePontoPanelChannelId, setBatePontoPanelChannelId] = useState<string | null>(
+    null,
+  );
+  const [batePontoLogsChannelId, setBatePontoLogsChannelId] = useState<string | null>(
+    null,
+  );
+  const [batePontoPanelLayout, setBatePontoPanelLayout] = useState<TicketPanelLayout>(
+    createDefaultBatePontoPanelLayout(),
+  );
+  const [batePontoLogLayout, setBatePontoLogLayout] = useState<TicketPanelLayout>(
+    createDefaultBatePontoLogLayout(),
+  );
+  const [batePontoAllowedRoleIds, setBatePontoAllowedRoleIds] = useState<string[]>([]);
+  const [batePontoHourBankEnabled, setBatePontoHourBankEnabled] = useState(true);
+  const [batePontoDailyTargetMinutes, setBatePontoDailyTargetMinutes] = useState(480);
+  const [batePontoTimezone, setBatePontoTimezone] = useState("America/Sao_Paulo");
+  const [batePontoAutoFinishOpenSessions, setBatePontoAutoFinishOpenSessions] =
+    useState(false);
+  const [batePontoMaxOpenHours, setBatePontoMaxOpenHours] = useState(12);
+  const [batePontoRequireVoiceChannel, setBatePontoRequireVoiceChannel] =
+    useState(false);
+  const [batePontoRequiredVoiceChannelIds, setBatePontoRequiredVoiceChannelIds] =
+    useState<string[]>([]);
   const [welcomeEnabled, setWelcomeEnabled] = useState(false);
   const [entryPublicChannelId, setEntryPublicChannelId] = useState<string | null>(null);
   const [entryLogChannelId, setEntryLogChannelId] = useState<string | null>(null);
@@ -2208,10 +2461,111 @@ export function ServerSettingsEditor({
   const [claimRoleIds, setClaimRoleIds] = useState<string[]>([]);
   const [closeRoleIds, setCloseRoleIds] = useState<string[]>([]);
   const [notifyRoleIds, setNotifyRoleIds] = useState<string[]>([]);
+
+  const preserveResourceIds = useMemo(() => {
+    const securityLogChannelIds = SECURITY_LOG_EVENT_OPTIONS.map(
+      (option) => securityLogsDraft.events[option.key].channelId,
+    );
+
+    return {
+      channelIds: [
+        menuChannelId,
+        logsCreatedChannelId,
+        logsClosedChannelId,
+        refundApprovalChannelId,
+        entryPublicChannelId,
+        entryLogChannelId,
+        exitPublicChannelId,
+        exitLogChannelId,
+        captchaPanelChannelId,
+        captchaLogsChannelId,
+        suggestionsPanelChannelId,
+        suggestionsPublishChannelId,
+        suggestionsLogsChannelId,
+        batePontoPanelChannelId,
+        batePontoLogsChannelId,
+        antiLinkLogChannelId,
+        salesPaymentApprovedLogChannelId,
+        salesPaymentPendingLogChannelId,
+        salesPaymentRejectedLogChannelId,
+        securityLogsDraft.defaultChannelId,
+        ...securityLogChannelIds,
+        ...antiLinkIgnoredChannelIds,
+      ],
+      categoryIds: [ticketsCategoryId, salesCartsCategoryId],
+      roleIds: [
+        adminRoleId,
+        ...claimRoleIds,
+        ...closeRoleIds,
+        ...notifyRoleIds,
+        ...refundApproverRoleIds,
+        ...captchaVerifiedRoleIds,
+        ...captchaBypassRoleIds,
+        ...batePontoAllowedRoleIds,
+        ...batePontoRequiredVoiceChannelIds,
+        ...antiLinkIgnoredRoleIds,
+        ...autoRoleRoleIds,
+      ],
+    };
+  }, [
+    adminRoleId,
+    antiLinkIgnoredChannelIds,
+    antiLinkIgnoredRoleIds,
+    antiLinkLogChannelId,
+    autoRoleRoleIds,
+    captchaBypassRoleIds,
+    captchaLogsChannelId,
+    captchaPanelChannelId,
+    captchaVerifiedRoleIds,
+    claimRoleIds,
+    closeRoleIds,
+    entryLogChannelId,
+    entryPublicChannelId,
+    exitLogChannelId,
+    exitPublicChannelId,
+    logsClosedChannelId,
+    logsCreatedChannelId,
+    menuChannelId,
+    notifyRoleIds,
+    refundApprovalChannelId,
+    refundApproverRoleIds,
+    salesCartsCategoryId,
+    salesPaymentApprovedLogChannelId,
+    salesPaymentPendingLogChannelId,
+    salesPaymentRejectedLogChannelId,
+    suggestionsLogsChannelId,
+    suggestionsPanelChannelId,
+    suggestionsPublishChannelId,
+    batePontoAllowedRoleIds,
+    batePontoRequiredVoiceChannelIds,
+    batePontoLogsChannelId,
+    batePontoPanelChannelId,
+    securityLogsDraft,
+    ticketsCategoryId,
+  ]);
+
+  const {
+    textChannelOptions,
+    voiceChannelOptions,
+    categoryOptions,
+    roleOptions,
+    applyResourceSnapshot,
+    refreshResourcesOnMenuOpen,
+  } = useLiveDiscordGuildResources(guildId, {
+    enabled: Boolean(guildId),
+    preserveResourceIds,
+  });
+
   const [savedSettingsDraft, setSavedSettingsDraft] =
     useState<ServerSettingsDraft | null>(null);
   const [savedWelcomeSettingsDraft, setSavedWelcomeSettingsDraft] =
     useState<WelcomeSettingsDraft | null>(null);
+  const [savedCaptchaSettingsDraft, setSavedCaptchaSettingsDraft] =
+    useState<CaptchaSettingsDraft | null>(null);
+  const [savedSuggestionSettingsDraft, setSavedSuggestionSettingsDraft] =
+    useState<SuggestionSettingsDraft | null>(null);
+  const [savedBatePontoSettingsDraft, setSavedBatePontoSettingsDraft] =
+    useState<BatePontoSettingsDraft | null>(null);
   const [savedAntiLinkSettingsDraft, setSavedAntiLinkSettingsDraft] =
     useState<AntiLinkSettingsDraft | null>(null);
   const [savedAutoRoleSettingsDraft, setSavedAutoRoleSettingsDraft] =
@@ -2220,6 +2574,22 @@ export function ServerSettingsEditor({
     useState<SalesSettingsDraft | null>(null);
   const currentTicketDraftRef = useRef<ServerSettingsDraft | null>(null);
   const savedTicketDraftRef = useRef<ServerSettingsDraft | null>(null);
+  const currentWelcomeDraftRef = useRef<WelcomeSettingsDraft | null>(null);
+  const savedWelcomeDraftRef = useRef<WelcomeSettingsDraft | null>(null);
+  const currentCaptchaDraftRef = useRef<CaptchaSettingsDraft | null>(null);
+  const savedCaptchaDraftRef = useRef<CaptchaSettingsDraft | null>(null);
+  const currentSuggestionDraftRef = useRef<SuggestionSettingsDraft | null>(null);
+  const savedSuggestionDraftRef = useRef<SuggestionSettingsDraft | null>(null);
+  const currentBatePontoDraftRef = useRef<BatePontoSettingsDraft | null>(null);
+  const savedBatePontoDraftRef = useRef<BatePontoSettingsDraft | null>(null);
+  const currentAntiLinkDraftRef = useRef<AntiLinkSettingsDraft | null>(null);
+  const savedAntiLinkDraftRef = useRef<AntiLinkSettingsDraft | null>(null);
+  const currentAutoRoleDraftRef = useRef<AutoRoleSettingsDraft | null>(null);
+  const savedAutoRoleDraftRef = useRef<AutoRoleSettingsDraft | null>(null);
+  const currentSalesDraftRef = useRef<SalesSettingsDraft | null>(null);
+  const savedSalesDraftRef = useRef<SalesSettingsDraft | null>(null);
+  const currentSecurityLogsDraftRef = useRef<SecurityLogsSettingsDraft | null>(null);
+  const savedSecurityLogsDraftRef = useRef<SecurityLogsSettingsDraft | null>(null);
   const [isStaffCardCollapsed, setIsStaffCardCollapsed] = useState(true);
   const [welcomeMessageTab, setWelcomeMessageTab] = useState<"entry" | "exit">(
     "entry",
@@ -2336,6 +2706,14 @@ export function ServerSettingsEditor({
         sales_coupons_gifts_edit: "server_manage_tickets_overview",
         entry_exit_overview: "server_manage_welcome_overview",
         entry_exit_message: "server_manage_welcome_message",
+        captcha_overview: "server_manage_captcha_overview",
+        captcha_message: "server_manage_captcha_message",
+        suggestions_overview: "server_manage_suggestions_overview",
+        suggestions_message: "server_manage_suggestions_message",
+        bate_ponto_overview: "server_manage_bate_ponto_overview",
+        bate_ponto_message: "server_manage_bate_ponto_message",
+        bate_ponto_ranking: "server_manage_bate_ponto_ranking",
+        bate_ponto_history: "server_manage_bate_ponto_history",
         security_antilink: "server_manage_antilink",
         security_autorole: "server_manage_autorole",
         security_logs: "server_view_security_logs",
@@ -2383,16 +2761,58 @@ export function ServerSettingsEditor({
 
   const applyDashboardSettingsPayload = useCallback(
     (payload: ServerDashboardSettingsPayload) => {
-      const shouldPreserveLocalTicketDraft =
-        currentTicketDraftRef.current !== null &&
-        savedTicketDraftRef.current !== null &&
-        !areServerSettingsDraftsEqual(
-          currentTicketDraftRef.current,
-          savedTicketDraftRef.current,
-        );
+      const shouldPreserveLocalTicketDraft = isSettingsDraftDirty(
+        currentTicketDraftRef.current,
+        savedTicketDraftRef.current,
+        areServerSettingsDraftsEqual,
+      );
+      const shouldPreserveLocalWelcomeDraft = isSettingsDraftDirty(
+        currentWelcomeDraftRef.current,
+        savedWelcomeDraftRef.current,
+        areWelcomeSettingsDraftsEqual,
+      );
+      const shouldPreserveLocalCaptchaDraft = isSettingsDraftDirty(
+        currentCaptchaDraftRef.current,
+        savedCaptchaDraftRef.current,
+        areCaptchaSettingsDraftsEqual,
+      );
+      const shouldPreserveLocalSuggestionDraft = isSettingsDraftDirty(
+        currentSuggestionDraftRef.current,
+        savedSuggestionDraftRef.current,
+        areSuggestionSettingsDraftsEqual,
+      );
+      const shouldPreserveLocalBatePontoDraft = isSettingsDraftDirty(
+        currentBatePontoDraftRef.current,
+        savedBatePontoDraftRef.current,
+        areBatePontoSettingsDraftsEqual,
+      );
+      const shouldPreserveLocalAntiLinkDraft = isSettingsDraftDirty(
+        currentAntiLinkDraftRef.current,
+        savedAntiLinkDraftRef.current,
+        areAntiLinkSettingsDraftsEqual,
+      );
+      const shouldPreserveLocalAutoRoleDraft = isSettingsDraftDirty(
+        currentAutoRoleDraftRef.current,
+        savedAutoRoleDraftRef.current,
+        areAutoRoleSettingsDraftsEqual,
+      );
+      const shouldPreserveLocalSalesDraft = isSettingsDraftDirty(
+        currentSalesDraftRef.current,
+        savedSalesDraftRef.current,
+        areSalesSettingsDraftsEqual,
+      );
+      const shouldPreserveLocalSecurityLogsDraft = isSettingsDraftDirty(
+        currentSecurityLogsDraftRef.current,
+        savedSecurityLogsDraftRef.current,
+        areSecurityLogsSettingsDraftsEqual,
+      );
       const text = payload.channels.text.map((channel) => ({
         id: channel.id,
         name: `# ${channel.name}`,
+      }));
+      const voice = (payload.channels.voice || []).map((channel) => ({
+        id: channel.id,
+        name: channel.name,
       }));
       const categories = payload.channels.categories.map((channel) => ({
         id: channel.id,
@@ -2400,11 +2820,15 @@ export function ServerSettingsEditor({
       }));
       const roleList = payload.roles as SelectOption[];
 
-      setTextChannelOptions(text);
-      setCategoryOptions(categories);
-      setRoleOptions(roleList);
+      applyResourceSnapshot({
+        textChannelOptions: text,
+        voiceChannelOptions: voice,
+        categoryOptions: categories,
+        roleOptions: roleList,
+      });
 
       const textSet = new Set(text.map((item) => item.id));
+      const voiceSet = new Set(voice.map((item) => item.id));
       const categorySet = new Set(categories.map((item) => item.id));
       const roleSet = new Set(roleList.map((item) => item.id));
 
@@ -2507,6 +2931,160 @@ export function ServerSettingsEditor({
           ? "avatar"
           : "custom";
 
+      const hasCaptchaSettings = Boolean(payload.captchaSettings);
+      const nextCaptchaEnabled = Boolean(payload.captchaSettings?.enabled);
+      const nextCaptchaPanelChannelId = hasCaptchaSettings
+        ? payload.captchaSettings?.panelChannelId &&
+          textSet.has(payload.captchaSettings.panelChannelId)
+          ? payload.captchaSettings.panelChannelId
+          : null
+        : null;
+      const nextCaptchaLogsChannelId = hasCaptchaSettings
+        ? payload.captchaSettings?.logsChannelId &&
+          textSet.has(payload.captchaSettings.logsChannelId)
+          ? payload.captchaSettings.logsChannelId
+          : null
+        : null;
+      const nextCaptchaVerifiedRoleIds = hasCaptchaSettings
+        ? Array.isArray(payload.captchaSettings?.verifiedRoleIds)
+          ? payload.captchaSettings.verifiedRoleIds.filter((id) => roleSet.has(id))
+          : []
+        : [];
+      const nextCaptchaBypassRoleIds = hasCaptchaSettings
+        ? Array.isArray(payload.captchaSettings?.bypassRoleIds)
+          ? payload.captchaSettings.bypassRoleIds.filter((id) => roleSet.has(id))
+          : []
+        : [];
+      const nextCaptchaPanelLayout = hasCaptchaSettings
+        ? normalizeCaptchaPanelLayout(payload.captchaSettings?.panelLayout, {
+            panelTitle: payload.captchaSettings?.panelTitle,
+            panelDescription: payload.captchaSettings?.panelDescription,
+            panelButtonLabel: payload.captchaSettings?.panelButtonLabel,
+          })
+        : createDefaultCaptchaPanelLayout();
+      const nextCaptchaChallengeTitle =
+        hasCaptchaSettings && typeof payload.captchaSettings?.challengeTitle === "string"
+          ? payload.captchaSettings.challengeTitle
+          : "Verificacao de seguranca";
+      const nextCaptchaChallengeDescription =
+        hasCaptchaSettings &&
+        typeof payload.captchaSettings?.challengeDescription === "string"
+          ? payload.captchaSettings.challengeDescription
+          : "Selecione o codigo que aparece na imagem acima.";
+      const nextCaptchaMaxAttempts =
+        hasCaptchaSettings && Number.isFinite(Number(payload.captchaSettings?.maxAttempts))
+          ? Number(payload.captchaSettings?.maxAttempts)
+          : 3;
+      const nextCaptchaTimeoutSeconds =
+        hasCaptchaSettings &&
+        Number.isFinite(Number(payload.captchaSettings?.timeoutSeconds))
+          ? Number(payload.captchaSettings?.timeoutSeconds)
+          : 120;
+      const nextCaptchaKickOnFail = hasCaptchaSettings
+        ? payload.captchaSettings?.kickOnFail === true
+        : false;
+      const nextCaptchaSuccessMessage =
+        hasCaptchaSettings && typeof payload.captchaSettings?.successMessage === "string"
+          ? payload.captchaSettings.successMessage
+          : "Verificacao concluida com sucesso. Bem-vindo ao servidor!";
+
+      const hasSuggestionsSettings = Boolean(payload.suggestionsSettings);
+      const nextSuggestionsEnabled = Boolean(payload.suggestionsSettings?.enabled);
+      const nextSuggestionsPanelChannelId = hasSuggestionsSettings
+        ? payload.suggestionsSettings?.panelChannelId &&
+          textSet.has(payload.suggestionsSettings.panelChannelId)
+          ? payload.suggestionsSettings.panelChannelId
+          : null
+        : null;
+      const nextSuggestionsPublishChannelId = hasSuggestionsSettings
+        ? payload.suggestionsSettings?.publishChannelId &&
+          textSet.has(payload.suggestionsSettings.publishChannelId)
+          ? payload.suggestionsSettings.publishChannelId
+          : null
+        : null;
+      const nextSuggestionsLogsChannelId = hasSuggestionsSettings
+        ? payload.suggestionsSettings?.logsChannelId &&
+          textSet.has(payload.suggestionsSettings.logsChannelId)
+          ? payload.suggestionsSettings.logsChannelId
+          : null
+        : null;
+      const nextSuggestionsPanelLayout = hasSuggestionsSettings
+        ? normalizeSuggestionPanelLayout(payload.suggestionsSettings?.panelLayout, {
+            panelTitle: payload.suggestionsSettings?.panelTitle,
+            panelDescription: payload.suggestionsSettings?.panelDescription,
+            panelButtonLabel: payload.suggestionsSettings?.panelButtonLabel,
+          })
+        : createDefaultSuggestionPanelLayout();
+      const nextSuggestionsSuggestionLayout = hasSuggestionsSettings
+        ? normalizeSuggestionPublishedLayout(
+            payload.suggestionsSettings?.suggestionLayout,
+          )
+        : createDefaultSuggestionPublishedLayout();
+
+      const hasBatePontoSettings = Boolean(payload.batePontoSettings);
+      const nextBatePontoEnabled = Boolean(payload.batePontoSettings?.enabled);
+      const nextBatePontoPanelChannelId = hasBatePontoSettings
+        ? payload.batePontoSettings?.panelChannelId &&
+          textSet.has(payload.batePontoSettings.panelChannelId)
+          ? payload.batePontoSettings.panelChannelId
+          : null
+        : null;
+      const nextBatePontoLogsChannelId = hasBatePontoSettings
+        ? payload.batePontoSettings?.logsChannelId &&
+          textSet.has(payload.batePontoSettings.logsChannelId)
+          ? payload.batePontoSettings.logsChannelId
+          : null
+        : null;
+      const nextBatePontoPanelLayout = hasBatePontoSettings
+        ? normalizeBatePontoPanelLayout(payload.batePontoSettings?.panelLayout, {
+            panelTitle: payload.batePontoSettings?.panelTitle,
+            panelDescription: payload.batePontoSettings?.panelDescription,
+            panelButtonLabel: payload.batePontoSettings?.panelButtonLabel,
+          })
+        : createDefaultBatePontoPanelLayout();
+      const nextBatePontoLogLayout = hasBatePontoSettings
+        ? normalizeBatePontoLogLayout(payload.batePontoSettings?.logLayout)
+        : createDefaultBatePontoLogLayout();
+      const nextBatePontoAllowedRoleIds = hasBatePontoSettings
+        ? Array.isArray(payload.batePontoSettings?.allowedRoleIds)
+          ? payload.batePontoSettings.allowedRoleIds.filter((id) => roleSet.has(id))
+          : []
+        : [];
+      const nextBatePontoHourBankEnabled =
+        hasBatePontoSettings && payload.batePontoSettings?.hourBankEnabled === false
+          ? false
+          : true;
+      const nextBatePontoDailyTargetMinutes = hasBatePontoSettings
+        ? Math.max(
+            60,
+            Math.min(
+              1440,
+              Number(payload.batePontoSettings?.dailyTargetMinutes ?? 480) || 480,
+            ),
+          )
+        : 480;
+      const nextBatePontoTimezone =
+        hasBatePontoSettings && typeof payload.batePontoSettings?.timezone === "string"
+          ? payload.batePontoSettings.timezone
+          : "America/Sao_Paulo";
+      const nextBatePontoAutoFinishOpenSessions =
+        hasBatePontoSettings && payload.batePontoSettings?.autoFinishOpenSessions === true;
+      const nextBatePontoMaxOpenHours = hasBatePontoSettings
+        ? Math.max(
+            1,
+            Math.min(24, Number(payload.batePontoSettings?.maxOpenHours ?? 12) || 12),
+          )
+        : 12;
+      const nextBatePontoRequireVoiceChannel =
+        hasBatePontoSettings && payload.batePontoSettings?.requireVoiceChannel === true;
+      const nextBatePontoRequiredVoiceChannelIds = hasBatePontoSettings
+        ? Array.isArray(payload.batePontoSettings?.requiredVoiceChannelIds)
+          ? payload.batePontoSettings.requiredVoiceChannelIds.filter((id) =>
+              voiceSet.has(id),
+            )
+          : []
+        : [];
+
       const nextAdminRoleId =
         payload.staffSettings?.adminRoleId &&
         roleSet.has(payload.staffSettings.adminRoleId)
@@ -2599,10 +3177,13 @@ export function ServerSettingsEditor({
         ? payload.antiLinkSettings.ignoredChannelIds.filter((id) => textSet.has(id))
         : [];
       const nextAntiLinkBlockExternalLinks =
+        payload.antiLinkSettings?.blockExternalLinks ??
         ANTILINK_DEFAULT_DETECTION.blockExternalLinks;
       const nextAntiLinkBlockDiscordInvites =
+        payload.antiLinkSettings?.blockDiscordInvites ??
         ANTILINK_DEFAULT_DETECTION.blockDiscordInvites;
       const nextAntiLinkBlockObfuscatedLinks =
+        payload.antiLinkSettings?.blockObfuscatedLinks ??
         ANTILINK_DEFAULT_DETECTION.blockObfuscatedLinks;
       const nextAutoRoleEnabled = Boolean(payload.autoRoleSettings?.enabled);
       const nextAutoRoleRoleIds = Array.isArray(payload.autoRoleSettings?.roleIds)
@@ -2781,138 +3362,248 @@ export function ServerSettingsEditor({
         setCloseRoleIds(nextCloseRoleIds);
         setNotifyRoleIds(nextNotifyRoleIds);
       }
-      setWelcomeEnabled(nextWelcomeEnabled);
-      setEntryPublicChannelId(nextEntryPublicChannelId);
-      setEntryLogChannelId(nextEntryLogChannelId);
-      setExitPublicChannelId(nextExitPublicChannelId);
-      setExitLogChannelId(nextExitLogChannelId);
-      setEntryPublicLayout(nextEntryPublicLayout);
-      setEntryLogLayout(nextEntryLogLayout);
-      setExitPublicLayout(nextExitPublicLayout);
-      setExitLogLayout(nextExitLogLayout);
-      setEntryPublicThumbnailMode(nextEntryPublicThumbnailMode);
-      setEntryLogThumbnailMode(nextEntryLogThumbnailMode);
-      setExitPublicThumbnailMode(nextExitPublicThumbnailMode);
-      setExitLogThumbnailMode(nextExitLogThumbnailMode);
-      setAntiLinkEnabled(nextAntiLinkEnabled);
-      setAntiLinkLogChannelId(nextAntiLinkLogChannelId);
-      setAntiLinkEnforcementAction(nextAntiLinkEnforcementAction);
-      setAntiLinkTimeoutMinutes(nextAntiLinkTimeoutMinutes);
-      setAntiLinkIgnoredRoleIds(nextAntiLinkIgnoredRoleIds);
-      setAntiLinkIgnoredChannelIds(nextAntiLinkIgnoredChannelIds);
-      setAntiLinkBlockExternalLinks(nextAntiLinkBlockExternalLinks);
-      setAntiLinkBlockDiscordInvites(nextAntiLinkBlockDiscordInvites);
-      setAntiLinkBlockObfuscatedLinks(nextAntiLinkBlockObfuscatedLinks);
-      setAutoRoleEnabled(nextAutoRoleEnabled);
-      setAutoRoleRoleIds(nextAutoRoleRoleIds);
-      setAutoRoleAssignmentDelayMinutes(nextAutoRoleAssignmentDelayMinutes);
-      setAutoRoleSyncExistingMembers(false);
-      setAutoRoleSyncStatus(nextAutoRoleSyncStatus);
-      setAutoRoleSyncRequestedAt(nextAutoRoleSyncRequestedAt);
-      setAutoRoleSyncStartedAt(nextAutoRoleSyncStartedAt);
-      setAutoRoleSyncCompletedAt(nextAutoRoleSyncCompletedAt);
-      setAutoRoleSyncError(nextAutoRoleSyncError);
-      setSalesEnabled(nextSalesEnabled);
-      setSalesCartsCategoryId(nextSalesCartsCategoryId);
-      setSalesPaymentApprovedLogChannelId(nextSalesPaymentApprovedLogChannelId);
-      setSalesPaymentPendingLogChannelId(nextSalesPaymentPendingLogChannelId);
-      setSalesPaymentRejectedLogChannelId(nextSalesPaymentRejectedLogChannelId);
-      setSalesReceiptCompanyName(nextSalesReceiptCompanyName);
-      setSalesReceiptCompanyDocument(nextSalesReceiptCompanyDocument);
-      setSalesReceiptSupportText(nextSalesReceiptSupportText);
-      setRefundLimitDays(nextRefundLimitDays);
-      setRefundRules(nextRefundRules);
-      setRefundAutoProcessEnabled(nextRefundAutoProcessEnabled);
-      setRefundManualApprovalRequired(nextRefundManualApprovalRequired);
-      setRefundApprovalChannelId(nextRefundApprovalChannelId);
-      setRefundApproverRoleIds(nextRefundApproverRoleIds);
-      setRefundSuccessMessage(nextRefundSuccessMessage);
-      setRefundErrorMessage(nextRefundErrorMessage);
-      setSecurityLogsDraft(nextSecurityLogsDraft);
-      setSavedSettingsDraft(
-        normalizeServerSettingsDraft({
-          enabled: nextTicketEnabled,
-          menuChannelId: nextMenuChannelId,
-          ticketsCategoryId: nextTicketsCategoryId,
-          logsCreatedChannelId: nextLogsCreatedChannelId,
-          logsClosedChannelId: nextLogsClosedChannelId,
-          panelLayout: nextPanelLayout,
-          adminRoleId: nextAdminRoleId,
-          claimRoleIds: nextClaimRoleIds,
-          closeRoleIds: nextCloseRoleIds,
-          notifyRoleIds: nextNotifyRoleIds,
-          aiRules: nextAiRules,
-          aiCompanyName: nextAiCompanyName,
-          aiCompanyBio: nextAiCompanyBio,
-          aiTone: nextAiTone,
-          aiEnabled: nextAiEnabled,
-          refundLimitDays: nextRefundLimitDays,
-          refundRules: nextRefundRules,
-          refundAutoProcessEnabled: nextRefundAutoProcessEnabled,
-          refundManualApprovalRequired: nextRefundManualApprovalRequired,
-          refundApprovalChannelId: nextRefundApprovalChannelId,
-          refundApproverRoleIds: nextRefundApproverRoleIds,
-          refundSuccessMessage: nextRefundSuccessMessage,
-          refundErrorMessage: nextRefundErrorMessage,
-        }),
-      );
-      setSavedWelcomeSettingsDraft(
-        normalizeWelcomeSettingsDraft({
-          enabled: nextWelcomeEnabled,
-          entryPublicChannelId: nextEntryPublicChannelId,
-          entryLogChannelId: nextEntryLogChannelId,
-          exitPublicChannelId: nextExitPublicChannelId,
-          exitLogChannelId: nextExitLogChannelId,
-          entryPublicLayout: nextEntryPublicLayout,
-          entryLogLayout: nextEntryLogLayout,
-          exitPublicLayout: nextExitPublicLayout,
-          exitLogLayout: nextExitLogLayout,
-          entryPublicThumbnailMode: nextEntryPublicThumbnailMode,
-          entryLogThumbnailMode: nextEntryLogThumbnailMode,
-          exitPublicThumbnailMode: nextExitPublicThumbnailMode,
-          exitLogThumbnailMode: nextExitLogThumbnailMode,
-        }),
-      );
-      setSavedAntiLinkSettingsDraft(
-        normalizeAntiLinkSettingsDraft({
-          enabled: nextAntiLinkEnabled,
-          logChannelId: nextAntiLinkLogChannelId,
-          enforcementAction: nextAntiLinkEnforcementAction,
-          timeoutMinutes: nextAntiLinkTimeoutMinutes,
-          ignoredRoleIds: nextAntiLinkIgnoredRoleIds,
-          ignoredChannelIds: nextAntiLinkIgnoredChannelIds,
-          blockExternalLinks: nextAntiLinkBlockExternalLinks,
-          blockDiscordInvites: nextAntiLinkBlockDiscordInvites,
-          blockObfuscatedLinks: nextAntiLinkBlockObfuscatedLinks,
-        }),
-      );
-      setSavedAutoRoleSettingsDraft(
-        normalizeAutoRoleSettingsDraft({
-          enabled: nextAutoRoleEnabled,
-          roleIds: nextAutoRoleRoleIds,
-          assignmentDelayMinutes: nextAutoRoleAssignmentDelayMinutes,
-        }),
-      );
-      setSavedSalesSettingsDraft(
-        normalizeSalesSettingsDraft({
-          enabled: nextSalesEnabled,
-          cartsCategoryId: nextSalesCartsCategoryId,
-          paymentApprovedLogChannelId: nextSalesPaymentApprovedLogChannelId,
-          paymentPendingLogChannelId: nextSalesPaymentPendingLogChannelId,
-          paymentRejectedLogChannelId: nextSalesPaymentRejectedLogChannelId,
-          receiptCompanyName: nextSalesReceiptCompanyName,
-          receiptCompanyDocument: nextSalesReceiptCompanyDocument,
-          receiptSupportText: nextSalesReceiptSupportText,
-        }),
-      );
-      setSavedSecurityLogsDraft(nextSecurityLogsDraft);
+      if (!shouldPreserveLocalWelcomeDraft) {
+        setWelcomeEnabled(nextWelcomeEnabled);
+        setEntryPublicChannelId(nextEntryPublicChannelId);
+        setEntryLogChannelId(nextEntryLogChannelId);
+        setExitPublicChannelId(nextExitPublicChannelId);
+        setExitLogChannelId(nextExitLogChannelId);
+        setEntryPublicLayout(nextEntryPublicLayout);
+        setEntryLogLayout(nextEntryLogLayout);
+        setExitPublicLayout(nextExitPublicLayout);
+        setExitLogLayout(nextExitLogLayout);
+        setEntryPublicThumbnailMode(nextEntryPublicThumbnailMode);
+        setEntryLogThumbnailMode(nextEntryLogThumbnailMode);
+        setExitPublicThumbnailMode(nextExitPublicThumbnailMode);
+        setExitLogThumbnailMode(nextExitLogThumbnailMode);
+      }
+      if (!shouldPreserveLocalCaptchaDraft) {
+        setCaptchaEnabled(nextCaptchaEnabled);
+        setCaptchaPanelChannelId(nextCaptchaPanelChannelId);
+        setCaptchaLogsChannelId(nextCaptchaLogsChannelId);
+        setCaptchaVerifiedRoleIds(nextCaptchaVerifiedRoleIds);
+        setCaptchaBypassRoleIds(nextCaptchaBypassRoleIds);
+        setCaptchaPanelLayout(nextCaptchaPanelLayout);
+        setCaptchaChallengeTitle(nextCaptchaChallengeTitle);
+        setCaptchaChallengeDescription(nextCaptchaChallengeDescription);
+        setCaptchaMaxAttempts(nextCaptchaMaxAttempts);
+        setCaptchaTimeoutSeconds(nextCaptchaTimeoutSeconds);
+        setCaptchaKickOnFail(nextCaptchaKickOnFail);
+        setCaptchaSuccessMessage(nextCaptchaSuccessMessage);
+      }
+      if (!shouldPreserveLocalSuggestionDraft) {
+        setSuggestionsEnabled(nextSuggestionsEnabled);
+        setSuggestionsPanelChannelId(nextSuggestionsPanelChannelId);
+        setSuggestionsPublishChannelId(nextSuggestionsPublishChannelId);
+        setSuggestionsLogsChannelId(nextSuggestionsLogsChannelId);
+        setSuggestionsPanelLayout(nextSuggestionsPanelLayout);
+        setSuggestionsSuggestionLayout(nextSuggestionsSuggestionLayout);
+      }
+      if (!shouldPreserveLocalBatePontoDraft) {
+        setBatePontoEnabled(nextBatePontoEnabled);
+        setBatePontoPanelChannelId(nextBatePontoPanelChannelId);
+        setBatePontoLogsChannelId(nextBatePontoLogsChannelId);
+        setBatePontoPanelLayout(nextBatePontoPanelLayout);
+        setBatePontoLogLayout(nextBatePontoLogLayout);
+        setBatePontoAllowedRoleIds(nextBatePontoAllowedRoleIds);
+        setBatePontoHourBankEnabled(nextBatePontoHourBankEnabled);
+        setBatePontoDailyTargetMinutes(nextBatePontoDailyTargetMinutes);
+        setBatePontoTimezone(nextBatePontoTimezone);
+        setBatePontoAutoFinishOpenSessions(nextBatePontoAutoFinishOpenSessions);
+        setBatePontoMaxOpenHours(nextBatePontoMaxOpenHours);
+        setBatePontoRequireVoiceChannel(nextBatePontoRequireVoiceChannel);
+        setBatePontoRequiredVoiceChannelIds(nextBatePontoRequiredVoiceChannelIds);
+      }
+      if (!shouldPreserveLocalAntiLinkDraft) {
+        setAntiLinkEnabled(nextAntiLinkEnabled);
+        setAntiLinkLogChannelId(nextAntiLinkLogChannelId);
+        setAntiLinkEnforcementAction(nextAntiLinkEnforcementAction);
+        setAntiLinkTimeoutMinutes(nextAntiLinkTimeoutMinutes);
+        setAntiLinkIgnoredRoleIds(nextAntiLinkIgnoredRoleIds);
+        setAntiLinkIgnoredChannelIds(nextAntiLinkIgnoredChannelIds);
+        setAntiLinkBlockExternalLinks(nextAntiLinkBlockExternalLinks);
+        setAntiLinkBlockDiscordInvites(nextAntiLinkBlockDiscordInvites);
+        setAntiLinkBlockObfuscatedLinks(nextAntiLinkBlockObfuscatedLinks);
+      }
+      if (!shouldPreserveLocalAutoRoleDraft) {
+        setAutoRoleEnabled(nextAutoRoleEnabled);
+        setAutoRoleRoleIds(nextAutoRoleRoleIds);
+        setAutoRoleAssignmentDelayMinutes(nextAutoRoleAssignmentDelayMinutes);
+        setAutoRoleSyncExistingMembers(false);
+        setAutoRoleSyncStatus(nextAutoRoleSyncStatus);
+        setAutoRoleSyncRequestedAt(nextAutoRoleSyncRequestedAt);
+        setAutoRoleSyncStartedAt(nextAutoRoleSyncStartedAt);
+        setAutoRoleSyncCompletedAt(nextAutoRoleSyncCompletedAt);
+        setAutoRoleSyncError(nextAutoRoleSyncError);
+      }
+      if (!shouldPreserveLocalSalesDraft) {
+        setSalesEnabled(nextSalesEnabled);
+        setSalesCartsCategoryId(nextSalesCartsCategoryId);
+        setSalesPaymentApprovedLogChannelId(nextSalesPaymentApprovedLogChannelId);
+        setSalesPaymentPendingLogChannelId(nextSalesPaymentPendingLogChannelId);
+        setSalesPaymentRejectedLogChannelId(nextSalesPaymentRejectedLogChannelId);
+        setSalesReceiptCompanyName(nextSalesReceiptCompanyName);
+        setSalesReceiptCompanyDocument(nextSalesReceiptCompanyDocument);
+        setSalesReceiptSupportText(nextSalesReceiptSupportText);
+      }
+      if (!shouldPreserveLocalTicketDraft) {
+        setRefundLimitDays(nextRefundLimitDays);
+        setRefundRules(nextRefundRules);
+        setRefundAutoProcessEnabled(nextRefundAutoProcessEnabled);
+        setRefundManualApprovalRequired(nextRefundManualApprovalRequired);
+        setRefundApprovalChannelId(nextRefundApprovalChannelId);
+        setRefundApproverRoleIds(nextRefundApproverRoleIds);
+        setRefundSuccessMessage(nextRefundSuccessMessage);
+        setRefundErrorMessage(nextRefundErrorMessage);
+      }
+      if (!shouldPreserveLocalSecurityLogsDraft) {
+        setSecurityLogsDraft(nextSecurityLogsDraft);
+      }
+      if (!shouldPreserveLocalTicketDraft) {
+        setSavedSettingsDraft(
+          normalizeServerSettingsDraft({
+            enabled: nextTicketEnabled,
+            menuChannelId: nextMenuChannelId,
+            ticketsCategoryId: nextTicketsCategoryId,
+            logsCreatedChannelId: nextLogsCreatedChannelId,
+            logsClosedChannelId: nextLogsClosedChannelId,
+            panelLayout: nextPanelLayout,
+            adminRoleId: nextAdminRoleId,
+            claimRoleIds: nextClaimRoleIds,
+            closeRoleIds: nextCloseRoleIds,
+            notifyRoleIds: nextNotifyRoleIds,
+            aiRules: nextAiRules,
+            aiCompanyName: nextAiCompanyName,
+            aiCompanyBio: nextAiCompanyBio,
+            aiTone: nextAiTone,
+            aiEnabled: nextAiEnabled,
+            refundLimitDays: nextRefundLimitDays,
+            refundRules: nextRefundRules,
+            refundAutoProcessEnabled: nextRefundAutoProcessEnabled,
+            refundManualApprovalRequired: nextRefundManualApprovalRequired,
+            refundApprovalChannelId: nextRefundApprovalChannelId,
+            refundApproverRoleIds: nextRefundApproverRoleIds,
+            refundSuccessMessage: nextRefundSuccessMessage,
+            refundErrorMessage: nextRefundErrorMessage,
+          }),
+        );
+      }
+      if (!shouldPreserveLocalWelcomeDraft) {
+        setSavedWelcomeSettingsDraft(
+          normalizeWelcomeSettingsDraft({
+            enabled: nextWelcomeEnabled,
+            entryPublicChannelId: nextEntryPublicChannelId,
+            entryLogChannelId: nextEntryLogChannelId,
+            exitPublicChannelId: nextExitPublicChannelId,
+            exitLogChannelId: nextExitLogChannelId,
+            entryPublicLayout: nextEntryPublicLayout,
+            entryLogLayout: nextEntryLogLayout,
+            exitPublicLayout: nextExitPublicLayout,
+            exitLogLayout: nextExitLogLayout,
+            entryPublicThumbnailMode: nextEntryPublicThumbnailMode,
+            entryLogThumbnailMode: nextEntryLogThumbnailMode,
+            exitPublicThumbnailMode: nextExitPublicThumbnailMode,
+            exitLogThumbnailMode: nextExitLogThumbnailMode,
+          }),
+        );
+      }
+      if (!shouldPreserveLocalCaptchaDraft) {
+        setSavedCaptchaSettingsDraft(
+          normalizeCaptchaSettingsDraft({
+            enabled: nextCaptchaEnabled,
+            panelChannelId: nextCaptchaPanelChannelId,
+            logsChannelId: nextCaptchaLogsChannelId,
+            verifiedRoleIds: nextCaptchaVerifiedRoleIds,
+            bypassRoleIds: nextCaptchaBypassRoleIds,
+            panelLayout: nextCaptchaPanelLayout,
+            challengeTitle: nextCaptchaChallengeTitle,
+            challengeDescription: nextCaptchaChallengeDescription,
+            maxAttempts: nextCaptchaMaxAttempts,
+            timeoutSeconds: nextCaptchaTimeoutSeconds,
+            kickOnFail: nextCaptchaKickOnFail,
+            successMessage: nextCaptchaSuccessMessage,
+          }),
+        );
+      }
+      if (!shouldPreserveLocalSuggestionDraft) {
+        setSavedSuggestionSettingsDraft(
+          normalizeSuggestionSettingsDraft({
+            enabled: nextSuggestionsEnabled,
+            panelChannelId: nextSuggestionsPanelChannelId,
+            publishChannelId: nextSuggestionsPublishChannelId,
+            logsChannelId: nextSuggestionsLogsChannelId,
+            panelLayout: nextSuggestionsPanelLayout,
+            suggestionLayout: nextSuggestionsSuggestionLayout,
+          }),
+        );
+      }
+      if (!shouldPreserveLocalBatePontoDraft) {
+        setSavedBatePontoSettingsDraft(
+          normalizeBatePontoSettingsDraft({
+            enabled: nextBatePontoEnabled,
+            panelChannelId: nextBatePontoPanelChannelId,
+            logsChannelId: nextBatePontoLogsChannelId,
+            panelLayout: nextBatePontoPanelLayout,
+            logLayout: nextBatePontoLogLayout,
+            allowedRoleIds: nextBatePontoAllowedRoleIds,
+            hourBankEnabled: nextBatePontoHourBankEnabled,
+            dailyTargetMinutes: nextBatePontoDailyTargetMinutes,
+            timezone: nextBatePontoTimezone,
+            autoFinishOpenSessions: nextBatePontoAutoFinishOpenSessions,
+            maxOpenHours: nextBatePontoMaxOpenHours,
+            requireVoiceChannel: nextBatePontoRequireVoiceChannel,
+            requiredVoiceChannelIds: nextBatePontoRequiredVoiceChannelIds,
+          }),
+        );
+      }
+      if (!shouldPreserveLocalAntiLinkDraft) {
+        setSavedAntiLinkSettingsDraft(
+          normalizeAntiLinkSettingsDraft({
+            enabled: nextAntiLinkEnabled,
+            logChannelId: nextAntiLinkLogChannelId,
+            enforcementAction: nextAntiLinkEnforcementAction,
+            timeoutMinutes: nextAntiLinkTimeoutMinutes,
+            ignoredRoleIds: nextAntiLinkIgnoredRoleIds,
+            ignoredChannelIds: nextAntiLinkIgnoredChannelIds,
+            blockExternalLinks: nextAntiLinkBlockExternalLinks,
+            blockDiscordInvites: nextAntiLinkBlockDiscordInvites,
+            blockObfuscatedLinks: nextAntiLinkBlockObfuscatedLinks,
+          }),
+        );
+      }
+      if (!shouldPreserveLocalAutoRoleDraft) {
+        setSavedAutoRoleSettingsDraft(
+          normalizeAutoRoleSettingsDraft({
+            enabled: nextAutoRoleEnabled,
+            roleIds: nextAutoRoleRoleIds,
+            assignmentDelayMinutes: nextAutoRoleAssignmentDelayMinutes,
+          }),
+        );
+      }
+      if (!shouldPreserveLocalSalesDraft) {
+        setSavedSalesSettingsDraft(
+          normalizeSalesSettingsDraft({
+            enabled: nextSalesEnabled,
+            cartsCategoryId: nextSalesCartsCategoryId,
+            paymentApprovedLogChannelId: nextSalesPaymentApprovedLogChannelId,
+            paymentPendingLogChannelId: nextSalesPaymentPendingLogChannelId,
+            paymentRejectedLogChannelId: nextSalesPaymentRejectedLogChannelId,
+            receiptCompanyName: nextSalesReceiptCompanyName,
+            receiptCompanyDocument: nextSalesReceiptCompanyDocument,
+            receiptSupportText: nextSalesReceiptSupportText,
+          }),
+        );
+      }
+      if (!shouldPreserveLocalSecurityLogsDraft) {
+        setSavedSecurityLogsDraft(nextSecurityLogsDraft);
+      }
       setDashboardPermissions(payload.dashboardPermissions);
       
       if (onPermissionsChange) {
         onPermissionsChange(payload.dashboardPermissions);
       }
     },
-    [onPermissionsChange],
+    [applyResourceSnapshot, onPermissionsChange],
   );
 
   useEffect(() => {
@@ -2978,12 +3669,34 @@ export function ServerSettingsEditor({
 
     setSavedSettingsDraft(null);
     setSavedWelcomeSettingsDraft(null);
+    setSavedCaptchaSettingsDraft(null);
+    setSavedSuggestionSettingsDraft(null);
     setSavedAntiLinkSettingsDraft(null);
     setSavedAutoRoleSettingsDraft(null);
     setSavedSalesSettingsDraft(null);
     setSavedSecurityLogsDraft(null);
     setPanelLayout(createDefaultTicketPanelLayout());
     setTicketEnabled(false);
+    setCaptchaEnabled(false);
+    setCaptchaPanelChannelId(null);
+    setCaptchaLogsChannelId(null);
+    setCaptchaVerifiedRoleIds([]);
+    setCaptchaBypassRoleIds([]);
+    setCaptchaPanelLayout(createDefaultCaptchaPanelLayout());
+    setCaptchaChallengeTitle("Verificacao de seguranca");
+    setCaptchaChallengeDescription("Selecione o codigo que aparece na imagem acima.");
+    setCaptchaMaxAttempts(3);
+    setCaptchaTimeoutSeconds(120);
+    setCaptchaKickOnFail(false);
+    setCaptchaSuccessMessage(
+      "Verificacao concluida com sucesso. Bem-vindo ao servidor!",
+    );
+    setSuggestionsEnabled(false);
+    setSuggestionsPanelChannelId(null);
+    setSuggestionsPublishChannelId(null);
+    setSuggestionsLogsChannelId(null);
+    setSuggestionsPanelLayout(createDefaultSuggestionPanelLayout());
+    setSuggestionsSuggestionLayout(createDefaultSuggestionPublishedLayout());
     setWelcomeEnabled(false);
     setEntryPublicChannelId(null);
     setEntryLogChannelId(null);
@@ -3112,6 +3825,7 @@ export function ServerSettingsEditor({
     const controller = new AbortController();
 
     async function loadSettings() {
+      const fetchEpoch = getServerDashboardSettingsFetchEpoch(guildId);
       const cachedPayload = readCachedServerDashboardSettings(guildId);
 
       if (cachedPayload) {
@@ -3131,6 +3845,9 @@ export function ServerSettingsEditor({
         });
 
         if (!mounted) return;
+        if (getServerDashboardSettingsFetchEpoch(guildId) !== fetchEpoch) {
+          return;
+        }
         applyDashboardSettingsPayload(payload);
         markDashboardSnapshotLoaded();
         setErrorMessage(null);
@@ -3772,8 +4489,22 @@ export function ServerSettingsEditor({
   const isWelcomeSection =
     settingsSection === "entry_exit_overview" ||
     settingsSection === "entry_exit_message";
+  const isCaptchaSection =
+    settingsSection === "captcha_overview" ||
+    settingsSection === "captcha_message";
+  const isSuggestionsSection =
+    settingsSection === "suggestions_overview" ||
+    settingsSection === "suggestions_message";
+  const isBatePontoSection =
+    settingsSection === "bate_ponto_overview" ||
+    settingsSection === "bate_ponto_message";
+  const isBatePontoRankingSection = settingsSection === "bate_ponto_ranking";
+  const isBatePontoHistorySection = settingsSection === "bate_ponto_history";
   const isTicketMessageSection = settingsSection === "message";
   const isWelcomeMessageSection = settingsSection === "entry_exit_message";
+  const isCaptchaMessageSection = settingsSection === "captcha_message";
+  const isSuggestionsMessageSection = settingsSection === "suggestions_message";
+  const isBatePontoMessageSection = settingsSection === "bate_ponto_message";
 
   const entryChannelsProvided = Boolean(
     entryPublicChannelId || entryLogChannelId,
@@ -3900,6 +4631,63 @@ export function ServerSettingsEditor({
           isEntryLayoutValid &&
           isExitLayoutValid)),
   );
+  const captchaFunctionButtonCount = countTicketPanelFunctionButtons(captchaPanelLayout);
+  const hasCaptchaTooManyFunctionButtons = captchaFunctionButtonCount > 1;
+  const isCaptchaMessageLayoutInvalid =
+    !ticketPanelLayoutHasRequiredParts(captchaPanelLayout) ||
+    hasCaptchaTooManyFunctionButtons;
+  const canSaveCaptcha = Boolean(
+    !settingsReadOnly &&
+      !isLoading &&
+      !isSaving &&
+      (!captchaEnabled ||
+        (captchaPanelChannelId &&
+          captchaVerifiedRoleIds.length &&
+          captchaPanelLayout.length &&
+          ticketPanelLayoutHasRequiredParts(captchaPanelLayout) &&
+          ticketPanelLayoutHasAtMostOneFunctionButton(captchaPanelLayout))),
+  );
+  const suggestionsFunctionButtonCount = countTicketPanelFunctionButtons(
+    suggestionsPanelLayout,
+  );
+  const hasSuggestionsTooManyFunctionButtons = suggestionsFunctionButtonCount > 1;
+  const isSuggestionsMessageLayoutInvalid =
+    !ticketPanelLayoutHasRequiredParts(suggestionsPanelLayout) ||
+    hasSuggestionsTooManyFunctionButtons;
+  const isSuggestionsPublishLayoutInvalid =
+    suggestionsEnabled &&
+    !suggestionPublishedLayoutHasRequiredSlots(suggestionsSuggestionLayout);
+  const canSaveSuggestions = Boolean(
+    !settingsReadOnly &&
+      !isLoading &&
+      !isSaving &&
+      (!suggestionsEnabled ||
+        (suggestionsPanelChannelId &&
+          suggestionsPublishChannelId &&
+          suggestionsPanelLayout.length &&
+          ticketPanelLayoutHasRequiredParts(suggestionsPanelLayout) &&
+          ticketPanelLayoutHasAtMostOneFunctionButton(suggestionsPanelLayout) &&
+          suggestionPublishedLayoutHasRequiredSlots(suggestionsSuggestionLayout))),
+  );
+  const batePontoFunctionButtonCount = countTicketPanelFunctionButtons(
+    batePontoPanelLayout,
+  );
+  const hasBatePontoTooManyFunctionButtons = batePontoFunctionButtonCount > 1;
+  const isBatePontoMessageLayoutInvalid =
+    !ticketPanelLayoutHasRequiredParts(batePontoPanelLayout) ||
+    hasBatePontoTooManyFunctionButtons;
+  const canSaveBatePonto = Boolean(
+    !settingsReadOnly &&
+      !isLoading &&
+      !isSaving &&
+      (!batePontoEnabled ||
+        (batePontoPanelChannelId &&
+          ticketPanelLayoutHasRenderableContent(batePontoLogLayout) &&
+          (settingsSection === "bate_ponto_overview" ||
+            (batePontoPanelLayout.length &&
+              ticketPanelLayoutHasRequiredParts(batePontoPanelLayout) &&
+              ticketPanelLayoutHasAtMostOneFunctionButton(batePontoPanelLayout))))),
+  );
   const antiLinkTimeoutValue = normalizeAntiLinkTimeoutMinutes(
     antiLinkTimeoutMinutes,
   );
@@ -3969,6 +4757,39 @@ export function ServerSettingsEditor({
       ticketPanelLayoutHasRequiredParts(panelLayout) &&
       ticketPanelLayoutHasAtMostOneFunctionButton(panelLayout),
   );
+  const canSendCaptchaEmbed = Boolean(
+    !settingsReadOnly &&
+      !isLoading &&
+      !isSaving &&
+      !isSendingEmbed &&
+      captchaEnabled &&
+      captchaPanelChannelId &&
+      captchaPanelLayout.length &&
+      ticketPanelLayoutHasRequiredParts(captchaPanelLayout) &&
+      ticketPanelLayoutHasAtMostOneFunctionButton(captchaPanelLayout),
+  );
+  const canSendSuggestionsEmbed = Boolean(
+    !settingsReadOnly &&
+      !isLoading &&
+      !isSaving &&
+      !isSendingEmbed &&
+      suggestionsEnabled &&
+      suggestionsPanelChannelId &&
+      suggestionsPanelLayout.length &&
+      ticketPanelLayoutHasRequiredParts(suggestionsPanelLayout) &&
+      ticketPanelLayoutHasAtMostOneFunctionButton(suggestionsPanelLayout),
+  );
+  const canSendBatePontoEmbed = Boolean(
+    !settingsReadOnly &&
+      !isLoading &&
+      !isSaving &&
+      !isSendingEmbed &&
+      batePontoEnabled &&
+      batePontoPanelChannelId &&
+      batePontoPanelLayout.length &&
+      ticketPanelLayoutHasRequiredParts(batePontoPanelLayout) &&
+      ticketPanelLayoutHasAtMostOneFunctionButton(batePontoPanelLayout),
+  );
 
   const currentSettingsDraft = useMemo(
     () =>
@@ -4023,9 +4844,6 @@ export function ServerSettingsEditor({
       refundErrorMessage,
     ],
   );
-  currentTicketDraftRef.current = currentSettingsDraft;
-  savedTicketDraftRef.current = savedSettingsDraft;
-
   const currentWelcomeDraft = useMemo(
     () =>
       normalizeWelcomeSettingsDraft({
@@ -4059,6 +4877,89 @@ export function ServerSettingsEditor({
       welcomeEnabled,
     ],
   );
+  const currentCaptchaDraft = useMemo(
+    () =>
+      normalizeCaptchaSettingsDraft({
+        enabled: captchaEnabled,
+        panelChannelId: captchaPanelChannelId,
+        logsChannelId: captchaLogsChannelId,
+        verifiedRoleIds: captchaVerifiedRoleIds,
+        bypassRoleIds: captchaBypassRoleIds,
+        panelLayout: captchaPanelLayout,
+        challengeTitle: captchaChallengeTitle,
+        challengeDescription: captchaChallengeDescription,
+        maxAttempts: captchaMaxAttempts,
+        timeoutSeconds: captchaTimeoutSeconds,
+        kickOnFail: captchaKickOnFail,
+        successMessage: captchaSuccessMessage,
+      }),
+    [
+      captchaBypassRoleIds,
+      captchaChallengeDescription,
+      captchaChallengeTitle,
+      captchaEnabled,
+      captchaKickOnFail,
+      captchaLogsChannelId,
+      captchaMaxAttempts,
+      captchaPanelChannelId,
+      captchaPanelLayout,
+      captchaSuccessMessage,
+      captchaTimeoutSeconds,
+      captchaVerifiedRoleIds,
+    ],
+  );
+  const currentSuggestionDraft = useMemo(
+    () =>
+      normalizeSuggestionSettingsDraft({
+        enabled: suggestionsEnabled,
+        panelChannelId: suggestionsPanelChannelId,
+        publishChannelId: suggestionsPublishChannelId,
+        logsChannelId: suggestionsLogsChannelId,
+        panelLayout: suggestionsPanelLayout,
+        suggestionLayout: suggestionsSuggestionLayout,
+      }),
+    [
+      suggestionsEnabled,
+      suggestionsLogsChannelId,
+      suggestionsPanelChannelId,
+      suggestionsPanelLayout,
+      suggestionsPublishChannelId,
+      suggestionsSuggestionLayout,
+    ],
+  );
+  const currentBatePontoDraft = useMemo(
+    () =>
+      normalizeBatePontoSettingsDraft({
+        enabled: batePontoEnabled,
+        panelChannelId: batePontoPanelChannelId,
+        logsChannelId: batePontoLogsChannelId,
+        panelLayout: batePontoPanelLayout,
+        logLayout: batePontoLogLayout,
+        allowedRoleIds: batePontoAllowedRoleIds,
+        hourBankEnabled: batePontoHourBankEnabled,
+        dailyTargetMinutes: batePontoDailyTargetMinutes,
+        timezone: batePontoTimezone,
+        autoFinishOpenSessions: batePontoAutoFinishOpenSessions,
+        maxOpenHours: batePontoMaxOpenHours,
+        requireVoiceChannel: batePontoRequireVoiceChannel,
+        requiredVoiceChannelIds: batePontoRequiredVoiceChannelIds,
+      }),
+    [
+      batePontoAllowedRoleIds,
+      batePontoAutoFinishOpenSessions,
+      batePontoDailyTargetMinutes,
+      batePontoEnabled,
+      batePontoHourBankEnabled,
+      batePontoLogLayout,
+      batePontoLogsChannelId,
+      batePontoMaxOpenHours,
+      batePontoPanelChannelId,
+      batePontoPanelLayout,
+      batePontoRequireVoiceChannel,
+      batePontoRequiredVoiceChannelIds,
+      batePontoTimezone,
+    ],
+  );
   const currentAntiLinkDraft = useMemo(
     () =>
       normalizeAntiLinkSettingsDraft({
@@ -4068,11 +4969,14 @@ export function ServerSettingsEditor({
         timeoutMinutes: antiLinkTimeoutValue,
         ignoredRoleIds: antiLinkIgnoredRoleIds,
         ignoredChannelIds: antiLinkIgnoredChannelIds,
-        blockExternalLinks: ANTILINK_DEFAULT_DETECTION.blockExternalLinks,
-        blockDiscordInvites: ANTILINK_DEFAULT_DETECTION.blockDiscordInvites,
-        blockObfuscatedLinks: ANTILINK_DEFAULT_DETECTION.blockObfuscatedLinks,
+        blockExternalLinks: antiLinkBlockExternalLinks,
+        blockDiscordInvites: antiLinkBlockDiscordInvites,
+        blockObfuscatedLinks: antiLinkBlockObfuscatedLinks,
       }),
     [
+      antiLinkBlockDiscordInvites,
+      antiLinkBlockExternalLinks,
+      antiLinkBlockObfuscatedLinks,
       antiLinkEnabled,
       antiLinkEnforcementAction,
       antiLinkIgnoredChannelIds,
@@ -4118,8 +5022,32 @@ export function ServerSettingsEditor({
     [securityLogsDraft],
   );
 
+  currentTicketDraftRef.current = currentSettingsDraft;
+  savedTicketDraftRef.current = savedSettingsDraft;
+  currentWelcomeDraftRef.current = currentWelcomeDraft;
+  savedWelcomeDraftRef.current = savedWelcomeSettingsDraft;
+  currentCaptchaDraftRef.current = currentCaptchaDraft;
+  savedCaptchaDraftRef.current = savedCaptchaSettingsDraft;
+  currentSuggestionDraftRef.current = currentSuggestionDraft;
+  savedSuggestionDraftRef.current = savedSuggestionSettingsDraft;
+  currentBatePontoDraftRef.current = currentBatePontoDraft;
+  savedBatePontoDraftRef.current = savedBatePontoSettingsDraft;
+  currentAntiLinkDraftRef.current = currentAntiLinkDraft;
+  savedAntiLinkDraftRef.current = savedAntiLinkSettingsDraft;
+  currentAutoRoleDraftRef.current = currentAutoRoleDraft;
+  savedAutoRoleDraftRef.current = savedAutoRoleSettingsDraft;
+  currentSalesDraftRef.current = currentSalesDraft;
+  savedSalesDraftRef.current = savedSalesSettingsDraft;
+  currentSecurityLogsDraftRef.current = currentSecurityLogsDraft;
+  savedSecurityLogsDraftRef.current = savedSecurityLogsDraft;
+
   const hasLoadedTicketDraft = !isLoading && savedSettingsDraft !== null;
   const hasLoadedWelcomeDraft = !isLoading && savedWelcomeSettingsDraft !== null;
+  const hasLoadedCaptchaDraft = !isLoading && savedCaptchaSettingsDraft !== null;
+  const hasLoadedSuggestionDraft =
+    !isLoading && savedSuggestionSettingsDraft !== null;
+  const hasLoadedBatePontoDraft =
+    !isLoading && savedBatePontoSettingsDraft !== null;
   const hasLoadedAntiLinkDraft =
     !isLoading && savedAntiLinkSettingsDraft !== null;
   const hasLoadedAutoRoleDraft =
@@ -4139,6 +5067,27 @@ export function ServerSettingsEditor({
       hasLoadedWelcomeDraft &&
       !areWelcomeSettingsDraftsEqual(currentWelcomeDraft, savedWelcomeSettingsDraft),
     [currentWelcomeDraft, hasLoadedWelcomeDraft, savedWelcomeSettingsDraft],
+  );
+  const hasCaptchaUnsavedChanges = useMemo(
+    () =>
+      hasLoadedCaptchaDraft &&
+      !areCaptchaSettingsDraftsEqual(currentCaptchaDraft, savedCaptchaSettingsDraft),
+    [currentCaptchaDraft, hasLoadedCaptchaDraft, savedCaptchaSettingsDraft],
+  );
+  const hasSuggestionUnsavedChanges = useMemo(
+    () =>
+      hasLoadedSuggestionDraft &&
+      !areSuggestionSettingsDraftsEqual(
+        currentSuggestionDraft,
+        savedSuggestionSettingsDraft,
+      ),
+    [currentSuggestionDraft, hasLoadedSuggestionDraft, savedSuggestionSettingsDraft],
+  );
+  const hasBatePontoUnsavedChanges = useMemo(
+    () =>
+      hasLoadedBatePontoDraft &&
+      !areBatePontoSettingsDraftsEqual(currentBatePontoDraft, savedBatePontoSettingsDraft),
+    [currentBatePontoDraft, hasLoadedBatePontoDraft, savedBatePontoSettingsDraft],
   );
   const hasAntiLinkUnsavedChanges = useMemo(
     () =>
@@ -4192,6 +5141,14 @@ export function ServerSettingsEditor({
       ? true
     : isSecurityLogsSection
       ? hasLoadedSecurityLogsDraft
+    : isCaptchaSection
+      ? hasLoadedCaptchaDraft
+    : isSuggestionsSection
+      ? hasLoadedSuggestionDraft
+    : isBatePontoSection
+      ? hasLoadedBatePontoDraft
+    : isBatePontoRankingSection || isBatePontoHistorySection
+      ? true
     : isWelcomeSection
       ? hasLoadedWelcomeDraft
       : hasLoadedTicketDraft;
@@ -4205,6 +5162,14 @@ export function ServerSettingsEditor({
       ? false
     : isSecurityLogsSection
       ? hasSecurityLogsUnsavedChanges
+    : isCaptchaSection
+      ? hasCaptchaUnsavedChanges
+    : isSuggestionsSection
+      ? hasSuggestionUnsavedChanges
+    : isBatePontoSection
+      ? hasBatePontoUnsavedChanges
+    : isBatePontoRankingSection || isBatePontoHistorySection
+      ? false
     : isWelcomeSection
       ? hasWelcomeUnsavedChanges
       : hasTicketUnsavedChanges;
@@ -4224,6 +5189,12 @@ export function ServerSettingsEditor({
           ? null
         : isSecurityLogsSection
           ? savedSecurityLogsDraft
+        : isCaptchaSection
+          ? savedCaptchaSettingsDraft
+        : isSuggestionsSection
+          ? savedSuggestionSettingsDraft
+        : isBatePontoSection
+          ? savedBatePontoSettingsDraft
         : isWelcomeSection
           ? savedWelcomeSettingsDraft
           : savedSettingsDraft),
@@ -4245,6 +5216,12 @@ export function ServerSettingsEditor({
         ? canSaveSales
       : isSecurityLogsSection
         ? canSaveSecurityLogs
+      : isCaptchaSection
+        ? canSaveCaptcha
+      : isSuggestionsSection
+        ? canSaveSuggestions
+      : isBatePontoSection
+        ? canSaveBatePonto
       : isWelcomeSection
         ? canSaveWelcome
       : isTicketAiSection
@@ -4269,6 +5246,11 @@ export function ServerSettingsEditor({
   const aiControlsDisabled = isSaving || settingsReadOnly || !aiEnabled;
   const welcomeControlsDisabled =
     isSaving || settingsReadOnly || !welcomeEnabled || isActivatingWelcome;
+  const captchaControlsDisabled = isSaving || settingsReadOnly || !captchaEnabled;
+  const suggestionsControlsDisabled =
+    isSaving || settingsReadOnly || !suggestionsEnabled;
+  const batePontoControlsDisabled =
+    isSaving || settingsReadOnly || !batePontoEnabled;
   const antiLinkControlsDisabled =
     isSaving || settingsReadOnly || !antiLinkEnabled || isActivatingAntiLink;
   const autoRoleControlsDisabled =
@@ -4300,6 +5282,30 @@ export function ServerSettingsEditor({
     !isSaving &&
     !showSaveSuccessBar &&
     isWelcomeMessageLayoutInvalid;
+  const showInvalidCaptchaSaveState =
+    isCaptchaMessageSection &&
+    captchaEnabled &&
+    hasUnsavedChanges &&
+    !isSaving &&
+    !showSaveSuccessBar &&
+    isCaptchaMessageLayoutInvalid;
+  const showInvalidSuggestionsSaveState =
+    isSuggestionsSection &&
+    suggestionsEnabled &&
+    hasUnsavedChanges &&
+    !isSaving &&
+    !showSaveSuccessBar &&
+    ((settingsSection === "suggestions_message" && isSuggestionsMessageLayoutInvalid) ||
+      (settingsSection === "suggestions_overview" && isSuggestionsPublishLayoutInvalid));
+  const showInvalidBatePontoSaveState =
+    isBatePontoSection &&
+    batePontoEnabled &&
+    hasUnsavedChanges &&
+    !isSaving &&
+    !showSaveSuccessBar &&
+    ((settingsSection === "bate_ponto_message" && isBatePontoMessageLayoutInvalid) ||
+      (settingsSection === "bate_ponto_overview" &&
+        !ticketPanelLayoutHasRenderableContent(batePontoLogLayout)));
   const showSaveBarSuccessState =
     showSaveSuccessBar &&
     !hasUnsavedChanges &&
@@ -4312,6 +5318,9 @@ export function ServerSettingsEditor({
   const showSaveBarErrorState =
     showInvalidTicketSaveState ||
     showInvalidWelcomeSaveState ||
+    showInvalidCaptchaSaveState ||
+    showInvalidSuggestionsSaveState ||
+    showInvalidBatePontoSaveState ||
     showBlockedNavigationSaveState;
   const saveActionVisualEnabled = canPersistSettings || isSaving;
   const floatingSaveBarTitle = showSaveBarSuccessState
@@ -4324,6 +5333,22 @@ export function ServerSettingsEditor({
         ? hasTooManyFunctionButtons
           ? "Existe mais de um botao funcional no embed"
           : "Nao da para salvar uma mensagem vazia"
+      : showInvalidCaptchaSaveState
+        ? hasCaptchaTooManyFunctionButtons
+          ? "Existe mais de um botao funcional no embed"
+          : "Nao da para salvar uma mensagem vazia"
+      : showInvalidSuggestionsSaveState
+        ? settingsSection === "suggestions_overview"
+          ? "O template publicado precisa manter titulo e descricao fixos do membro"
+          : hasSuggestionsTooManyFunctionButtons
+          ? "Existe mais de um botao funcional no embed"
+          : "Nao da para salvar uma mensagem vazia"
+      : showInvalidBatePontoSaveState
+        ? settingsSection === "bate_ponto_overview"
+          ? "O template de log precisa manter pelo menos um conteudo valido"
+          : hasBatePontoTooManyFunctionButtons
+            ? "Existe mais de um botao funcional no embed"
+            : "Nao da para salvar uma mensagem vazia"
       : showInvalidWelcomeSaveState
           ? "Adicione pelo menos um conteudo na mensagem"
       : showBlockedNavigationSaveState
@@ -4333,6 +5358,12 @@ export function ServerSettingsEditor({
               ? isAntiLinkSection
                 ? "Defina o canal de log para continuar"
                 : "Ative eventos validos e defina o canal de cada log ligado"
+              : isCaptchaSection
+                ? "Complete canal principal e cargos verificados para continuar"
+              : isSuggestionsSection
+                ? "Complete canais do painel e publicacao para continuar"
+              : isBatePontoSection
+                ? "Complete canal do painel e mensagens validas para continuar"
               : isWelcomeSection
               ? "Complete os canais de entrada e saida para continuar"
               : "Complete os campos obrigatorios para continuar"
@@ -4356,6 +5387,14 @@ export function ServerSettingsEditor({
             ? isAntiLinkSection
               ? "Escolha um canal de log para o modulo anti-link."
               : "Todo evento ligado precisa ter um canal de log configurado."
+            : isCaptchaSection
+              ? "Complete canal principal e cargos verificados para continuar."
+            : isSuggestionsSection
+              ? "Complete canais do painel e publicacao para continuar."
+            : isBatePontoSection
+              ? settingsSection === "bate_ponto_message"
+                ? "Complete a mensagem do painel com conteudo e um botao funcional."
+                : "Defina o canal do painel e mantenha pelo menos um bloco de texto no template de log."
             : isWelcomeSection
             ? "Defina canais publicos e privados para entrada e saida antes de salvar."
             : "Preencha todos os campos de ticket e staff para liberar o salvamento."
@@ -4401,14 +5440,6 @@ export function ServerSettingsEditor({
       onUnsavedChangesChange(hasUnsavedChanges);
     }
   }, [hasUnsavedChanges, onUnsavedChangesChange]);
-
-  useEffect(() => {
-    return () => {
-      if (typeof onUnsavedChangesChange === "function") {
-        onUnsavedChangesChange(false);
-      }
-    };
-  }, [onUnsavedChangesChange]);
 
   useEffect(() => {
     if (!navigationBlockSignal) return;
@@ -4492,11 +5523,6 @@ export function ServerSettingsEditor({
     exitPublicThumbnailMode,
     exitLogThumbnailMode,
   ]);
-
-  const activeWelcomeThumbnailPreviewUrl =
-    activeWelcomeThumbnailMode === "avatar"
-      ? "/cdn/icons/discord-icon.svg"
-      : null;
 
   const handleWelcomeLayoutChange = useCallback(
     (nextLayout: TicketPanelLayout) => {
@@ -5262,6 +6288,50 @@ export function ServerSettingsEditor({
       setEntryLogThumbnailMode(savedWelcomeSettingsDraft.entryLogThumbnailMode);
       setExitPublicThumbnailMode(savedWelcomeSettingsDraft.exitPublicThumbnailMode);
       setExitLogThumbnailMode(savedWelcomeSettingsDraft.exitLogThumbnailMode);
+    } else if (isCaptchaSection && savedCaptchaSettingsDraft) {
+      setCaptchaEnabled(savedCaptchaSettingsDraft.enabled);
+      setCaptchaPanelChannelId(savedCaptchaSettingsDraft.panelChannelId);
+      setCaptchaLogsChannelId(savedCaptchaSettingsDraft.logsChannelId);
+      setCaptchaVerifiedRoleIds(savedCaptchaSettingsDraft.verifiedRoleIds);
+      setCaptchaBypassRoleIds(savedCaptchaSettingsDraft.bypassRoleIds);
+      setCaptchaPanelLayout(savedCaptchaSettingsDraft.panelLayout);
+      setCaptchaChallengeTitle(savedCaptchaSettingsDraft.challengeTitle);
+      setCaptchaChallengeDescription(savedCaptchaSettingsDraft.challengeDescription);
+      setCaptchaMaxAttempts(savedCaptchaSettingsDraft.maxAttempts);
+      setCaptchaTimeoutSeconds(savedCaptchaSettingsDraft.timeoutSeconds);
+      setCaptchaKickOnFail(savedCaptchaSettingsDraft.kickOnFail);
+      setCaptchaSuccessMessage(savedCaptchaSettingsDraft.successMessage);
+    } else if (isSuggestionsSection && savedSuggestionSettingsDraft) {
+      setSuggestionsEnabled(savedSuggestionSettingsDraft.enabled);
+      setSuggestionsPanelChannelId(savedSuggestionSettingsDraft.panelChannelId);
+      setSuggestionsPublishChannelId(savedSuggestionSettingsDraft.publishChannelId);
+      setSuggestionsLogsChannelId(savedSuggestionSettingsDraft.logsChannelId);
+      setSuggestionsPanelLayout(savedSuggestionSettingsDraft.panelLayout);
+      setSuggestionsSuggestionLayout(
+        savedSuggestionSettingsDraft.suggestionLayout.length
+          ? savedSuggestionSettingsDraft.suggestionLayout
+          : createDefaultSuggestionPublishedLayout(),
+      );
+    } else if (isBatePontoSection && savedBatePontoSettingsDraft) {
+      setBatePontoEnabled(savedBatePontoSettingsDraft.enabled);
+      setBatePontoPanelChannelId(savedBatePontoSettingsDraft.panelChannelId);
+      setBatePontoLogsChannelId(savedBatePontoSettingsDraft.logsChannelId);
+      setBatePontoPanelLayout(savedBatePontoSettingsDraft.panelLayout);
+      setBatePontoLogLayout(savedBatePontoSettingsDraft.logLayout);
+      setBatePontoAllowedRoleIds(savedBatePontoSettingsDraft.allowedRoleIds);
+      setBatePontoHourBankEnabled(savedBatePontoSettingsDraft.hourBankEnabled);
+      setBatePontoDailyTargetMinutes(savedBatePontoSettingsDraft.dailyTargetMinutes);
+      setBatePontoTimezone(savedBatePontoSettingsDraft.timezone);
+      setBatePontoAutoFinishOpenSessions(
+        savedBatePontoSettingsDraft.autoFinishOpenSessions,
+      );
+      setBatePontoMaxOpenHours(savedBatePontoSettingsDraft.maxOpenHours);
+      setBatePontoRequireVoiceChannel(
+        savedBatePontoSettingsDraft.requireVoiceChannel,
+      );
+      setBatePontoRequiredVoiceChannelIds(
+        savedBatePontoSettingsDraft.requiredVoiceChannelIds,
+      );
     } else if (savedSettingsDraft) {
       setTicketEnabled(savedSettingsDraft.enabled);
       setMenuChannelId(savedSettingsDraft.menuChannelId);
@@ -5296,11 +6366,17 @@ export function ServerSettingsEditor({
     canResetSettings,
     isAntiLinkSection,
     isAutoRoleSection,
+    isCaptchaSection,
+    isSuggestionsSection,
+    isBatePontoSection,
     isSalesSettingsSection,
     isSecurityLogsSection,
     isWelcomeSection,
     savedAntiLinkSettingsDraft,
     savedAutoRoleSettingsDraft,
+    savedCaptchaSettingsDraft,
+    savedSuggestionSettingsDraft,
+    savedBatePontoSettingsDraft,
     savedSalesSettingsDraft,
     savedSecurityLogsDraft,
     savedSettingsDraft,
@@ -5313,6 +6389,9 @@ export function ServerSettingsEditor({
     setIsSaving(true);
     setErrorMessage(null);
     setSuccessMessage(null);
+    let dashboardCachePatch: Parameters<typeof patchCachedServerDashboardSettings>[1] | null =
+      null;
+    let savedSuccessMessage: string | null = null;
     try {
       if (isAutoRoleSection) {
         const response = await fetch("/api/auth/me/guilds/autorole-settings", {
@@ -5351,6 +6430,17 @@ export function ServerSettingsEditor({
 
         setAutoRoleSyncExistingMembers(false);
         setSavedAutoRoleSettingsDraft(currentAutoRoleDraft);
+        if (payload.settings) {
+          dashboardCachePatch = {
+            autoRoleSettings: {
+              ...payload.settings,
+              updatedAt:
+                typeof payload.settings.updatedAt === "string"
+                  ? payload.settings.updatedAt
+                  : new Date().toISOString(),
+            },
+          };
+        }
       } else if (isAntiLinkSection) {
         const response = await fetch("/api/auth/me/guilds/antilink-settings", {
           method: "POST",
@@ -5377,6 +6467,17 @@ export function ServerSettingsEditor({
         }
 
         setSavedAntiLinkSettingsDraft(currentAntiLinkDraft);
+        if (payload.settings) {
+          dashboardCachePatch = {
+            antiLinkSettings: {
+              ...payload.settings,
+              updatedAt:
+                typeof payload.settings.updatedAt === "string"
+                  ? payload.settings.updatedAt
+                  : new Date().toISOString(),
+            },
+          };
+        }
       } else if (isSecurityLogsSection) {
         const response = await fetch(
           "/api/auth/me/guilds/security-logs-settings",
@@ -5402,6 +6503,17 @@ export function ServerSettingsEditor({
         }
 
         setSavedSecurityLogsDraft(currentSecurityLogsDraft);
+        if (payload.settings) {
+          dashboardCachePatch = {
+            securityLogsSettings: {
+              ...payload.settings,
+              updatedAt:
+                typeof payload.settings.updatedAt === "string"
+                  ? payload.settings.updatedAt
+                  : new Date().toISOString(),
+            },
+          };
+        }
       } else if (isSalesSettingsSection) {
         const response = await fetch("/api/auth/me/guilds/sales-settings", {
           method: "POST",
@@ -5473,6 +6585,17 @@ export function ServerSettingsEditor({
         setSalesReceiptCompanyDocument(nextSalesDraft.receiptCompanyDocument);
         setSalesReceiptSupportText(nextSalesDraft.receiptSupportText);
         setSavedSalesSettingsDraft(nextSalesDraft);
+        if (payload.settings) {
+          dashboardCachePatch = {
+            salesSettings: {
+              ...payload.settings,
+              updatedAt:
+                typeof payload.settings.updatedAt === "string"
+                  ? payload.settings.updatedAt
+                  : new Date().toISOString(),
+            },
+          };
+        }
       } else if (isWelcomeSection) {
         const response = await fetch("/api/auth/me/guilds/welcome-settings", {
           method: "POST",
@@ -5501,6 +6624,345 @@ export function ServerSettingsEditor({
         }
 
         setSavedWelcomeSettingsDraft(currentWelcomeDraft);
+        if (payload.settings) {
+          dashboardCachePatch = {
+            welcomeSettings: {
+              ...payload.settings,
+              updatedAt:
+                typeof payload.settings.updatedAt === "string"
+                  ? payload.settings.updatedAt
+                  : new Date().toISOString(),
+            },
+          };
+        }
+      } else if (isCaptchaSection) {
+        const legacyFields = deriveLegacyTicketPanelFields(captchaPanelLayout);
+        const response = await fetch("/api/auth/me/guilds/captcha-settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            guildId,
+            enabled: captchaEnabled,
+            panelChannelId: captchaPanelChannelId,
+            logsChannelId: captchaLogsChannelId,
+            verifiedRoleIds: captchaVerifiedRoleIds,
+            bypassRoleIds: captchaBypassRoleIds,
+            panelLayout: captchaPanelLayout,
+            panelTitle: legacyFields.panelTitle,
+            panelDescription: legacyFields.panelDescription,
+            panelButtonLabel: legacyFields.panelButtonLabel,
+            challengeTitle: captchaChallengeTitle,
+            challengeDescription: captchaChallengeDescription,
+            maxAttempts: captchaMaxAttempts,
+            timeoutSeconds: captchaTimeoutSeconds,
+            kickOnFail: captchaKickOnFail,
+            successMessage: captchaSuccessMessage,
+          }),
+        });
+
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.message || "Falha ao salvar configuracoes de captcha.");
+        }
+
+        const nextCaptchaDraft = normalizeCaptchaSettingsDraft({
+          enabled: payload.settings?.enabled === true,
+          panelChannelId:
+            typeof payload.settings?.panelChannelId === "string"
+              ? payload.settings.panelChannelId
+              : null,
+          logsChannelId:
+            typeof payload.settings?.logsChannelId === "string"
+              ? payload.settings.logsChannelId
+              : null,
+          verifiedRoleIds: Array.isArray(payload.settings?.verifiedRoleIds)
+            ? payload.settings.verifiedRoleIds.filter(
+                (id: unknown): id is string => typeof id === "string",
+              )
+            : [],
+          bypassRoleIds: Array.isArray(payload.settings?.bypassRoleIds)
+            ? payload.settings.bypassRoleIds.filter(
+                (id: unknown): id is string => typeof id === "string",
+              )
+            : [],
+          panelLayout: normalizeTicketPanelLayout(
+            payload.settings?.panelLayout,
+            payload.settings || undefined,
+          ),
+          challengeTitle:
+            typeof payload.settings?.challengeTitle === "string"
+              ? payload.settings.challengeTitle
+              : captchaChallengeTitle,
+          challengeDescription:
+            typeof payload.settings?.challengeDescription === "string"
+              ? payload.settings.challengeDescription
+              : captchaChallengeDescription,
+          maxAttempts: Number(payload.settings?.maxAttempts ?? captchaMaxAttempts),
+          timeoutSeconds: Number(payload.settings?.timeoutSeconds ?? captchaTimeoutSeconds),
+          kickOnFail: payload.settings?.kickOnFail === true,
+          successMessage:
+            typeof payload.settings?.successMessage === "string"
+              ? payload.settings.successMessage
+              : captchaSuccessMessage,
+        });
+
+        setCaptchaEnabled(nextCaptchaDraft.enabled);
+        setCaptchaPanelChannelId(nextCaptchaDraft.panelChannelId);
+        setCaptchaLogsChannelId(nextCaptchaDraft.logsChannelId);
+        setCaptchaVerifiedRoleIds(nextCaptchaDraft.verifiedRoleIds);
+        setCaptchaBypassRoleIds(nextCaptchaDraft.bypassRoleIds);
+        setCaptchaPanelLayout(nextCaptchaDraft.panelLayout);
+        setCaptchaChallengeTitle(nextCaptchaDraft.challengeTitle);
+        setCaptchaChallengeDescription(nextCaptchaDraft.challengeDescription);
+        setCaptchaMaxAttempts(nextCaptchaDraft.maxAttempts);
+        setCaptchaTimeoutSeconds(nextCaptchaDraft.timeoutSeconds);
+        setCaptchaKickOnFail(nextCaptchaDraft.kickOnFail);
+        setCaptchaSuccessMessage(nextCaptchaDraft.successMessage);
+        setSavedCaptchaSettingsDraft(nextCaptchaDraft);
+        dashboardCachePatch = {
+          captchaSettings: {
+            enabled: nextCaptchaDraft.enabled,
+            panelChannelId: nextCaptchaDraft.panelChannelId,
+            logsChannelId: nextCaptchaDraft.logsChannelId,
+            verifiedRoleIds: nextCaptchaDraft.verifiedRoleIds,
+            bypassRoleIds: nextCaptchaDraft.bypassRoleIds,
+            panelLayout: nextCaptchaDraft.panelLayout,
+            panelTitle:
+              typeof payload.settings?.panelTitle === "string"
+                ? payload.settings.panelTitle
+                : "",
+            panelDescription:
+              typeof payload.settings?.panelDescription === "string"
+                ? payload.settings.panelDescription
+                : "",
+            panelButtonLabel:
+              typeof payload.settings?.panelButtonLabel === "string"
+                ? payload.settings.panelButtonLabel
+                : "",
+            challengeTitle: nextCaptchaDraft.challengeTitle,
+            challengeDescription: nextCaptchaDraft.challengeDescription,
+            maxAttempts: nextCaptchaDraft.maxAttempts,
+            timeoutSeconds: nextCaptchaDraft.timeoutSeconds,
+            kickOnFail: nextCaptchaDraft.kickOnFail,
+            successMessage: nextCaptchaDraft.successMessage,
+            updatedAt:
+              typeof payload.settings?.updatedAt === "string"
+                ? payload.settings.updatedAt
+                : new Date().toISOString(),
+          },
+        };
+      } else if (isSuggestionsSection) {
+        const legacyFields = deriveLegacyTicketPanelFields(suggestionsPanelLayout);
+        const response = await fetch("/api/auth/me/guilds/suggestions-settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            guildId,
+            enabled: suggestionsEnabled,
+            panelChannelId: suggestionsPanelChannelId,
+            publishChannelId: suggestionsPublishChannelId,
+            logsChannelId: suggestionsLogsChannelId,
+            panelLayout: suggestionsPanelLayout,
+            panelTitle: legacyFields.panelTitle,
+            panelDescription: legacyFields.panelDescription,
+            panelButtonLabel: legacyFields.panelButtonLabel,
+            suggestionLayout: suggestionsSuggestionLayout,
+          }),
+        });
+
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) {
+          throw new Error(
+            payload.message || "Falha ao salvar configuracoes de sugestoes.",
+          );
+        }
+
+        const nextSuggestionDraft = normalizeSuggestionSettingsDraft({
+          enabled: payload.settings?.enabled === true,
+          panelChannelId:
+            typeof payload.settings?.panelChannelId === "string"
+              ? payload.settings.panelChannelId
+              : null,
+          publishChannelId:
+            typeof payload.settings?.publishChannelId === "string"
+              ? payload.settings.publishChannelId
+              : null,
+          logsChannelId:
+            typeof payload.settings?.logsChannelId === "string"
+              ? payload.settings.logsChannelId
+              : null,
+          panelLayout: normalizeSuggestionPanelLayout(
+            payload.settings?.panelLayout,
+            payload.settings || undefined,
+          ),
+          suggestionLayout: normalizeSuggestionPublishedLayout(
+            payload.settings?.suggestionLayout,
+          ),
+        });
+
+        setSuggestionsEnabled(nextSuggestionDraft.enabled);
+        setSuggestionsPanelChannelId(nextSuggestionDraft.panelChannelId);
+        setSuggestionsPublishChannelId(nextSuggestionDraft.publishChannelId);
+        setSuggestionsLogsChannelId(nextSuggestionDraft.logsChannelId);
+        setSuggestionsPanelLayout(nextSuggestionDraft.panelLayout);
+        setSuggestionsSuggestionLayout(nextSuggestionDraft.suggestionLayout);
+        setSavedSuggestionSettingsDraft(nextSuggestionDraft);
+        dashboardCachePatch = {
+          suggestionsSettings: {
+            enabled: nextSuggestionDraft.enabled,
+            panelChannelId: nextSuggestionDraft.panelChannelId,
+            publishChannelId: nextSuggestionDraft.publishChannelId,
+            logsChannelId: nextSuggestionDraft.logsChannelId,
+            panelLayout: nextSuggestionDraft.panelLayout,
+            panelTitle:
+              typeof payload.settings?.panelTitle === "string"
+                ? payload.settings.panelTitle
+                : "",
+            panelDescription:
+              typeof payload.settings?.panelDescription === "string"
+                ? payload.settings.panelDescription
+                : "",
+            panelButtonLabel:
+              typeof payload.settings?.panelButtonLabel === "string"
+                ? payload.settings.panelButtonLabel
+                : "",
+            suggestionLayout: nextSuggestionDraft.suggestionLayout,
+            updatedAt:
+              typeof payload.settings?.updatedAt === "string"
+                ? payload.settings.updatedAt
+                : new Date().toISOString(),
+          },
+        };
+      } else if (isBatePontoSection) {
+        const legacyFields = deriveLegacyTicketPanelFields(batePontoPanelLayout);
+        const response = await fetch("/api/auth/me/guilds/bate-ponto-settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            guildId,
+            enabled: batePontoEnabled,
+            panelChannelId: batePontoPanelChannelId,
+            logsChannelId: batePontoLogsChannelId,
+            panelLayout: batePontoPanelLayout,
+            panelTitle: legacyFields.panelTitle,
+            panelDescription: legacyFields.panelDescription,
+            panelButtonLabel: legacyFields.panelButtonLabel,
+            logLayout: batePontoLogLayout,
+            allowedRoleIds: batePontoAllowedRoleIds,
+            hourBankEnabled: batePontoHourBankEnabled,
+            dailyTargetMinutes: batePontoDailyTargetMinutes,
+            timezone: batePontoTimezone,
+            autoFinishOpenSessions: batePontoAutoFinishOpenSessions,
+            maxOpenHours: batePontoMaxOpenHours,
+            requireVoiceChannel: batePontoRequireVoiceChannel,
+            requiredVoiceChannelIds: batePontoRequiredVoiceChannelIds,
+          }),
+        });
+
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) {
+          throw new Error(
+            payload.message || "Falha ao salvar configuracoes de bate ponto.",
+          );
+        }
+
+        const nextBatePontoDraft = normalizeBatePontoSettingsDraft({
+          enabled: payload.settings?.enabled === true,
+          panelChannelId:
+            typeof payload.settings?.panelChannelId === "string"
+              ? payload.settings.panelChannelId
+              : null,
+          logsChannelId:
+            typeof payload.settings?.logsChannelId === "string"
+              ? payload.settings.logsChannelId
+              : null,
+          panelLayout: normalizeBatePontoPanelLayout(
+            payload.settings?.panelLayout,
+            payload.settings || undefined,
+          ),
+          logLayout: normalizeBatePontoLogLayout(payload.settings?.logLayout),
+          allowedRoleIds: Array.isArray(payload.settings?.allowedRoleIds)
+            ? payload.settings.allowedRoleIds.filter(
+                (id: unknown): id is string => typeof id === "string",
+              )
+            : [],
+          hourBankEnabled: payload.settings?.hourBankEnabled !== false,
+          dailyTargetMinutes: Number(
+            payload.settings?.dailyTargetMinutes ?? batePontoDailyTargetMinutes,
+          ),
+          timezone:
+            typeof payload.settings?.timezone === "string"
+              ? payload.settings.timezone
+              : batePontoTimezone,
+          autoFinishOpenSessions:
+            payload.settings?.autoFinishOpenSessions === true,
+          maxOpenHours: Number(payload.settings?.maxOpenHours ?? batePontoMaxOpenHours),
+          requireVoiceChannel: payload.settings?.requireVoiceChannel === true,
+          requiredVoiceChannelIds: Array.isArray(
+            payload.settings?.requiredVoiceChannelIds,
+          )
+            ? payload.settings.requiredVoiceChannelIds.filter(
+                (id: unknown): id is string => typeof id === "string",
+              )
+            : [],
+        });
+
+        setBatePontoEnabled(nextBatePontoDraft.enabled);
+        setBatePontoPanelChannelId(nextBatePontoDraft.panelChannelId);
+        setBatePontoLogsChannelId(nextBatePontoDraft.logsChannelId);
+        setBatePontoPanelLayout(nextBatePontoDraft.panelLayout);
+        setBatePontoLogLayout(nextBatePontoDraft.logLayout);
+        setBatePontoAllowedRoleIds(nextBatePontoDraft.allowedRoleIds);
+        setBatePontoHourBankEnabled(nextBatePontoDraft.hourBankEnabled);
+        setBatePontoDailyTargetMinutes(nextBatePontoDraft.dailyTargetMinutes);
+        setBatePontoTimezone(nextBatePontoDraft.timezone);
+        setBatePontoAutoFinishOpenSessions(nextBatePontoDraft.autoFinishOpenSessions);
+        setBatePontoMaxOpenHours(nextBatePontoDraft.maxOpenHours);
+        setBatePontoRequireVoiceChannel(nextBatePontoDraft.requireVoiceChannel);
+        setBatePontoRequiredVoiceChannelIds(
+          nextBatePontoDraft.requiredVoiceChannelIds,
+        );
+        setSavedBatePontoSettingsDraft(nextBatePontoDraft);
+        if (
+          settingsSection === "bate_ponto_overview" &&
+          payload.panelDispatch?.ok === true
+        ) {
+          savedSuccessMessage =
+            "Configuracoes salvas e embed padrao enviado no canal do painel.";
+        }
+        dashboardCachePatch = {
+          batePontoSettings: {
+            enabled: nextBatePontoDraft.enabled,
+            panelChannelId: nextBatePontoDraft.panelChannelId,
+            logsChannelId: nextBatePontoDraft.logsChannelId,
+            panelLayout: nextBatePontoDraft.panelLayout,
+            panelTitle:
+              typeof payload.settings?.panelTitle === "string"
+                ? payload.settings.panelTitle
+                : "",
+            panelDescription:
+              typeof payload.settings?.panelDescription === "string"
+                ? payload.settings.panelDescription
+                : "",
+            panelButtonLabel:
+              typeof payload.settings?.panelButtonLabel === "string"
+                ? payload.settings.panelButtonLabel
+                : "",
+            logLayout: nextBatePontoDraft.logLayout,
+            allowedRoleIds: nextBatePontoDraft.allowedRoleIds,
+            hourBankEnabled: nextBatePontoDraft.hourBankEnabled,
+            dailyTargetMinutes: nextBatePontoDraft.dailyTargetMinutes,
+            timezone: nextBatePontoDraft.timezone,
+            autoFinishOpenSessions: nextBatePontoDraft.autoFinishOpenSessions,
+            maxOpenHours: nextBatePontoDraft.maxOpenHours,
+            requireVoiceChannel: nextBatePontoDraft.requireVoiceChannel,
+            requiredVoiceChannelIds: nextBatePontoDraft.requiredVoiceChannelIds,
+            updatedAt:
+              typeof payload.settings?.updatedAt === "string"
+                ? payload.settings.updatedAt
+                : new Date().toISOString(),
+          },
+        };
       } else {
         const shouldPersistTicketStaff =
           ticketEnabled ||
@@ -5515,37 +6977,57 @@ export function ServerSettingsEditor({
         const normalizedRefundManualApprovalRequired = normalizedRefundAutoProcessEnabled
           ? false
           : refundManualApprovalRequired !== false;
-        const ticketRes = await fetch("/api/auth/me/guilds/ticket-settings", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            guildId,
-            enabled: ticketEnabled,
-            menuChannelId,
-            ticketsCategoryId,
-            logsCreatedChannelId,
-            logsClosedChannelId,
-            panelLayout,
-            aiRules,
-            aiEnabled,
-            aiCompanyName,
-            aiCompanyBio,
-            aiTone,
-            refundSettings: {
-              refundLimitDays,
-              refundRules,
-              refundAutoProcessEnabled: normalizedRefundAutoProcessEnabled,
-              refundManualApprovalRequired: normalizedRefundManualApprovalRequired,
-              refundApprovalChannelId,
-              refundApproverRoleIds,
-              refundSuccessMessage,
-              refundErrorMessage,
-            },
-            panelTitle: legacyFields.panelTitle,
-            panelDescription: legacyFields.panelDescription,
-            panelButtonLabel: legacyFields.panelButtonLabel,
-          }),
+        const ticketRequestBody = JSON.stringify({
+          guildId,
+          enabled: ticketEnabled,
+          menuChannelId,
+          ticketsCategoryId,
+          logsCreatedChannelId,
+          logsClosedChannelId,
+          panelLayout,
+          aiRules,
+          aiEnabled,
+          aiCompanyName,
+          aiCompanyBio,
+          aiTone,
+          refundSettings: {
+            refundLimitDays,
+            refundRules,
+            refundAutoProcessEnabled: normalizedRefundAutoProcessEnabled,
+            refundManualApprovalRequired: normalizedRefundManualApprovalRequired,
+            refundApprovalChannelId,
+            refundApproverRoleIds,
+            refundSuccessMessage,
+            refundErrorMessage,
+          },
+          panelTitle: legacyFields.panelTitle,
+          panelDescription: legacyFields.panelDescription,
+          panelButtonLabel: legacyFields.panelButtonLabel,
         });
+        const staffRequestBody = shouldPersistTicketStaff
+          ? JSON.stringify({
+              guildId,
+              adminRoleId,
+              claimRoleIds,
+              closeRoleIds,
+              notifyRoleIds,
+            })
+          : null;
+
+        const [ticketRes, staffRes] = await Promise.all([
+          fetch("/api/auth/me/guilds/ticket-settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: ticketRequestBody,
+          }),
+          staffRequestBody
+            ? fetch("/api/auth/me/guilds/ticket-staff-settings", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: staffRequestBody,
+              })
+            : Promise.resolve(null),
+        ]);
 
         const ticket = await ticketRes.json();
         if (!ticketRes.ok || !ticket.ok) {
@@ -5559,19 +7041,7 @@ export function ServerSettingsEditor({
           notifyRoleIds: savedSettingsDraft?.notifyRoleIds ?? [],
         };
 
-        if (shouldPersistTicketStaff) {
-          const staffRes = await fetch("/api/auth/me/guilds/ticket-staff-settings", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              guildId,
-              adminRoleId,
-              claimRoleIds,
-              closeRoleIds,
-              notifyRoleIds,
-            }),
-          });
-
+        if (staffRes) {
           const staff = await staffRes.json();
           if (!staffRes.ok || !staff.ok) {
             throw new Error(staff.message || "Falha ao salvar staff.");
@@ -5683,10 +7153,34 @@ export function ServerSettingsEditor({
         setRefundSuccessMessage(nextSavedTicketDraft.refundSuccessMessage);
         setRefundErrorMessage(nextSavedTicketDraft.refundErrorMessage);
         setSavedSettingsDraft(nextSavedTicketDraft);
+        dashboardCachePatch = {
+          ticketSettings: ticket.settings
+            ? {
+                ...ticket.settings,
+                updatedAt:
+                  typeof ticket.settings.updatedAt === "string"
+                    ? ticket.settings.updatedAt
+                    : new Date().toISOString(),
+              }
+            : undefined,
+          staffSettings: shouldPersistTicketStaff
+            ? {
+                adminRoleId: nextStaffSettings.adminRoleId,
+                claimRoleIds: nextStaffSettings.claimRoleIds,
+                closeRoleIds: nextStaffSettings.closeRoleIds,
+                notifyRoleIds: nextStaffSettings.notifyRoleIds,
+                updatedAt: new Date().toISOString(),
+              }
+            : undefined,
+        };
       }
 
-      invalidateCachedServerDashboardSettings(guildId);
-      setSuccessMessage("Configuracoes salvas com sucesso.");
+      if (dashboardCachePatch) {
+        patchCachedServerDashboardSettings(guildId, dashboardCachePatch);
+      } else {
+        markServerDashboardSettingsSaved(guildId);
+      }
+      setSuccessMessage(savedSuccessMessage || "Configuracoes salvas com sucesso.");
       setShowSaveSuccessBar(true);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Erro ao salvar configuracoes.");
@@ -5714,11 +7208,39 @@ export function ServerSettingsEditor({
     autoRoleSyncExistingMembers,
     applyAutoRoleRuntimePayload,
     adminRoleId,
+    batePontoAllowedRoleIds,
+    batePontoAutoFinishOpenSessions,
+    batePontoDailyTargetMinutes,
+    batePontoEnabled,
+    batePontoHourBankEnabled,
+    batePontoLogLayout,
+    batePontoLogsChannelId,
+    batePontoMaxOpenHours,
+    batePontoRequireVoiceChannel,
+    batePontoRequiredVoiceChannelIds,
+    batePontoPanelChannelId,
+    batePontoPanelLayout,
+    batePontoTimezone,
     canPersistSettings,
+    captchaBypassRoleIds,
+    captchaChallengeDescription,
+    captchaChallengeTitle,
+    captchaEnabled,
+    captchaKickOnFail,
+    captchaLogsChannelId,
+    captchaMaxAttempts,
+    captchaPanelChannelId,
+    captchaPanelLayout,
+    captchaSuccessMessage,
+    captchaTimeoutSeconds,
+    captchaVerifiedRoleIds,
     claimRoleIds,
     closeRoleIds,
     currentAntiLinkDraft,
     currentAutoRoleDraft,
+    currentCaptchaDraft,
+    currentSuggestionDraft,
+    currentBatePontoDraft,
     currentWelcomeDraft,
     entryPublicLayout,
     entryLogLayout,
@@ -5735,6 +7257,9 @@ export function ServerSettingsEditor({
     guildId,
     isAntiLinkSection,
     isAutoRoleSection,
+    isCaptchaSection,
+    isSuggestionsSection,
+    isBatePontoSection,
     isSalesSettingsSection,
     isSecurityLogsSection,
     isTicketSection,
@@ -5754,6 +7279,7 @@ export function ServerSettingsEditor({
     refundSuccessMessage,
     savedSettingsDraft,
     salesCartsCategoryId,
+    settingsSection,
     salesEnabled,
     salesPaymentApprovedLogChannelId,
     salesPaymentPendingLogChannelId,
@@ -5763,10 +7289,19 @@ export function ServerSettingsEditor({
     salesReceiptSupportText,
     setSavedAntiLinkSettingsDraft,
     setSavedAutoRoleSettingsDraft,
+    setSavedCaptchaSettingsDraft,
+    setSavedSuggestionSettingsDraft,
+    setSavedBatePontoSettingsDraft,
     setSavedSalesSettingsDraft,
     setSavedSecurityLogsDraft,
     setSavedSettingsDraft,
     setSavedWelcomeSettingsDraft,
+    suggestionsEnabled,
+    suggestionsLogsChannelId,
+    suggestionsPanelChannelId,
+    suggestionsPanelLayout,
+    suggestionsPublishChannelId,
+    suggestionsSuggestionLayout,
     ticketEnabled,
     ticketsCategoryId,
     welcomeEnabled,
@@ -5807,6 +7342,121 @@ export function ServerSettingsEditor({
       setIsSendingEmbed(false);
     }
   }, [canSendEmbed, guildId, menuChannelId, panelLayout]);
+
+  const handleSendCaptchaEmbed = useCallback(async () => {
+    if (!canSendCaptchaEmbed || !captchaPanelChannelId) return;
+    if (isSendingEmbedRef.current) return;
+    isSendingEmbedRef.current = true;
+
+    setIsSendingEmbed(true);
+    setErrorMessage(null);
+
+    try {
+      const response = await fetch("/api/auth/me/guilds/captcha-panel-message", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          guildId,
+          panelChannelId: captchaPanelChannelId,
+          panelLayout: captchaPanelLayout,
+        }),
+      });
+
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.message || "Falha ao enviar o embed de captcha.");
+      }
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Erro ao enviar o embed de captcha.",
+      );
+    } finally {
+      isSendingEmbedRef.current = false;
+      setIsSendingEmbed(false);
+    }
+  }, [canSendCaptchaEmbed, captchaPanelChannelId, captchaPanelLayout, guildId]);
+
+  const handleSendSuggestionsEmbed = useCallback(async () => {
+    if (!canSendSuggestionsEmbed || !suggestionsPanelChannelId) return;
+    if (isSendingEmbedRef.current) return;
+    isSendingEmbedRef.current = true;
+
+    setIsSendingEmbed(true);
+    setErrorMessage(null);
+
+    try {
+      const response = await fetch("/api/auth/me/guilds/suggestions-panel-message", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          guildId,
+          panelChannelId: suggestionsPanelChannelId,
+          panelLayout: suggestionsPanelLayout,
+        }),
+      });
+
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.message || "Falha ao enviar o embed de sugestoes.");
+      }
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Erro ao enviar o embed de sugestoes.",
+      );
+    } finally {
+      isSendingEmbedRef.current = false;
+      setIsSendingEmbed(false);
+    }
+  }, [
+    canSendSuggestionsEmbed,
+    guildId,
+    suggestionsPanelChannelId,
+    suggestionsPanelLayout,
+  ]);
+
+  const handleSendBatePontoEmbed = useCallback(async () => {
+    if (!canSendBatePontoEmbed || !batePontoPanelChannelId) return;
+    if (isSendingEmbedRef.current) return;
+    isSendingEmbedRef.current = true;
+
+    setIsSendingEmbed(true);
+    setErrorMessage(null);
+
+    try {
+      const response = await fetch("/api/auth/me/guilds/bate-ponto-panel-message", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          guildId,
+          panelChannelId: batePontoPanelChannelId,
+          panelLayout: batePontoPanelLayout,
+        }),
+      });
+
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.message || "Falha ao enviar o embed de bate ponto.");
+      }
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Erro ao enviar o embed de bate ponto.",
+      );
+    } finally {
+      isSendingEmbedRef.current = false;
+      setIsSendingEmbed(false);
+    }
+  }, [
+    batePontoPanelChannelId,
+    batePontoPanelLayout,
+    canSendBatePontoEmbed,
+    guildId,
+  ]);
 
   const handleActivateWelcome = useCallback(async () => {
     if (isActivatingWelcome || settingsReadOnly) return;
@@ -6127,6 +7777,7 @@ export function ServerSettingsEditor({
   ]);
 
   return (
+    <DiscordGuildResourcesRefreshProvider refresh={refreshResourcesOnMenuOpen}>
     <ClientErrorBoundary
       fallback={
         <section
@@ -6175,7 +7826,7 @@ export function ServerSettingsEditor({
                     Atualizando dados do servidor...
                   </div>
                 ) : null}
-                <div className={`space-y-[18px] ${showFloatingSaveBar && !isUnauthorizedForSection ? "pb-[112px]" : ""} ${isLoading ? "pointer-events-none opacity-[0.78]" : ""}`}>
+                <div className={`space-y-[18px] ${showFloatingSaveBar && !isUnauthorizedForSection ? "pb-[112px]" : ""} ${shouldShowBlockingSkeleton ? "pointer-events-none opacity-[0.78]" : ""}`}>
                   {isUnauthorizedForSection ? (
                     <PermissionDeniedState 
                       onAction={() => {
@@ -6238,21 +7889,13 @@ export function ServerSettingsEditor({
                       readOnly={settingsReadOnly}
                     />
                   ) : settingsSection === "sales_overview" ? (
-                    <div className="space-y-[14px]">
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
-                              Modulo Vendas
-                            </p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Mantenha a loja do servidor em operacao
-                            </h3>
-                            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              O Flowdesk libera criacao de carrinho, logs de pagamento e comprovantes personalizados quando o modulo estiver ativo.
-                            </p>
-                          </div>
-
+                    <ModulePage>
+                      <ModuleHero
+                        label="Modulo Vendas"
+                        title="Loja do servidor em operacao"
+                        description="Carrinhos, logs de pagamento e comprovantes ficam prontos quando o modulo estiver ativo. Salve para aplicar no Discord."
+                        icon={ShoppingBag}
+                        action={
                           <DashboardInlineSwitch
                             checked={salesEnabled}
                             onChange={() => {
@@ -6262,72 +7905,32 @@ export function ServerSettingsEditor({
                             disabled={isSaving || settingsReadOnly}
                             ariaLabel="Ativar ou desativar modulo de vendas"
                           />
-                        </div>
+                        }
+                      />
+                      <div className="grid gap-[12px] md:grid-cols-2 xl:grid-cols-4">
+                        <ModuleStat label="Status" value={salesEnabled ? "Ativo" : "Desligado"} hint="Loja e checkout" icon={ShoppingBag} delay={0.06} />
+                        <ModuleStat label="Categoria" value={optionLabel(categoryOptions, salesCartsCategoryId)} hint="Onde o carrinho nasce" icon={Hash} delay={0.1} />
+                        <ModuleStat label="Log aprovado" value={optionLabel(textChannelOptions, salesPaymentApprovedLogChannelId)} hint="Pagamentos confirmados" icon={Hash} delay={0.14} />
+                        <ModuleStat label="Comprovante" value={salesReceiptCompanyName.trim() || "Sem marca"} hint="Identidade do recibo" icon={Signature} delay={0.18} />
                       </div>
-
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Configurando vendas</p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Carrinhos e logs fixas
-                            </h3>
-                            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              Defina a categoria onde cada carrinho nasce e os canais que recebem pagamentos aprovados, pendentes e recusados.
-                            </p>
-                          </div>
+                      <ModuleCard label="Operacao" title="Carrinhos e logs" description="Cada valor abaixo mostra o destino atual. Troque o canal sem perder o contexto do que ja esta configurado." delay={0.16}>
+                        <div className="grid grid-cols-1 gap-[12px] xl:grid-cols-2">
+                          <ModuleSetting label="Categoria do carrinho" value={optionLabel(categoryOptions, salesCartsCategoryId)} hint="Canal-categoria onde o pedido e criado" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha uma categoria" options={categoryOptions} value={salesCartsCategoryId} onChange={setSalesCartsCategoryId} disabled={salesControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Log aprovado" value={optionLabel(textChannelOptions, salesPaymentApprovedLogChannelId)} hint="Pagamento confirmado" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal de logs" options={textChannelOptions} value={salesPaymentApprovedLogChannelId} onChange={setSalesPaymentApprovedLogChannelId} disabled={salesControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Log pendente" value={optionLabel(textChannelOptions, salesPaymentPendingLogChannelId)} hint="Aguardando pagamento" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal de logs" options={textChannelOptions} value={salesPaymentPendingLogChannelId} onChange={setSalesPaymentPendingLogChannelId} disabled={salesControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Log recusado" value={optionLabel(textChannelOptions, salesPaymentRejectedLogChannelId)} hint="Falha ou cancelamento" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal de logs" options={textChannelOptions} value={salesPaymentRejectedLogChannelId} onChange={setSalesPaymentRejectedLogChannelId} disabled={salesControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
                         </div>
+                      </ModuleCard>
 
-                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
-                          <ConfigStepSelect
-                            label="Categoria onde o carrinho sera gerado"
-                            placeholder="Escolha uma categoria"
-                            options={categoryOptions}
-                            value={salesCartsCategoryId}
-                            onChange={setSalesCartsCategoryId}
-                            disabled={salesControlsDisabled}
-                            controlHeightPx={serverSettingsControlHeight}
-                          />
-                          <ConfigStepSelect
-                            label="Log de pagamento aprovado"
-                            placeholder="Escolha o canal de logs"
-                            options={textChannelOptions}
-                            value={salesPaymentApprovedLogChannelId}
-                            onChange={setSalesPaymentApprovedLogChannelId}
-                            disabled={salesControlsDisabled}
-                            controlHeightPx={serverSettingsControlHeight}
-                          />
-                          <ConfigStepSelect
-                            label="Log de pagamento pendente"
-                            placeholder="Escolha o canal de logs"
-                            options={textChannelOptions}
-                            value={salesPaymentPendingLogChannelId}
-                            onChange={setSalesPaymentPendingLogChannelId}
-                            disabled={salesControlsDisabled}
-                            controlHeightPx={serverSettingsControlHeight}
-                          />
-                          <ConfigStepSelect
-                            label="Log de pagamento recusado"
-                            placeholder="Escolha o canal de logs"
-                            options={textChannelOptions}
-                            value={salesPaymentRejectedLogChannelId}
-                            onChange={setSalesPaymentRejectedLogChannelId}
-                            disabled={salesControlsDisabled}
-                            controlHeightPx={serverSettingsControlHeight}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div>
-                          <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Comprovante</p>
-                          <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                            Identidade do recibo
-                          </h3>
-                          <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                            Personalize o nome exibido no comprovante, documento/identificador e a mensagem de suporte enviada ao cliente.
-                          </p>
-                        </div>
+                      <ModuleCard label="Comprovante" title="Identidade do recibo" description="O cliente ve esses dados no comprovante. Salve para sincronizar a marca da loja." delay={0.2}>
 
                         <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
                           <div>
@@ -6367,11 +7970,11 @@ export function ServerSettingsEditor({
                             />
                           </div>
                         </div>
-                      </div>
-                    </div>
+                      </ModuleCard>
+                    </ModulePage>
                   ) : salesPlaceholderContent ? (
                     <div className="space-y-[14px]">
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                      <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div>
                           <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
                             {salesPlaceholderContent.tag}
@@ -6386,21 +7989,13 @@ export function ServerSettingsEditor({
                       </div>
                     </div>
                   ) : settingsSection === "overview" ? (
-                    <div className="space-y-[14px]">
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
-                              Modulo Ticket
-                            </p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Mantenha a central de atendimento em operacao
-                            </h3>
-                            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              O Flowdesk libera painel, abertura de tickets, logs e permissoes quando o modulo estiver ativo.
-                            </p>
-                          </div>
-
+                    <ModulePage>
+                      <ModuleHero
+                        label="Modulo Ticket"
+                        title="Central de atendimento"
+                        description="Painel, abertura, logs e permissoes ficam prontos quando o modulo estiver ativo. Salve para publicar no servidor."
+                        icon={Ticket}
+                        action={
                           <DashboardInlineSwitch
                             checked={ticketEnabled}
                             onChange={() => {
@@ -6410,100 +8005,71 @@ export function ServerSettingsEditor({
                             disabled={isSaving || settingsReadOnly}
                             ariaLabel="Ativar ou desativar modulo de tickets"
                           />
-                        </div>
+                        }
+                      />
+                      <div className="grid gap-[12px] md:grid-cols-2 xl:grid-cols-4">
+                        <ModuleStat label="Status" value={ticketEnabled ? "Ativo" : "Desligado"} hint="Atendimento ao vivo" icon={Ticket} delay={0.06} />
+                        <ModuleStat label="Menu" value={optionLabel(textChannelOptions, menuChannelId)} hint="Canal do painel" icon={Hash} delay={0.1} />
+                        <ModuleStat label="Categoria" value={optionLabel(categoryOptions, ticketsCategoryId)} hint="Onde os tickets abrem" icon={Hash} delay={0.14} />
+                        <ModuleStat label="Staff" value={optionLabel(roleOptions, adminRoleId)} hint="Cargo administrador" icon={Users} delay={0.18} />
                       </div>
-
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Ticket</p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Canais e logs
-                            </h3>
-                            <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              Defina o canal principal, a categoria dos tickets e os logs que sustentam a operacao do servidor.
-                            </p>
-                          </div>
+                      <ModuleCard label="Operacao" title="Canais e logs" description="O valor grande e o destino atual. O seletor so entra quando voce precisa trocar." delay={0.16}>
+                        <div className="grid grid-cols-1 gap-[12px] xl:grid-cols-2">
+                          <ModuleSetting label="Canal do menu" value={optionLabel(textChannelOptions, menuChannelId)} hint="Painel principal de tickets" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal" options={textChannelOptions} value={menuChannelId} onChange={setMenuChannelId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Categoria dos tickets" value={optionLabel(categoryOptions, ticketsCategoryId)} hint="Onde cada ticket e criado" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha uma categoria" options={categoryOptions} value={ticketsCategoryId} onChange={setTicketsCategoryId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Log de criacao" value={optionLabel(textChannelOptions, logsCreatedChannelId)} hint="Abertura registrada" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal de logs" options={textChannelOptions} value={logsCreatedChannelId} onChange={setLogsCreatedChannelId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Log de fechamento" value={optionLabel(textChannelOptions, logsClosedChannelId)} hint="Encerramento registrado" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal de logs" options={textChannelOptions} value={logsClosedChannelId} onChange={setLogsClosedChannelId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
                         </div>
-
-                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
-                          <ConfigStepSelect label="Canal do menu principal de tickets" placeholder="Escolha o canal" options={textChannelOptions} value={menuChannelId} onChange={setMenuChannelId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          <ConfigStepSelect label="Categoria onde os tickets serao abertos" placeholder="Escolha uma categoria" options={categoryOptions} value={ticketsCategoryId} onChange={setTicketsCategoryId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          <ConfigStepSelect label="Canal de logs de criacao" placeholder="Escolha o canal de logs" options={textChannelOptions} value={logsCreatedChannelId} onChange={setLogsCreatedChannelId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          <ConfigStepSelect label="Canal de logs de fechamento" placeholder="Escolha o canal de logs" options={textChannelOptions} value={logsClosedChannelId} onChange={setLogsClosedChannelId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                        </div>
-                      </div>
-
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <button
-                          type="button"
-                          onClick={() => setIsStaffCardCollapsed((current) => !current)}
-                          className="group flex w-full items-start justify-between gap-[16px] text-left"
-                          aria-expanded={!isStaffCardCollapsed}
-                          aria-controls="server-staff-settings-panel"
-                        >
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Ticket</p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Permissoes e cargos
-                            </h3>
-                            <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              Controle quem administra, assume, fecha e recebe notificacoes dos tickets dentro do painel.
-                            </p>
-                          </div>
-
-                          <span className="inline-flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-[14px] border border-[#1A1A1A] bg-[#0D0D0D] text-[#B9B9B9] transition-colors duration-200 group-hover:border-[#2A2A2A] group-hover:bg-[#111111] group-hover:text-[#F0F0F0]">
-                            <svg
-                              viewBox="0 0 20 20"
-                              aria-hidden="true"
-                              className={`h-[18px] w-[18px] transition-transform duration-300 ease-out ${
-                                isStaffCardCollapsed ? "rotate-0" : "rotate-180"
-                              }`}
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2.1"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            >
-                              <path d="M5.5 7.75 10 12.25l4.5-4.5" />
-                            </svg>
-                          </span>
-                        </button>
-
-                        {!isStaffCardCollapsed ? (
-                          <div
-                            id="server-staff-settings-panel"
-                            className="mt-[18px] flowdesk-fade-up-soft"
+                      </ModuleCard>
+                      <ModuleCard
+                        label="Staff"
+                        title="Permissoes e cargos"
+                        description="Quem administra, assume, fecha e recebe aviso. Salve para aplicar no Discord."
+                        delay={0.2}
+                        action={
+                          <button
+                            type="button"
+                            onClick={() => setIsStaffCardCollapsed((current) => !current)}
+                            className="inline-flex h-[34px] items-center rounded-[12px] border border-[#1C1C1C] bg-[#141414] px-[12px] text-[12px] text-[#C4C4C8]"
                           >
-                            <div className="grid grid-cols-1 gap-[16px] xl:grid-cols-2">
-                              <ConfigStepSelect label="Cargo administrador do ticket" placeholder="Escolha o cargo" options={roleOptions} value={adminRoleId} onChange={setAdminRoleId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                              <ConfigStepMultiSelect label="Cargos que podem assumir tickets" placeholder="Escolha os cargos" options={roleOptions} values={claimRoleIds} onChange={setClaimRoleIds} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                              <ConfigStepMultiSelect label="Cargos que podem fechar tickets" placeholder="Escolha os cargos" options={roleOptions} values={closeRoleIds} onChange={setCloseRoleIds} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                              <ConfigStepMultiSelect label="Cargos que podem enviar notificacao" placeholder="Escolha os cargos" options={roleOptions} values={notifyRoleIds} onChange={setNotifyRoleIds} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                            </div>
+                            {isStaffCardCollapsed ? "Mostrar" : "Ocultar"}
+                          </button>
+                        }
+                      >
+                        {!isStaffCardCollapsed ? (
+                          <div className="grid grid-cols-1 gap-[12px] xl:grid-cols-2">
+                            <ModuleSetting label="Administrador" value={optionLabel(roleOptions, adminRoleId)} hint="Cargo com controle total" icon={Users}>
+                              <ConfigStepSelect label="" placeholder="Escolha o cargo" options={roleOptions} value={adminRoleId} onChange={setAdminRoleId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                            </ModuleSetting>
+                            <ModuleSetting label="Assumir" value={optionLabels(roleOptions, claimRoleIds)} hint="Quem pega o ticket" icon={Users}>
+                              <ConfigStepMultiSelect label="" placeholder="Escolha os cargos" options={roleOptions} values={claimRoleIds} onChange={setClaimRoleIds} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                            </ModuleSetting>
+                            <ModuleSetting label="Fechar" value={optionLabels(roleOptions, closeRoleIds)} hint="Quem encerra o ticket" icon={Users}>
+                              <ConfigStepMultiSelect label="" placeholder="Escolha os cargos" options={roleOptions} values={closeRoleIds} onChange={setCloseRoleIds} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                            </ModuleSetting>
+                            <ModuleSetting label="Notificar" value={optionLabels(roleOptions, notifyRoleIds)} hint="Quem recebe aviso" icon={Users}>
+                              <ConfigStepMultiSelect label="" placeholder="Escolha os cargos" options={roleOptions} values={notifyRoleIds} onChange={setNotifyRoleIds} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                            </ModuleSetting>
                           </div>
                         ) : null}
-                      </div>
-                    </div>
+                      </ModuleCard>
+                    </ModulePage>
                   ) : settingsSection === "ticket_ai" ? (
                     <div className="space-y-[14px]">
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
-                              Modulo FlowAI
-                            </p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Otimize seu atendimento com IA
-                            </h3>
-                            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              O FlowAI entende sua empresa, aplica suas regras e conduz reembolsos de forma segura quando o modulo estiver ativo.
-                            </p>
-                            <p className="mt-[10px] text-[12px] uppercase tracking-[0.14em] text-[#5B5B5B]">
-                              {flowAiHeaderDescription}
-                            </p>
-                          </div>
-
+                      <ModuleHero
+                        label="Modulo FlowAI"
+                        title="Atendimento com IA"
+                        description={`${flowAiHeaderDescription} O FlowAI aplica as regras da empresa e conduz reembolsos quando o modulo estiver ativo.`}
+                        icon={Settings2}
+                        action={
                           <DashboardInlineSwitch
                             checked={aiEnabled}
                             onChange={() => {
@@ -6544,8 +8110,8 @@ export function ServerSettingsEditor({
                             }
                             ariaLabel="Ativar ou desativar modulo FlowAI"
                           />
-                        </div>
-                      </div>
+                        }
+                      />
 
                       <div className="grid grid-cols-1 gap-[10px] sm:grid-cols-2 xl:grid-cols-4">
                         {flowAiChecklist.map((item) => (
@@ -6576,7 +8142,7 @@ export function ServerSettingsEditor({
                         ))}
                       </div>
 
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                      <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div>
                           <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Identidade da Empresa</p>
                           <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
@@ -6625,7 +8191,7 @@ export function ServerSettingsEditor({
                         </div>
                       </div>
 
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                      <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div>
                           <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Personalizacao FlowAI</p>
                           <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
@@ -6738,7 +8304,7 @@ export function ServerSettingsEditor({
                         </div>
                       </div>
 
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                      <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
                           <div>
                             <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Processamento de Reembolso</p>
@@ -6894,21 +8460,13 @@ export function ServerSettingsEditor({
                       onSendEmbed={handleSendEmbed}
                     />
                   ) : settingsSection === "entry_exit_overview" ? (
-                    <div className="space-y-[14px]">
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
-                              Mensagem Entrada/Saida
-                            </p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Automatize recepcao e despedida do servidor
-                            </h3>
-                            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              O Flowdesk envia a mensagem publica, registra logs privados e libera o builder quando o modulo estiver ativo.
-                            </p>
-                          </div>
-
+                    <ModulePage>
+                      <ModuleHero
+                        label="Entrada e saida"
+                        title="Recepcao automatica"
+                        description="Mensagem publica e log privado para quem entra e sai. Salve para ativar no servidor."
+                        icon={LogIn}
+                        action={
                           <DashboardInlineSwitch
                             checked={welcomeEnabled}
                             onChange={() => {
@@ -6918,69 +8476,511 @@ export function ServerSettingsEditor({
                             disabled={isSaving || settingsReadOnly}
                             ariaLabel="Ativar ou desativar modulo de entrada e saida"
                           />
-                        </div>
+                        }
+                      />
+                      <div className="grid gap-[12px] md:grid-cols-2 xl:grid-cols-4">
+                        <ModuleStat label="Status" value={welcomeEnabled ? "Ativo" : "Desligado"} hint="Mensagens automaticas" icon={MessageSquare} delay={0.06} />
+                        <ModuleStat label="Entrada publica" value={optionLabel(textChannelOptions, entryPublicChannelId)} hint="Boas-vindas" icon={LogIn} delay={0.1} />
+                        <ModuleStat label="Saida publica" value={optionLabel(textChannelOptions, exitPublicChannelId)} hint="Despedida" icon={LogOut} delay={0.14} />
+                        <ModuleStat label="Logs" value={[entryLogChannelId, exitLogChannelId].filter(Boolean).length === 2 ? "Completos" : "Pendentes"} hint="Registro privado" icon={Hash} delay={0.18} />
                       </div>
-
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Mensagem Entrada/Saida</p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Canais e logs de entrada
-                            </h3>
-                            <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              Escolha onde a mensagem publica aparece e qual canal privado recebe o log de entrada.
-                            </p>
-                          </div>
-                          <span className="inline-flex h-[30px] items-center justify-center rounded-full border border-[#151515] bg-[#0B0B0B] px-[12px] text-[11px] uppercase tracking-[0.16em] text-[#686868]">
-                            Entrada
-                          </span>
+                      <ModuleCard label="Entrada" title="Canais de entrada" description="Onde o membro e recebido e onde a equipe ve o log." delay={0.16}>
+                        <div className="grid grid-cols-1 gap-[12px] xl:grid-cols-2">
+                          <ModuleSetting label="Canal publico" value={optionLabel(textChannelOptions, entryPublicChannelId)} hint="Mensagem de boas-vindas" icon={LogIn}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal" options={textChannelOptions} value={entryPublicChannelId} onChange={setEntryPublicChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Log privado" value={optionLabel(textChannelOptions, entryLogChannelId)} hint="Auditoria de entrada" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal" options={textChannelOptions} value={entryLogChannelId} onChange={setEntryLogChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
                         </div>
-
-                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
-                          <ConfigStepSelect label="Canal de entrada publico" placeholder="Escolha o canal" options={textChannelOptions} value={entryPublicChannelId} onChange={setEntryPublicChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          <ConfigStepSelect label="Log privado de entrada" placeholder="Escolha o canal" options={textChannelOptions} value={entryLogChannelId} onChange={setEntryLogChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                      </ModuleCard>
+                      <ModuleCard label="Saida" title="Canais de saida" description="Onde o servidor se despede e onde o log e gravado." delay={0.2}>
+                        <div className="grid grid-cols-1 gap-[12px] xl:grid-cols-2">
+                          <ModuleSetting label="Canal publico" value={optionLabel(textChannelOptions, exitPublicChannelId)} hint="Mensagem de saida" icon={LogOut}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal" options={textChannelOptions} value={exitPublicChannelId} onChange={setExitPublicChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Log privado" value={optionLabel(textChannelOptions, exitLogChannelId)} hint="Auditoria de saida" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal" options={textChannelOptions} value={exitLogChannelId} onChange={setExitLogChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
                         </div>
-                      </div>
-
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Mensagem Entrada/Saida</p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Canais e logs de saida
-                            </h3>
-                            <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              Defina o canal publico de saida e o log privado para eventos de desligamento.
-                            </p>
-                          </div>
-                          <span className="inline-flex h-[30px] items-center justify-center rounded-full border border-[#151515] bg-[#0B0B0B] px-[12px] text-[11px] uppercase tracking-[0.16em] text-[#686868]">
-                            Saida
-                          </span>
-                        </div>
-
-                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
-                          <ConfigStepSelect label="Canal de saida publico" placeholder="Escolha o canal" options={textChannelOptions} value={exitPublicChannelId} onChange={setExitPublicChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          <ConfigStepSelect label="Log privado de saida" placeholder="Escolha o canal" options={textChannelOptions} value={exitLogChannelId} onChange={setExitLogChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                        </div>
-                      </div>
-                    </div>
-                  ) : settingsSection === "security_antilink" ? (
+                      </ModuleCard>
+                    </ModulePage>
+                  ) : settingsSection === "suggestions_overview" ? (
                     <div className="space-y-[14px]">
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                      <ModuleHero
+                        label="Modulo Sugestoes"
+                        title="Ideias e votacoes"
+                        description="Painel, publicacao e logs. Salve para publicar o fluxo de sugestoes."
+                        icon={MessageSquare}
+                        action={
+                          <DashboardInlineSwitch
+                            checked={suggestionsEnabled}
+                            onChange={() => {
+                              if (isSaving || settingsReadOnly) return;
+                              setSuggestionsEnabled((current) => !current);
+                            }}
+                            disabled={isSaving || settingsReadOnly}
+                            ariaLabel="Ativar ou desativar modulo de sugestoes"
+                          />
+                        }
+                      />
+                      <div className="grid gap-[12px] md:grid-cols-3">
+                        <ModuleStat label="Painel" value={optionLabel(textChannelOptions, suggestionsPanelChannelId)} hint="Onde o membro envia" icon={Hash} delay={0.08} />
+                        <ModuleStat label="Publicacao" value={optionLabel(textChannelOptions, suggestionsPublishChannelId)} hint="Onde a ideia aparece" icon={Hash} delay={0.12} />
+                        <ModuleStat label="Logs" value={optionLabel(textChannelOptions, suggestionsLogsChannelId, "Opcional")} hint="Auditoria interna" icon={Hash} delay={0.16} />
+                      </div>
+                      <ModuleCard label="Canais" title="Destinos do modulo" description="Cada card mostra o canal atual antes do seletor." delay={0.18}>
+                        <div className="grid grid-cols-1 gap-[12px] xl:grid-cols-2">
+                          <ModuleSetting label="Canal do painel" value={optionLabel(textChannelOptions, suggestionsPanelChannelId)} hint="Formulario de envio" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal" options={textChannelOptions} value={suggestionsPanelChannelId} onChange={setSuggestionsPanelChannelId} disabled={suggestionsControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Canal de publicacao" value={optionLabel(textChannelOptions, suggestionsPublishChannelId)} hint="Sugestao publicada" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal" options={textChannelOptions} value={suggestionsPublishChannelId} onChange={setSuggestionsPublishChannelId} disabled={suggestionsControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Canal de logs" value={optionLabel(textChannelOptions, suggestionsLogsChannelId, "Opcional")} hint="Registro interno" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal de logs" options={textChannelOptions} value={suggestionsLogsChannelId} onChange={setSuggestionsLogsChannelId} disabled={suggestionsControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                        </div>
+                      </ModuleCard>
+
+                      <TicketMessageBuilder
+                        guildId={guildId}
+                        value={suggestionsSuggestionLayout}
+                        onChange={setSuggestionsSuggestionLayout}
+                        layoutPreset="suggestion_publish"
+                        disabled={isSaving || settingsReadOnly || !suggestionsEnabled}
+                        hideSendButton
+                        eyebrow="Sugestoes"
+                        headline="Template da sugestao publicada"
+                        description="Monte cabecalho, rodape e blocos extras no builder. Titulo e descricao do membro ficam em um bloco fixo; adicione conteudos, separadores e imagens como nos outros modulos."
+                      />
+                    </div>
+                  ) : settingsSection === "suggestions_message" ? (
+                    <TicketMessageBuilder
+                      guildId={guildId}
+                      value={suggestionsPanelLayout}
+                      onChange={setSuggestionsPanelLayout}
+                      layoutPreset="suggestions"
+                      disabled={
+                        isSaving ||
+                        isSendingEmbed ||
+                        settingsReadOnly ||
+                        !suggestionsEnabled
+                      }
+                      canSendEmbed={canSendSuggestionsEmbed}
+                      isSendingEmbed={isSendingEmbed}
+                      onSendEmbed={handleSendSuggestionsEmbed}
+                      eyebrow="Sugestoes"
+                      headline="Mensagem do painel"
+                      description="Monte o embed publicado no canal do painel e envie a mensagem quando estiver pronta."
+                      sendButtonLabel="Enviar embed de sugestoes"
+                    />
+                  ) : settingsSection === "bate_ponto_overview" ? (
+                    <div className="space-y-[14px]">
+                      <ModuleHero
+                        label="Modulo Bate Ponto"
+                        title="Expediente e banco de horas"
+                        description="Painel, logs, cargos e regras de encerramento. Salve para aplicar na equipe."
+                        icon={Clock}
+                        action={
+                          <DashboardInlineSwitch
+                            checked={batePontoEnabled}
+                            onChange={() => {
+                              if (isSaving || settingsReadOnly) return;
+                              setBatePontoEnabled((current) => !current);
+                            }}
+                            disabled={isSaving || settingsReadOnly}
+                            ariaLabel="Ativar ou desativar modulo de bate ponto"
+                          />
+                        }
+                      />
+
+                      <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
+                        <div>
+                          <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Bate Ponto</p>
+                          <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
+                            Canais e cargos
+                          </h3>
+                          <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                            Defina onde o painel sera publicado, onde os logs serao enviados e quais cargos podem usar o modulo.
+                          </p>
+                        </div>
+
+                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
+                          <ConfigStepSelect label="Canal do painel" placeholder="Escolha o canal" options={textChannelOptions} value={batePontoPanelChannelId} onChange={setBatePontoPanelChannelId} disabled={batePontoControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepSelect label="Canal de logs (opcional)" placeholder="Escolha o canal de logs" options={textChannelOptions} value={batePontoLogsChannelId} onChange={setBatePontoLogsChannelId} disabled={batePontoControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <div className="xl:col-span-2">
+                            <ConfigStepMultiSelect label="Cargos autorizados" placeholder="Selecione os cargos" options={roleOptions} values={batePontoAllowedRoleIds} onChange={setBatePontoAllowedRoleIds} disabled={batePontoControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
                           <div>
                             <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
-                              Modulo AntiLink
+                              Requisito de call
                             </p>
                             <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Proteja o servidor automaticamente
+                              Exigir call para iniciar ponto
                             </h3>
-                            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              O Flowdesk bloqueia links externos, convites do Discord e tentativas de ofuscacao sempre que o evento acontecer.
+                            <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                              Quando ativo, o membro precisa estar em uma call do servidor para iniciar o ponto. Se nenhuma call especifica for selecionada abaixo, qualquer call do servidor serve.
                             </p>
                           </div>
 
+                          <DashboardInlineSwitch
+                            checked={batePontoRequireVoiceChannel}
+                            onChange={() => {
+                              if (isSaving || settingsReadOnly || batePontoControlsDisabled) return;
+                              setBatePontoRequireVoiceChannel((current) => !current);
+                            }}
+                            disabled={isSaving || settingsReadOnly || batePontoControlsDisabled}
+                            ariaLabel="Exigir call para iniciar ponto"
+                          />
+                        </div>
+
+                        <div className="mt-[18px]">
+                          <ConfigStepMultiSelect
+                            label="Calls autorizadas (opcional)"
+                            placeholder="Qualquer call do servidor"
+                            options={voiceChannelOptions ?? []}
+                            values={batePontoRequiredVoiceChannelIds}
+                            onChange={setBatePontoRequiredVoiceChannelIds}
+                            disabled={
+                              batePontoControlsDisabled || !batePontoRequireVoiceChannel
+                            }
+                            controlHeightPx={serverSettingsControlHeight}
+                          />
+                          <p className="mt-[8px] text-[12px] leading-[1.5] text-[#686868]">
+                            Deixe vazio para aceitar qualquer canal de voz. Selecione calls especificas para restringir onde o ponto pode ser iniciado.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
+                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
+                          <div>
+                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Banco de horas</p>
+                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
+                              Meta diaria e fuso horario
+                            </h3>
+                            <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                              Ajuste a meta diaria de trabalho e o fuso usado para calcular saldo e registros.
+                            </p>
+                          </div>
+
+                          <DashboardInlineSwitch
+                            checked={batePontoHourBankEnabled}
+                            onChange={() => {
+                              if (isSaving || settingsReadOnly || batePontoControlsDisabled) return;
+                              setBatePontoHourBankEnabled((current) => !current);
+                            }}
+                            disabled={isSaving || settingsReadOnly || batePontoControlsDisabled}
+                            ariaLabel="Ativar ou desativar banco de horas"
+                          />
+                        </div>
+
+                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
+                          <div>
+                            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">
+                              Meta diaria (horas)
+                            </label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={24}
+                              step={0.25}
+                              value={Number((batePontoDailyTargetMinutes / 60).toFixed(2))}
+                              onChange={(event) => {
+                                const hours = Number(event.currentTarget.value);
+                                if (!Number.isFinite(hours)) return;
+                                setBatePontoDailyTargetMinutes(
+                                  Math.max(
+                                    60,
+                                    Math.min(1440, Math.round(hours * 60)),
+                                  ),
+                                );
+                              }}
+                              disabled={batePontoControlsDisabled || !batePontoHourBankEnabled}
+                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                            <p className="mt-[8px] text-[12px] leading-[1.5] text-[#686868]">
+                              Equivalente a {batePontoDailyTargetMinutes} minutos por dia.
+                            </p>
+                          </div>
+                          <div>
+                            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">Fuso horario</label>
+                            <input
+                              type="text"
+                              value={batePontoTimezone}
+                              onChange={(event) => setBatePontoTimezone(event.currentTarget.value)}
+                              placeholder="America/Sao_Paulo"
+                              maxLength={64}
+                              disabled={batePontoControlsDisabled}
+                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
+                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
+                          <div>
+                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Sessoes abertas</p>
+                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
+                              Encerramento automatico
+                            </h3>
+                            <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                              Finalize sessoes abertas automaticamente apos o limite de horas configurado.
+                            </p>
+                          </div>
+
+                          <DashboardInlineSwitch
+                            checked={batePontoAutoFinishOpenSessions}
+                            onChange={() => {
+                              if (isSaving || settingsReadOnly || batePontoControlsDisabled) return;
+                              setBatePontoAutoFinishOpenSessions((current) => !current);
+                            }}
+                            disabled={isSaving || settingsReadOnly || batePontoControlsDisabled}
+                            ariaLabel="Ativar ou desativar encerramento automatico de sessoes abertas"
+                          />
+                        </div>
+
+                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
+                          <div>
+                            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">Maximo de horas abertas</label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={24}
+                              value={batePontoMaxOpenHours}
+                              onChange={(event) =>
+                                setBatePontoMaxOpenHours(
+                                  Math.max(
+                                    1,
+                                    Math.min(24, Number(event.currentTarget.value) || 12),
+                                  ),
+                                )
+                              }
+                              disabled={
+                                batePontoControlsDisabled || !batePontoAutoFinishOpenSessions
+                              }
+                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <TicketMessageBuilder
+                        guildId={guildId}
+                        value={batePontoLogLayout}
+                        onChange={setBatePontoLogLayout}
+                        layoutPreset="bate_ponto_log"
+                        disabled={isSaving || settingsReadOnly || !batePontoEnabled}
+                        hideSendButton
+                        eyebrow="Bate Ponto"
+                        headline="Template do log"
+                        description="Monte o embed enviado no canal de logs quando uma acao de ponto for registrada."
+                      />
+                    </div>
+                  ) : settingsSection === "bate_ponto_message" ? (
+                    <TicketMessageBuilder
+                      guildId={guildId}
+                      value={batePontoPanelLayout}
+                      onChange={setBatePontoPanelLayout}
+                      layoutPreset="bate_ponto"
+                      disabled={
+                        isSaving ||
+                        isSendingEmbed ||
+                        settingsReadOnly ||
+                        !batePontoEnabled
+                      }
+                      canSendEmbed={canSendBatePontoEmbed}
+                      isSendingEmbed={isSendingEmbed}
+                      onSendEmbed={handleSendBatePontoEmbed}
+                      eyebrow="Bate Ponto"
+                      headline="Mensagem do painel"
+                      description="Monte o embed publicado no canal do painel e envie a mensagem quando estiver pronta."
+                      sendButtonLabel="Enviar embed de bate ponto"
+                    />
+                  ) : settingsSection === "bate_ponto_ranking" ? (
+                    <BatePontoRankingPanel guildId={guildId} />
+                  ) : settingsSection === "bate_ponto_history" ? (
+                    <BatePontoHistoryPanel guildId={guildId} />
+                  ) : settingsSection === "captcha_overview" ? (
+                    <div className="space-y-[14px]">
+                      <ModuleHero
+                        label="Modulo Captcha"
+                        title="Verificacao na entrada"
+                        description="Painel, cargos e desafio visual. Salve para proteger o servidor."
+                        icon={ShieldCheck}
+                        action={
+                          <DashboardInlineSwitch
+                            checked={captchaEnabled}
+                            onChange={() => {
+                              if (isSaving || settingsReadOnly) return;
+                              setCaptchaEnabled((current) => !current);
+                            }}
+                            disabled={isSaving || settingsReadOnly}
+                            ariaLabel="Ativar ou desativar modulo de captcha"
+                          />
+                        }
+                      />
+                      <div className="grid gap-[12px] md:grid-cols-2 xl:grid-cols-4">
+                        <ModuleStat label="Status" value={captchaEnabled ? "Ativo" : "Desligado"} hint="Protecao de entrada" icon={ShieldCheck} delay={0.06} />
+                        <ModuleStat label="Painel" value={optionLabel(textChannelOptions, captchaPanelChannelId)} hint="Canal principal" icon={Hash} delay={0.1} />
+                        <ModuleStat label="Verificados" value={optionLabels(roleOptions, captchaVerifiedRoleIds)} hint="Cargos apos o desafio" icon={Users} delay={0.14} />
+                        <ModuleStat label="Tentativas" value={String(captchaMaxAttempts)} hint="Limite do desafio" icon={Shield} delay={0.18} />
+                      </div>
+                      <ModuleCard label="Acesso" title="Canais e cargos" description="Destinos atuais e quem passa na verificacao." delay={0.16}>
+                        <div className="grid grid-cols-1 gap-[12px] xl:grid-cols-2">
+                          <ModuleSetting label="Canal principal" value={optionLabel(textChannelOptions, captchaPanelChannelId)} hint="Painel do captcha" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal" options={textChannelOptions} value={captchaPanelChannelId} onChange={setCaptchaPanelChannelId} disabled={captchaControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Canal de logs" value={optionLabel(textChannelOptions, captchaLogsChannelId, "Opcional")} hint="Auditoria" icon={Hash}>
+                            <ConfigStepSelect label="" placeholder="Escolha o canal de logs" options={textChannelOptions} value={captchaLogsChannelId} onChange={setCaptchaLogsChannelId} disabled={captchaControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Cargos verificados" value={optionLabels(roleOptions, captchaVerifiedRoleIds)} hint="Acesso liberado" icon={Users}>
+                            <ConfigStepMultiSelect label="" placeholder="Escolha os cargos" options={roleOptions} values={captchaVerifiedRoleIds} onChange={setCaptchaVerifiedRoleIds} disabled={captchaControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                          <ModuleSetting label="Bypass" value={optionLabels(roleOptions, captchaBypassRoleIds, "Nenhum")} hint="Pula o desafio" icon={Users}>
+                            <ConfigStepMultiSelect label="" placeholder="Escolha os cargos" options={roleOptions} values={captchaBypassRoleIds} onChange={setCaptchaBypassRoleIds} disabled={captchaControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleSetting>
+                        </div>
+                      </ModuleCard>
+
+                      <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
+                        <div>
+                          <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Desafio</p>
+                          <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
+                            Regras da verificacao
+                          </h3>
+                          <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
+                            Personalize titulo, instrucoes, tentativas, tempo limite e o que acontece quando o membro falha.
+                          </p>
+                        </div>
+
+                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
+                          <div>
+                            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">Titulo do desafio</label>
+                            <input
+                              type="text"
+                              value={captchaChallengeTitle}
+                              onChange={(event) => setCaptchaChallengeTitle(event.currentTarget.value)}
+                              placeholder="Verificacao de seguranca"
+                              maxLength={80}
+                              disabled={captchaControlsDisabled}
+                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">Maximo de tentativas</label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={10}
+                              value={captchaMaxAttempts}
+                              onChange={(event) =>
+                                setCaptchaMaxAttempts(
+                                  Math.max(1, Math.min(10, Number(event.currentTarget.value || 3))),
+                                )
+                              }
+                              disabled={captchaControlsDisabled}
+                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                          </div>
+                          <div className="xl:col-span-2">
+                            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">Descricao do desafio</label>
+                            <textarea
+                              rows={3}
+                              value={captchaChallengeDescription}
+                              onChange={(event) => setCaptchaChallengeDescription(event.currentTarget.value)}
+                              placeholder="Selecione o codigo que aparece na imagem acima."
+                              maxLength={400}
+                              disabled={captchaControlsDisabled}
+                              className="min-h-[92px] w-full resize-none rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] py-[12px] text-[14px] leading-[1.5] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">Tempo limite (segundos)</label>
+                            <input
+                              type="number"
+                              min={30}
+                              max={600}
+                              value={captchaTimeoutSeconds}
+                              onChange={(event) =>
+                                setCaptchaTimeoutSeconds(
+                                  Math.max(30, Math.min(600, Number(event.currentTarget.value || 120))),
+                                )
+                              }
+                              disabled={captchaControlsDisabled}
+                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                          </div>
+                          <div className={`flex items-center justify-between gap-[16px] rounded-[16px] border border-[#171717] bg-[#090909] px-[16px] py-[14px] ${captchaControlsDisabled ? "opacity-40" : ""}`}>
+                            <span className="text-[13px] font-medium text-[#8A8A8A]">Expulsar ao falhar</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (captchaControlsDisabled) return;
+                                setCaptchaKickOnFail((current) => !current);
+                              }}
+                              disabled={captchaControlsDisabled}
+                              className={`relative inline-flex h-[22px] w-[40px] shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                                captchaKickOnFail ? "bg-[#0062FF]" : "bg-[#1E1E1E]"
+                              } ${captchaControlsDisabled ? "cursor-not-allowed" : ""}`}
+                            >
+                              <span
+                                className={`pointer-events-none inline-block h-[18px] w-[18px] transform rounded-full bg-[#FFFFFF] shadow transition duration-200 ease-in-out ${
+                                  captchaKickOnFail ? "translate-x-[18px]" : "translate-x-0"
+                                }`}
+                              />
+                            </button>
+                          </div>
+                          <div className="xl:col-span-2">
+                            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">Mensagem de sucesso</label>
+                            <input
+                              type="text"
+                              value={captchaSuccessMessage}
+                              onChange={(event) => setCaptchaSuccessMessage(event.currentTarget.value)}
+                              placeholder="Verificacao concluida com sucesso. Bem-vindo ao servidor!"
+                              maxLength={400}
+                              disabled={captchaControlsDisabled}
+                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : settingsSection === "captcha_message" ? (
+                    <TicketMessageBuilder
+                      guildId={guildId}
+                      value={captchaPanelLayout}
+                      onChange={setCaptchaPanelLayout}
+                      layoutPreset="captcha"
+                      disabled={
+                        isSaving ||
+                        isSendingEmbed ||
+                        settingsReadOnly ||
+                        !captchaEnabled
+                      }
+                      canSendEmbed={canSendCaptchaEmbed}
+                      isSendingEmbed={isSendingEmbed}
+                      onSendEmbed={handleSendCaptchaEmbed}
+                      eyebrow="Captcha"
+                      headline="Mensagem do painel"
+                      description="Monte o embed publicado no canal principal e envie a mensagem quando estiver pronta."
+                      sendButtonLabel="Enviar embed de captcha"
+                    />
+                  ) : settingsSection === "security_antilink" ? (
+                    <div className="space-y-[14px]">
+                      <ModuleHero
+                        label="Modulo AntiLink"
+                        title="Protecao automatica"
+                        description="Bloqueia links externos, convites e ofuscacao assim que o evento acontece. Salve para aplicar no servidor."
+                        icon={ShieldX}
+                        action={
                           <DashboardInlineSwitch
                             checked={antiLinkEnabled}
                             onChange={() => {
@@ -6991,10 +8991,10 @@ export function ServerSettingsEditor({
                             disabled={isSaving || settingsReadOnly}
                             ariaLabel="Ativar ou desativar modulo AntiLink"
                           />
-                        </div>
-                      </div>
+                        }
+                      />
 
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                      <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
                           <div>
                             <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Configuracao AntiLink</p>
@@ -7085,20 +9085,12 @@ export function ServerSettingsEditor({
                     </div>
                   ) : settingsSection === "security_autorole" ? (
                     <div className="space-y-[14px]">
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
-                        <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
-                              Modulo AutoRole
-                            </p>
-                            <h3 className="mt-[10px] text-[22px] leading-none font-medium tracking-[-0.04em] text-[#D1D1D1]">
-                              Aplique cargos automaticamente
-                            </h3>
-                            <p className="mt-[10px] max-w-[760px] text-[14px] leading-[1.6] text-[#7B7B7B]">
-                              Selecione cargos para o bot adicionar em novos membros e, se quiser, sincronize quem ja esta no servidor.
-                            </p>
-                          </div>
-
+                      <ModuleHero
+                        label="Modulo AutoRole"
+                        title="Cargos automaticos"
+                        description="O bot adiciona os cargos em novos membros. Se quiser, sincronize quem ja esta no servidor."
+                        icon={Users}
+                        action={
                           <DashboardInlineSwitch
                             checked={autoRoleEnabled}
                             onChange={() => {
@@ -7114,10 +9106,10 @@ export function ServerSettingsEditor({
                             disabled={isSaving || settingsReadOnly}
                             ariaLabel="Ativar ou desativar modulo AutoRole"
                           />
-                        </div>
-                      </div>
+                        }
+                      />
 
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                      <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
                           <div>
                             <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
@@ -7381,7 +9373,7 @@ export function ServerSettingsEditor({
                   ) : settingsSection === "security_logs" ? (
                     <>
                       <div className="space-y-[14px]">
-                        <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                        <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                           <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
                             <div>
                               <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
@@ -7404,7 +9396,7 @@ export function ServerSettingsEditor({
                           </div>
                         </div>
 
-                        <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                        <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                           <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
                             <div>
                               <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">
@@ -7591,7 +9583,7 @@ export function ServerSettingsEditor({
                     </>
                   ) : (
                     <>
-                      <div className="rounded-[24px] border border-[#161616] bg-[linear-gradient(180deg,#0B0B0B_0%,#090909_100%)] px-[18px] py-[18px] sm:px-[22px] sm:py-[22px]">
+                      <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
                           <div>
                             <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Mensagem Entrada/Saida</p>
@@ -7673,7 +9665,6 @@ export function ServerSettingsEditor({
                           eyebrow=""
                           headline=""
                           description=""
-                          thumbnailPreviewUrl={activeWelcomeThumbnailPreviewUrl}
                         />
                       </div>
                     </>
@@ -9220,5 +11211,6 @@ export function ServerSettingsEditor({
       ) : null}
       </section>
     </ClientErrorBoundary>
+    </DiscordGuildResourcesRefreshProvider>
   );
 }

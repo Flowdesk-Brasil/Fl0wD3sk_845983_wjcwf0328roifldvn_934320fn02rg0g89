@@ -27,6 +27,7 @@ export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const guildId = (url.searchParams.get("guildId") || "").trim();
+    const forceFresh = url.searchParams.get("fresh") === "1";
 
     if (!isGuildId(guildId)) {
       return applyNoStoreHeaders(
@@ -83,7 +84,7 @@ export async function GET(request: Request) {
       );
     }
 
-    const rawRoles = await fetchGuildRolesByBot(guildId);
+    const rawRoles = await fetchGuildRolesByBot(guildId, { forceFresh });
     if (!rawRoles) {
       return applyNoStoreHeaders(
         NextResponse.json(

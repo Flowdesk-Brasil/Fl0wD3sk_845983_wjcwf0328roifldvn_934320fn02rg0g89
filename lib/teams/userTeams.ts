@@ -10,6 +10,14 @@ export type TeamRolePermission =
   | "server_manage_tickets_message"
   | "server_manage_welcome_overview"
   | "server_manage_welcome_message"
+  | "server_manage_captcha_overview"
+  | "server_manage_captcha_message"
+  | "server_manage_suggestions_overview"
+  | "server_manage_suggestions_message"
+  | "server_manage_bate_ponto_overview"
+  | "server_manage_bate_ponto_message"
+  | "server_manage_bate_ponto_ranking"
+  | "server_manage_bate_ponto_history"
   | "server_manage_antilink"
   | "server_manage_autorole"
   | "server_view_security_logs"
@@ -674,6 +682,10 @@ export async function getUserTeamsSnapshotForUser(input: {
                 "manage_servers", "manage_members", "manage_roles", "view_audit_logs",
                 "server_manage_tickets_overview", "server_manage_tickets_message",
                 "server_manage_welcome_overview", "server_manage_welcome_message",
+                "server_manage_captcha_overview", "server_manage_captcha_message",
+                "server_manage_suggestions_overview", "server_manage_suggestions_message",
+                "server_manage_bate_ponto_overview", "server_manage_bate_ponto_message",
+                "server_manage_bate_ponto_ranking", "server_manage_bate_ponto_history",
                 "server_manage_antilink", "server_manage_autorole",
                 "server_view_security_logs",
               ] as TeamRolePermission[]

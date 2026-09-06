@@ -16,6 +16,7 @@ type ServerDashboardSettingsPayload = {
   };
   channels: {
     text: Array<{ id: string; name: string; type: number; position: number }>;
+    voice?: Array<{ id: string; name: string; type: number; position: number }>;
     categories: Array<{ id: string; name: string; type: number; position: number }>;
   };
   roles: Array<{ id: string; name: string; color: number; position: number }>;
@@ -63,6 +64,55 @@ type ServerDashboardSettingsPayload = {
     exitLayout: TicketPanelLayout;
     entryThumbnailMode: WelcomeThumbnailMode;
     exitThumbnailMode: WelcomeThumbnailMode;
+    updatedAt: string | null;
+  } | null;
+  captchaSettings: {
+    enabled: boolean;
+    panelChannelId: string | null;
+    logsChannelId: string | null;
+    verifiedRoleIds: string[];
+    bypassRoleIds: string[];
+    panelLayout: TicketPanelLayout;
+    panelTitle: string;
+    panelDescription: string;
+    panelButtonLabel: string;
+    challengeTitle: string;
+    challengeDescription: string;
+    maxAttempts: number;
+    timeoutSeconds: number;
+    kickOnFail: boolean;
+    successMessage: string;
+    updatedAt: string | null;
+  } | null;
+  suggestionsSettings: {
+    enabled: boolean;
+    panelChannelId: string | null;
+    publishChannelId: string | null;
+    logsChannelId: string | null;
+    panelLayout: TicketPanelLayout;
+    panelTitle: string;
+    panelDescription: string;
+    panelButtonLabel: string;
+    suggestionLayout: TicketPanelLayout;
+    updatedAt: string | null;
+  } | null;
+  batePontoSettings: {
+    enabled: boolean;
+    panelChannelId: string | null;
+    logsChannelId: string | null;
+    panelLayout: TicketPanelLayout;
+    panelTitle: string;
+    panelDescription: string;
+    panelButtonLabel: string;
+    logLayout: TicketPanelLayout;
+    allowedRoleIds: string[];
+    hourBankEnabled: boolean;
+    dailyTargetMinutes: number;
+    timezone: string;
+    autoFinishOpenSessions: boolean;
+    maxOpenHours: number;
+    requireVoiceChannel?: boolean;
+    requiredVoiceChannelIds?: string[];
     updatedAt: string | null;
   } | null;
   antiLinkSettings: {
@@ -144,6 +194,19 @@ const dashboardSettingsInflight = new Map<
   string,
   Promise<ServerDashboardSettingsPayload>
 >();
+
+const dashboardSettingsFetchEpoch = new Map<string, number>();
+
+function getDashboardSettingsFetchEpoch(guildId: string) {
+  return dashboardSettingsFetchEpoch.get(guildId) ?? 0;
+}
+
+function bumpDashboardSettingsFetchEpoch(guildId: string) {
+  const nextEpoch = getDashboardSettingsFetchEpoch(guildId) + 1;
+  dashboardSettingsFetchEpoch.set(guildId, nextEpoch);
+  dashboardSettingsInflight.delete(guildId);
+  return nextEpoch;
+}
 
 function canUseStorage() {
   return (
@@ -230,6 +293,7 @@ function storePayload(guildId: string, payload: ServerDashboardSettingsPayload) 
 }
 
 export function invalidateCachedServerDashboardSettings(guildId: string) {
+  bumpDashboardSettingsFetchEpoch(guildId);
   dashboardSettingsCache.delete(guildId);
   const cache = readStorageCache();
   if (cache[guildId]) {
@@ -238,10 +302,50 @@ export function invalidateCachedServerDashboardSettings(guildId: string) {
   }
 }
 
+export function markServerDashboardSettingsSaved(guildId: string) {
+  return bumpDashboardSettingsFetchEpoch(guildId);
+}
+
+export function getServerDashboardSettingsFetchEpoch(guildId: string) {
+  return getDashboardSettingsFetchEpoch(guildId);
+}
+
+export function patchCachedServerDashboardSettings(
+  guildId: string,
+  patch: Partial<
+    Pick<
+      ServerDashboardSettingsPayload,
+      | "ticketSettings"
+      | "staffSettings"
+      | "welcomeSettings"
+      | "captchaSettings"
+      | "suggestionsSettings"
+      | "batePontoSettings"
+      | "antiLinkSettings"
+      | "autoRoleSettings"
+      | "salesSettings"
+      | "securityLogsSettings"
+    >
+  >,
+) {
+  markServerDashboardSettingsSaved(guildId);
+  const current = readCachedServerDashboardSettings(guildId);
+  if (!current) {
+    return;
+  }
+
+  storePayload(guildId, {
+    ...current,
+    ...patch,
+  });
+}
+
 async function requestServerDashboardSettings(
   guildId: string,
   signal?: AbortSignal,
 ) {
+  const fetchEpoch = getDashboardSettingsFetchEpoch(guildId);
+
   const response = await fetch(
     `/api/auth/me/guilds/dashboard-settings?guildId=${encodeURIComponent(guildId)}`,
     {
@@ -258,7 +362,10 @@ async function requestServerDashboardSettings(
     throw new Error(message || "Falha ao carregar configuracoes do servidor.");
   }
 
-  storePayload(guildId, payload);
+  if (getDashboardSettingsFetchEpoch(guildId) === fetchEpoch) {
+    storePayload(guildId, payload);
+  }
+
   return payload;
 }
 

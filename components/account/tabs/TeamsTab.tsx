@@ -21,6 +21,14 @@ type TeamRolePermission =
   | "server_manage_tickets_message"
   | "server_manage_welcome_overview"
   | "server_manage_welcome_message"
+  | "server_manage_captcha_overview"
+  | "server_manage_captcha_message"
+  | "server_manage_suggestions_overview"
+  | "server_manage_suggestions_message"
+  | "server_manage_bate_ponto_overview"
+  | "server_manage_bate_ponto_message"
+  | "server_manage_bate_ponto_ranking"
+  | "server_manage_bate_ponto_history"
   | "server_manage_antilink"
   | "server_manage_autorole"
   | "server_view_security_logs"
@@ -101,6 +109,14 @@ const PERMISSION_OPTIONS: { id: TeamRolePermission; label: string; description: 
   { id: "server_manage_tickets_message", label: "Painel: Mensagem do Ticket", description: "Pode editar o embed do painel de tickets" },
   { id: "server_manage_welcome_overview", label: "Painel: Canais e Logs (Boas-vindas)", description: "Acesso aos logs de entrada/saída" },
   { id: "server_manage_welcome_message", label: "Painel: Configurando Mensagem (Boas-vindas)", description: "Pode editar as embeds de boas-vindas" },
+  { id: "server_manage_captcha_overview", label: "Painel: Configurando Captcha", description: "Acesso as configuracoes gerais do captcha" },
+  { id: "server_manage_captcha_message", label: "Painel: Mensagem do Captcha", description: "Pode editar o embed do painel de captcha" },
+  { id: "server_manage_suggestions_overview", label: "Painel: Configurando Sugestoes", description: "Acesso as configuracoes gerais de sugestoes" },
+  { id: "server_manage_suggestions_message", label: "Painel: Mensagem de Sugestoes", description: "Pode editar o embed do painel de sugestoes" },
+  { id: "server_manage_bate_ponto_overview", label: "Painel: Configurando Ponto", description: "Acesso as configuracoes gerais de bate ponto" },
+  { id: "server_manage_bate_ponto_message", label: "Painel: Mensagem de Bate Ponto", description: "Pode editar o embed do painel de bate ponto" },
+  { id: "server_manage_bate_ponto_ranking", label: "Painel: Ranking de Bate Ponto", description: "Pode visualizar o ranking de horas" },
+  { id: "server_manage_bate_ponto_history", label: "Painel: Historico de Bate Ponto", description: "Pode visualizar o historico de registros" },
   { id: "server_manage_antilink", label: "Painel: AntiLink", description: "Pode configurar o sistema de AntiLink" },
   { id: "server_manage_autorole", label: "Painel: AutoRole", description: "Pode configurar atribuição automática de cargos" },
   { id: "server_view_security_logs", label: "Painel: Logs", description: "Acesso aos logs de segurança" },

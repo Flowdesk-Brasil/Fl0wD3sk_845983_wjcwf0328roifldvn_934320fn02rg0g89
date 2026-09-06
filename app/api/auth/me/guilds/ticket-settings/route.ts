@@ -698,24 +698,18 @@ export async function POST(request: Request) {
             flowSecureDto.array(flowSecureDto.record()),
           ),
           panelTitle: flowSecureDto.optional(
-            flowSecureDto.string({
-              allowEmpty: true,
+            flowSecureDto.legacyPanelPlainText({
               maxLength: PANEL_TITLE_MAX_LENGTH,
-              disallowAngleBrackets: false,
             }),
           ),
           panelDescription: flowSecureDto.optional(
-            flowSecureDto.string({
-              allowEmpty: true,
+            flowSecureDto.legacyPanelPlainText({
               maxLength: PANEL_DESCRIPTION_MAX_LENGTH,
-              disallowAngleBrackets: false,
             }),
           ),
           panelButtonLabel: flowSecureDto.optional(
-            flowSecureDto.string({
-              allowEmpty: true,
+            flowSecureDto.legacyPanelPlainText({
               maxLength: PANEL_BUTTON_LABEL_MAX_LENGTH,
-              disallowAngleBrackets: false,
             }),
           ),
           aiRules: flowSecureDto.optional(

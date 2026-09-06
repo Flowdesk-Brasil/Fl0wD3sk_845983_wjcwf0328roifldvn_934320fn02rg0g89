@@ -3,6 +3,72 @@ export const DEFAULT_TICKET_PANEL_DESCRIPTION =
   "Escolha uma opcao abaixo para falar com a equipe responsavel.";
 export const DEFAULT_TICKET_PANEL_BUTTON_LABEL = "Abrir ticket";
 
+export const DEFAULT_CAPTCHA_PANEL_TITLE = "Iniciar captcha";
+export const DEFAULT_CAPTCHA_PANEL_DESCRIPTION =
+  "Complete a verificacao abaixo para liberar o acesso aos canais.";
+export const DEFAULT_CAPTCHA_PANEL_BUTTON_LABEL = "Iniciar captcha";
+
+export const DEFAULT_SUGGESTION_PANEL_TITLE = "Iniciar Sugestao";
+export const DEFAULT_SUGGESTION_PANEL_DESCRIPTION =
+  "Compartilhe ideias para melhorar o servidor. Clique abaixo para abrir uma sugestao.";
+export const DEFAULT_SUGGESTION_PANEL_BUTTON_LABEL = "Abrir Sugestao";
+
+export const DEFAULT_BATE_PONTO_PANEL_TITLE = "Bate Ponto";
+export const DEFAULT_BATE_PONTO_PANEL_DESCRIPTION =
+  "Registre entrada, pausa e saida do seu expediente.";
+export const DEFAULT_BATE_PONTO_PANEL_BUTTON_LABEL = "Bater Ponto";
+export const DEFAULT_BATE_PONTO_LOG_TITLE = "{{action}}";
+export const DEFAULT_BATE_PONTO_LOG_DESCRIPTION =
+  "**Usuario:** {{member}} (`{{member_id}}`)\n**Horario:** {{timestamp}}\n**Tempo trabalhado:** {{worked_time}}\n**Tempo em pausa:** {{break_time}}\n**Banco de horas:** {{hour_bank}}";
+
+export const BATE_PONTO_LOG_ACTION_TOKEN = "{{action}}";
+export const BATE_PONTO_LOG_MEMBER_TOKEN = "{{member}}";
+export const BATE_PONTO_LOG_MEMBER_ID_TOKEN = "{{member_id}}";
+export const BATE_PONTO_LOG_TIMESTAMP_TOKEN = "{{timestamp}}";
+export const BATE_PONTO_LOG_WORKED_TIME_TOKEN = "{{worked_time}}";
+export const BATE_PONTO_LOG_BREAK_TIME_TOKEN = "{{break_time}}";
+export const BATE_PONTO_LOG_HOUR_BANK_TOKEN = "{{hour_bank}}";
+export const BATE_PONTO_LOG_SESSION_ID_TOKEN = "{{session_id}}";
+
+export type BatePontoLogPreviewContext = {
+  username: string;
+  memberId: string;
+};
+
+export function resolveBatePontoLogPreviewMarkdown(
+  markdown: string,
+  context?: Partial<BatePontoLogPreviewContext>,
+) {
+  const username = trimText(context?.username) || "usuario";
+  const memberId = trimText(context?.memberId) || "000000000000000000";
+  const memberMention = `<@${memberId}>`;
+  const timestampPreview = new Date().toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  return String(markdown || "")
+    .split(BATE_PONTO_LOG_ACTION_TOKEN)
+    .join("Ponto iniciado")
+    .split(BATE_PONTO_LOG_MEMBER_TOKEN)
+    .join(memberMention)
+    .split(BATE_PONTO_LOG_MEMBER_ID_TOKEN)
+    .join(memberId)
+    .split(BATE_PONTO_LOG_TIMESTAMP_TOKEN)
+    .join(timestampPreview)
+    .split(BATE_PONTO_LOG_WORKED_TIME_TOKEN)
+    .join("0s")
+    .split(BATE_PONTO_LOG_BREAK_TIME_TOKEN)
+    .join("0s")
+    .split(BATE_PONTO_LOG_HOUR_BANK_TOKEN)
+    .join("0")
+    .split(BATE_PONTO_LOG_SESSION_ID_TOKEN)
+    .join("1");
+}
+
 export type TicketPanelComponentType =
   | "content"
   | "container"
@@ -44,6 +110,7 @@ export type TicketPanelUserThumbnailAccessory = {
 export type TicketPanelButtonAccessory = {
   type: "button";
   label: string;
+  emoji?: string;
   style: TicketPanelButtonStyle;
   disabled: boolean;
 };
@@ -51,6 +118,7 @@ export type TicketPanelButtonAccessory = {
 export type TicketPanelLinkButtonAccessory = {
   type: "link_button";
   label: string;
+  emoji?: string;
   url: string;
 };
 
@@ -86,6 +154,7 @@ export type TicketPanelSeparatorComponent = TicketPanelComponentBase & {
 export type TicketPanelButtonComponent = TicketPanelComponentBase & {
   type: "button";
   label: string;
+  emoji?: string;
   style: TicketPanelButtonStyle;
   disabled: boolean;
 };
@@ -93,6 +162,7 @@ export type TicketPanelButtonComponent = TicketPanelComponentBase & {
 export type TicketPanelLinkButtonComponent = TicketPanelComponentBase & {
   type: "link_button";
   label: string;
+  emoji?: string;
   url: string;
 };
 
@@ -148,6 +218,18 @@ function stripMarkdownDecorators(value: string) {
     .trim();
 }
 
+export function sanitizeLegacyPanelPlainText(value: string) {
+  return value
+    .replace(/<a?:\w+:\d+>/g, " ")
+    .replace(/<@!?\d+>/g, " ")
+    .replace(/<@&\d+>/g, " ")
+    .replace(/<#\d+>/g, " ")
+    .replace(/<t:\d+(?::[tTdD])?>/g, " ")
+    .replace(/[<>]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function buildMarkdownFromLegacy(legacy?: Partial<LegacyTicketPanelFields>) {
   const title = trimText(legacy?.panelTitle) || DEFAULT_TICKET_PANEL_TITLE;
   const description =
@@ -194,6 +276,74 @@ function sanitizeButtonStyle(value: unknown): TicketPanelButtonStyle {
   }
 
   return "primary";
+}
+
+export function sanitizeButtonEmoji(value: unknown) {
+  if (typeof value !== "string") return "";
+  return value.trim().slice(0, 120);
+}
+
+export type ParsedButtonEmoji =
+  | {
+      kind: "custom";
+      id: string;
+      name: string;
+      animated: boolean;
+      raw: string;
+    }
+  | {
+      kind: "unicode";
+      name: string;
+      raw: string;
+    };
+
+export function parseButtonEmojiMarkup(value: unknown): ParsedButtonEmoji | null {
+  const normalized = sanitizeButtonEmoji(value);
+  if (!normalized) return null;
+
+  const customMatch = normalized.match(/^<(a?):([a-zA-Z0-9_]+):(\d{17,20})>$/);
+  if (customMatch) {
+    return {
+      kind: "custom",
+      animated: customMatch[1] === "a",
+      name: customMatch[2],
+      id: customMatch[3],
+      raw: normalized,
+    };
+  }
+
+  return {
+    kind: "unicode",
+    name: normalized,
+    raw: normalized,
+  };
+}
+
+export function formatButtonEmojiMarkup(emoji: {
+  id: string;
+  name: string;
+  animated: boolean;
+}) {
+  return emoji.animated
+    ? `<a:${emoji.name}:${emoji.id}>`
+    : `<:${emoji.name}:${emoji.id}>`;
+}
+
+export function buildDiscordButtonEmojiPayload(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  const parsed = parseButtonEmojiMarkup(value);
+  if (!parsed) return undefined;
+
+  if (parsed.kind === "custom") {
+    return {
+      id: parsed.id,
+      name: parsed.name,
+      animated: parsed.animated,
+    };
+  }
+
+  return { name: parsed.name };
 }
 
 function sanitizeSeparatorSpacing(
@@ -247,6 +397,7 @@ export function createTicketPanelContentAccessoryByType(
     return {
       type,
       label: "Abrir link",
+      emoji: "",
       url: "https://flowdesk.com.br",
     };
   }
@@ -254,6 +405,7 @@ export function createTicketPanelContentAccessoryByType(
   return {
     type: "button",
     label: "Acao",
+    emoji: "",
     style: "primary",
     disabled: false,
   };
@@ -286,12 +438,715 @@ export function createDefaultTicketPanelLayout(
           id: createTicketPanelComponentId("button"),
           type: "button",
           label: buttonLabel,
+          emoji: "",
           style: "primary",
           disabled: false,
         },
       ],
     },
   ];
+}
+
+export function createDefaultCaptchaPanelLayout(
+  legacy?: Partial<LegacyTicketPanelFields>,
+): TicketPanelLayout {
+  return createDefaultTicketPanelLayout({
+    panelTitle: trimText(legacy?.panelTitle) || DEFAULT_CAPTCHA_PANEL_TITLE,
+    panelDescription:
+      trimText(legacy?.panelDescription) || DEFAULT_CAPTCHA_PANEL_DESCRIPTION,
+    panelButtonLabel:
+      trimText(legacy?.panelButtonLabel) || DEFAULT_CAPTCHA_PANEL_BUTTON_LABEL,
+  });
+}
+
+function isTicketPanelLegacyContent(
+  legacy?: Partial<LegacyTicketPanelFields>,
+) {
+  const title = trimText(legacy?.panelTitle);
+  const description = trimText(legacy?.panelDescription);
+  const buttonLabel = trimText(legacy?.panelButtonLabel);
+
+  const titleMatchesTicketDefault = !title || title === DEFAULT_TICKET_PANEL_TITLE;
+  const descriptionMatchesTicketDefault =
+    !description || description === DEFAULT_TICKET_PANEL_DESCRIPTION;
+  const buttonMatchesTicketDefault =
+    !buttonLabel || buttonLabel === DEFAULT_TICKET_PANEL_BUTTON_LABEL;
+
+  return (
+    titleMatchesTicketDefault &&
+    descriptionMatchesTicketDefault &&
+    buttonMatchesTicketDefault
+  );
+}
+
+export function isUnsetCaptchaPanelLayout(
+  value: unknown,
+  legacyFallback?: Partial<LegacyTicketPanelFields>,
+) {
+  if (value === null || value === undefined) {
+    return true;
+  }
+
+  if (!Array.isArray(value) || value.length === 0) {
+    return isTicketPanelLegacyContent(legacyFallback);
+  }
+
+  if (!isTicketPanelLegacyContent(legacyFallback)) {
+    return false;
+  }
+
+  const derivedLegacy = deriveLegacyTicketPanelFields(
+    normalizeTicketPanelLayout(value),
+  );
+
+  return (
+    derivedLegacy.panelTitle === DEFAULT_TICKET_PANEL_TITLE &&
+    derivedLegacy.panelDescription === DEFAULT_TICKET_PANEL_DESCRIPTION &&
+    derivedLegacy.panelButtonLabel === DEFAULT_TICKET_PANEL_BUTTON_LABEL
+  );
+}
+
+export function normalizeCaptchaPanelLayout(
+  value: unknown,
+  legacyFallback?: Partial<LegacyTicketPanelFields>,
+): TicketPanelLayout {
+  const resolvedLegacy = {
+    panelTitle: trimText(legacyFallback?.panelTitle) || DEFAULT_CAPTCHA_PANEL_TITLE,
+    panelDescription:
+      trimText(legacyFallback?.panelDescription) ||
+      DEFAULT_CAPTCHA_PANEL_DESCRIPTION,
+    panelButtonLabel:
+      trimText(legacyFallback?.panelButtonLabel) ||
+      DEFAULT_CAPTCHA_PANEL_BUTTON_LABEL,
+  };
+
+  if (isUnsetCaptchaPanelLayout(value, legacyFallback)) {
+    return createDefaultCaptchaPanelLayout(resolvedLegacy);
+  }
+
+  return normalizeTicketPanelLayout(value, resolvedLegacy);
+}
+
+export function createDefaultSuggestionPanelLayout(
+  legacy?: Partial<LegacyTicketPanelFields>,
+): TicketPanelLayout {
+  return createDefaultTicketPanelLayout({
+    panelTitle: trimText(legacy?.panelTitle) || DEFAULT_SUGGESTION_PANEL_TITLE,
+    panelDescription:
+      trimText(legacy?.panelDescription) || DEFAULT_SUGGESTION_PANEL_DESCRIPTION,
+    panelButtonLabel:
+      trimText(legacy?.panelButtonLabel) || DEFAULT_SUGGESTION_PANEL_BUTTON_LABEL,
+  });
+}
+
+function isSuggestionPanelLegacyContent(legacy?: Partial<LegacyTicketPanelFields>) {
+  const title = trimText(legacy?.panelTitle);
+  const description = trimText(legacy?.panelDescription);
+  const buttonLabel = trimText(legacy?.panelButtonLabel);
+
+  const titleMatchesSuggestionDefault =
+    !title || title === DEFAULT_SUGGESTION_PANEL_TITLE;
+  const descriptionMatchesSuggestionDefault =
+    !description || description === DEFAULT_SUGGESTION_PANEL_DESCRIPTION;
+  const buttonMatchesSuggestionDefault =
+    !buttonLabel || buttonLabel === DEFAULT_SUGGESTION_PANEL_BUTTON_LABEL;
+
+  return (
+    titleMatchesSuggestionDefault &&
+    descriptionMatchesSuggestionDefault &&
+    buttonMatchesSuggestionDefault
+  );
+}
+
+export function isUnsetSuggestionPanelLayout(
+  value: unknown,
+  legacyFallback?: Partial<LegacyTicketPanelFields>,
+) {
+  if (value === null || value === undefined) {
+    return true;
+  }
+
+  if (!Array.isArray(value) || value.length === 0) {
+    return isSuggestionPanelLegacyContent(legacyFallback);
+  }
+
+  const derivedLegacy = deriveLegacyTicketPanelFields(
+    normalizeTicketPanelLayout(value),
+  );
+
+  return (
+    derivedLegacy.panelTitle === DEFAULT_TICKET_PANEL_TITLE &&
+    derivedLegacy.panelDescription === DEFAULT_TICKET_PANEL_DESCRIPTION &&
+    derivedLegacy.panelButtonLabel === DEFAULT_TICKET_PANEL_BUTTON_LABEL
+  );
+}
+
+export const DEFAULT_SUGGESTION_PUBLISHED_ACCENT = "#00bcd4";
+export const DEFAULT_SUGGESTION_PUBLISHED_HEADER = "NOVA SUGESTAO ENVIADA!";
+export const DEFAULT_SUGGESTION_PUBLISHED_FOOTER =
+  "Flowdesk | Sistema de sugestoes";
+export const SUGGESTION_PUBLISHED_HEADER_TOKEN = "{{published_header}}";
+export const SUGGESTION_PUBLISHED_FOOTER_TOKEN = "{{published_footer}}";
+export const SUGGESTION_PUBLISHED_TITLE_TOKEN = "{{suggestion_title}}";
+export const SUGGESTION_PUBLISHED_BODY_TOKEN = "{{suggestion_body}}";
+export const SUGGESTION_PUBLISHED_AUTHOR_TOKEN = "{{suggestion_author}}";
+export const SUGGESTION_PUBLISHED_TITLE_PREVIEW = "### Titulo da sugestao";
+export const SUGGESTION_PUBLISHED_BODY_PREVIEW = "> ```descricao```";
+
+export function formatSuggestionPublishedBody(body: string) {
+  const safe = trimText(body);
+  if (!safe) {
+    return SUGGESTION_PUBLISHED_BODY_PREVIEW;
+  }
+
+  return `> \`\`\`${safe}\`\`\``;
+}
+
+export function createSuggestionMemberSlotMarkdown() {
+  return `${SUGGESTION_PUBLISHED_TITLE_TOKEN}\n\n${SUGGESTION_PUBLISHED_BODY_TOKEN}`;
+}
+
+export function isSuggestionMemberSlotMarkdown(markdown: string) {
+  const trimmed = markdown.trim();
+  if (
+    !trimmed.includes(SUGGESTION_PUBLISHED_TITLE_TOKEN) ||
+    !trimmed.includes(SUGGESTION_PUBLISHED_BODY_TOKEN)
+  ) {
+    return false;
+  }
+
+  if (
+    trimmed.includes(SUGGESTION_PUBLISHED_HEADER_TOKEN) ||
+    trimmed.includes(SUGGESTION_PUBLISHED_AUTHOR_TOKEN) ||
+    trimmed.includes(SUGGESTION_PUBLISHED_FOOTER_TOKEN)
+  ) {
+    return false;
+  }
+
+  return !stripLegacySuggestionPublishedPreviewLines(trimmed)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .some(
+      (line) =>
+        line !== SUGGESTION_PUBLISHED_TITLE_TOKEN &&
+        line !== SUGGESTION_PUBLISHED_BODY_TOKEN,
+    );
+}
+
+function isLegacyCombinedSuggestionContentMarkdown(markdown: string) {
+  return (
+    markdown.includes(SUGGESTION_PUBLISHED_TITLE_TOKEN) &&
+    markdown.includes(SUGGESTION_PUBLISHED_BODY_TOKEN) &&
+    !isSuggestionMemberSlotMarkdown(markdown)
+  );
+}
+
+function stripMemberSlotTokensFromContent(markdown: string) {
+  return markdown
+    .split(/\r?\n/)
+    .filter((line) => {
+      const trimmed = line.trim();
+      return (
+        trimmed !== SUGGESTION_PUBLISHED_TITLE_TOKEN &&
+        trimmed !== SUGGESTION_PUBLISHED_BODY_TOKEN
+      );
+    })
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function createSuggestionPublishedContentChild(
+  markdown: string,
+  id?: string,
+): TicketPanelContentComponent {
+  return {
+    id: id || createTicketPanelComponentId("content"),
+    type: "content",
+    markdown,
+    accessory: null,
+  };
+}
+
+export function createSuggestionMemberSlotChild(
+  id?: string,
+): TicketPanelContentComponent {
+  return {
+    id: id || createTicketPanelComponentId("slot"),
+    type: "content",
+    markdown: createSuggestionMemberSlotMarkdown(),
+    accessory: null,
+  };
+}
+
+function splitLegacyCombinedSuggestionContent(
+  markdown: string,
+): TicketPanelContainerChild[] {
+  const cleaned = stripLegacySuggestionPublishedPreviewLines(markdown);
+  const parsed = parseSuggestionPublishedContentMarkdown(cleaned);
+  const children: TicketPanelContainerChild[] = [];
+  const prefix = stripLegacySuggestionPublishedPreviewLines(parsed.prefix);
+
+  if (prefix) {
+    children.push(createSuggestionPublishedContentChild(prefix));
+  }
+
+  children.push(createSuggestionMemberSlotChild());
+
+  const suffix = stripLegacySuggestionPublishedPreviewLines(parsed.suffix);
+  if (suffix) {
+    children.push(createSuggestionPublishedContentChild(suffix));
+  }
+
+  return children;
+}
+
+function normalizeSuggestionPublishedContainerChildren(
+  children: TicketPanelContainerChild[],
+): TicketPanelContainerChild[] {
+  let expanded: TicketPanelContainerChild[] = [];
+
+  for (const child of children) {
+    if (
+      child.type === "content" &&
+      isLegacyCombinedSuggestionContentMarkdown(child.markdown)
+    ) {
+      expanded.push(...splitLegacyCombinedSuggestionContent(child.markdown));
+      continue;
+    }
+
+    expanded.push(child);
+  }
+
+  let slotSeen = false;
+  expanded = expanded
+    .filter((child) => {
+      if (
+        child.type === "content" &&
+        isSuggestionMemberSlotMarkdown(child.markdown)
+      ) {
+        if (slotSeen) {
+          return false;
+        }
+        slotSeen = true;
+        return true;
+      }
+
+      return true;
+    })
+    .map((child) => {
+      if (
+        child.type === "content" &&
+        isSuggestionMemberSlotMarkdown(child.markdown)
+      ) {
+        return createSuggestionMemberSlotChild(child.id);
+      }
+
+      if (child.type === "content") {
+        return {
+          ...child,
+          markdown: stripMemberSlotTokensFromContent(child.markdown),
+        };
+      }
+
+      return child;
+    });
+
+  if (!slotSeen) {
+    const insertAt = expanded.findIndex(
+      (child) =>
+        child.type === "separator" ||
+        (child.type === "content" &&
+          child.markdown.includes(SUGGESTION_PUBLISHED_AUTHOR_TOKEN)),
+    );
+    const index = insertAt >= 0 ? insertAt : expanded.length;
+    expanded = [
+      ...expanded.slice(0, index),
+      createSuggestionMemberSlotChild(),
+      ...expanded.slice(index),
+    ];
+  }
+
+  return expanded;
+}
+
+function normalizeSuggestionPublishedLayoutStructure(
+  layout: TicketPanelLayout,
+): TicketPanelLayout {
+  return layout.map((component) => {
+    if (component.type === "container") {
+      return {
+        ...component,
+        children: normalizeSuggestionPublishedContainerChildren(
+          component.children,
+        ),
+      };
+    }
+
+    return component;
+  });
+}
+
+export function mergeSuggestionPublishedContentMarkdown(
+  prefix: string,
+  suffix: string,
+) {
+  const sections = [
+    prefix.trim(),
+    SUGGESTION_PUBLISHED_TITLE_TOKEN,
+    SUGGESTION_PUBLISHED_BODY_TOKEN,
+    suffix.trim(),
+  ].filter(Boolean);
+
+  return sections.join("\n\n");
+}
+
+export function parseSuggestionPublishedContentMarkdown(markdown: string) {
+  const titleIndex = markdown.indexOf(SUGGESTION_PUBLISHED_TITLE_TOKEN);
+  const bodyIndex = markdown.indexOf(SUGGESTION_PUBLISHED_BODY_TOKEN);
+
+  if (titleIndex === -1 || bodyIndex === -1 || bodyIndex < titleIndex) {
+    return {
+      prefix: markdown,
+      suffix: "",
+      hasSlots: false,
+    };
+  }
+
+  return {
+    prefix: markdown.slice(0, titleIndex).replace(/\s+$/, ""),
+    suffix: markdown
+      .slice(bodyIndex + SUGGESTION_PUBLISHED_BODY_TOKEN.length)
+      .replace(/^\s+/, ""),
+    hasSlots: true,
+  };
+}
+
+function stripLegacySuggestionPublishedPreviewLines(markdown: string) {
+  return markdown
+    .split(/\r?\n/)
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        return true;
+      }
+
+      if (
+        trimmed === SUGGESTION_PUBLISHED_TITLE_TOKEN ||
+        trimmed === SUGGESTION_PUBLISHED_BODY_TOKEN ||
+        trimmed.includes(SUGGESTION_PUBLISHED_AUTHOR_TOKEN) ||
+        trimmed.includes(SUGGESTION_PUBLISHED_HEADER_TOKEN) ||
+        trimmed.includes(SUGGESTION_PUBLISHED_FOOTER_TOKEN)
+      ) {
+        return true;
+      }
+
+      return (
+        trimmed !== SUGGESTION_PUBLISHED_TITLE_PREVIEW &&
+        trimmed !== "### Titulo da sugestao" &&
+        trimmed !== SUGGESTION_PUBLISHED_BODY_PREVIEW &&
+        trimmed !== "> ```descricao```" &&
+        trimmed !== "-# Enviada por @autor" &&
+        trimmed !== "Enviada por @autor" &&
+        trimmed !== "Flowdesk | Sistema de sugestoes" &&
+        trimmed !== "-# Flowdesk | Sistema de sugestoes" &&
+        !trimmed.startsWith("Descreva aqui o corpo da sugestao")
+      );
+    })
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+export function normalizeSuggestionPublishedContentMarkdown(markdown: string) {
+  if (isSuggestionMemberSlotMarkdown(markdown)) {
+    return createSuggestionMemberSlotMarkdown();
+  }
+
+  return stripMemberSlotTokensFromContent(
+    stripLegacySuggestionPublishedPreviewLines(markdown),
+  );
+}
+
+function ensureSuggestionPublishedSlotsInLayout(
+  layout: TicketPanelLayout,
+): TicketPanelLayout {
+  return normalizeSuggestionPublishedLayoutStructure(
+    normalizeTicketPanelLayout(layout),
+  );
+}
+
+export function inlineSuggestionPublishedStaticTokens(
+  markdown: string,
+  options?: {
+    publishedHeader?: string;
+    publishedFooter?: string;
+  },
+) {
+  const header =
+    trimText(options?.publishedHeader) || DEFAULT_SUGGESTION_PUBLISHED_HEADER;
+  const footer =
+    trimText(options?.publishedFooter) || DEFAULT_SUGGESTION_PUBLISHED_FOOTER;
+
+  return markdown
+    .replaceAll(SUGGESTION_PUBLISHED_HEADER_TOKEN, header)
+    .replaceAll(SUGGESTION_PUBLISHED_FOOTER_TOKEN, footer);
+}
+
+function inlineStaticTokensInLayout(
+  layout: TicketPanelLayout,
+  migration?: {
+    publishedHeader?: string;
+    publishedFooter?: string;
+  },
+): TicketPanelLayout {
+  return layout.map((component) => {
+    if (component.type === "container") {
+      return {
+        ...component,
+        children: component.children.map((child) => {
+          if (child.type !== "content" || isSuggestionMemberSlotMarkdown(child.markdown)) {
+            return child;
+          }
+
+          return {
+            ...child,
+            markdown: inlineSuggestionPublishedStaticTokens(
+              child.markdown,
+              migration,
+            ),
+          };
+        }),
+      };
+    }
+
+    if (
+      component.type === "content" &&
+      !isSuggestionMemberSlotMarkdown(component.markdown)
+    ) {
+      return {
+        ...component,
+        markdown: inlineSuggestionPublishedStaticTokens(
+          component.markdown,
+          migration,
+        ),
+      };
+    }
+
+    return component;
+  });
+}
+
+export function resolveSuggestionPublishedPreviewMarkdown(markdown: string) {
+  return inlineSuggestionPublishedStaticTokens(markdown)
+    .replaceAll(
+      SUGGESTION_PUBLISHED_TITLE_TOKEN,
+      SUGGESTION_PUBLISHED_TITLE_PREVIEW,
+    )
+    .replaceAll(
+      SUGGESTION_PUBLISHED_BODY_TOKEN,
+      SUGGESTION_PUBLISHED_BODY_PREVIEW,
+    )
+    .replaceAll(SUGGESTION_PUBLISHED_AUTHOR_TOKEN, "@autor");
+}
+
+export function suggestionPublishedLayoutHasRequiredSlots(
+  layout: TicketPanelLayout,
+) {
+  const normalized = normalizeSuggestionPublishedLayoutStructure(
+    normalizeTicketPanelLayout(layout),
+  );
+
+  for (const component of normalized) {
+    if (component.type !== "container") {
+      continue;
+    }
+
+    const slotCount = component.children.filter(
+      (child) =>
+        child.type === "content" &&
+        isSuggestionMemberSlotMarkdown(child.markdown),
+    ).length;
+
+    if (slotCount === 1) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function createDefaultSuggestionPublishedLayout(): TicketPanelLayout {
+  return [
+    {
+      id: createTicketPanelComponentId("container"),
+      type: "container",
+      accentColor: DEFAULT_SUGGESTION_PUBLISHED_ACCENT,
+      children: [
+        createSuggestionPublishedContentChild(
+          `## 💡 ${DEFAULT_SUGGESTION_PUBLISHED_HEADER}`,
+        ),
+        createSuggestionMemberSlotChild(),
+        createSuggestionPublishedContentChild(
+          `-# Enviada por {{suggestion_author}}\n-# ${DEFAULT_SUGGESTION_PUBLISHED_FOOTER}`,
+        ),
+      ],
+    },
+  ];
+}
+
+export function isUnsetSuggestionPublishedLayout(value: unknown) {
+  if (value === null || value === undefined) {
+    return true;
+  }
+
+  return !Array.isArray(value) || value.length === 0;
+}
+
+export function normalizeSuggestionPublishedLayout(
+  value: unknown,
+  migration?: {
+    publishedHeader?: string;
+    publishedFooter?: string;
+  },
+): TicketPanelLayout {
+  if (isUnsetSuggestionPublishedLayout(value)) {
+    return createDefaultSuggestionPublishedLayout();
+  }
+
+  return inlineStaticTokensInLayout(
+    ensureSuggestionPublishedSlotsInLayout(normalizeTicketPanelLayout(value)),
+    migration,
+  );
+}
+
+export function normalizeSuggestionPanelLayout(
+  value: unknown,
+  legacyFallback?: Partial<LegacyTicketPanelFields>,
+): TicketPanelLayout {
+  const resolvedLegacy = {
+    panelTitle:
+      trimText(legacyFallback?.panelTitle) || DEFAULT_SUGGESTION_PANEL_TITLE,
+    panelDescription:
+      trimText(legacyFallback?.panelDescription) ||
+      DEFAULT_SUGGESTION_PANEL_DESCRIPTION,
+    panelButtonLabel:
+      trimText(legacyFallback?.panelButtonLabel) ||
+      DEFAULT_SUGGESTION_PANEL_BUTTON_LABEL,
+  };
+
+  if (isUnsetSuggestionPanelLayout(value, legacyFallback)) {
+    return createDefaultSuggestionPanelLayout(resolvedLegacy);
+  }
+
+  return normalizeTicketPanelLayout(value, resolvedLegacy);
+}
+
+export function createDefaultBatePontoPanelLayout(
+  legacy?: Partial<LegacyTicketPanelFields>,
+): TicketPanelLayout {
+  return createDefaultTicketPanelLayout({
+    panelTitle: trimText(legacy?.panelTitle) || DEFAULT_BATE_PONTO_PANEL_TITLE,
+    panelDescription:
+      trimText(legacy?.panelDescription) || DEFAULT_BATE_PONTO_PANEL_DESCRIPTION,
+    panelButtonLabel:
+      trimText(legacy?.panelButtonLabel) || DEFAULT_BATE_PONTO_PANEL_BUTTON_LABEL,
+  });
+}
+
+function isBatePontoPanelLegacyContent(legacy?: Partial<LegacyTicketPanelFields>) {
+  const title = trimText(legacy?.panelTitle);
+  const description = trimText(legacy?.panelDescription);
+  const buttonLabel = trimText(legacy?.panelButtonLabel);
+
+  const titleMatchesDefault =
+    !title || title === DEFAULT_BATE_PONTO_PANEL_TITLE;
+  const descriptionMatchesDefault =
+    !description || description === DEFAULT_BATE_PONTO_PANEL_DESCRIPTION;
+  const buttonMatchesDefault =
+    !buttonLabel || buttonLabel === DEFAULT_BATE_PONTO_PANEL_BUTTON_LABEL;
+
+  return titleMatchesDefault && descriptionMatchesDefault && buttonMatchesDefault;
+}
+
+export function isUnsetBatePontoPanelLayout(
+  value: unknown,
+  legacyFallback?: Partial<LegacyTicketPanelFields>,
+) {
+  if (value === null || value === undefined) {
+    return true;
+  }
+
+  if (!Array.isArray(value) || value.length === 0) {
+    return isBatePontoPanelLegacyContent(legacyFallback);
+  }
+
+  return false;
+}
+
+export function normalizeBatePontoPanelLayout(
+  value: unknown,
+  legacyFallback?: Partial<LegacyTicketPanelFields>,
+): TicketPanelLayout {
+  const resolvedLegacy = {
+    panelTitle:
+      trimText(legacyFallback?.panelTitle) || DEFAULT_BATE_PONTO_PANEL_TITLE,
+    panelDescription:
+      trimText(legacyFallback?.panelDescription) ||
+      DEFAULT_BATE_PONTO_PANEL_DESCRIPTION,
+    panelButtonLabel:
+      trimText(legacyFallback?.panelButtonLabel) ||
+      DEFAULT_BATE_PONTO_PANEL_BUTTON_LABEL,
+  };
+
+  if (isUnsetBatePontoPanelLayout(value, legacyFallback)) {
+    return createDefaultBatePontoPanelLayout(resolvedLegacy);
+  }
+
+  return normalizeTicketPanelLayout(value, resolvedLegacy);
+}
+
+export function createDefaultBatePontoLogLayout(): TicketPanelLayout {
+  return [
+    {
+      id: createTicketPanelComponentId("container"),
+      type: "container",
+      accentColor: "",
+      children: [
+        {
+          id: createTicketPanelComponentId("content"),
+          type: "content",
+          markdown: `## ${DEFAULT_BATE_PONTO_LOG_TITLE}\n\n${DEFAULT_BATE_PONTO_LOG_DESCRIPTION}`,
+          accessory: null,
+        },
+      ],
+    },
+  ];
+}
+
+export function isUnsetBatePontoLogLayout(value: unknown) {
+  if (value === null || value === undefined) {
+    return true;
+  }
+
+  if (!Array.isArray(value) || value.length === 0) {
+    return true;
+  }
+
+  return false;
+}
+
+export function normalizeBatePontoLogLayout(value: unknown): TicketPanelLayout {
+  if (isUnsetBatePontoLogLayout(value)) {
+    return createDefaultBatePontoLogLayout();
+  }
+
+  return normalizeTicketPanelLayout(value, {
+    panelTitle: DEFAULT_BATE_PONTO_LOG_TITLE,
+    panelDescription: DEFAULT_BATE_PONTO_LOG_DESCRIPTION,
+    panelButtonLabel: "",
+  });
 }
 
 export function createTicketPanelComponentByType(
@@ -338,6 +1193,7 @@ export function createTicketPanelComponentByType(
         id: createTicketPanelComponentId("button"),
         type,
         label: "Acao principal",
+        emoji: "",
         style: "primary",
         disabled: false,
       };
@@ -346,6 +1202,7 @@ export function createTicketPanelComponentByType(
         id: createTicketPanelComponentId("link"),
         type,
         label: "Abrir link",
+        emoji: "",
         url: "https://flowdesk.com.br",
       };
     case "select":
@@ -390,8 +1247,12 @@ function normalizeContentAccessory(
 ): TicketPanelContentAccessory | null {
   if (!value || typeof value !== "object") return null;
   const candidate = value as Record<string, unknown>;
+  const rawType =
+    typeof candidate.type === "string"
+      ? candidate.type.trim().toLowerCase().replace(/-/g, "_")
+      : "";
 
-  if (candidate.type === "thumbnail") {
+  if (rawType === "thumbnail") {
     return {
       type: "thumbnail",
       imageUrl: getCandidateString(candidate, "imageUrl", "", 1000),
@@ -399,7 +1260,7 @@ function normalizeContentAccessory(
     };
   }
 
-  if (candidate.type === "user_thumbnail") {
+  if (rawType === "user_thumbnail" || rawType === "userthumbnail") {
     return {
       type: "user_thumbnail",
       alt: "",
@@ -410,6 +1271,7 @@ function normalizeContentAccessory(
     return {
       type: "link_button",
       label: getCandidateString(candidate, "label", "Abrir link", 80),
+      emoji: sanitizeButtonEmoji(candidate.emoji),
       url: getCandidateString(candidate, "url", "https://flowdesk.com.br", 1000),
     };
   }
@@ -418,6 +1280,7 @@ function normalizeContentAccessory(
     return {
       type: "button",
       label: getCandidateString(candidate, "label", "Acao", 80),
+      emoji: sanitizeButtonEmoji(candidate.emoji),
       style: sanitizeButtonStyle(candidate.style),
       disabled: Boolean(candidate.disabled),
     };
@@ -496,6 +1359,7 @@ function normalizeNonContainerComponent(
           DEFAULT_TICKET_PANEL_BUTTON_LABEL,
           80,
         ),
+        emoji: sanitizeButtonEmoji(candidate.emoji),
         style: sanitizeButtonStyle(candidate.style),
         disabled: Boolean(candidate.disabled),
       };
@@ -504,6 +1368,7 @@ function normalizeNonContainerComponent(
         id,
         type,
         label: getCandidateString(candidate, "label", "Abrir link", 80),
+        emoji: sanitizeButtonEmoji(candidate.emoji),
         url: getCandidateString(candidate, "url", "https://flowdesk.com.br", 1000),
       };
     case "select":
@@ -684,13 +1549,22 @@ export function deriveLegacyTicketPanelFields(
     .filter(Boolean);
 
   const firstMeaningfulLine = markdownLines[0] || "";
-  const titleCandidate = stripMarkdownDecorators(firstMeaningfulLine);
+  const titleCandidate = sanitizeLegacyPanelPlainText(
+    stripMarkdownDecorators(firstMeaningfulLine),
+  );
   const remainingLines = markdownLines.slice(1);
-  const descriptionCandidate = remainingLines
-    .map((line) => stripMarkdownDecorators(line))
-    .filter(Boolean)
-    .join("\n")
-    .trim();
+  const descriptionCandidate = sanitizeLegacyPanelPlainText(
+    remainingLines
+      .map((line) => stripMarkdownDecorators(line))
+      .filter(Boolean)
+      .join("\n")
+      .trim(),
+  );
+  const buttonLabelCandidate = sanitizeLegacyPanelPlainText(
+    (resolvedButtonLike && "placeholder" in resolvedButtonLike
+      ? resolvedButtonLike.placeholder
+      : resolvedButtonLike?.label) || "",
+  );
 
   return {
     panelTitle: clampText(titleCandidate || DEFAULT_TICKET_PANEL_TITLE, 80),
@@ -703,9 +1577,7 @@ export function deriveLegacyTicketPanelFields(
       ),
     panelButtonLabel:
       clampText(
-        (resolvedButtonLike && "placeholder" in resolvedButtonLike
-          ? resolvedButtonLike.placeholder
-          : resolvedButtonLike?.label) || DEFAULT_TICKET_PANEL_BUTTON_LABEL,
+        buttonLabelCandidate || DEFAULT_TICKET_PANEL_BUTTON_LABEL,
         40,
       ),
   };
@@ -765,4 +1637,110 @@ export function ticketPanelLayoutHasRequiredParts(layout: TicketPanelLayout) {
   }
 
   return hasContent && hasAction;
+}
+
+export function ticketPanelLayoutHasRenderableContent(layout: TicketPanelLayout) {
+  const normalized = normalizeTicketPanelLayout(layout);
+
+  for (const component of normalized) {
+    let hasContent = false;
+
+    walkComponent(component, (current) => {
+      if (current.type === "content" && current.markdown.trim().length > 0) {
+        hasContent = true;
+      }
+    });
+
+    if (hasContent) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export const DEFAULT_USER_THUMBNAIL_PREVIEW_URL =
+  "https://cdn.discordapp.com/embed/avatars/0.png";
+
+export function layoutHasUserThumbnailAccessory(layout: TicketPanelLayout) {
+  let found = false;
+
+  for (const component of normalizeTicketPanelLayout(layout)) {
+    walkComponent(component, (current) => {
+      if (
+        current.type === "content" &&
+        current.accessory?.type === "user_thumbnail"
+      ) {
+        found = true;
+      }
+    });
+    if (found) break;
+  }
+
+  return found;
+}
+
+function mapContainerChildUserThumbnail(
+  child: TicketPanelContainerChild,
+  userAvatarUrl: string,
+): TicketPanelContainerChild {
+  if (
+    child.type === "content" &&
+    child.accessory?.type === "user_thumbnail"
+  ) {
+    return {
+      ...child,
+      accessory: {
+        type: "thumbnail",
+        imageUrl: userAvatarUrl,
+        alt: child.accessory.alt || "",
+      },
+    };
+  }
+
+  return child;
+}
+
+function mapComponentUserThumbnail(
+  component: TicketPanelComponent,
+  userAvatarUrl: string,
+): TicketPanelComponent {
+  if (component.type === "container") {
+    return {
+      ...component,
+      children: component.children.map((child) =>
+        mapContainerChildUserThumbnail(child, userAvatarUrl),
+      ),
+    };
+  }
+
+  if (
+    component.type === "content" &&
+    component.accessory?.type === "user_thumbnail"
+  ) {
+    return {
+      ...component,
+      accessory: {
+        type: "thumbnail",
+        imageUrl: userAvatarUrl,
+        alt: component.accessory.alt || "",
+      },
+    };
+  }
+
+  return component;
+}
+
+export function applyUserAvatarThumbnailToLayout(
+  layout: TicketPanelLayout,
+  userAvatarUrl?: string | null,
+): TicketPanelLayout {
+  const safeUrl = trimText(userAvatarUrl || "");
+  if (!safeUrl) {
+    return layout;
+  }
+
+  return normalizeTicketPanelLayout(layout).map((component) =>
+    mapComponentUserThumbnail(component, safeUrl),
+  );
 }

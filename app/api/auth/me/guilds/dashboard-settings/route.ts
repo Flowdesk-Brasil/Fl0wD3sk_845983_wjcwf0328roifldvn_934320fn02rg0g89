@@ -20,7 +20,16 @@ import {
   rewriteUnreadableServerSettingsVaultSnapshot,
   type ServerSettingsVaultModule,
 } from "@/lib/servers/serverSettingsVault";
-import { normalizeTicketPanelLayout } from "@/lib/servers/ticketPanelBuilder";
+import {
+  DEFAULT_SUGGESTION_PUBLISHED_FOOTER,
+  DEFAULT_SUGGESTION_PUBLISHED_HEADER,
+  normalizeBatePontoLogLayout,
+  normalizeBatePontoPanelLayout,
+  normalizeCaptchaPanelLayout,
+  normalizeSuggestionPanelLayout,
+  normalizeSuggestionPublishedLayout,
+  normalizeTicketPanelLayout,
+} from "@/lib/servers/ticketPanelBuilder";
 import {
   createDefaultWelcomeEntryLayout,
   createDefaultWelcomeExitLayout,
@@ -36,6 +45,8 @@ import { getEffectiveDashboardPermissions } from "@/lib/teams/userTeams";
 const GUILD_CATEGORY = 4;
 const GUILD_TEXT = 0;
 const GUILD_ANNOUNCEMENT = 5;
+const GUILD_VOICE = 2;
+const GUILD_STAGE = 13;
 const DASHBOARD_SETTINGS_CACHE_TTL_MS = 15_000;
 const TICKET_SETTINGS_SELECT_BASE =
   "enabled, menu_channel_id, tickets_category_id, logs_created_channel_id, logs_closed_channel_id, panel_layout, panel_title, panel_description, panel_button_label, ai_rules, updated_at";
@@ -550,6 +561,308 @@ function buildWelcomePayload(input: {
   };
 }
 
+function buildCaptchaPayload(input: {
+  record: Record<string, unknown> | null;
+  snapshot: Record<string, unknown> | null;
+  textSet: Set<string>;
+  roleSet: Set<string>;
+  updatedAt: string | null;
+}) {
+  if (!input.record && !input.snapshot) {
+    return null;
+  }
+
+  const panelTitle =
+    typeof input.snapshot?.panelTitle === "string"
+      ? input.snapshot.panelTitle
+      : typeof input.record?.panel_title === "string"
+        ? input.record.panel_title
+        : "";
+  const panelDescription =
+    typeof input.snapshot?.panelDescription === "string"
+      ? input.snapshot.panelDescription
+      : typeof input.record?.panel_description === "string"
+        ? input.record.panel_description
+        : "";
+  const panelButtonLabel =
+    typeof input.snapshot?.panelButtonLabel === "string"
+      ? input.snapshot.panelButtonLabel
+      : typeof input.record?.panel_button_label === "string"
+        ? input.record.panel_button_label
+        : "";
+
+  return {
+    enabled:
+      typeof input.snapshot?.enabled === "boolean"
+        ? input.snapshot.enabled
+        : input.record?.enabled === true,
+    panelChannelId:
+      typeof input.snapshot?.panelChannelId === "string" &&
+      (input.textSet.size === 0 || input.textSet.has(input.snapshot.panelChannelId))
+        ? input.snapshot.panelChannelId
+        : typeof input.record?.panel_channel_id === "string" &&
+            (input.textSet.size === 0 || input.textSet.has(input.record.panel_channel_id))
+          ? input.record.panel_channel_id
+          : null,
+    logsChannelId:
+      typeof input.snapshot?.logsChannelId === "string" &&
+      (input.textSet.size === 0 || input.textSet.has(input.snapshot.logsChannelId))
+        ? input.snapshot.logsChannelId
+        : typeof input.record?.logs_channel_id === "string" &&
+            (input.textSet.size === 0 || input.textSet.has(input.record.logs_channel_id))
+          ? input.record.logs_channel_id
+          : null,
+    verifiedRoleIds: filterKnownIds(
+      input.snapshot?.verifiedRoleIds ?? input.record?.verified_role_ids,
+      input.roleSet,
+    ),
+    bypassRoleIds: filterKnownIds(
+      input.snapshot?.bypassRoleIds ?? input.record?.bypass_role_ids,
+      input.roleSet,
+    ),
+    panelLayout: normalizeCaptchaPanelLayout(
+      input.snapshot?.panelLayout ?? input.record?.panel_layout,
+      { panelTitle, panelDescription, panelButtonLabel },
+    ),
+    panelTitle,
+    panelDescription,
+    panelButtonLabel,
+    challengeTitle:
+      typeof input.snapshot?.challengeTitle === "string"
+        ? input.snapshot.challengeTitle
+        : typeof input.record?.challenge_title === "string"
+          ? input.record.challenge_title
+          : "Verificacao de seguranca",
+    challengeDescription:
+      typeof input.snapshot?.challengeDescription === "string"
+        ? input.snapshot.challengeDescription
+        : typeof input.record?.challenge_description === "string"
+          ? input.record.challenge_description
+          : "Selecione o codigo que aparece na imagem acima.",
+    maxAttempts: Math.max(
+      1,
+      Math.min(
+        10,
+        Number(input.snapshot?.maxAttempts ?? input.record?.max_attempts ?? 3) || 3,
+      ),
+    ),
+    timeoutSeconds: Math.max(
+      30,
+      Math.min(
+        600,
+        Number(input.snapshot?.timeoutSeconds ?? input.record?.timeout_seconds ?? 120) ||
+          120,
+      ),
+    ),
+    kickOnFail:
+      input.snapshot?.kickOnFail === true || input.record?.kick_on_fail === true,
+    successMessage:
+      typeof input.snapshot?.successMessage === "string"
+        ? input.snapshot.successMessage
+        : typeof input.record?.success_message === "string"
+          ? input.record.success_message
+          : "Verificacao concluida com sucesso. Bem-vindo ao servidor!",
+    updatedAt: input.updatedAt,
+  };
+}
+
+function buildSuggestionsPayload(input: {
+  record: Record<string, unknown> | null;
+  snapshot: Record<string, unknown> | null;
+  textSet: Set<string>;
+  updatedAt: string | null;
+}) {
+  if (!input.record && !input.snapshot) {
+    return null;
+  }
+
+  const panelTitle =
+    typeof input.snapshot?.panelTitle === "string"
+      ? input.snapshot.panelTitle
+      : typeof input.record?.panel_title === "string"
+        ? input.record.panel_title
+        : "";
+  const panelDescription =
+    typeof input.snapshot?.panelDescription === "string"
+      ? input.snapshot.panelDescription
+      : typeof input.record?.panel_description === "string"
+        ? input.record.panel_description
+        : "";
+  const panelButtonLabel =
+    typeof input.snapshot?.panelButtonLabel === "string"
+      ? input.snapshot.panelButtonLabel
+      : typeof input.record?.panel_button_label === "string"
+        ? input.record.panel_button_label
+        : "";
+
+  return {
+    enabled:
+      typeof input.snapshot?.enabled === "boolean"
+        ? input.snapshot.enabled
+        : input.record?.enabled === true,
+    panelChannelId:
+      typeof input.snapshot?.panelChannelId === "string" &&
+      (input.textSet.size === 0 || input.textSet.has(input.snapshot.panelChannelId))
+        ? input.snapshot.panelChannelId
+        : typeof input.record?.panel_channel_id === "string" &&
+            (input.textSet.size === 0 || input.textSet.has(input.record.panel_channel_id))
+          ? input.record.panel_channel_id
+          : null,
+    publishChannelId:
+      typeof input.snapshot?.publishChannelId === "string" &&
+      (input.textSet.size === 0 || input.textSet.has(input.snapshot.publishChannelId))
+        ? input.snapshot.publishChannelId
+        : typeof input.record?.publish_channel_id === "string" &&
+            (input.textSet.size === 0 || input.textSet.has(input.record.publish_channel_id))
+          ? input.record.publish_channel_id
+          : null,
+    logsChannelId:
+      typeof input.snapshot?.logsChannelId === "string" &&
+      (input.textSet.size === 0 || input.textSet.has(input.snapshot.logsChannelId))
+        ? input.snapshot.logsChannelId
+        : typeof input.record?.logs_channel_id === "string" &&
+            (input.textSet.size === 0 || input.textSet.has(input.record.logs_channel_id))
+          ? input.record.logs_channel_id
+          : null,
+    panelLayout: normalizeSuggestionPanelLayout(
+      input.snapshot?.panelLayout ?? input.record?.panel_layout,
+      { panelTitle, panelDescription, panelButtonLabel },
+    ),
+    panelTitle,
+    panelDescription,
+    panelButtonLabel,
+    suggestionLayout: normalizeSuggestionPublishedLayout(
+      input.snapshot?.suggestionLayout ?? input.record?.suggestion_layout,
+      {
+        publishedHeader:
+          typeof input.snapshot?.publishedHeader === "string"
+            ? input.snapshot.publishedHeader
+            : typeof input.record?.published_header === "string"
+              ? input.record.published_header
+              : DEFAULT_SUGGESTION_PUBLISHED_HEADER,
+        publishedFooter:
+          typeof input.snapshot?.publishedFooter === "string"
+            ? input.snapshot.publishedFooter
+            : typeof input.record?.published_footer === "string"
+              ? input.record.published_footer
+              : DEFAULT_SUGGESTION_PUBLISHED_FOOTER,
+      },
+    ),
+    updatedAt: input.updatedAt,
+  };
+}
+
+function buildBatePontoPayload(input: {
+  record: Record<string, unknown> | null;
+  snapshot: Record<string, unknown> | null;
+  textSet: Set<string>;
+  roleSet: Set<string>;
+  voiceSet: Set<string>;
+  updatedAt: string | null;
+}) {
+  if (!input.record && !input.snapshot) {
+    return null;
+  }
+
+  const panelTitle =
+    typeof input.snapshot?.panelTitle === "string"
+      ? input.snapshot.panelTitle
+      : typeof input.record?.panel_title === "string"
+        ? input.record.panel_title
+        : "";
+  const panelDescription =
+    typeof input.snapshot?.panelDescription === "string"
+      ? input.snapshot.panelDescription
+      : typeof input.record?.panel_description === "string"
+        ? input.record.panel_description
+        : "";
+  const panelButtonLabel =
+    typeof input.snapshot?.panelButtonLabel === "string"
+      ? input.snapshot.panelButtonLabel
+      : typeof input.record?.panel_button_label === "string"
+        ? input.record.panel_button_label
+        : "";
+
+  return {
+    enabled:
+      typeof input.snapshot?.enabled === "boolean"
+        ? input.snapshot.enabled
+        : input.record?.enabled === true,
+    panelChannelId:
+      typeof input.snapshot?.panelChannelId === "string" &&
+      (input.textSet.size === 0 || input.textSet.has(input.snapshot.panelChannelId))
+        ? input.snapshot.panelChannelId
+        : typeof input.record?.panel_channel_id === "string" &&
+            (input.textSet.size === 0 || input.textSet.has(input.record.panel_channel_id))
+          ? input.record.panel_channel_id
+          : null,
+    logsChannelId:
+      typeof input.snapshot?.logsChannelId === "string" &&
+      (input.textSet.size === 0 || input.textSet.has(input.snapshot.logsChannelId))
+        ? input.snapshot.logsChannelId
+        : typeof input.record?.logs_channel_id === "string" &&
+            (input.textSet.size === 0 || input.textSet.has(input.record.logs_channel_id))
+          ? input.record.logs_channel_id
+          : null,
+    panelLayout: normalizeBatePontoPanelLayout(
+      input.snapshot?.panelLayout ?? input.record?.panel_layout,
+      { panelTitle, panelDescription, panelButtonLabel },
+    ),
+    panelTitle,
+    panelDescription,
+    panelButtonLabel,
+    logLayout: normalizeBatePontoLogLayout(
+      input.snapshot?.logLayout ?? input.record?.log_layout,
+    ),
+    allowedRoleIds: filterKnownIds(
+      input.snapshot?.allowedRoleIds ?? input.record?.allowed_role_ids,
+      input.roleSet,
+    ),
+    hourBankEnabled:
+      typeof input.snapshot?.hourBankEnabled === "boolean"
+        ? input.snapshot.hourBankEnabled
+        : input.record?.hour_bank_enabled !== false,
+    dailyTargetMinutes: Math.max(
+      60,
+      Math.min(
+        1440,
+        Number(
+          input.snapshot?.dailyTargetMinutes ??
+            input.record?.daily_target_minutes ??
+            480,
+        ) || 480,
+      ),
+    ),
+    timezone:
+      typeof input.snapshot?.timezone === "string" &&
+      input.snapshot.timezone.trim()
+        ? input.snapshot.timezone.trim()
+        : typeof input.record?.timezone === "string" && input.record.timezone.trim()
+          ? input.record.timezone.trim()
+          : "America/Sao_Paulo",
+    autoFinishOpenSessions:
+      input.snapshot?.autoFinishOpenSessions === true ||
+      input.record?.auto_finish_open_sessions === true,
+    maxOpenHours: Math.max(
+      1,
+      Math.min(
+        24,
+        Number(input.snapshot?.maxOpenHours ?? input.record?.max_open_hours ?? 12) ||
+          12,
+      ),
+    ),
+    requireVoiceChannel:
+      input.snapshot?.requireVoiceChannel === true ||
+      input.record?.require_voice_channel === true,
+    requiredVoiceChannelIds: filterKnownIds(
+      input.snapshot?.requiredVoiceChannelIds ??
+        input.record?.required_voice_channel_ids,
+      input.voiceSet,
+    ),
+    updatedAt: input.updatedAt,
+  };
+}
+
 function buildAntiLinkPayload(input: {
   record: Record<string, unknown> | null;
   snapshot: Record<string, unknown> | null;
@@ -941,6 +1254,9 @@ export async function GET(request: Request) {
       refundResult,
       staffResult,
       welcomeResult,
+      captchaResult,
+      suggestionsResult,
+      batePontoResult,
       antiLinkResult,
       autoRoleResult,
       salesResult,
@@ -966,6 +1282,27 @@ export async function GET(request: Request) {
         .from("guild_welcome_settings")
         .select(
           "enabled, entry_public_channel_id, entry_log_channel_id, exit_public_channel_id, exit_log_channel_id, entry_layout, exit_layout, entry_thumbnail_mode, exit_thumbnail_mode, updated_at",
+        )
+        .eq("guild_id", guildId)
+        .maybeSingle(),
+      supabase
+        .from("guild_captcha_settings")
+        .select(
+          "enabled, panel_channel_id, logs_channel_id, verified_role_ids, bypass_role_ids, panel_layout, panel_title, panel_description, panel_button_label, challenge_title, challenge_description, max_attempts, timeout_seconds, kick_on_fail, success_message, updated_at",
+        )
+        .eq("guild_id", guildId)
+        .maybeSingle(),
+      supabase
+        .from("guild_suggestions_settings")
+        .select(
+          "enabled, panel_channel_id, publish_channel_id, logs_channel_id, panel_layout, panel_title, panel_description, panel_button_label, suggestion_layout, published_header, published_footer, thread_name_prefix, updated_at",
+        )
+        .eq("guild_id", guildId)
+        .maybeSingle(),
+      supabase
+        .from("guild_bate_ponto_settings")
+        .select(
+          "enabled, panel_channel_id, logs_channel_id, panel_layout, panel_title, panel_description, panel_button_label, log_layout, allowed_role_ids, hour_bank_enabled, daily_target_minutes, timezone, auto_finish_open_sessions, max_open_hours, require_voice_channel, required_voice_channel_ids, updated_at",
         )
         .eq("guild_id", guildId)
         .maybeSingle(),
@@ -1003,6 +1340,9 @@ export async function GET(request: Request) {
           "ticket_settings",
           "ticket_staff_settings",
           "welcome_settings",
+          "captcha_settings",
+          "suggestions_settings",
+          "bate_ponto_settings",
           "antilink_settings",
           "autorole_settings",
           "sales_settings",
@@ -1018,6 +1358,42 @@ export async function GET(request: Request) {
     if (refundResult.error) throw new Error(refundResult.error.message);
     if (staffResult.error) throw new Error(staffResult.error.message);
     if (welcomeResult.error) throw new Error(welcomeResult.error.message);
+    if (captchaResult.error) {
+      const code = typeof captchaResult.error.code === "string" ? captchaResult.error.code : "";
+      const message =
+        typeof captchaResult.error.message === "string"
+          ? captchaResult.error.message.toLowerCase()
+          : "";
+      if (code !== "42P01" && !message.includes("guild_captcha_settings")) {
+        throw new Error(captchaResult.error.message);
+      }
+    }
+    if (suggestionsResult.error) {
+      const code =
+        typeof suggestionsResult.error.code === "string"
+          ? suggestionsResult.error.code
+          : "";
+      const message =
+        typeof suggestionsResult.error.message === "string"
+          ? suggestionsResult.error.message.toLowerCase()
+          : "";
+      if (code !== "42P01" && !message.includes("guild_suggestions_settings")) {
+        throw new Error(suggestionsResult.error.message);
+      }
+    }
+    if (batePontoResult.error) {
+      const code =
+        typeof batePontoResult.error.code === "string"
+          ? batePontoResult.error.code
+          : "";
+      const message =
+        typeof batePontoResult.error.message === "string"
+          ? batePontoResult.error.message.toLowerCase()
+          : "";
+      if (code !== "42P01" && !message.includes("guild_bate_ponto_settings")) {
+        throw new Error(batePontoResult.error.message);
+      }
+    }
     if (antiLinkResult.error) throw new Error(antiLinkResult.error.message);
     if (autoRoleResult.error) throw new Error(autoRoleResult.error.message);
     if (salesResult.error) {
@@ -1059,6 +1435,20 @@ export async function GET(request: Request) {
         })),
     );
     const textSet = new Set(textChannels.map((channel) => channel.id));
+    const voiceChannels = sortChannels(
+      (rawChannels || [])
+        .filter(
+          (channel) =>
+            channel.type === GUILD_VOICE || channel.type === GUILD_STAGE,
+        )
+        .map((channel) => ({
+          id: channel.id,
+          name: channel.name,
+          type: channel.type,
+          position: channel.position || 0,
+        })),
+    );
+    const voiceSet = new Set(voiceChannels.map((channel) => channel.id));
 
     const roles = sortRoles(
       (rawRoles || [])
@@ -1081,6 +1471,7 @@ export async function GET(request: Request) {
       },
       channels: {
         text: textChannels,
+        voice: voiceChannels,
         categories,
       },
       roles,
@@ -1120,6 +1511,43 @@ export async function GET(request: Request) {
           secureSnapshots.get("welcome_settings")?.updatedAt ||
           (typeof welcomeResult.data?.updated_at === "string"
             ? welcomeResult.data.updated_at
+            : null),
+      }),
+      captchaSettings: buildCaptchaPayload({
+        record: toRecordOrNull(captchaResult.data),
+        snapshot: toRecordOrNull(secureSnapshots.get("captcha_settings")?.payload),
+        textSet,
+        roleSet,
+        updatedAt:
+          secureSnapshots.get("captcha_settings")?.updatedAt ||
+          (typeof captchaResult.data?.updated_at === "string"
+            ? captchaResult.data.updated_at
+            : null),
+      }),
+      suggestionsSettings: buildSuggestionsPayload({
+        record: toRecordOrNull(suggestionsResult.data),
+        snapshot: toRecordOrNull(
+          secureSnapshots.get("suggestions_settings")?.payload,
+        ),
+        textSet,
+        updatedAt:
+          secureSnapshots.get("suggestions_settings")?.updatedAt ||
+          (typeof suggestionsResult.data?.updated_at === "string"
+            ? suggestionsResult.data.updated_at
+            : null),
+      }),
+      batePontoSettings: buildBatePontoPayload({
+        record: toRecordOrNull(batePontoResult.data),
+        snapshot: toRecordOrNull(
+          secureSnapshots.get("bate_ponto_settings")?.payload,
+        ),
+        textSet,
+        roleSet,
+        voiceSet,
+        updatedAt:
+          secureSnapshots.get("bate_ponto_settings")?.updatedAt ||
+          (typeof batePontoResult.data?.updated_at === "string"
+            ? batePontoResult.data.updated_at
             : null),
       }),
       antiLinkSettings: buildAntiLinkPayload({
@@ -1185,6 +1613,9 @@ export async function GET(request: Request) {
       { moduleKey: "ticket_settings", settings: payload.ticketSettings },
       { moduleKey: "ticket_staff_settings", settings: payload.staffSettings },
       { moduleKey: "welcome_settings", settings: payload.welcomeSettings },
+      { moduleKey: "captcha_settings", settings: payload.captchaSettings },
+      { moduleKey: "suggestions_settings", settings: payload.suggestionsSettings },
+      { moduleKey: "bate_ponto_settings", settings: payload.batePontoSettings },
       { moduleKey: "antilink_settings", settings: payload.antiLinkSettings },
       { moduleKey: "autorole_settings", settings: payload.autoRoleSettings },
       { moduleKey: "sales_settings", settings: payload.salesSettings },
