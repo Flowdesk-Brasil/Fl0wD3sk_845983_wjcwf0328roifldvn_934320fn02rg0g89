@@ -1,4 +1,4 @@
-/* Panel chrome for /servers, /dashboard and /account.
+/* Panel chrome for /servers, /dashboard, /account and /affiliates.
    Simple class names only — Tailwind v4 must not parse these as utilities. */
 
 .fd-panel {

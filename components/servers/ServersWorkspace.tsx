@@ -46,6 +46,7 @@ import { LandingReveal } from "@/components/landing/LandingReveal";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { useNotificationEffect } from "@/components/notifications/NotificationsProvider";
 import { ServerDiscordLinkModal } from "@/components/servers/ServerUi";
+import { CreateTeamModal } from "@/components/teams/CreateTeamModal";
 import { ServerHomeOverview } from "@/components/servers/ServerHomeOverview";
 import { ServerSettingsEditor } from "@/components/servers/ServerSettingsEditor";
 import { ServerSettingsEditorSkeleton } from "@/components/servers/ServerSettingsEditorSkeleton";
@@ -4994,433 +4995,78 @@ export function ServersWorkspace({
         onConnect={handleReconnectDiscord}
       />
 
-      {isCreateTeamModalOpen ? (
-        <div className="fixed inset-y-0 left-0 right-0 z-[5000] isolate overflow-y-auto overscroll-contain lg:left-[278px]">
-          <button
-            type="button"
-            aria-label="Fechar modal de equipe"
-            className="absolute inset-0 bg-[rgba(0,0,0,0.62)]"
-            onClick={() => {
-              setIsCreateTeamModalOpen(false);
-              setIsMemberSubmodalOpen(false);
-              setTeamActionError(null);
-            }}
-          />
-          <div className="relative z-[10] min-h-full px-[20px] py-[32px] md:px-6 lg:px-8 xl:pl-[40px] xl:pr-[42px]">
-            <div className="mx-auto flex min-h-[calc(100vh-64px)] w-full max-w-[1220px] items-center justify-center">
-              <div
-              role="dialog"
-              aria-modal="true"
-              aria-label="Criar equipe"
-              className="relative w-full max-w-[760px] overflow-hidden rounded-[20px] border border-[#222226] bg-[#141416] px-[22px] py-[22px] sm:px-[28px] sm:py-[28px]"
-              >
-              <div className="relative z-10">
-                <div className="flex flex-col gap-[14px] sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <p className="fd-kicker">Criar equipe</p>
-                    <h2 className="mt-[10px] text-[28px] leading-[1.15] font-semibold tracking-[-0.04em] text-[#F0F0F2] sm:text-[34px]">
-                      Monte uma equipe
-                      <br />
-                      para seus servidores
-                    </h2>
-                    <p className="mt-[14px] max-w-[560px] text-[14px] leading-[1.55] text-[#747474]">
-                      Crie uma estrutura profissional, escolha os servidores da equipe e envie convites pendentes para o staff aceitar depois dentro do painel.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsCreateTeamModalOpen(false);
-                      setIsMemberSubmodalOpen(false);
-                      setTeamActionError(null);
-                    }}
-                    className="inline-flex h-[40px] w-[40px] items-center justify-center rounded-[14px] border border-[#171717] bg-[#0D0D0D] text-[#9C9C9C] transition-colors hover:border-[#242424] hover:text-[#E4E4E4]"
-                    aria-label="Fechar modal"
-                  >
-                    <span className="text-[18px] leading-none">x</span>
-                  </button>
-                </div>
+      <CreateTeamModal
+        open={isCreateTeamModalOpen}
+        step={createTeamStep}
+        teamName={createTeamName}
+        iconKey={createTeamIconKey}
+        selectedServerIds={createTeamServerIds}
+        memberIds={createTeamMemberIds}
+        memberDraftIds={memberDraftIds}
+        normalizedInviteDraftDiscordIds={normalizedInviteDraftDiscordIds}
+        availableServers={availableTeamServerOptions}
+        isTeamServersLoading={isTeamServersLoading}
+        hasServersInPanel={teamServerOptions.length > 0}
+        isCreatingTeam={isCreatingTeam}
+        isNextDisabled={isCreateTeamNextDisabled}
+        teamActionError={teamActionError}
+        isMemberSubmodalOpen={isMemberSubmodalOpen}
+        onClose={() => {
+          setIsCreateTeamModalOpen(false);
+          setIsMemberSubmodalOpen(false);
+          setTeamActionError(null);
+        }}
+        onTeamNameChange={setCreateTeamName}
+        onIconKeyChange={setCreateTeamIconKey}
+        onToggleServer={handleToggleCreateTeamServer}
+        onStepBack={() => {
+          if (createTeamStep === "name") {
+            setIsCreateTeamModalOpen(false);
+            setIsMemberSubmodalOpen(false);
+            setTeamActionError(null);
+            return;
+          }
+          if (createTeamStep === "servers") {
+            setCreateTeamStep("name");
+            setTeamActionError(null);
+            return;
+          }
+          setCreateTeamStep("servers");
+          setTeamActionError(null);
+        }}
+        onStepNext={() => {
+          if (createTeamStep === "name") {
+            if (createTeamName.trim().length < 3) {
+              setTeamActionError("Escolha um nome de equipe com pelo menos 3 caracteres.");
+              return;
+            }
+            setTeamActionError(null);
+            setCreateTeamStep("servers");
+            return;
+          }
+          if (createTeamStep === "servers") {
+            if (!createTeamServerIds.length) {
+              setTeamActionError("Selecione pelo menos um servidor para vincular a equipe.");
+              return;
+            }
+            setTeamActionError(null);
+            setCreateTeamStep("members");
+            return;
+          }
+          void handleCreateTeam();
+        }}
+        onOpenMemberSubmodal={handleOpenMemberSubmodal}
+        onCloseMemberSubmodal={() => {
+          setIsMemberSubmodalOpen(false);
+          setTeamActionError(null);
+        }}
+        onMemberDraftChange={handleMemberDraftChange}
+        onAddMemberDraftField={handleAddMemberDraftField}
+        onConfirmMemberDrafts={handleConfirmMemberDrafts}
+        onRemoveMemberId={handleRemoveTeamMemberId}
+      />
 
-                <div className="mt-[22px]">
-                  {createTeamStep === "name" ? (
-                    <div className="mt-[18px] space-y-[14px]">
-                      <label className="block">
-                        <span className="mb-[8px] block text-[12px] uppercase tracking-[0.16em] text-[#666666]">
-                          Nome da equipe
-                        </span>
-                        <input
-                          type="text"
-                          value={typeof createTeamName === "string" ? createTeamName : ""}
-                          onChange={(event) => setCreateTeamName(String(event.currentTarget.value ?? ""))}
-                          placeholder="Ex: Moderacao principal"
-                          autoComplete="off"
-                          maxLength={64}
-                          className="h-[50px] w-full rounded-[16px] border border-[#151515] bg-[#0A0A0A] px-[16px] text-[15px] text-[#E0E0E0] outline-none transition-colors placeholder:text-[#575757] focus:border-[rgba(0,98,255,0.34)]"
-                        />
-                      </label>
 
-                      <div>
-                        <span className="mb-[8px] block text-[12px] uppercase tracking-[0.16em] text-[#666666]">
-                          Cor da equipe
-                        </span>
-                        <div className="grid grid-cols-3 gap-[10px]">
-                          {TEAM_ICON_OPTIONS.map((option) => {
-                            const isActive = createTeamIconKey === option.key;
-                            return (
-                              <button
-                                key={option.key}
-                                type="button"
-                                onClick={() => setCreateTeamIconKey(option.key)}
-                                className={`rounded-[16px] border px-[10px] py-[12px] transition-colors ${
-                                  isActive
-                                    ? "border-[rgba(0,98,255,0.3)] bg-[rgba(0,98,255,0.08)]"
-                                    : "border-[#141414] bg-[#0A0A0A] hover:border-[#1E1E1E] hover:bg-[#0D0D0D]"
-                                }`}
-                              >
-                                <div className="flex flex-col items-center gap-[8px]">
-                                  <TeamAvatar
-                                    iconKey={option.key}
-                                    name={createTeamName || option.label}
-                                    className="h-[44px] w-[44px] rounded-[14px]"
-                                    textClassName="text-[16px] text-[#F3F3F3]"
-                                  />
-                                  <span className="text-[12px] leading-none text-[#C7C7C7]">
-                                    {option.label}
-                                  </span>
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {createTeamStep === "servers" ? (
-                    <div className="mt-[18px]">
-                      <div className="mb-[10px] flex items-center justify-between gap-[12px]">
-                        <span className="text-[12px] uppercase tracking-[0.16em] text-[#666666]">
-                          Servidores vinculados
-                        </span>
-                        <span className="text-[12px] text-[#6F6F6F]">
-                          {createTeamServerIds.length} selecionado(s)
-                        </span>
-                      </div>
-                      {!isTeamServersLoading && !availableTeamServerOptions.length && teamServerOptions.length ? (
-                        <p className="mb-[10px] text-[12px] leading-[1.5] text-[#676767]">
-                          Todos os servidores disponiveis no painel ja estao vinculados a outra equipe.
-                        </p>
-                      ) : null}
-                      <div className="max-h-[360px] space-y-[8px] overflow-y-auto pr-[4px]">
-                        {availableTeamServerOptions.length ? availableTeamServerOptions.map((server) => {
-                          const isChecked = createTeamServerIds.includes(server.guildId);
-                          return (
-                            <label
-                              key={server.guildId}
-                              className={`flex cursor-pointer items-center gap-[12px] rounded-[16px] border px-[14px] py-[12px] transition-colors ${
-                                isChecked
-                                  ? "border-[rgba(0,98,255,0.32)] bg-[rgba(0,98,255,0.08)]"
-                                  : "border-[#141414] bg-[#0A0A0A] hover:border-[#1F1F1F] hover:bg-[#0D0D0D]"
-                              }`}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={isChecked}
-                                onChange={() => handleToggleCreateTeamServer(server.guildId)}
-                                className="hidden"
-                              />
-                              <span
-                                className={`inline-flex h-[18px] w-[18px] items-center justify-center rounded-[6px] border ${
-                                  isChecked
-                                    ? "border-[#0062FF] bg-[#0062FF]"
-                                    : "border-[#303030] bg-[#111111]"
-                                }`}
-                              >
-                                {isChecked ? (
-                                  <span className="h-[6px] w-[6px] rounded-full bg-white" />
-                                ) : null}
-                              </span>
-                              {server.iconUrl ? (
-                                <Image
-                                  src={server.iconUrl}
-                                  alt={server.guildName}
-                                  width={36}
-                                  height={36}
-                                  className="h-[36px] w-[36px] rounded-[12px] object-cover"
-                                />
-                              ) : (
-                                <div className="flex h-[36px] w-[36px] items-center justify-center rounded-[12px] bg-[#131313] text-[11px] font-semibold text-[#8A8A8A]">
-                                  FD
-                                </div>
-                              )}
-                              <span className="min-w-0 flex-1">
-                                <span className="block truncate text-[14px] leading-none font-medium text-[#E8E8E8]">
-                                  {server.guildName}
-                                </span>
-                                <span className="mt-[5px] block truncate text-[12px] leading-none text-[#6B6B6B]">
-                                  {server.guildId}
-                                </span>
-                              </span>
-                            </label>
-                          );
-                        }) : (
-                          <div className="rounded-[16px] border border-[#141414] bg-[#0A0A0A] px-[14px] py-[14px] text-[13px] leading-[1.5] text-[#6E6E6E]">
-                            {isTeamServersLoading
-                              ? "Carregando servidores disponiveis..."
-                              : "Nenhum servidor disponivel no painel para vincular a uma equipe agora."}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {createTeamStep === "members" ? (
-                    <div className="mt-[18px] space-y-[14px]">
-                      <div className="rounded-[18px] border border-[#141414] bg-[#0A0A0A] p-[14px]">
-                        <div className="flex flex-col gap-[10px] sm:flex-row sm:items-center sm:justify-between">
-                          <div>
-                            <p className="text-[12px] uppercase tracking-[0.16em] text-[#666666]">
-                              Convidar membros
-                            </p>
-                            <p className="mt-[8px] text-[13px] leading-[1.55] text-[#727272]">
-                              Adicione IDs do Discord. Eles ficam pendentes ate o staff entrar no painel e aceitar o convite.
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={handleOpenMemberSubmodal}
-                            className="group relative inline-flex h-[42px] shrink-0 items-center justify-center overflow-visible whitespace-nowrap rounded-[12px] px-5 text-[13px] leading-none font-semibold"
-                          >
-                            <span
-                              aria-hidden="true"
-                              className="absolute inset-0 rounded-[12px] bg-[#111111] transition-transform duration-150 ease-out group-hover:scale-[1.02] group-active:scale-[0.985]"
-                            />
-                            <span className="relative z-10 inline-flex items-center gap-[8px] whitespace-nowrap leading-none text-[#B7B7B7]">
-                              <PlusIcon />
-                              Adicionar membro
-                            </span>
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="rounded-[18px] border border-[#141414] bg-[#0A0A0A] p-[14px]">
-                        <div className="flex items-center justify-between gap-[10px]">
-                          <p className="text-[12px] uppercase tracking-[0.16em] text-[#666666]">
-                            Membros pendentes
-                          </p>
-                          <span className="text-[12px] text-[#6A6A6A]">
-                            {createTeamMemberIds.length} ID(s)
-                          </span>
-                        </div>
-                        {createTeamMemberIds.length ? (
-                          <div className="mt-[12px] flex flex-wrap gap-[8px]">
-                            {createTeamMemberIds.map((discordId) => (
-                              <button
-                                key={discordId}
-                                type="button"
-                                onClick={() => handleRemoveTeamMemberId(discordId)}
-                                className="inline-flex items-center gap-[8px] rounded-full border border-[#171717] bg-[#121212] px-[10px] py-[7px] text-[12px] leading-none text-[#C4C4C4] transition-colors hover:border-[#242424] hover:text-[#F0F0F0]"
-                              >
-                                <span>{discordId}</span>
-                                <span className="text-[13px] leading-none text-[#777777]">x</span>
-                              </button>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="mt-[12px] text-[12px] text-[#5E5E5E]">
-                            Nenhum membro adicionado ainda.
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-
-                <div className="mt-[20px] flex flex-col-reverse gap-[10px] sm:flex-row sm:justify-between">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (createTeamStep === "name") {
-                        setIsCreateTeamModalOpen(false);
-                        setIsMemberSubmodalOpen(false);
-                        setTeamActionError(null);
-                        return;
-                      }
-                      if (createTeamStep === "servers") {
-                        setCreateTeamStep("name");
-                        setTeamActionError(null);
-                        return;
-                      }
-                      setCreateTeamStep("servers");
-                      setTeamActionError(null);
-                    }}
-                    className="inline-flex h-[46px] items-center justify-center rounded-[14px] border border-[#171717] bg-[#0D0D0D] px-[18px] text-[14px] font-medium text-[#CACACA] transition-colors hover:border-[#232323] hover:bg-[#111111] hover:text-[#F1F1F1]"
-                  >
-                    {createTeamStep === "name" ? "Cancelar" : "Voltar"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (createTeamStep === "name") {
-                        if (createTeamName.trim().length < 3) {
-                          setTeamActionError("Escolha um nome de equipe com pelo menos 3 caracteres.");
-                          return;
-                        }
-                        setTeamActionError(null);
-                        setCreateTeamStep("servers");
-                        return;
-                      }
-                      if (createTeamStep === "servers") {
-                        if (!createTeamServerIds.length) {
-                          setTeamActionError("Selecione pelo menos um servidor para vincular a equipe.");
-                          return;
-                        }
-                        setTeamActionError(null);
-                        setCreateTeamStep("members");
-                        return;
-                      }
-                      void handleCreateTeam();
-                    }}
-                    disabled={
-                      isCreateTeamNextDisabled
-                    }
-                    className="group relative inline-flex h-[46px] shrink-0 items-center justify-center overflow-visible whitespace-nowrap rounded-[12px] px-6 text-[14px] leading-none font-semibold disabled:cursor-not-allowed disabled:opacity-75"
-                  >
-                    <span
-                      aria-hidden="true"
-                      className={`absolute inset-0 rounded-[12px] transition-transform duration-150 ease-out group-hover:scale-[1.02] group-active:scale-[0.985] ${
-                        isCreateTeamNextDisabled ? "bg-[#111111]" : "bg-[#F3F3F3]"
-                      }`}
-                    />
-                    <span
-                      className={`relative z-10 inline-flex items-center justify-center whitespace-nowrap leading-none ${
-                        isCreateTeamNextDisabled ? "text-[#B7B7B7]" : "text-[#111111]"
-                      }`}
-                    >
-                      {isCreatingTeam ? (
-                        <span className="relative inline-flex items-center justify-center">
-                          <span className="invisible">
-                            {createTeamStep === "members" ? "Criar equipe" : "Proximo"}
-                          </span>
-                          <span className="absolute inset-0 flex items-center justify-center">
-                            <ButtonLoader size={16} colorClassName={isCreateTeamNextDisabled ? "text-[#B7B7B7]" : "text-[#111111]"} />
-                          </span>
-                        </span>
-                      ) : (
-                        createTeamStep === "members" ? "Criar equipe" : "Proximo"
-                      )}
-                    </span>
-                  </button>
-                </div>
-              </div>
-              </div>
-            </div>
-          </div>
-
-          {isMemberSubmodalOpen ? (
-            <div className="absolute inset-0 z-[30] overflow-y-auto overscroll-contain p-[16px]">
-              <button
-                type="button"
-                aria-label="Fechar submodal de membros"
-                className="absolute inset-0 bg-[rgba(0,0,0,0.62)]"
-                onClick={() => {
-                  setIsMemberSubmodalOpen(false);
-                  setTeamActionError(null);
-                }}
-              />
-              <div className="relative z-[40] mx-auto flex min-h-full items-center justify-center">
-                <div className="w-full max-w-[520px] overflow-hidden rounded-[16px] border border-[#222226] bg-[#161618] p-[18px]">
-                <div className="flex items-start justify-between gap-[14px]">
-                  <div>
-                    <p className="text-[12px] uppercase tracking-[0.16em] text-[#666666]">
-                      Adicionar membros
-                    </p>
-                    <p className="mt-[10px] text-[14px] leading-[1.55] text-[#797979]">
-                      Digite um ou mais IDs do Discord. Use um campo por pessoa.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsMemberSubmodalOpen(false);
-                      setTeamActionError(null);
-                    }}
-                    className="inline-flex h-[38px] w-[38px] items-center justify-center rounded-[12px] border border-[#171717] bg-[#0D0D0D] text-[#9C9C9C] transition-colors hover:border-[#242424] hover:text-[#E4E4E4]"
-                    aria-label="Fechar submodal"
-                  >
-                    <span className="text-[18px] leading-none">x</span>
-                  </button>
-                </div>
-
-                <div className="mt-[18px] space-y-[10px]">
-                  {memberDraftIds.map((draft, index) => (
-                    <input
-                      key={index}
-                      type="text"
-                      value={typeof draft === "string" ? draft : ""}
-                      onChange={(event) => handleMemberDraftChange(index, String(event.currentTarget.value ?? ""))}
-                      placeholder={
-                        'ID do membro ' + (index + 1)
-                      }
-                      autoComplete="off"
-                      className="h-[48px] w-full rounded-[14px] border border-[#151515] bg-[#0A0A0A] px-[16px] text-[14px] text-[#E0E0E0] outline-none transition-colors placeholder:text-[#575757] focus:border-[rgba(0,98,255,0.34)]"
-                    />
-                  ))}
-                </div>
-
-                <div className="mt-[14px] flex flex-wrap gap-[8px]">
-                  <button
-                    type="button"
-                    onClick={handleAddMemberDraftField}
-                    className="inline-flex h-[40px] items-center justify-center rounded-[12px] border border-[#171717] bg-[#0D0D0D] px-[14px] text-[13px] font-medium text-[#CACACA] transition-colors hover:border-[#232323] hover:bg-[#111111] hover:text-[#F1F1F1]"
-                  >
-                    Adicionar mais
-                  </button>
-                  {normalizedInviteDraftDiscordIds.length ? (
-                    <div className="flex flex-wrap items-center gap-[8px]">
-                      {normalizedInviteDraftDiscordIds.map((discordId) => (
-                        <span
-                          key={discordId}
-                          className="inline-flex rounded-full border border-[#171717] bg-[#121212] px-[10px] py-[7px] text-[12px] leading-none text-[#BFBFBF]"
-                        >
-                          {discordId}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-
-                <div className="mt-[18px] flex flex-col-reverse gap-[10px] sm:flex-row sm:justify-end">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsMemberSubmodalOpen(false);
-                      setTeamActionError(null);
-                    }}
-                    className="inline-flex h-[44px] items-center justify-center rounded-[12px] border border-[#171717] bg-[#0D0D0D] px-[16px] text-[13px] font-medium text-[#CACACA] transition-colors hover:border-[#232323] hover:bg-[#111111] hover:text-[#F1F1F1]"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleConfirmMemberDrafts}
-                    className="group relative inline-flex h-[44px] shrink-0 items-center justify-center overflow-visible whitespace-nowrap rounded-[12px] px-5 text-[13px] leading-none font-semibold"
-                  >
-                    <span
-                      aria-hidden="true"
-                      className="absolute inset-0 rounded-[12px] bg-[#111111] transition-transform duration-150 ease-out group-hover:scale-[1.02] group-active:scale-[0.985]"
-                    />
-                    <span className="relative z-10 inline-flex items-center justify-center whitespace-nowrap leading-none text-[#B7B7B7]">
-                      Confirmar IDs
-                    </span>
-                  </button>
-                </div>
-                </div>
-              </div>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
     </PanelShell>
   );
 }

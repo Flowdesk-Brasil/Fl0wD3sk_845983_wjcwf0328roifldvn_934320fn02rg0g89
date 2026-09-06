@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { motion } from "motion/react";
 import {
   AlertTriangle,
@@ -22,36 +22,20 @@ import {
   YAxis,
 } from "recharts";
 import { fetchClientData } from "@/lib/performance/clientData";
+import {
+  useWorkspaceOverview,
+  type WorkspaceOverviewPayload,
+} from "@/lib/servers/useWorkspaceOverview";
+import {
+  RecentChargeDetailSheet,
+  type RecentChargeDetail,
+} from "@/components/servers/RecentChargeDetailSheet";
 import type { ManagedServer } from "@/lib/servers/managedServersShared";
 
-type OverviewCharge = {
-  id: string;
-  code: string;
-  customer: string;
-  status: string;
-  tone: "success" | "muted" | "info";
-  amount: number;
-};
+type OverviewCharge = RecentChargeDetail;
 
-type OverviewPayload = {
-  ok: boolean;
-  message?: string;
-  stats: {
-    receivable: number;
-    receivableCount: number;
-    received: number;
-    receivedCount: number;
-    receivedThisMonth: number;
-    overdue: number;
-    overdueCount: number;
-    cancelledCount: number;
-    openTickets: number;
-  };
-  chart: Array<{ key: string; label: string; received: number; forecast: number }>;
+type OverviewPayload = WorkspaceOverviewPayload & {
   charges: OverviewCharge[];
-  upcoming: Array<{ id: string; name: string; detail: string; initials: string }>;
-  tickets: Array<{ id: string; title: string; meta: string }>;
-  activity: Array<{ title: string; meta: string; at: string | null }>;
 };
 
 type ServerHomeOverviewProps = {
@@ -134,48 +118,10 @@ export function ServerHomeOverview({
   onOpenSales,
   onOpenTickets,
 }: ServerHomeOverviewProps) {
-  const [data, setData] = useState<OverviewPayload | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setIsLoading(true);
-    setErrorMessage(null);
-
-    void fetchClientData<OverviewPayload>(
-      `/api/auth/me/guilds/workspace-overview?guildId=${encodeURIComponent(guildId)}`,
-      { credentials: "same-origin" },
-      {
-        cacheKey: `workspace-overview:${guildId}`,
-        cacheTtlMs: 20_000,
-        timeoutMs: 8000,
-      },
-    )
-      .then((payload) => {
-        if (cancelled) return;
-        if (!payload?.ok) {
-          setErrorMessage(payload?.message || "Nao foi possivel carregar a visao geral.");
-          return;
-        }
-        setData(payload);
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return;
-        setErrorMessage(
-          error instanceof Error ? error.message : "Nao foi possivel carregar a visao geral.",
-        );
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [guildId]);
-
-  const stats = data?.stats;
+  const { data, isLoading, isRefreshing, errorMessage, reload } = useWorkspaceOverview(guildId);
+  const [selectedCharge, setSelectedCharge] = useState<OverviewCharge | null>(null);
+  const overview = data as OverviewPayload | null;
+  const stats = overview?.stats;
   const activeServers = useMemo(
     () => servers.filter((server) => server.status === "paid"),
     [servers],
@@ -231,8 +177,22 @@ export function ServerHomeOverview({
       </motion.div>
 
       {errorMessage ? (
-        <div className="mt-[22px] rounded-[18px] border border-[#2A1A1A] bg-[#141010] px-[16px] py-[14px] text-[13px] text-[#E8B4B4]">
-          {errorMessage}
+        <div className="mt-[22px] flex flex-col gap-[12px] rounded-[18px] border border-[#2A1717] bg-[rgba(219,70,70,0.08)] px-[16px] py-[14px] sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-[13px] leading-[1.55] text-[#E8B4B4]">{errorMessage}</p>
+          <button
+            type="button"
+            onClick={() => void reload()}
+            className="inline-flex h-[38px] shrink-0 items-center justify-center rounded-[12px] border border-[#3A2222] bg-[#141414] px-[14px] text-[13px] font-medium text-[#F0D0D0] transition-colors hover:bg-[#171717]"
+          >
+            Tentar novamente
+          </button>
+        </div>
+      ) : null}
+
+      {isRefreshing && overview ? (
+        <div className="mt-[14px] inline-flex items-center gap-[8px] rounded-full border border-[#1C1C1C] bg-[#141414] px-[12px] py-[6px] text-[11px] font-medium text-[#8B8B90]">
+          <span className="h-[6px] w-[6px] animate-pulse rounded-full bg-[#5B8DEF]" />
+          Atualizando visao geral...
         </div>
       ) : null}
 
@@ -306,7 +266,7 @@ export function ServerHomeOverview({
                 </div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={data?.chart || []} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                  <LineChart data={overview?.chart || []} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid stroke="#1C1C1C" strokeDasharray="4 6" vertical={false} />
                     <XAxis
                       dataKey="label"
@@ -377,13 +337,29 @@ export function ServerHomeOverview({
                   </tr>
                 </thead>
                 <tbody>
-                  {(data?.charges || []).length || isLoading ? (
-                    (isLoading ? Array.from({ length: 4 }) : data?.charges || []).map((charge, index) => {
+                  {(overview?.charges || []).length || isLoading ? (
+                    (isLoading ? Array.from({ length: 4 }) : overview?.charges || []).map((charge, index) => {
                       const row = charge as OverviewCharge | undefined;
                       return (
                         <tr
                           key={row?.id || index}
-                          className="border-t border-[#171717] transition-colors hover:bg-[#111111]"
+                          role={row ? "button" : undefined}
+                          tabIndex={row ? 0 : undefined}
+                          onClick={() => {
+                            if (row) setSelectedCharge(row);
+                          }}
+                          onKeyDown={(event) => {
+                            if (!row) return;
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              setSelectedCharge(row);
+                            }
+                          }}
+                          className={`border-t border-[#1C1C1C] transition-colors ${
+                            row
+                              ? "cursor-pointer hover:bg-[#141414] focus-visible:bg-[#141414] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#2A2A2E]"
+                              : ""
+                          }`}
                         >
                           <td className="py-[13px] pr-[12px]">
                             <p className="text-[13px] font-medium text-[#F2F2F3]">
@@ -438,8 +414,8 @@ export function ServerHomeOverview({
               Proximos vencimentos
             </h2>
             <div className="mt-[14px] space-y-[12px]">
-              {(data?.upcoming || []).length ? (
-                data?.upcoming.map((item) => (
+              {(overview?.upcoming || []).length ? (
+                overview?.upcoming.map((item) => (
                   <div key={item.id} className="flex items-center gap-[12px]">
                     <span className="flex h-[36px] w-[36px] items-center justify-center rounded-full bg-[#171717] text-[11px] font-semibold text-[#D4D4D8]">
                       {item.initials}
@@ -497,8 +473,8 @@ export function ServerHomeOverview({
             </h2>
             <div className="relative mt-[16px] space-y-[14px] pl-[8px]">
               <span className="absolute top-[8px] bottom-[8px] left-[16px] w-px bg-[#1C1C1C]" />
-              {(data?.activity || []).length ? (
-                data?.activity.map((item, index) => (
+              {(overview?.activity || []).length ? (
+                overview?.activity.map((item, index) => (
                   <div key={`${item.title}-${index}`} className="relative flex gap-[12px] pl-[28px]">
                     <span className="absolute left-[4px] flex h-[24px] w-[24px] items-center justify-center rounded-[8px] border border-[#1C1C1C] bg-[#141414] text-[#C4C4C8]">
                       {index % 2 === 0 ? (
@@ -536,8 +512,8 @@ export function ServerHomeOverview({
               </h2>
             </div>
             <div className="mt-[14px] space-y-[10px]">
-              {(data?.tickets || []).length ? (
-                data?.tickets.map((ticket) => (
+              {(overview?.tickets || []).length ? (
+                overview?.tickets.map((ticket) => (
                   <button
                     key={ticket.id}
                     type="button"
@@ -560,6 +536,11 @@ export function ServerHomeOverview({
           </motion.section>
         </div>
       </div>
+
+      <RecentChargeDetailSheet
+        charge={selectedCharge}
+        onClose={() => setSelectedCharge(null)}
+      />
     </div>
   );
 }
