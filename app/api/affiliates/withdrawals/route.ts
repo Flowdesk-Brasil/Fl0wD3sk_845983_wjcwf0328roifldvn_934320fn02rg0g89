@@ -9,7 +9,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getCurrentUserFromSessionCookie } from "@/lib/auth/session";
 import { requireActiveAffiliate } from "@/lib/affiliates/account";
-import { requestWithdrawal, type PixKeyType } from "@/lib/affiliates/withdrawals";
+import { maskPixKey, requestWithdrawal, type PixKeyType } from "@/lib/affiliates/withdrawals";
 import {
   WITHDRAWAL_COOLDOWN_HOURS,
   WITHDRAWAL_FEE_BRL,
@@ -191,7 +191,7 @@ export async function GET() {
       amount: Number(row.amount ?? 0),
       fee: Number(row.fee_amount ?? 0),
       net: Number(row.net_amount ?? row.amount ?? 0),
-      pixKey: maskPixKey(String(row.pix_key ?? ""), String(row.pix_key_type ?? "")),
+      pixKey: maskPixKey(String(row.pix_key ?? ""), row.pix_key_type),
       pixKeyType: row.pix_key_type,
       status: row.status,
       notes: row.rejection_reason || row.notes || null,
@@ -200,22 +200,4 @@ export async function GET() {
       paidAt: row.status === "paid" ? row.processed_at : null,
     })),
   });
-}
-
-/**
- * Mascara a chave para nao devolver o dado completo em toda listagem.
- * O valor cheio so aparece no painel administrativo, para quem paga.
- */
-function maskPixKey(key: string, type: string) {
-  if (!key) return "";
-
-  if (type === "email") {
-    const [name, domain] = key.split("@");
-    if (!domain) return "***";
-    const visible = name.slice(0, 2);
-    return `${visible}${"*".repeat(Math.max(name.length - 2, 1))}@${domain}`;
-  }
-
-  if (key.length <= 4) return "*".repeat(key.length);
-  return `${"*".repeat(Math.max(key.length - 4, 3))}${key.slice(-4)}`;
 }

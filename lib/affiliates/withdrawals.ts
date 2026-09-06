@@ -405,7 +405,7 @@ export async function rejectWithdrawal(input: {
     return { ok: false, status: 500, message: "Falha ao devolver o saldo." };
   }
 
-  await supabaseAdmin
+  const { error: updateError } = await supabaseAdmin
     .from("affiliate_withdrawals")
     .update({
       status: "rejected",
@@ -417,6 +417,29 @@ export async function rejectWithdrawal(input: {
     })
     .eq("id", input.withdrawalId);
 
+  if (updateError) {
+    // O saldo ja voltou, mas o saque continuaria como pendente: o indice unico
+    // parcial bloquearia qualquer novo saque do afiliado. Como o ledger e
+    // imutavel, desfazer significa lancar a entrada inversa e deixar o pedido
+    // no estado anterior, para o operador tentar de novo.
+    await postLedgerEntry({
+      affiliateId: withdrawal.affiliate_id as string,
+      entryType: "withdrawal_requested",
+      availableDelta: -amount,
+      withdrawalId: input.withdrawalId,
+      description: "Estorno da devolucao: falha ao marcar o saque como recusado",
+      createdBy: input.reviewedBy,
+      idempotencyKey: `withdrawal-reject-rollback-${input.withdrawalId}`,
+    });
+
+    console.error("[affiliates] falha ao recusar saque:", updateError);
+    return {
+      ok: false,
+      status: 500,
+      message: "Nao foi possivel recusar o saque. O saldo nao foi alterado; tente de novo.",
+    };
+  }
+
   void queueAffiliateWebhook({
     affiliateId: withdrawal.affiliate_id as string,
     eventType: "withdrawal.rejected",
@@ -427,6 +450,26 @@ export async function rejectWithdrawal(input: {
 }
 
 /** Move para "processing": sinaliza que a transferencia esta sendo feita. */
+/**
+ * Mascara a chave PIX para exibicao ao proprio afiliado.
+ *
+ * O valor completo so aparece no painel administrativo, que e onde alguem
+ * precisa dele para transferir.
+ */
+export function maskPixKey(key: string, type: string | null | undefined) {
+  const value = String(key ?? "");
+  if (!value) return "";
+
+  if (type === "email") {
+    const [name, domain] = value.split("@");
+    if (!domain) return "***";
+    return `${name.slice(0, 2)}${"*".repeat(Math.max(name.length - 2, 1))}@${domain}`;
+  }
+
+  if (value.length <= 4) return "*".repeat(value.length);
+  return `${"*".repeat(Math.max(value.length - 4, 3))}${value.slice(-4)}`;
+}
+
 export async function markWithdrawalProcessing(input: {
   withdrawalId: string;
   reviewedBy: string;

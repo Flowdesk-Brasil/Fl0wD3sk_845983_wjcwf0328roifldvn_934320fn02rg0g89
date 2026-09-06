@@ -574,7 +574,7 @@ export async function reverseAffiliateConversionForOrder(
   try {
     const { data: conversion, error } = await supabaseAdmin
       .from("affiliate_conversions")
-      .select("id, affiliate_id, commission_amount, status, reversed_at, available_at, order_id")
+      .select("id, affiliate_id, commission_amount, status, reversed_at, matured_at, order_id")
       .eq("payment_order_id", paymentOrderId)
       .maybeSingle();
 
@@ -591,9 +591,11 @@ export async function reverseAffiliateConversionForOrder(
       return { reversed: false, reason: "Conversao sem valor a estornar." };
     }
 
-    // Se ja maturou, o valor esta no disponivel; senao, ainda no pendente.
-    const availableAt = conversion.available_at ? new Date(String(conversion.available_at)) : null;
-    const hasMatured = Boolean(availableAt && availableAt.getTime() <= Date.now());
+    // De onde debitar depende de onde o dinheiro esta AGORA. available_at diz
+    // apenas quando a comissao *deveria* maturar; se o job atrasar, o valor
+    // ainda esta em carencia. matured_at so e preenchido quando a maturacao
+    // realmente lancou commission_matured no ledger.
+    const hasMatured = Boolean(conversion.matured_at);
 
     const ledger = await postLedgerEntry({
       affiliateId: conversion.affiliate_id as string,

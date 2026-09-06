@@ -18,6 +18,7 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { findAffiliateByUserId } from "@/lib/affiliates/account";
 import { listLedgerEntries } from "@/lib/affiliates/ledger";
 import { RANK_BONUS } from "@/lib/affiliates/affiliateLevels";
+import { maskPixKey } from "@/lib/affiliates/withdrawals";
 import {
   PROGRAM_TERMS_VERSION,
   getProgramRulesSummary,
@@ -54,6 +55,31 @@ function buildDiscordAvatarUrl(user: RankingUser | null) {
   if (!avatar || !discordUserId) return null;
 
   return `https://cdn.discordapp.com/avatars/${discordUserId}/${avatar}.png`;
+}
+
+/**
+ * Devolve as preferencias sem o segredo do webhook.
+ *
+ * O segredo completo so e mostrado no momento em que e gerado ou rotacionado,
+ * pela rota de configuracoes. Em qualquer outra leitura vai mascarado.
+ */
+function shapeSettings(row: Record<string, unknown> | null) {
+  if (!row) return null;
+
+  const secret = String(row.webhook_secret ?? "");
+
+  return {
+    webhook_url: row.webhook_url ?? null,
+    webhook_enabled: row.webhook_enabled === true,
+    webhook_events: Array.isArray(row.webhook_events) ? row.webhook_events : [],
+    webhook_secret_preview: secret ? `${secret.slice(0, 10)}...${secret.slice(-4)}` : null,
+    notify_email: row.notify_email === true,
+    notify_sms: row.notify_sms === true,
+    notify_push: row.notify_push === true,
+    email_address: row.email_address ?? null,
+    sms_phone: row.sms_phone ?? null,
+    updated_at: row.updated_at ?? null,
+  };
 }
 
 function startOfCurrentMonth() {
@@ -152,9 +178,14 @@ export async function GET() {
       .eq("affiliate_id", profile.id)
       .order("created_at", { ascending: false })
       .limit(100),
+    // Colunas explicitas em vez de "*": com select("*") o webhook_secret vinha
+    // junto e era devolvido inteiro no payload. O segredo so aparece uma vez,
+    // quando e gerado em /api/affiliates/settings; aqui vai so o prefixo.
     supabaseAdmin
       .from("affiliate_settings")
-      .select("*")
+      .select(
+        "webhook_url, webhook_enabled, webhook_events, webhook_secret, notify_email, notify_sms, notify_push, email_address, sms_phone, updated_at",
+      )
       .eq("affiliate_id", profile.id)
       .maybeSingle(),
     supabaseAdmin
@@ -254,7 +285,7 @@ export async function GET() {
         enrolledAt: profile.enrolled_at,
       },
       stats,
-      settings: settingsResult.data || null,
+      settings: shapeSettings(settingsResult.data),
       insight,
       links: links.map((link) => ({
         linkId: link.id,
@@ -299,7 +330,7 @@ export async function GET() {
         amount: toNumber(withdrawal.amount),
         fee: toNumber(withdrawal.fee_amount),
         net: toNumber(withdrawal.net_amount ?? withdrawal.amount),
-        pixKey: withdrawal.pix_key,
+        pixKey: maskPixKey(String(withdrawal.pix_key ?? ""), withdrawal.pix_key_type),
         pixKeyType: withdrawal.pix_key_type,
         status: withdrawal.status === "processed" ? "paid" : withdrawal.status,
         requestedAt: withdrawal.created_at,
