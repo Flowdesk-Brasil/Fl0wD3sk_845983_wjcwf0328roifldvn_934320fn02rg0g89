@@ -49,7 +49,6 @@ function isMissingBatePontoTableError(error: {
 }
 
 const RANKING_CACHE_TTL_MS = 20_000;
-const RANKING_LIMIT = 50;
 
 function buildRankingEntries(
   sessions: SessionRow[],
@@ -161,13 +160,10 @@ export async function GET(request: Request) {
       hourBankByUser.set(row.user_id, Number(row.balance_seconds || 0));
     }
 
-    const ranking = buildRankingEntries(sessions, hourBankByUser).slice(
-      0,
-      RANKING_LIMIT,
-    );
+    const ranking = buildRankingEntries(sessions, hourBankByUser);
     const profileMap = await enrichBatePontoMemberProfiles(
       guildId,
-      ranking.map((entry) => entry.userId),
+      ranking.slice(0, 50).map((entry) => entry.userId),
     );
     const payload = {
       ok: true as const,
