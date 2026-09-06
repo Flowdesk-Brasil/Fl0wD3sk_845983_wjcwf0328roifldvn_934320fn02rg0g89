@@ -110,6 +110,12 @@ qualquer saque. A função de recálculo emite um `warning` no log do Postgres,
 mas não falha — se ela lançasse exceção, o lançamento de estorno (já gravado, e
 imutável) congelaria o afiliado, porque todo recálculo seguinte quebraria.
 
+Por isso a migração 150 **remove** os checks `affiliates_balance_available_check`
+e `affiliates_balance_pending_check`, criados pela v1 exigindo saldo `>= 0`. Com
+eles no lugar, o recálculo falharia por violação de constraint exatamente nesse
+cenário. `total_earned` continua não-negativo, porque é métrica de vida e a
+função aplica `greatest(x, 0)` antes de gravar.
+
 ## Onde mexer
 
 | Preciso mudar | Arquivo |
