@@ -123,7 +123,7 @@ export function PanelUserMenu({
             <p className="fd-user-menu-label">Conta</p>
             <button type="button" className="fd-user-menu-item" onClick={() => run(actions.onOpenMyAccount)}>
               <UserRound className="h-4 w-4 shrink-0" strokeWidth={1.8} />
-              Meu perfil
+              Vincular Conta
             </button>
             <button type="button" className="fd-user-menu-item" onClick={() => run(actions.onOpenSettings)}>
               <Cog className="h-4 w-4 shrink-0" strokeWidth={1.8} />

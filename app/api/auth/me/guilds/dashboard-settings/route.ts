@@ -1226,11 +1226,11 @@ export async function GET(request: Request) {
       return applyNoStoreHeaders(access.response);
     }
 
-    await cleanupExpiredUnpaidServerSetups({
+    void cleanupExpiredUnpaidServerSetups({
       userId: access.sessionData.authSession.user.id,
       guildId,
       source: "guild_dashboard_settings_get",
-    });
+    }).catch(() => undefined);
 
     const cacheKey = buildDashboardSettingsCacheKey({
       userId: access.sessionData.authSession.user.id,

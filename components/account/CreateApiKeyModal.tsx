@@ -288,8 +288,7 @@ function CreateApiKeyModalDialog({
                         options={reasonSelectOptions}
                         value={reason}
                         onChange={setReason}
-                        controlHeightPx={50}
-                        variant="immersive"
+                        variant="default"
                       />
                     </div>
 
@@ -308,8 +307,7 @@ function CreateApiKeyModalDialog({
                             setCustomDate("");
                           }
                         }}
-                        controlHeightPx={50}
-                        variant="immersive"
+                        variant="default"
                       />
                     </div>
 

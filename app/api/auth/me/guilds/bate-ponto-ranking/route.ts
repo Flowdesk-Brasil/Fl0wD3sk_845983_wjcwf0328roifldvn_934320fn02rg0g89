@@ -1,15 +1,12 @@
 import { NextResponse } from "next/server";
-import {
-  assertUserAdminInGuildOrNull,
-  isGuildId,
-  resolveSessionAccessToken,
-} from "@/lib/auth/discordGuildAccess";
-import {
-  getEffectiveDashboardPermissions,
-  type TeamRolePermission,
-} from "@/lib/teams/userTeams";
+import { isGuildId } from "@/lib/auth/discordGuildAccess";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { applyNoStoreHeaders } from "@/lib/security/http";
+import { ensureDashboardModuleAccess } from "@/lib/servers/dashboardModuleAccess";
+import {
+  readPanelResponseCache,
+  writePanelResponseCache,
+} from "@/lib/servers/panelResponseCache";
 import {
   attachBatePontoMemberProfile,
   enrichBatePontoMemberProfiles,
@@ -51,66 +48,7 @@ function isMissingBatePontoTableError(error: {
   );
 }
 
-async function ensureGuildAccess(
-  guildId: string,
-  requiredPermission: TeamRolePermission,
-) {
-  const sessionData = await resolveSessionAccessToken();
-  if (!sessionData?.authSession) {
-    return {
-      ok: false as const,
-      response: NextResponse.json(
-        { ok: false, message: "Nao autenticado." },
-        { status: 401 },
-      ),
-    };
-  }
-
-  if (!sessionData.accessToken) {
-    return {
-      ok: false as const,
-      response: NextResponse.json(
-        { ok: false, message: "Token OAuth ausente na sessao." },
-        { status: 401 },
-      ),
-    };
-  }
-
-  const { permissions: dashboardPerms, isTeamServer } =
-    await getEffectiveDashboardPermissions({
-      authUserId: sessionData.authSession.user.id,
-      guildId,
-    });
-
-  const accessibleGuild = await assertUserAdminInGuildOrNull(
-    {
-      authSession: sessionData.authSession,
-      accessToken: sessionData.accessToken,
-    },
-    guildId,
-  );
-
-  const hasFullAccess = dashboardPerms === "full";
-  const hasSpecificPerm =
-    dashboardPerms instanceof Set && dashboardPerms.has(requiredPermission);
-  const canManage =
-    hasFullAccess || hasSpecificPerm || (!isTeamServer && accessibleGuild);
-
-  if (!canManage) {
-    return {
-      ok: false as const,
-      response: NextResponse.json(
-        {
-          ok: false,
-          message: "Voce nao possui permissao para gerenciar este modulo.",
-        },
-        { status: 403 },
-      ),
-    };
-  }
-
-  return { ok: true as const };
-}
+const RANKING_CACHE_TTL_MS = 20_000;
 
 function buildRankingEntries(
   sessions: SessionRow[],
@@ -166,11 +104,21 @@ export async function GET(request: Request) {
       );
     }
 
-    const access = await ensureGuildAccess(
+    const access = await ensureDashboardModuleAccess(
       guildId,
       "server_manage_bate_ponto_ranking",
     );
-    if (!access.ok) return access.response;
+    if (!access.ok) return applyNoStoreHeaders(access.response);
+
+    const cacheKey = `bate-ponto-ranking:${guildId}:${periodDays}`;
+    const cached = readPanelResponseCache<{
+      ok: true;
+      periodDays: number;
+      ranking: RankingEntry[];
+    }>(cacheKey);
+    if (cached) {
+      return applyNoStoreHeaders(NextResponse.json(cached));
+    }
 
     const since = new Date(
       Date.now() - periodDays * 24 * 60 * 60 * 1000,
@@ -217,17 +165,16 @@ export async function GET(request: Request) {
       guildId,
       ranking.slice(0, 50).map((entry) => entry.userId),
     );
-    const enrichedRanking = ranking.map((entry) =>
-      attachBatePontoMemberProfile(entry, profileMap),
-    );
+    const payload = {
+      ok: true as const,
+      periodDays,
+      ranking: ranking.map((entry) =>
+        attachBatePontoMemberProfile(entry, profileMap),
+      ),
+    };
+    writePanelResponseCache(cacheKey, payload, RANKING_CACHE_TTL_MS);
 
-    return applyNoStoreHeaders(
-      NextResponse.json({
-        ok: true,
-        periodDays,
-        ranking: enrichedRanking,
-      }),
-    );
+    return applyNoStoreHeaders(NextResponse.json(payload));
   } catch (error) {
     return applyNoStoreHeaders(
       NextResponse.json(

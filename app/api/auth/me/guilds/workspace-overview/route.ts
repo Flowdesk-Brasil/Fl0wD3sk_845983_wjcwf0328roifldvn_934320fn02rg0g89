@@ -4,7 +4,7 @@ import {
   isGuildId,
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
-import { getEffectiveDashboardPermissions } from "@/lib/teams/userTeams";
+import { getEffectiveDashboardPermissions, type TeamRolePermission } from "@/lib/teams/userTeams";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
@@ -13,12 +13,17 @@ type CartRow = {
   id: string;
   status: string | null;
   total_amount: string | number | null;
+  currency: string | null;
   customer_name: string | null;
   customer_email: string | null;
   created_at: string | null;
   paid_at: string | null;
   payment_expires_at: string | null;
   provider_status: string | null;
+  provider: string | null;
+  provider_payment_id: string | null;
+  selected_payment_method_key: string | null;
+  discount_code: string | null;
 };
 
 type TicketRow = {
@@ -66,6 +71,36 @@ function invoiceCode(id: string, createdAt: string | null) {
   return `INV-${year}-${suffix.padStart(6, "0")}`;
 }
 
+function paymentMethodLabel(key: string | null | undefined) {
+  const labels: Record<string, string> = {
+    mercado_pago: "Mercado Pago",
+    flowpay: "FlowPay",
+    card: "Cartao de credito",
+    boleto: "Boleto bancario",
+    paypal: "PayPal",
+    nupay: "NuPay",
+  };
+  if (!key) return "Nao informado";
+  return labels[key] || key.replace(/_/g, " ");
+}
+
+function rawStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    paid: "Pagamento confirmado",
+    delivered: "Pedido entregue",
+    payment_pending: "Aguardando pagamento",
+    open: "Carrinho aberto",
+    link_required: "Aguardando vinculo da conta",
+    cancelled: "Cancelado",
+    expired: "Expirado",
+    refunded: "Reembolsado",
+    rejected: "Pagamento recusado",
+    delivery_failed: "Falha na entrega",
+    charged_back: "Chargeback",
+  };
+  return labels[status] || status.replace(/_/g, " ");
+}
+
 function monthKey(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
@@ -81,6 +116,61 @@ function buildMonthSeries() {
       forecast: 0,
     };
   });
+}
+
+async function isGuildPlanOwner(
+  supabase: ReturnType<typeof getSupabaseAdminClientOrThrow>,
+  authUserId: number,
+  guildId: string,
+) {
+  const planOwner = await supabase
+    .from("auth_user_plan_guilds")
+    .select("user_id")
+    .eq("guild_id", guildId)
+    .maybeSingle();
+
+  if (planOwner.data?.user_id === authUserId) return true;
+
+  const legacyOwner = await supabase
+    .from("payment_orders")
+    .select("user_id")
+    .eq("guild_id", guildId)
+    .eq("status", "approved")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return legacyOwner.data?.user_id === authUserId;
+}
+
+async function loadGuildCarts(
+  supabase: ReturnType<typeof getSupabaseAdminClientOrThrow>,
+  guildId: string,
+) {
+  const extendedSelect =
+    "id, status, total_amount, currency, customer_name, customer_email, created_at, paid_at, payment_expires_at, provider_status, provider, provider_payment_id, selected_payment_method_key, discount_code";
+  const baseSelect =
+    "id, status, total_amount, customer_name, customer_email, created_at, paid_at, payment_expires_at, provider_status";
+
+  const extended = await supabase
+    .from("guild_sales_carts")
+    .select(extendedSelect)
+    .eq("guild_id", guildId)
+    .order("created_at", { ascending: false })
+    .limit(240);
+
+  if (!extended.error) {
+    return (extended.data || []) as CartRow[];
+  }
+
+  const base = await supabase
+    .from("guild_sales_carts")
+    .select(baseSelect)
+    .eq("guild_id", guildId)
+    .order("created_at", { ascending: false })
+    .limit(240);
+
+  return (base.error ? [] : base.data || []) as CartRow[];
 }
 
 export async function GET(request: Request) {
@@ -102,15 +192,23 @@ export async function GET(request: Request) {
     const { permissions, isTeamServer } = await getEffectiveDashboardPermissions({
       authUserId: sessionData.authSession.user.id,
       guildId,
-    });
-    const accessibleGuild = await assertUserAdminInGuildOrNull(
-      {
-        authSession: sessionData.authSession,
-        accessToken: sessionData.accessToken,
-      },
-      guildId,
-    );
+    }).catch(() => ({
+      permissions: new Set<TeamRolePermission>(),
+      isTeamServer: false,
+    }));
+    const supabase = getSupabaseAdminClientOrThrow();
+    const [isOwner, accessibleGuild] = await Promise.all([
+      isGuildPlanOwner(supabase, sessionData.authSession.user.id, guildId),
+      assertUserAdminInGuildOrNull(
+        {
+          authSession: sessionData.authSession,
+          accessToken: sessionData.accessToken,
+        },
+        guildId,
+      ),
+    ]);
     const canAccess =
+      isOwner ||
       permissions === "full" ||
       (permissions instanceof Set && permissions.size > 0) ||
       (!isTeamServer && accessibleGuild);
@@ -124,16 +222,8 @@ export async function GET(request: Request) {
       );
     }
 
-    const supabase = getSupabaseAdminClientOrThrow();
-    const [cartsResult, ticketsResult, eventsResult] = await Promise.all([
-      supabase
-        .from("guild_sales_carts")
-        .select(
-          "id, status, total_amount, customer_name, customer_email, created_at, paid_at, payment_expires_at, provider_status",
-        )
-        .eq("guild_id", guildId)
-        .order("created_at", { ascending: false })
-        .limit(240),
+    const [carts, ticketsResult, eventsResult] = await Promise.all([
+      loadGuildCarts(supabase, guildId),
       supabase
         .from("tickets")
         .select("id, status, created_at")
@@ -148,7 +238,6 @@ export async function GET(request: Request) {
         .limit(12),
     ]);
 
-    const carts = (cartsResult.error ? [] : cartsResult.data || []) as CartRow[];
     const tickets = (ticketsResult.error ? [] : ticketsResult.data || []) as TicketRow[];
     const events = (eventsResult.error ? [] : eventsResult.data || []) as EventRow[];
 
@@ -215,9 +304,22 @@ export async function GET(request: Request) {
             id: cart.id,
             code: invoiceCode(cart.id, cart.created_at),
             customer: cart.customer_name || cart.customer_email || "Cliente",
+            customerEmail: cart.customer_email || null,
             status: isReceived(status) ? "Pago" : isCancelled(status) ? "Cancelado" : "Em aberto",
+            statusDetail: rawStatusLabel(status),
+            rawStatus: status,
             tone: isReceived(status) ? "success" : isCancelled(status) ? "muted" : "info",
             amount: money(cart.total_amount),
+            currency: cart.currency || "BRL",
+            createdAt: cart.created_at,
+            paidAt: cart.paid_at,
+            expiresAt: cart.payment_expires_at,
+            paymentMethod: paymentMethodLabel(cart.selected_payment_method_key),
+            paymentMethodKey: cart.selected_payment_method_key,
+            provider: cart.provider,
+            providerStatus: cart.provider_status,
+            providerPaymentId: cart.provider_payment_id,
+            discountCode: cart.discount_code,
           };
         }),
         upcoming,

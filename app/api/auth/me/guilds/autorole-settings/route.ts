@@ -11,7 +11,10 @@ import {
   type TeamRolePermission 
 } from "@/lib/teams/userTeams";
 import { getGuildLicenseStatusForUser } from "@/lib/payments/licenseStatus";
-import { cleanupExpiredUnpaidServerSetups } from "@/lib/payments/setupCleanup";
+import {
+  cleanupExpiredUnpaidServerSetups,
+  cleanupExpiredUnpaidServerSetupsBackground,
+} from "@/lib/payments/setupCleanup";
 import {
   createServerSaveDiagnosticContext,
   recordServerSaveDiagnostic,
@@ -355,7 +358,7 @@ export async function GET(request: Request) {
       return access.response;
     }
 
-    await cleanupExpiredUnpaidServerSetups({
+    cleanupExpiredUnpaidServerSetupsBackground({
       userId: access.context.sessionData.authSession.user.id,
       guildId,
       source: "guild_autorole_settings_get",

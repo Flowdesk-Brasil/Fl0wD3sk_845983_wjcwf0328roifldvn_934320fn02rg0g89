@@ -129,7 +129,7 @@ export function BatePontoUserDetailSheet({
   return createPortal(
     <div className="fixed inset-0 z-[120] flex items-end justify-center bg-[rgba(0,0,0,0.72)] p-[12px] sm:items-center sm:p-[24px]">
       <div className="absolute inset-0" onClick={onClose} aria-hidden="true" />
-      <section className="relative z-[1] flex max-h-[92vh] w-full max-w-[920px] flex-col overflow-hidden rounded-[28px] border border-[#1E1E1E] bg-[#090909] shadow-[0_30px_90px_rgba(0,0,0,0.55)]">
+      <section className="relative z-[1] flex max-h-[92vh] w-full max-w-[920px] flex-col overflow-hidden rounded-[28px] border border-[#1C1C1C] bg-[#0D0D0D] shadow-[0_30px_90px_rgba(0,0,0,0.55)]">
         <div className="flex items-start justify-between gap-[16px] border-b border-[#171717] px-[20px] py-[18px] sm:px-[24px]">
           <div className="flex min-w-0 items-center gap-[14px]">
             <BatePontoMemberAvatar

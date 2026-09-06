@@ -11,6 +11,10 @@ import {
   resolveBatePontoActionLabel,
   resolveBatePontoMemberLabel,
 } from "@/lib/servers/batePontoFormatting";
+import {
+  readCachedBatePontoHistory,
+  writeCachedBatePontoHistory,
+} from "@/lib/servers/batePontoPanelCache";
 
 type BatePontoHistoryEvent = {
   id: number;
@@ -71,10 +75,23 @@ export function BatePontoHistoryPanel({ guildId }: BatePontoHistoryPanelProps) {
 
   const loadHistory = useCallback(
     async (nextOffset: number, append: boolean) => {
+      const trimmedFilter = appliedUserFilter.trim();
+      const filterKey =
+        trimmedFilter && SNOWFLAKE_REGEX.test(trimmedFilter) ? trimmedFilter : "";
       if (append) {
         setIsLoadingMore(true);
       } else {
-        setIsLoading(true);
+        const cached = readCachedBatePontoHistory<BatePontoHistoryEvent[]>(
+          guildId,
+          filterKey,
+          nextOffset,
+        );
+        if (cached) {
+          setEvents(cached);
+          setIsLoading(false);
+        } else {
+          setIsLoading(true);
+        }
       }
       setErrorMessage(null);
 
@@ -85,9 +102,8 @@ export function BatePontoHistoryPanel({ guildId }: BatePontoHistoryPanelProps) {
           offset: String(nextOffset),
         });
 
-        const trimmedFilter = appliedUserFilter.trim();
-        if (trimmedFilter && SNOWFLAKE_REGEX.test(trimmedFilter)) {
-          params.set("userId", trimmedFilter);
+        if (filterKey) {
+          params.set("userId", filterKey);
         }
 
         const response = await fetch(
@@ -102,6 +118,9 @@ export function BatePontoHistoryPanel({ guildId }: BatePontoHistoryPanelProps) {
         const nextEvents = Array.isArray(payload.events)
           ? (payload.events as BatePontoHistoryEvent[])
           : [];
+        if (!append) {
+          writeCachedBatePontoHistory(guildId, filterKey, nextOffset, nextEvents);
+        }
 
         setEvents((current) => (append ? [...current, ...nextEvents] : nextEvents));
         setOffset(nextOffset + nextEvents.length);
@@ -166,7 +185,7 @@ export function BatePontoHistoryPanel({ guildId }: BatePontoHistoryPanelProps) {
               </p>
             </div>
 
-            <span className="inline-flex h-[30px] items-center justify-center rounded-full border border-[#151515] bg-[#0B0B0B] px-[12px] text-[11px] uppercase tracking-[0.16em] text-[#686868]">
+            <span className="inline-flex h-[30px] items-center justify-center rounded-full border border-[#1C1C1C] bg-[#141414] px-[12px] text-[11px] uppercase tracking-[0.16em] text-[#686868]">
               {totalLabel}
             </span>
           </div>
@@ -183,7 +202,7 @@ export function BatePontoHistoryPanel({ guildId }: BatePontoHistoryPanelProps) {
                 value={userFilter}
                 onChange={(event) => setUserFilter(event.currentTarget.value)}
                 placeholder="Filtrar por nome ou ID do usuario"
-                className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] pl-[42px] pr-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626]"
+                className="fd-field h-[48px] w-full rounded-[14px] pl-[42px] pr-[14px] text-[14px] outline-none transition-colors"
               />
             </label>
             <button

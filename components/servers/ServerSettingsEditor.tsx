@@ -40,13 +40,18 @@ import { BatePontoRankingPanel } from "@/components/servers/BatePontoRankingPane
 import { PermissionDeniedState } from "@/components/servers/PermissionDeniedState";
 import {
   ModuleCard,
+  ModuleFieldsGrid,
   ModuleHero,
   ModulePage,
-  ModuleSetting,
   ModuleStat,
   optionLabel,
   optionLabels,
 } from "@/components/servers/module-ui/ModuleUi";
+import {
+  SERVER_SETTINGS_SAVE_BAR_EXIT_MS,
+  SERVER_SETTINGS_SAVE_SUCCESS_VISIBLE_MS,
+  waitUntilMinServerSettingsSaveUi,
+} from "@/lib/servers/serverSettingsSaveFlow";
 import { serversScale } from "@/components/servers/serversScale";
 import {
   SalesCategoryEditPanel,
@@ -2268,6 +2273,7 @@ export function ServerSettingsEditor({
   const [isSaveBarRendered, setIsSaveBarRendered] = useState(false);
   const [isSaveBarExiting, setIsSaveBarExiting] = useState(false);
   const navigationBlockedFeedbackTimeoutRef = useRef<number | null>(null);
+  const saveInFlightRef = useRef(false);
 
   const [menuChannelId, setMenuChannelId] = useState<string | null>(null);
   const [ticketsCategoryId, setTicketsCategoryId] = useState<string | null>(null);
@@ -4362,7 +4368,7 @@ export function ServerSettingsEditor({
     [addMethodClientCooldownRemainingSeconds],
   );
 
-  const serverSettingsControlHeight = 60;
+  const serverSettingsControlHeight = 42;
 
   const openAddMethodModal = useCallback(
     (options?: { enableRecurringAfterAdd?: boolean }) => {
@@ -5326,7 +5332,7 @@ export function ServerSettingsEditor({
   const floatingSaveBarTitle = showSaveBarSuccessState
     ? "Configuracoes salvas com sucesso."
     : isSaving
-    ? "Salvando alteracoes do servidor..."
+    ? "Salvando..."
     : errorMessage
       ? "Nao foi possivel salvar agora"
       : showInvalidTicketSaveState
@@ -5371,7 +5377,7 @@ export function ServerSettingsEditor({
   const floatingSaveBarDescription = showSaveBarSuccessState
     ? "Tudo ficou sincronizado e o painel ja esta atualizado para a equipe."
     : isSaving
-    ? "Estamos sincronizando canais e cargos deste servidor com o painel."
+    ? "Gravando no servidor. Voce ja pode continuar usando o painel."
       : errorMessage
       ? errorMessage
       : showInvalidTicketSaveState
@@ -5489,7 +5495,7 @@ export function ServerSettingsEditor({
 
     const timeoutId = window.setTimeout(() => {
       setShowSaveSuccessBar(false);
-    }, 1800);
+    }, SERVER_SETTINGS_SAVE_SUCCESS_VISIBLE_MS);
 
     return () => {
       window.clearTimeout(timeoutId);
@@ -5566,7 +5572,7 @@ export function ServerSettingsEditor({
     const timeoutId = window.setTimeout(() => {
       setIsSaveBarRendered(false);
       setIsSaveBarExiting(false);
-    }, 260);
+    }, SERVER_SETTINGS_SAVE_BAR_EXIT_MS);
 
     return () => {
       window.clearTimeout(timeoutId);
@@ -6384,11 +6390,28 @@ export function ServerSettingsEditor({
   ]);
 
   const handleSave = useCallback(async () => {
-    if (!canPersistSettings) return;
+    if (!canPersistSettings || saveInFlightRef.current) return;
     if (isTicketSection && ticketEnabled && !adminRoleId) return;
+
+    const saveStartedAtMs = Date.now();
+    saveInFlightRef.current = true;
     setIsSaving(true);
+    setShowSaveSuccessBar(false);
     setErrorMessage(null);
     setSuccessMessage(null);
+
+    const previousSaved = {
+      autoRole: savedAutoRoleSettingsDraft,
+      antiLink: savedAntiLinkSettingsDraft,
+      security: savedSecurityLogsDraft,
+      sales: savedSalesSettingsDraft,
+      captcha: savedCaptchaSettingsDraft,
+      suggestions: savedSuggestionSettingsDraft,
+      batePonto: savedBatePontoSettingsDraft,
+      welcome: savedWelcomeSettingsDraft,
+      settings: savedSettingsDraft,
+    };
+
     let dashboardCachePatch: Parameters<typeof patchCachedServerDashboardSettings>[1] | null =
       null;
     let savedSuccessMessage: string | null = null;
@@ -7180,11 +7203,36 @@ export function ServerSettingsEditor({
       } else {
         markServerDashboardSettingsSaved(guildId);
       }
+
+      await waitUntilMinServerSettingsSaveUi(saveStartedAtMs);
       setSuccessMessage(savedSuccessMessage || "Configuracoes salvas com sucesso.");
       setShowSaveSuccessBar(true);
     } catch (error) {
+      await waitUntilMinServerSettingsSaveUi(saveStartedAtMs);
+      if (isAutoRoleSection) {
+        setSavedAutoRoleSettingsDraft(previousSaved.autoRole);
+      } else if (isAntiLinkSection) {
+        setSavedAntiLinkSettingsDraft(previousSaved.antiLink);
+      } else if (isSecurityLogsSection) {
+        setSavedSecurityLogsDraft(previousSaved.security);
+      } else if (isSalesSettingsSection) {
+        setSavedSalesSettingsDraft(previousSaved.sales);
+      } else if (isCaptchaSection) {
+        setSavedCaptchaSettingsDraft(previousSaved.captcha);
+      } else if (isSuggestionsSection) {
+        setSavedSuggestionSettingsDraft(previousSaved.suggestions);
+      } else if (isBatePontoSection) {
+        setSavedBatePontoSettingsDraft(previousSaved.batePonto);
+      } else if (isWelcomeSection) {
+        setSavedWelcomeSettingsDraft(previousSaved.welcome);
+      } else {
+        setSavedSettingsDraft(previousSaved.settings);
+      }
+      setShowSaveSuccessBar(false);
+      setSuccessMessage(null);
       setErrorMessage(error instanceof Error ? error.message : "Erro ao salvar configuracoes.");
     } finally {
+      saveInFlightRef.current = false;
       setIsSaving(false);
     }
   }, [
@@ -7239,9 +7287,20 @@ export function ServerSettingsEditor({
     currentAntiLinkDraft,
     currentAutoRoleDraft,
     currentCaptchaDraft,
+    currentSalesDraft,
+    currentSettingsDraft,
     currentSuggestionDraft,
     currentBatePontoDraft,
     currentWelcomeDraft,
+    savedAntiLinkSettingsDraft,
+    savedAutoRoleSettingsDraft,
+    savedCaptchaSettingsDraft,
+    savedSalesSettingsDraft,
+    savedSecurityLogsDraft,
+    savedSettingsDraft,
+    savedSuggestionSettingsDraft,
+    savedBatePontoSettingsDraft,
+    savedWelcomeSettingsDraft,
     entryPublicLayout,
     entryLogLayout,
     entryLogChannelId,
@@ -7786,7 +7845,7 @@ export function ServerSettingsEditor({
             marginTop: standalone ? "0px" : `${serversScale.cardsTopSpacing}px`,
           }}
         >
-          <div className="rounded-[24px] border border-[#161616] bg-[#090909] px-[22px] py-[28px] text-center">
+          <div className="rounded-[24px] border border-[#161616] bg-[#0D0D0D] px-[22px] py-[28px] text-center">
             <div>
               <p className="text-[16px] text-[#D8D8D8]">
                 Nao foi possivel carregar as configuracoes deste servidor.
@@ -7913,21 +7972,13 @@ export function ServerSettingsEditor({
                         <ModuleStat label="Log aprovado" value={optionLabel(textChannelOptions, salesPaymentApprovedLogChannelId)} hint="Pagamentos confirmados" icon={Hash} delay={0.14} />
                         <ModuleStat label="Comprovante" value={salesReceiptCompanyName.trim() || "Sem marca"} hint="Identidade do recibo" icon={Signature} delay={0.18} />
                       </div>
-                      <ModuleCard label="Operacao" title="Carrinhos e logs" description="Cada valor abaixo mostra o destino atual. Troque o canal sem perder o contexto do que ja esta configurado." delay={0.16}>
-                        <div className="grid grid-cols-1 gap-[12px] xl:grid-cols-2">
-                          <ModuleSetting label="Categoria do carrinho" value={optionLabel(categoryOptions, salesCartsCategoryId)} hint="Canal-categoria onde o pedido e criado" icon={Hash}>
-                            <ConfigStepSelect label="" placeholder="Escolha uma categoria" options={categoryOptions} value={salesCartsCategoryId} onChange={setSalesCartsCategoryId} disabled={salesControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          </ModuleSetting>
-                          <ModuleSetting label="Log aprovado" value={optionLabel(textChannelOptions, salesPaymentApprovedLogChannelId)} hint="Pagamento confirmado" icon={Hash}>
-                            <ConfigStepSelect label="" placeholder="Escolha o canal de logs" options={textChannelOptions} value={salesPaymentApprovedLogChannelId} onChange={setSalesPaymentApprovedLogChannelId} disabled={salesControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          </ModuleSetting>
-                          <ModuleSetting label="Log pendente" value={optionLabel(textChannelOptions, salesPaymentPendingLogChannelId)} hint="Aguardando pagamento" icon={Hash}>
-                            <ConfigStepSelect label="" placeholder="Escolha o canal de logs" options={textChannelOptions} value={salesPaymentPendingLogChannelId} onChange={setSalesPaymentPendingLogChannelId} disabled={salesControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          </ModuleSetting>
-                          <ModuleSetting label="Log recusado" value={optionLabel(textChannelOptions, salesPaymentRejectedLogChannelId)} hint="Falha ou cancelamento" icon={Hash}>
-                            <ConfigStepSelect label="" placeholder="Escolha o canal de logs" options={textChannelOptions} value={salesPaymentRejectedLogChannelId} onChange={setSalesPaymentRejectedLogChannelId} disabled={salesControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          </ModuleSetting>
-                        </div>
+                      <ModuleCard label="Operacao" title="Carrinhos e logs" description="Configure categoria do carrinho e canais de log de pagamento." delay={0.16}>
+                        <ModuleFieldsGrid>
+                          <ConfigStepSelect label="Categoria do carrinho" placeholder="Escolha uma categoria" options={categoryOptions} value={salesCartsCategoryId} onChange={setSalesCartsCategoryId} disabled={salesControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepSelect label="Log aprovado" placeholder="Escolha o canal de logs" options={textChannelOptions} value={salesPaymentApprovedLogChannelId} onChange={setSalesPaymentApprovedLogChannelId} disabled={salesControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepSelect label="Log pendente" placeholder="Escolha o canal de logs" options={textChannelOptions} value={salesPaymentPendingLogChannelId} onChange={setSalesPaymentPendingLogChannelId} disabled={salesControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepSelect label="Log recusado" placeholder="Escolha o canal de logs" options={textChannelOptions} value={salesPaymentRejectedLogChannelId} onChange={setSalesPaymentRejectedLogChannelId} disabled={salesControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                        </ModuleFieldsGrid>
                       </ModuleCard>
 
                       <ModuleCard label="Comprovante" title="Identidade do recibo" description="O cliente ve esses dados no comprovante. Salve para sincronizar a marca da loja." delay={0.2}>
@@ -7942,7 +7993,7 @@ export function ServerSettingsEditor({
                               placeholder="Ex: Flowdesk Store"
                               maxLength={100}
                               disabled={salesControlsDisabled}
-                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                              className="h-[48px] w-full rounded-[14px] fd-field border border-[#1C1C1C] bg-[#141414] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#6F6F74] focus:border-[#2A2A2E] disabled:cursor-not-allowed disabled:opacity-60"
                             />
                           </div>
                           <div>
@@ -7954,7 +8005,7 @@ export function ServerSettingsEditor({
                               placeholder="Ex: CNPJ, CPF ou ID interno"
                               maxLength={80}
                               disabled={salesControlsDisabled}
-                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                              className="h-[48px] w-full rounded-[14px] fd-field border border-[#1C1C1C] bg-[#141414] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#6F6F74] focus:border-[#2A2A2E] disabled:cursor-not-allowed disabled:opacity-60"
                             />
                           </div>
                           <div className="xl:col-span-2">
@@ -7966,7 +8017,7 @@ export function ServerSettingsEditor({
                               placeholder="Ex: Qualquer duvida, abra um ticket com o comprovante em maos."
                               maxLength={300}
                               disabled={salesControlsDisabled}
-                              className="min-h-[92px] w-full resize-none rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] py-[12px] text-[14px] leading-[1.5] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                              className="min-h-[92px] w-full resize-none rounded-[14px] fd-field border border-[#1C1C1C] bg-[#141414] px-[14px] py-[12px] text-[14px] leading-[1.5] text-[#D1D1D1] outline-none transition-all placeholder:text-[#6F6F74] focus:border-[#2A2A2E] disabled:cursor-not-allowed disabled:opacity-60"
                             />
                           </div>
                         </div>
@@ -8013,21 +8064,13 @@ export function ServerSettingsEditor({
                         <ModuleStat label="Categoria" value={optionLabel(categoryOptions, ticketsCategoryId)} hint="Onde os tickets abrem" icon={Hash} delay={0.14} />
                         <ModuleStat label="Staff" value={optionLabel(roleOptions, adminRoleId)} hint="Cargo administrador" icon={Users} delay={0.18} />
                       </div>
-                      <ModuleCard label="Operacao" title="Canais e logs" description="O valor grande e o destino atual. O seletor so entra quando voce precisa trocar." delay={0.16}>
-                        <div className="grid grid-cols-1 gap-[12px] xl:grid-cols-2">
-                          <ModuleSetting label="Canal do menu" value={optionLabel(textChannelOptions, menuChannelId)} hint="Painel principal de tickets" icon={Hash}>
-                            <ConfigStepSelect label="" placeholder="Escolha o canal" options={textChannelOptions} value={menuChannelId} onChange={setMenuChannelId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          </ModuleSetting>
-                          <ModuleSetting label="Categoria dos tickets" value={optionLabel(categoryOptions, ticketsCategoryId)} hint="Onde cada ticket e criado" icon={Hash}>
-                            <ConfigStepSelect label="" placeholder="Escolha uma categoria" options={categoryOptions} value={ticketsCategoryId} onChange={setTicketsCategoryId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          </ModuleSetting>
-                          <ModuleSetting label="Log de criacao" value={optionLabel(textChannelOptions, logsCreatedChannelId)} hint="Abertura registrada" icon={Hash}>
-                            <ConfigStepSelect label="" placeholder="Escolha o canal de logs" options={textChannelOptions} value={logsCreatedChannelId} onChange={setLogsCreatedChannelId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          </ModuleSetting>
-                          <ModuleSetting label="Log de fechamento" value={optionLabel(textChannelOptions, logsClosedChannelId)} hint="Encerramento registrado" icon={Hash}>
-                            <ConfigStepSelect label="" placeholder="Escolha o canal de logs" options={textChannelOptions} value={logsClosedChannelId} onChange={setLogsClosedChannelId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          </ModuleSetting>
-                        </div>
+                      <ModuleCard label="Operacao" title="Canais e logs" description="Configure o painel de tickets, categoria e canais de log." delay={0.16}>
+                        <ModuleFieldsGrid>
+                          <ConfigStepSelect label="Canal do menu" placeholder="Escolha o canal" options={textChannelOptions} value={menuChannelId} onChange={setMenuChannelId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepSelect label="Categoria dos tickets" placeholder="Escolha uma categoria" options={categoryOptions} value={ticketsCategoryId} onChange={setTicketsCategoryId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepSelect label="Log de criacao" placeholder="Escolha o canal de logs" options={textChannelOptions} value={logsCreatedChannelId} onChange={setLogsCreatedChannelId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepSelect label="Log de fechamento" placeholder="Escolha o canal de logs" options={textChannelOptions} value={logsClosedChannelId} onChange={setLogsClosedChannelId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                        </ModuleFieldsGrid>
                       </ModuleCard>
                       <ModuleCard
                         label="Staff"
@@ -8045,20 +8088,12 @@ export function ServerSettingsEditor({
                         }
                       >
                         {!isStaffCardCollapsed ? (
-                          <div className="grid grid-cols-1 gap-[12px] xl:grid-cols-2">
-                            <ModuleSetting label="Administrador" value={optionLabel(roleOptions, adminRoleId)} hint="Cargo com controle total" icon={Users}>
-                              <ConfigStepSelect label="" placeholder="Escolha o cargo" options={roleOptions} value={adminRoleId} onChange={setAdminRoleId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                            </ModuleSetting>
-                            <ModuleSetting label="Assumir" value={optionLabels(roleOptions, claimRoleIds)} hint="Quem pega o ticket" icon={Users}>
-                              <ConfigStepMultiSelect label="" placeholder="Escolha os cargos" options={roleOptions} values={claimRoleIds} onChange={setClaimRoleIds} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                            </ModuleSetting>
-                            <ModuleSetting label="Fechar" value={optionLabels(roleOptions, closeRoleIds)} hint="Quem encerra o ticket" icon={Users}>
-                              <ConfigStepMultiSelect label="" placeholder="Escolha os cargos" options={roleOptions} values={closeRoleIds} onChange={setCloseRoleIds} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                            </ModuleSetting>
-                            <ModuleSetting label="Notificar" value={optionLabels(roleOptions, notifyRoleIds)} hint="Quem recebe aviso" icon={Users}>
-                              <ConfigStepMultiSelect label="" placeholder="Escolha os cargos" options={roleOptions} values={notifyRoleIds} onChange={setNotifyRoleIds} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                            </ModuleSetting>
-                          </div>
+                          <ModuleFieldsGrid>
+                            <ConfigStepSelect label="Administrador" placeholder="Escolha o cargo" options={roleOptions} value={adminRoleId} onChange={setAdminRoleId} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                            <ConfigStepMultiSelect label="Assumir" placeholder="Escolha os cargos" options={roleOptions} values={claimRoleIds} onChange={setClaimRoleIds} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                            <ConfigStepMultiSelect label="Fechar" placeholder="Escolha os cargos" options={roleOptions} values={closeRoleIds} onChange={setCloseRoleIds} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                            <ConfigStepMultiSelect label="Notificar" placeholder="Escolha os cargos" options={roleOptions} values={notifyRoleIds} onChange={setNotifyRoleIds} disabled={ticketControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          </ModuleFieldsGrid>
                         ) : null}
                       </ModuleCard>
                     </ModulePage>
@@ -8163,7 +8198,7 @@ export function ServerSettingsEditor({
                               placeholder="Ex: Flowdesk, Loja do Anderson..."
                               maxLength={100}
                               disabled={aiControlsDisabled}
-                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                              className="h-[48px] w-full rounded-[14px] fd-field border border-[#1C1C1C] bg-[#141414] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#6F6F74] focus:border-[#2A2A2E] disabled:cursor-not-allowed disabled:opacity-60"
                             />
                             <div className="mt-[6px] flex justify-end">
                               <span className={`text-[10px] font-medium tracking-wide ${aiCompanyName.length >= 100 ? "text-[#FF4A4A]" : "text-[#404040]"}`}>
@@ -8180,7 +8215,7 @@ export function ServerSettingsEditor({
                               placeholder="Somos uma empresa focada em automacao para Discord..."
                               maxLength={1000}
                               disabled={aiControlsDisabled}
-                              className="min-h-[92px] w-full resize-none rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] py-[12px] text-[14px] leading-[1.5] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                              className="min-h-[92px] w-full resize-none rounded-[14px] fd-field border border-[#1C1C1C] bg-[#141414] px-[14px] py-[12px] text-[14px] leading-[1.5] text-[#D1D1D1] outline-none transition-all placeholder:text-[#6F6F74] focus:border-[#2A2A2E] disabled:cursor-not-allowed disabled:opacity-60"
                             />
                             <div className="mt-[6px] flex justify-end">
                               <span className={`text-[10px] font-medium tracking-wide ${aiCompanyBio.length >= 1000 ? "text-[#FF4A4A]" : "text-[#404040]"}`}>
@@ -8218,8 +8253,8 @@ export function ServerSettingsEditor({
                                   disabled={aiControlsDisabled}
                                   className={`rounded-[16px] border px-[12px] py-[12px] text-left transition-all ${
                                     aiControlsDisabled
-                                      ? "cursor-not-allowed border-[#171717] bg-[#090909] opacity-40"
-                                      : "border-[#171717] bg-[#090909] hover:border-[#232323] hover:bg-[#0C0C0C]"
+                                      ? "cursor-not-allowed border-[#1C1C1C] bg-[#141414] opacity-40"
+                                      : "border-[#1C1C1C] bg-[#141414] hover:border-[#2A2A2E] hover:bg-[#171717]"
                                   }`}
                                 >
                                   <span className="block text-[13px] font-medium text-[#D1D1D1]">
@@ -8241,10 +8276,10 @@ export function ServerSettingsEditor({
                               setIsAiRulesModalOpen(true);
                             }}
                             disabled={aiControlsDisabled}
-                            className={`group relative flex w-full items-center justify-between gap-[16px] rounded-[18px] border border-[#1A1A1A] bg-[#0A0A0A] p-[4px] pr-[14px] transition-all ${
+                            className={`group relative flex w-full items-center justify-between gap-[16px] rounded-[18px] border border-[#1C1C1C] bg-[#141414] p-[4px] pr-[14px] transition-all ${
                               aiControlsDisabled
                                 ? "cursor-not-allowed opacity-40 grayscale-[0.5]"
-                                : "hover:border-[#222222] hover:bg-[#0D0D0D]"
+                                : "hover:border-[#2A2A2E] hover:bg-[#171717]"
                             }`}
                           >
                             <div className="flex items-center gap-[12px]">
@@ -8265,7 +8300,7 @@ export function ServerSettingsEditor({
                             <span className="text-[#454545] transition-transform group-hover:translate-x-[2px]"><svg viewBox="0 0 20 20" className="h-[14px] w-[14px]" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M7.5 15l5-5-5-5" strokeLinecap="round" strokeLinejoin="round"/></svg></span>
                           </button>
 
-                          <div className="rounded-[18px] border border-[#171717] bg-[#090909] px-[14px] py-[12px]">
+                          <div className="rounded-[18px] border border-[#1C1C1C] bg-[#141414] px-[14px] py-[12px]">
                             <p className="text-[11px] uppercase tracking-[0.16em] text-[#5F5F5F]">Resumo atual</p>
                             <p className="mt-[8px] text-[13px] leading-[1.6] text-[#767676]">
                               {flowAiRulesCount
@@ -8292,8 +8327,8 @@ export function ServerSettingsEditor({
                                   aiControlsDisabled ? "opacity-40 cursor-not-allowed grayscale-[0.5]" : ""
                                 } ${
                                   aiTone === tone.id
-                                    ? "border-[#2E2E2E] bg-[#141414] shadow-[0_0_14px_rgba(255,255,255,0.01)]"
-                                    : "border-[#171717] bg-[#090909] hover:border-[#222222] hover:bg-[#0C0C0C]"
+                                    ? "border-[#2E2E2E] bg-[#171717] shadow-[0_0_14px_rgba(255,255,255,0.01)]"
+                                    : "border-[#1C1C1C] bg-[#141414] hover:border-[#2A2A2E] hover:bg-[#171717]"
                                 }`}
                               >
                                 <span className={`text-[20px] transition-transform ${aiTone === tone.id ? "scale-110" : ""}`}>{tone.icon}</span>
@@ -8327,7 +8362,7 @@ export function ServerSettingsEditor({
                               value={refundLimitDays}
                               onChange={(event) => setRefundLimitDays(Math.max(0, Math.min(365, Number(event.target.value || 0))))}
                               disabled={aiControlsDisabled}
-                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                              className="h-[48px] w-full rounded-[14px] fd-field border border-[#1C1C1C] bg-[#141414] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#6F6F74] focus:border-[#2A2A2E] disabled:cursor-not-allowed disabled:opacity-60"
                             />
                           </div>
                           <ConfigStepSelect
@@ -8349,7 +8384,7 @@ export function ServerSettingsEditor({
                             controlHeightPx={serverSettingsControlHeight}
                           />
                           <div className="grid grid-cols-1 gap-[12px] sm:grid-cols-2">
-                            <div className={`flex items-center justify-between gap-[16px] rounded-[16px] border border-[#171717] bg-[#090909] px-[16px] py-[14px] ${aiControlsDisabled ? "opacity-40" : ""}`}>
+                            <div className={`flex items-center justify-between gap-[16px] rounded-[16px] border border-[#1C1C1C] bg-[#141414] px-[16px] py-[14px] ${aiControlsDisabled ? "opacity-40" : ""}`}>
                               <span className="text-[13px] font-medium text-[#8A8A8A]">Processar reembolso automaticamente</span>
                               <button
                                 type="button"
@@ -8375,7 +8410,7 @@ export function ServerSettingsEditor({
                                 />
                               </button>
                             </div>
-                            <div className={`flex items-center justify-between gap-[16px] rounded-[16px] border border-[#171717] bg-[#090909] px-[16px] py-[14px] ${aiControlsDisabled ? "opacity-40" : ""}`}>
+                            <div className={`flex items-center justify-between gap-[16px] rounded-[16px] border border-[#1C1C1C] bg-[#141414] px-[16px] py-[14px] ${aiControlsDisabled ? "opacity-40" : ""}`}>
                               <span className="text-[13px] font-medium text-[#8A8A8A]">Exigir aprovacao manual</span>
                               <button
                                 type="button"
@@ -8414,7 +8449,7 @@ export function ServerSettingsEditor({
                               placeholder="Ex: Reembolso disponivel em ate 7 dias apos a compra. Produtos digitais nao sao reembolsaveis..."
                               maxLength={2000}
                               disabled={aiControlsDisabled}
-                              className="min-h-[100px] w-full resize-none rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] py-[12px] text-[14px] leading-[1.5] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                              className="min-h-[100px] w-full resize-none rounded-[14px] fd-field border border-[#1C1C1C] bg-[#141414] px-[14px] py-[12px] text-[14px] leading-[1.5] text-[#D1D1D1] outline-none transition-all placeholder:text-[#6F6F74] focus:border-[#2A2A2E] disabled:cursor-not-allowed disabled:opacity-60"
                             />
                           </div>
                           <div>
@@ -8426,7 +8461,7 @@ export function ServerSettingsEditor({
                               placeholder="Ex: Reembolso aprovado! O valor sera estornado em ate 5 dias uteis."
                               maxLength={600}
                               disabled={aiControlsDisabled}
-                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                              className="h-[48px] w-full rounded-[14px] fd-field border border-[#1C1C1C] bg-[#141414] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#6F6F74] focus:border-[#2A2A2E] disabled:cursor-not-allowed disabled:opacity-60"
                             />
                           </div>
                           <div>
@@ -8438,7 +8473,7 @@ export function ServerSettingsEditor({
                               placeholder="Ex: Nao foi possivel processar o reembolso. Entre em contato com o suporte."
                               maxLength={600}
                               disabled={aiControlsDisabled}
-                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                              className="h-[48px] w-full rounded-[14px] fd-field border border-[#1C1C1C] bg-[#141414] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#6F6F74] focus:border-[#2A2A2E] disabled:cursor-not-allowed disabled:opacity-60"
                             />
                           </div>
                         </div>
@@ -8484,25 +8519,13 @@ export function ServerSettingsEditor({
                         <ModuleStat label="Saida publica" value={optionLabel(textChannelOptions, exitPublicChannelId)} hint="Despedida" icon={LogOut} delay={0.14} />
                         <ModuleStat label="Logs" value={[entryLogChannelId, exitLogChannelId].filter(Boolean).length === 2 ? "Completos" : "Pendentes"} hint="Registro privado" icon={Hash} delay={0.18} />
                       </div>
-                      <ModuleCard label="Entrada" title="Canais de entrada" description="Onde o membro e recebido e onde a equipe ve o log." delay={0.16}>
-                        <div className="grid grid-cols-1 gap-[12px] xl:grid-cols-2">
-                          <ModuleSetting label="Canal publico" value={optionLabel(textChannelOptions, entryPublicChannelId)} hint="Mensagem de boas-vindas" icon={LogIn}>
-                            <ConfigStepSelect label="" placeholder="Escolha o canal" options={textChannelOptions} value={entryPublicChannelId} onChange={setEntryPublicChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          </ModuleSetting>
-                          <ModuleSetting label="Log privado" value={optionLabel(textChannelOptions, entryLogChannelId)} hint="Auditoria de entrada" icon={Hash}>
-                            <ConfigStepSelect label="" placeholder="Escolha o canal" options={textChannelOptions} value={entryLogChannelId} onChange={setEntryLogChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          </ModuleSetting>
-                        </div>
-                      </ModuleCard>
-                      <ModuleCard label="Saida" title="Canais de saida" description="Onde o servidor se despede e onde o log e gravado." delay={0.2}>
-                        <div className="grid grid-cols-1 gap-[12px] xl:grid-cols-2">
-                          <ModuleSetting label="Canal publico" value={optionLabel(textChannelOptions, exitPublicChannelId)} hint="Mensagem de saida" icon={LogOut}>
-                            <ConfigStepSelect label="" placeholder="Escolha o canal" options={textChannelOptions} value={exitPublicChannelId} onChange={setExitPublicChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          </ModuleSetting>
-                          <ModuleSetting label="Log privado" value={optionLabel(textChannelOptions, exitLogChannelId)} hint="Auditoria de saida" icon={Hash}>
-                            <ConfigStepSelect label="" placeholder="Escolha o canal" options={textChannelOptions} value={exitLogChannelId} onChange={setExitLogChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          </ModuleSetting>
-                        </div>
+                      <ModuleCard label="Canais" title="Entrada e saida" description="Configure canais publicos e logs privados de entrada e saida." delay={0.16}>
+                        <ModuleFieldsGrid>
+                          <ConfigStepSelect label="Canal publico de entrada" placeholder="Escolha o canal" options={textChannelOptions} value={entryPublicChannelId} onChange={setEntryPublicChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepSelect label="Log privado de entrada" placeholder="Escolha o canal" options={textChannelOptions} value={entryLogChannelId} onChange={setEntryLogChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepSelect label="Canal publico de saida" placeholder="Escolha o canal" options={textChannelOptions} value={exitPublicChannelId} onChange={setExitPublicChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepSelect label="Log privado de saida" placeholder="Escolha o canal" options={textChannelOptions} value={exitLogChannelId} onChange={setExitLogChannelId} disabled={welcomeControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                        </ModuleFieldsGrid>
                       </ModuleCard>
                     </ModulePage>
                   ) : settingsSection === "suggestions_overview" ? (
@@ -8529,18 +8552,12 @@ export function ServerSettingsEditor({
                         <ModuleStat label="Publicacao" value={optionLabel(textChannelOptions, suggestionsPublishChannelId)} hint="Onde a ideia aparece" icon={Hash} delay={0.12} />
                         <ModuleStat label="Logs" value={optionLabel(textChannelOptions, suggestionsLogsChannelId, "Opcional")} hint="Auditoria interna" icon={Hash} delay={0.16} />
                       </div>
-                      <ModuleCard label="Canais" title="Destinos do modulo" description="Cada card mostra o canal atual antes do seletor." delay={0.18}>
-                        <div className="grid grid-cols-1 gap-[12px] xl:grid-cols-2">
-                          <ModuleSetting label="Canal do painel" value={optionLabel(textChannelOptions, suggestionsPanelChannelId)} hint="Formulario de envio" icon={Hash}>
-                            <ConfigStepSelect label="" placeholder="Escolha o canal" options={textChannelOptions} value={suggestionsPanelChannelId} onChange={setSuggestionsPanelChannelId} disabled={suggestionsControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          </ModuleSetting>
-                          <ModuleSetting label="Canal de publicacao" value={optionLabel(textChannelOptions, suggestionsPublishChannelId)} hint="Sugestao publicada" icon={Hash}>
-                            <ConfigStepSelect label="" placeholder="Escolha o canal" options={textChannelOptions} value={suggestionsPublishChannelId} onChange={setSuggestionsPublishChannelId} disabled={suggestionsControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          </ModuleSetting>
-                          <ModuleSetting label="Canal de logs" value={optionLabel(textChannelOptions, suggestionsLogsChannelId, "Opcional")} hint="Registro interno" icon={Hash}>
-                            <ConfigStepSelect label="" placeholder="Escolha o canal de logs" options={textChannelOptions} value={suggestionsLogsChannelId} onChange={setSuggestionsLogsChannelId} disabled={suggestionsControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          </ModuleSetting>
-                        </div>
+                      <ModuleCard label="Canais" title="Destinos do modulo" description="Configure painel, publicacao e logs de sugestoes." delay={0.18}>
+                        <ModuleFieldsGrid>
+                          <ConfigStepSelect label="Canal do painel" placeholder="Escolha o canal" options={textChannelOptions} value={suggestionsPanelChannelId} onChange={setSuggestionsPanelChannelId} disabled={suggestionsControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepSelect label="Canal de publicacao" placeholder="Escolha o canal" options={textChannelOptions} value={suggestionsPublishChannelId} onChange={setSuggestionsPublishChannelId} disabled={suggestionsControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepSelect label="Canal de logs" placeholder="Escolha o canal de logs" options={textChannelOptions} value={suggestionsLogsChannelId} onChange={setSuggestionsLogsChannelId} disabled={suggestionsControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                        </ModuleFieldsGrid>
                       </ModuleCard>
 
                       <TicketMessageBuilder
@@ -8606,12 +8623,14 @@ export function ServerSettingsEditor({
                           </p>
                         </div>
 
-                        <div className="mt-[18px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
-                          <ConfigStepSelect label="Canal do painel" placeholder="Escolha o canal" options={textChannelOptions} value={batePontoPanelChannelId} onChange={setBatePontoPanelChannelId} disabled={batePontoControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          <ConfigStepSelect label="Canal de logs (opcional)" placeholder="Escolha o canal de logs" options={textChannelOptions} value={batePontoLogsChannelId} onChange={setBatePontoLogsChannelId} disabled={batePontoControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          <div className="xl:col-span-2">
-                            <ConfigStepMultiSelect label="Cargos autorizados" placeholder="Selecione os cargos" options={roleOptions} values={batePontoAllowedRoleIds} onChange={setBatePontoAllowedRoleIds} disabled={batePontoControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          </div>
+                        <div className="mt-[18px]">
+                          <ModuleFieldsGrid>
+                            <ConfigStepSelect label="Canal do painel" placeholder="Escolha o canal" options={textChannelOptions} value={batePontoPanelChannelId} onChange={setBatePontoPanelChannelId} disabled={batePontoControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                            <ConfigStepSelect label="Canal de logs (opcional)" placeholder="Escolha o canal de logs" options={textChannelOptions} value={batePontoLogsChannelId} onChange={setBatePontoLogsChannelId} disabled={batePontoControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                            <div className="xl:col-span-2">
+                              <ConfigStepMultiSelect label="Cargos autorizados" placeholder="Selecione os cargos" options={roleOptions} values={batePontoAllowedRoleIds} onChange={setBatePontoAllowedRoleIds} disabled={batePontoControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                            </div>
+                          </ModuleFieldsGrid>
                         </div>
                       </div>
 
@@ -8703,7 +8722,7 @@ export function ServerSettingsEditor({
                                 );
                               }}
                               disabled={batePontoControlsDisabled || !batePontoHourBankEnabled}
-                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                              className="h-[48px] w-full rounded-[14px] fd-field border border-[#1C1C1C] bg-[#141414] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#6F6F74] focus:border-[#2A2A2E] disabled:cursor-not-allowed disabled:opacity-60"
                             />
                             <p className="mt-[8px] text-[12px] leading-[1.5] text-[#686868]">
                               Equivalente a {batePontoDailyTargetMinutes} minutos por dia.
@@ -8718,7 +8737,7 @@ export function ServerSettingsEditor({
                               placeholder="America/Sao_Paulo"
                               maxLength={64}
                               disabled={batePontoControlsDisabled}
-                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                              className="h-[48px] w-full rounded-[14px] fd-field border border-[#1C1C1C] bg-[#141414] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#6F6F74] focus:border-[#2A2A2E] disabled:cursor-not-allowed disabled:opacity-60"
                             />
                           </div>
                         </div>
@@ -8766,7 +8785,7 @@ export function ServerSettingsEditor({
                               disabled={
                                 batePontoControlsDisabled || !batePontoAutoFinishOpenSessions
                               }
-                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                              className="h-[48px] w-full rounded-[14px] fd-field border border-[#1C1C1C] bg-[#141414] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#6F6F74] focus:border-[#2A2A2E] disabled:cursor-not-allowed disabled:opacity-60"
                             />
                           </div>
                         </div>
@@ -8833,21 +8852,13 @@ export function ServerSettingsEditor({
                         <ModuleStat label="Verificados" value={optionLabels(roleOptions, captchaVerifiedRoleIds)} hint="Cargos apos o desafio" icon={Users} delay={0.14} />
                         <ModuleStat label="Tentativas" value={String(captchaMaxAttempts)} hint="Limite do desafio" icon={Shield} delay={0.18} />
                       </div>
-                      <ModuleCard label="Acesso" title="Canais e cargos" description="Destinos atuais e quem passa na verificacao." delay={0.16}>
-                        <div className="grid grid-cols-1 gap-[12px] xl:grid-cols-2">
-                          <ModuleSetting label="Canal principal" value={optionLabel(textChannelOptions, captchaPanelChannelId)} hint="Painel do captcha" icon={Hash}>
-                            <ConfigStepSelect label="" placeholder="Escolha o canal" options={textChannelOptions} value={captchaPanelChannelId} onChange={setCaptchaPanelChannelId} disabled={captchaControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          </ModuleSetting>
-                          <ModuleSetting label="Canal de logs" value={optionLabel(textChannelOptions, captchaLogsChannelId, "Opcional")} hint="Auditoria" icon={Hash}>
-                            <ConfigStepSelect label="" placeholder="Escolha o canal de logs" options={textChannelOptions} value={captchaLogsChannelId} onChange={setCaptchaLogsChannelId} disabled={captchaControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          </ModuleSetting>
-                          <ModuleSetting label="Cargos verificados" value={optionLabels(roleOptions, captchaVerifiedRoleIds)} hint="Acesso liberado" icon={Users}>
-                            <ConfigStepMultiSelect label="" placeholder="Escolha os cargos" options={roleOptions} values={captchaVerifiedRoleIds} onChange={setCaptchaVerifiedRoleIds} disabled={captchaControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          </ModuleSetting>
-                          <ModuleSetting label="Bypass" value={optionLabels(roleOptions, captchaBypassRoleIds, "Nenhum")} hint="Pula o desafio" icon={Users}>
-                            <ConfigStepMultiSelect label="" placeholder="Escolha os cargos" options={roleOptions} values={captchaBypassRoleIds} onChange={setCaptchaBypassRoleIds} disabled={captchaControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
-                          </ModuleSetting>
-                        </div>
+                      <ModuleCard label="Acesso" title="Canais e cargos" description="Configure canais do captcha e cargos de verificacao." delay={0.16}>
+                        <ModuleFieldsGrid>
+                          <ConfigStepSelect label="Canal principal" placeholder="Escolha o canal" options={textChannelOptions} value={captchaPanelChannelId} onChange={setCaptchaPanelChannelId} disabled={captchaControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepSelect label="Canal de logs" placeholder="Escolha o canal de logs" options={textChannelOptions} value={captchaLogsChannelId} onChange={setCaptchaLogsChannelId} disabled={captchaControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepMultiSelect label="Cargos verificados" placeholder="Escolha os cargos" options={roleOptions} values={captchaVerifiedRoleIds} onChange={setCaptchaVerifiedRoleIds} disabled={captchaControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                          <ConfigStepMultiSelect label="Bypass" placeholder="Escolha os cargos" options={roleOptions} values={captchaBypassRoleIds} onChange={setCaptchaBypassRoleIds} disabled={captchaControlsDisabled} controlHeightPx={serverSettingsControlHeight} />
+                        </ModuleFieldsGrid>
                       </ModuleCard>
 
                       <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
@@ -8871,7 +8882,7 @@ export function ServerSettingsEditor({
                               placeholder="Verificacao de seguranca"
                               maxLength={80}
                               disabled={captchaControlsDisabled}
-                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                              className="h-[48px] w-full rounded-[14px] fd-field border border-[#1C1C1C] bg-[#141414] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#6F6F74] focus:border-[#2A2A2E] disabled:cursor-not-allowed disabled:opacity-60"
                             />
                           </div>
                           <div>
@@ -8887,7 +8898,7 @@ export function ServerSettingsEditor({
                                 )
                               }
                               disabled={captchaControlsDisabled}
-                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                              className="h-[48px] w-full rounded-[14px] fd-field border border-[#1C1C1C] bg-[#141414] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#6F6F74] focus:border-[#2A2A2E] disabled:cursor-not-allowed disabled:opacity-60"
                             />
                           </div>
                           <div className="xl:col-span-2">
@@ -8899,7 +8910,7 @@ export function ServerSettingsEditor({
                               placeholder="Selecione o codigo que aparece na imagem acima."
                               maxLength={400}
                               disabled={captchaControlsDisabled}
-                              className="min-h-[92px] w-full resize-none rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] py-[12px] text-[14px] leading-[1.5] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                              className="min-h-[92px] w-full resize-none rounded-[14px] fd-field border border-[#1C1C1C] bg-[#141414] px-[14px] py-[12px] text-[14px] leading-[1.5] text-[#D1D1D1] outline-none transition-all placeholder:text-[#6F6F74] focus:border-[#2A2A2E] disabled:cursor-not-allowed disabled:opacity-60"
                             />
                           </div>
                           <div>
@@ -8915,10 +8926,10 @@ export function ServerSettingsEditor({
                                 )
                               }
                               disabled={captchaControlsDisabled}
-                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                              className="h-[48px] w-full rounded-[14px] fd-field border border-[#1C1C1C] bg-[#141414] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#6F6F74] focus:border-[#2A2A2E] disabled:cursor-not-allowed disabled:opacity-60"
                             />
                           </div>
-                          <div className={`flex items-center justify-between gap-[16px] rounded-[16px] border border-[#171717] bg-[#090909] px-[16px] py-[14px] ${captchaControlsDisabled ? "opacity-40" : ""}`}>
+                          <div className={`flex items-center justify-between gap-[16px] rounded-[16px] border border-[#1C1C1C] bg-[#0D0D0D] px-[16px] py-[14px] ${captchaControlsDisabled ? "opacity-40" : ""}`}>
                             <span className="text-[13px] font-medium text-[#8A8A8A]">Expulsar ao falhar</span>
                             <button
                               type="button"
@@ -8947,7 +8958,7 @@ export function ServerSettingsEditor({
                               placeholder="Verificacao concluida com sucesso. Bem-vindo ao servidor!"
                               maxLength={400}
                               disabled={captchaControlsDisabled}
-                              className="h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                              className="h-[48px] w-full rounded-[14px] fd-field border border-[#1C1C1C] bg-[#141414] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#6F6F74] focus:border-[#2A2A2E] disabled:cursor-not-allowed disabled:opacity-60"
                             />
                           </div>
                         </div>
@@ -9033,7 +9044,7 @@ export function ServerSettingsEditor({
                         </div>
 
                         {antiLinkEnforcementAction === "timeout" ? (
-                          <div className="mt-[16px] rounded-[18px] border border-[#161616] bg-[#0A0A0A] px-[14px] py-[14px]">
+                          <div className="mt-[16px] rounded-[18px] border border-[#1C1C1C] bg-[#141414] px-[14px] py-[14px]">
                             <label
                               htmlFor="anti-link-timeout-minutes"
                               className="block text-[12px] uppercase tracking-[0.16em] text-[#676767]"
@@ -9053,7 +9064,7 @@ export function ServerSettingsEditor({
                                 );
                               }}
                               disabled={antiLinkControlsDisabled}
-                              className="mt-[10px] h-[48px] w-full rounded-[14px] border border-[#171717] bg-[#080808] px-[12px] text-[14px] text-[#E2E2E2] outline-none transition-colors placeholder:text-[#4F4F4F] focus:border-[#262626] disabled:cursor-not-allowed disabled:opacity-60"
+                              className="mt-[10px] h-[48px] w-full rounded-[14px] fd-field border border-[#1C1C1C] bg-[#141414] px-[12px] text-[14px] text-[#E2E2E2] outline-none transition-colors placeholder:text-[#4F4F4F] focus:border-[#2A2A2E] disabled:cursor-not-allowed disabled:opacity-60"
                               placeholder="Exemplo: 10"
                             />
                           </div>
@@ -9299,12 +9310,12 @@ export function ServerSettingsEditor({
 
                             <div className="space-y-[10px] px-[14px] py-[14px]">
                               {isAutoRoleConsoleLoading && autoRoleConsoleEntries.length === 0 ? (
-                                <div className="flex items-center gap-[10px] rounded-[16px] border border-[#121212] bg-[#090909] px-[14px] py-[14px] text-[13px] text-[#7A7A7A]">
+                                <div className="flex items-center gap-[10px] rounded-[16px] border border-[#1C1C1C] bg-[#0D0D0D] px-[14px] py-[14px] text-[13px] text-[#7A7A7A]">
                                   <ButtonLoader size={14} colorClassName="text-[#D8D8D8]" />
                                   Carregando console do autorole...
                                 </div>
                               ) : autoRoleConsoleEntries.length === 0 ? (
-                                <div className="rounded-[16px] border border-dashed border-[#191919] bg-[#080808] px-[14px] py-[16px]">
+                                <div className="rounded-[16px] border border-dashed border-[#1C1C1C] bg-[#141414] px-[14px] py-[16px]">
                                   <p className="font-mono text-[13px] leading-[1.7] text-[#767676]">
                                     {autoRoleSyncInFlight
                                       ? "Aguardando o bot registrar os primeiros membros desta sincronizacao..."
@@ -9429,7 +9440,7 @@ export function ServerSettingsEditor({
                               controlHeightPx={serverSettingsControlHeight}
                             />
 
-                            <span className="inline-flex h-[32px] items-center justify-center rounded-full border border-[#151515] bg-[#0B0B0B] px-[12px] text-[11px] uppercase tracking-[0.16em] text-[#686868]">
+                            <span className="inline-flex h-[32px] items-center justify-center rounded-full border border-[#1C1C1C] bg-[#141414] px-[12px] text-[11px] uppercase tracking-[0.16em] text-[#686868]">
                               {securityLogsDraft.useDefaultChannel
                                 ? "Canal unico"
                                 : "Canais isolados"}
@@ -9596,7 +9607,7 @@ export function ServerSettingsEditor({
                           </div>
 
                           <div className="flex flex-wrap items-center gap-[12px]">
-                            <div className="inline-flex items-center rounded-full border border-[#151515] bg-[#0B0B0B] p-[4px]">
+                            <div className="inline-flex items-center rounded-full border border-[#1C1C1C] bg-[#141414] p-[4px]">
                               {(["entry", "exit"] as const).map((tab) => {
                                 const isActive = welcomeMessageTab === tab;
                                 return (
@@ -9617,7 +9628,7 @@ export function ServerSettingsEditor({
                               })}
                             </div>
 
-                            <div className="inline-flex items-center rounded-full border border-[#151515] bg-[#0B0B0B] p-[4px]">
+                            <div className="inline-flex items-center rounded-full border border-[#1C1C1C] bg-[#141414] p-[4px]">
                               {(["public", "log"] as const).map((tab) => {
                                 const isActive = welcomeSubTab === tab;
                                 const Icon = tab === "public" ? Users : ShieldCheck;
@@ -10039,7 +10050,7 @@ export function ServerSettingsEditor({
                     </span>
                   </div>
 
-                  <div className="mt-4 rounded-[3px] border border-[#2E2E2E] bg-[#090909] px-3 py-3">
+                  <div className="mt-4 rounded-[3px] border border-[#1C1C1C] bg-[#0D0D0D] px-3 py-3">
                     <div className="flex flex-col gap-3 min-[640px]:flex-row min-[640px]:items-center min-[640px]:justify-between">
                       <div>
                         <p className="text-[14px] text-[#D8D8D8]">Cobranca recorrente</p>
@@ -10085,7 +10096,7 @@ export function ServerSettingsEditor({
                     ) : null}
                   </div>
 
-                  <div className="mt-4 rounded-[3px] border border-[#2E2E2E] bg-[#090909] px-3 py-3">
+                  <div className="mt-4 rounded-[3px] border border-[#1C1C1C] bg-[#0D0D0D] px-3 py-3">
                     <div className="flex flex-col gap-3 min-[640px]:flex-row min-[640px]:items-center min-[640px]:justify-between">
                       <p className="text-[12px] text-[#8E8E8E]">Cartao vinculado a recorrencia</p>
                       <button
@@ -10229,7 +10240,7 @@ export function ServerSettingsEditor({
                   />
                   <span
                     aria-hidden="true"
-                    className="pointer-events-none absolute inset-[1px] rounded-[25px] bg-[#070707]"
+                    className="pointer-events-none absolute inset-[1px] rounded-[25px] bg-[#0D0D0D]"
                   />
 
                   <div className="relative z-10 flex flex-col gap-[16px] px-[18px] py-[16px] sm:px-[22px] sm:py-[18px] xl:flex-row xl:items-center xl:justify-between">
@@ -10274,7 +10285,7 @@ export function ServerSettingsEditor({
                           onClick={() => {
                             void handleSave();
                           }}
-                          disabled={!canPersistSettings}
+                          disabled={!canPersistSettings || isSaving}
                           className={`group relative inline-flex h-[46px] items-center justify-center overflow-hidden whitespace-nowrap rounded-[12px] px-6 text-[15px] leading-none font-semibold ${
                             canPersistSettings ? "" : "cursor-not-allowed"
                           }`}
@@ -10363,7 +10374,7 @@ export function ServerSettingsEditor({
                     className={`flex items-center gap-3 rounded-[3px] border px-3 py-3 text-left transition-colors ${
                       isSelected
                         ? "border-[#6AE25A] bg-[rgba(106,226,90,0.12)]"
-                        : "border-[#2E2E2E] bg-[#090909] hover:bg-[#101010]"
+                        : "border border-[#1C1C1C] bg-[#0D0D0D] hover:bg-[#171717]"
                     }`}
                   >
                     <span className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-[3px] bg-[#111111]">
@@ -10805,7 +10816,7 @@ export function ServerSettingsEditor({
                   </button>
                 </div>
 
-                <div className="mt-[24px] rounded-[22px] border border-[#161616] bg-[#090909] px-[18px] py-[18px]">
+                <div className="mt-[24px] rounded-[22px] border border-[#161616] bg-[#0D0D0D] px-[18px] py-[18px]">
                   <p className="text-[12px] uppercase tracking-[0.16em] text-[#666666]">
                     Canal de destino
                   </p>
@@ -10918,7 +10929,7 @@ export function ServerSettingsEditor({
                     {WELCOME_VARIABLES.map((variable) => (
                       <div
                         key={variable.token}
-                        className="group rounded-[20px] border border-[#141414] bg-[#080808] px-[16px] py-[14px] transition-colors hover:border-[#1C1C1C] hover:bg-[#0A0A0A]"
+                        className="group rounded-[20px] border border-[#1C1C1C] bg-[#141414] px-[16px] py-[14px] transition-colors hover:border-[#2A2A2E] hover:bg-[#171717]"
                       >
                         <div className="flex items-center gap-[8px]">
                           <span className="rounded-[8px] bg-[#111111] px-[8px] py-[4px] text-[13px] font-bold tracking-tight text-[#E2E2E2] group-hover:bg-[#161616]">
@@ -11034,7 +11045,7 @@ export function ServerSettingsEditor({
                   </div>
 
                   <div className="mt-[28px]">
-                    <div className="relative rounded-[24px] border border-[#161616] bg-[#0A0A0A] p-[10px]">
+                    <div className="relative rounded-[24px] border border-[#1C1C1C] bg-[#141414] p-[10px]">
                       <textarea
                         value={aiRulesDraft}
                         onChange={(e) => setAiRulesDraft(e.target.value)}
@@ -11042,7 +11053,7 @@ export function ServerSettingsEditor({
                         rows={12}
                         maxLength={4000}
                         disabled={aiControlsDisabled}
-                        className={`w-full resize-none rounded-[18px] bg-[#080808] p-[16px] text-[15px] font-medium leading-[1.6] text-[#D1D1D1] outline-none transition-all placeholder:text-[#3B3B3B] focus:bg-[#090909] ${aiControlsDisabled ? "cursor-not-allowed opacity-50" : ""}`}
+                        className={`w-full resize-none rounded-[18px] border border-[#1C1C1C] bg-[#0D0D0D] p-[16px] text-[15px] font-medium leading-[1.6] text-[#D1D1D1] outline-none transition-all placeholder:text-[#6F6F74] focus:border-[#2A2A2E] ${aiControlsDisabled ? "cursor-not-allowed opacity-50" : ""}`}
                       />
                       <div className="absolute right-[22px] top-[22px]">
                         <span className={`text-[10px] font-bold tracking-[0.12em] ${aiRulesDraft.length >= 4000 ? "text-[#FF4A4A]" : "text-[#3A3A3A]"}`}>
@@ -11165,7 +11176,7 @@ export function ServerSettingsEditor({
                     </button>
                   </div>
 
-                  <div className="mt-[28px] rounded-[24px] border border-[#161616] bg-[#090909] px-[18px] py-[18px]">
+                  <div className="mt-[28px] rounded-[24px] border border-[#161616] bg-[#0D0D0D] px-[18px] py-[18px]">
                     <p className="text-[12px] uppercase tracking-[0.16em] text-[#5F5F5F]">
                       Plano detectado
                     </p>

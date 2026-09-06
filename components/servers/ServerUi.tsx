@@ -111,7 +111,7 @@ export function ServerTextInput({
     <input
       {...props}
       className={cn(
-        "flowdesk-server-input h-[44px] w-full rounded-[14px] border border-[#252525] bg-[#0D0D0D] px-[14px] text-[14px] text-[#F1F1F1] outline-none transition-[border-color,box-shadow,background-color] duration-200 placeholder:text-[#646464] focus:border-[#4A4A4A]",
+        "flowdesk-server-input fd-field h-[44px] w-full rounded-[14px] px-[14px] text-[14px] outline-none transition-colors duration-200",
         className,
       )}
     />

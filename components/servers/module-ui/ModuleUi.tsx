@@ -158,6 +158,13 @@ export function ModuleCard({
   );
 }
 
+export const MODULE_FIELDS_GRID_CLASS =
+  "grid grid-cols-1 gap-[16px] xl:grid-cols-2";
+
+export function ModuleFieldsGrid({ children }: { children: ReactNode }) {
+  return <div className={MODULE_FIELDS_GRID_CLASS}>{children}</div>;
+}
+
 export function ModuleSetting({
   label,
   value,
