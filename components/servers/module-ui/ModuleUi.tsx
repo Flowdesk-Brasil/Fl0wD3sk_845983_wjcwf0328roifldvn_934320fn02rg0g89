@@ -1,9 +1,10 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { motion } from "motion/react";
 import type { LucideIcon } from "lucide-react";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, ChevronDown, Power, RotateCcw } from "lucide-react";
+import type { ServerEditorModuleActions } from "@/lib/servers/serverEditorChrome";
 
 export const moduleEase = [0.22, 1, 0.36, 1] as const;
 
@@ -38,46 +39,93 @@ export function ModulePage({ children }: { children: ReactNode }) {
   return <div className="space-y-[14px]">{children}</div>;
 }
 
-export function ModuleHero({
-  label,
-  title,
-  description,
-  icon: Icon,
-  action,
-  delay = 0,
+export function ModuleActionsMenu({
+  actions,
 }: {
-  label: string;
-  title: string;
-  description: string;
-  icon: LucideIcon;
-  action?: ReactNode;
-  delay?: number;
+  actions: ServerEditorModuleActions;
 }) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+
+    function handlePointer(event: MouseEvent) {
+      if (
+        menuRef.current &&
+        event.target instanceof Node &&
+        !menuRef.current.contains(event.target)
+      ) {
+        setOpen(false);
+      }
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+
+    document.addEventListener("mousedown", handlePointer);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handlePointer);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [open]);
+
+  const toggleLabel = actions.enabled ? "Desativar módulo" : "Ativar módulo";
+
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.42, delay, ease: moduleEase }}
-      className={`${MODULE_CARD_CLASS} hover:border-[#2A2A2E]`}
-    >
-      <div className="flex items-start justify-between gap-[16px]">
-        <div className="flex min-w-0 items-start gap-[14px]">
-          <span className="mt-[2px] flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-[12px] border border-[#1C1C1C] bg-[#141414] text-[#C4C4C8]">
-            <Icon className="h-[18px] w-[18px]" strokeWidth={1.85} />
-          </span>
-          <div className="min-w-0">
-            <p className="text-[12px] font-medium text-[#8B8B90]">{label}</p>
-            <h2 className="mt-[8px] text-[22px] leading-[1.15] font-semibold tracking-[-0.04em] text-[#F2F2F3] md:text-[26px]">
-              {title}
-            </h2>
-            <p className="mt-[8px] max-w-[720px] text-[13px] leading-[1.6] text-[#8B8B90] md:text-[14px]">
-              {description}
-            </p>
-          </div>
+    <div ref={menuRef} className={open ? "relative z-[620]" : "relative shrink-0"}>
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        disabled={actions.disabled}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        className="inline-flex h-[42px] items-center gap-[8px] rounded-[14px] border border-[#1C1C1C] bg-[#141414] px-[14px] text-[14px] font-medium text-[#E8E8EA] transition-colors hover:border-[#2A2A2E] hover:bg-[#171717] disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        Ações
+        <ChevronDown
+          className={`h-[16px] w-[16px] text-[#8B8B90] transition-transform ${open ? "rotate-180" : ""}`}
+          strokeWidth={2}
+        />
+      </button>
+
+      {open ? (
+        <div
+          role="menu"
+          className="flowdesk-scale-in-soft absolute right-0 top-[calc(100%+8px)] z-[620] min-w-[220px] overflow-hidden rounded-[16px] border border-[#242424] bg-[#0A0A0A] p-[6px] shadow-[0_20px_60px_rgba(0,0,0,0.55)]"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              actions.onToggle();
+              setOpen(false);
+            }}
+            disabled={actions.disabled}
+            className="flex w-full items-center gap-[10px] rounded-[10px] px-[12px] py-[10px] text-left text-[13px] text-[#E4E4E7] transition-colors hover:bg-[#141414] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Power className="h-[15px] w-[15px] text-[#9A9AA0]" strokeWidth={1.9} />
+            {toggleLabel}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              if (!actions.canReset) return;
+              actions.onReset();
+              setOpen(false);
+            }}
+            disabled={actions.disabled || !actions.canReset}
+            className="flex w-full items-center gap-[10px] rounded-[10px] px-[12px] py-[10px] text-left text-[13px] transition-colors hover:bg-[#141414] disabled:cursor-not-allowed disabled:text-[#55555A] disabled:hover:bg-transparent text-[#C8C8CC]"
+          >
+            <RotateCcw className="h-[15px] w-[15px] text-[#9A9AA0]" strokeWidth={1.9} />
+            Resetar módulo
+          </button>
         </div>
-        {action ? <div className="shrink-0 pt-[2px]">{action}</div> : null}
-      </div>
-    </motion.div>
+      ) : null}
+    </div>
   );
 }
 

@@ -11,6 +11,8 @@ export type ServerSettingsVaultModule =
   | "welcome_settings"
   | "captcha_settings"
   | "suggestions_settings"
+  | "sorteio_settings"
+  | "whitelist_settings"
   | "bate_ponto_settings"
   | "antilink_settings"
   | "autorole_settings"

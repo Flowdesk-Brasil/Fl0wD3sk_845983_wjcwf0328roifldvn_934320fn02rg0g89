@@ -1,3 +1,5 @@
+import { parseResponseJson } from "@/lib/performance/clientData";
+
 type CacheEntry<T> = {
   timestamp: number;
   value: T;
@@ -58,7 +60,7 @@ export function prefetchBatePontoPanels(guildId: string) {
       `/api/auth/me/guilds/bate-ponto-ranking?guildId=${encodeURIComponent(guildId)}&periodDays=30`,
       { cache: "no-store" },
     )
-      .then((response) => response.json())
+      .then((response) => parseResponseJson<{ ok?: boolean; ranking?: unknown }>(response))
       .then((payload) => {
         if (payload?.ok && Array.isArray(payload.ranking)) {
           writeCachedBatePontoRanking(guildId, 30, payload.ranking);
@@ -72,7 +74,7 @@ export function prefetchBatePontoPanels(guildId: string) {
       `/api/auth/me/guilds/bate-ponto-history?guildId=${encodeURIComponent(guildId)}&limit=50&offset=0`,
       { cache: "no-store" },
     )
-      .then((response) => response.json())
+      .then((response) => parseResponseJson<{ ok?: boolean; events?: unknown }>(response))
       .then((payload) => {
         if (payload?.ok && Array.isArray(payload.events)) {
           writeCachedBatePontoHistory(guildId, "", 0, payload.events);

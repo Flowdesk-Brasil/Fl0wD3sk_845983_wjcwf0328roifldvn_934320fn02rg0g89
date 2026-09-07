@@ -23,7 +23,6 @@ import {
   ServerButton,
   ServerDiscordRelinkState,
   ServerEmptyState,
-  ServerSectionHeading,
   ServerSurface,
   ServerTextInput,
   cn,
@@ -562,12 +561,6 @@ export function SalesPaymentMethodsPanel({
 
   return (
     <div className="space-y-[18px]">
-      <ServerSectionHeading
-        eyebrow="Vendas"
-        title="Metodos de pagamento"
-        description="Ative o PIX via Mercado Pago e mantenha os demais provedores desativados ate a liberacao comercial."
-      />
-
       <ServerSurface className="overflow-hidden">
         <div className="flex flex-col gap-[12px] border-b border-[#171717] px-[18px] py-[16px] lg:flex-row lg:items-center lg:justify-between lg:px-[22px]">
           <div className="relative w-full lg:max-w-[420px]">

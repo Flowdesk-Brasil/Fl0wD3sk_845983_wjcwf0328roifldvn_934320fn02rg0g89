@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { AlertTriangle, Bell, Check, Info } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import {
@@ -8,6 +9,7 @@ import {
   type NotificationInboxItem,
   type NotificationTone,
 } from "@/components/notifications/NotificationsProvider";
+import { usePanelDropdownPosition } from "@/components/panel-shell/usePanelDropdownPosition";
 
 function formatRelativeTime(createdAt: number) {
   const elapsedMs = Date.now() - createdAt;
@@ -40,7 +42,9 @@ function NotificationRow({ item }: { item: NotificationInboxItem }) {
           {item.title || item.message}
         </p>
         {item.title ? (
-          <p className="mt-1 line-clamp-2 text-[12px] leading-[1.45] text-[#8b8b90]">{item.message}</p>
+          <p className="mt-1 line-clamp-2 text-[12px] leading-[1.45] text-[#8b8b90]">
+            {item.message}
+          </p>
         ) : null}
         <p className="mt-1.5 text-[11px] text-[#6a6a70]">{formatRelativeTime(item.createdAt)}</p>
       </div>
@@ -54,15 +58,23 @@ type PanelNotificationsMenuProps = {
 };
 
 export function PanelNotificationsMenu({ open, onOpenChange }: PanelNotificationsMenuProps) {
-  const rootRef = useRef<HTMLDivElement | null>(null);
+  const anchorRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const position = usePanelDropdownPosition(open, anchorRef, 360);
   const { items, unreadCount, markAllRead } = useNotificationInbox();
+  const [shouldRenderMenu, setShouldRenderMenu] = useState(open);
+
+  useEffect(() => {
+    if (open) setShouldRenderMenu(true);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
 
     function handlePointer(event: MouseEvent) {
       const target = event.target as Node | null;
-      if (target && rootRef.current?.contains(target)) return;
+      if (anchorRef.current?.contains(target)) return;
+      if (menuRef.current?.contains(target)) return;
       onOpenChange(false);
     }
 
@@ -78,56 +90,104 @@ export function PanelNotificationsMenu({ open, onOpenChange }: PanelNotification
     };
   }, [onOpenChange, open]);
 
+  const menu =
+    typeof document !== "undefined" && shouldRenderMenu && position ? (
+      createPortal(
+        <AnimatePresence onExitComplete={() => setShouldRenderMenu(false)}>
+          {open ? (
+            <>
+              <motion.button
+                type="button"
+                aria-label="Fechar notificacoes"
+                className="fd-panel-dropdown-backdrop"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.14 }}
+                onClick={() => onOpenChange(false)}
+              />
+              <motion.div
+                ref={menuRef}
+                className="fd-notify-menu is-portal"
+                role="dialog"
+                aria-label="Notificacoes"
+                style={{
+                  top: position.top,
+                  right: position.right,
+                  width: position.width,
+                }}
+                initial={{ opacity: 0, y: -8, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+              >
+                <div className="fd-notify-head">
+                  <div>
+                    <p>Notificacoes</p>
+                    {unreadCount > 0 ? (
+                      <span className="mt-1 block text-[11px] font-normal text-[#8b8b90]">
+                        {unreadCount} nova{unreadCount === 1 ? "" : "s"}
+                      </span>
+                    ) : (
+                      <span className="mt-1 block text-[11px] font-normal text-[#6a6a70]">
+                        Tudo em dia
+                      </span>
+                    )}
+                  </div>
+                  {unreadCount > 0 ? (
+                    <button
+                      type="button"
+                      className="fd-notify-mark-read"
+                      onClick={() => markAllRead()}
+                    >
+                      Marcar lidas
+                    </button>
+                  ) : null}
+                </div>
+                <div className="fd-notify-list">
+                  {items.length ? (
+                    items.map((item) => <NotificationRow key={item.id} item={item} />)
+                  ) : (
+                    <div className="fd-notify-empty">
+                      <span className="fd-notify-empty-icon" aria-hidden="true">
+                        <Bell className="h-4 w-4" strokeWidth={1.8} />
+                      </span>
+                      <p className="text-[13px] font-medium text-[#d1d1d5]">
+                        Nenhuma notificacao por enquanto
+                      </p>
+                      <p className="mt-1 max-w-[240px] text-[12px] leading-[1.5] text-[#7d7d82]">
+                        Alertas de sucesso, erro e avisos do painel aparecem aqui.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            </>
+          ) : null}
+        </AnimatePresence>,
+        document.body,
+      )
+    ) : null;
+
   return (
-    <div ref={rootRef} className="relative">
+    <>
       <button
+        ref={anchorRef}
         type="button"
         className={`fd-header-icon${open ? " is-open" : ""}`}
         aria-label="Notificacoes"
         aria-expanded={open}
+        aria-haspopup="dialog"
         onClick={() => onOpenChange(!open)}
       >
         <Bell className="h-4 w-4" strokeWidth={1.8} />
-        {unreadCount > 0 ? <span className="fd-header-icon-dot" /> : null}
-      </button>
-
-      <AnimatePresence>
-        {open ? (
-          <motion.div
-            className="fd-notify-menu"
-            role="dialog"
-            aria-label="Notificacoes"
-            initial={{ opacity: 0, y: -6, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -4, scale: 0.98 }}
-            transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-          >
-            <div className="fd-notify-head">
-              <p>Notificacoes</p>
-              {unreadCount > 0 ? <span>{unreadCount} nova(s)</span> : null}
-            </div>
-            <div className="fd-notify-list">
-              {items.length ? (
-                items.map((item) => <NotificationRow key={item.id} item={item} />)
-              ) : (
-                <p className="px-4 py-8 text-center text-[13px] text-[#7d7d82]">
-                  Nenhuma notificacao por enquanto.
-                </p>
-              )}
-            </div>
-            <button
-              type="button"
-              className="fd-notify-footer"
-              onClick={() => {
-                markAllRead();
-                onOpenChange(false);
-              }}
-            >
-              Ver todas as notificacoes
-            </button>
-          </motion.div>
+        {unreadCount > 0 ? (
+          <span className="fd-header-icon-dot">
+            {unreadCount > 9 ? "9+" : unreadCount}
+          </span>
         ) : null}
-      </AnimatePresence>
-    </div>
+      </button>
+      {menu}
+    </>
   );
 }

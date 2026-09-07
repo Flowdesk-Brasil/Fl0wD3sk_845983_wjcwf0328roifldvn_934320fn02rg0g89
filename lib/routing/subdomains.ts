@@ -143,6 +143,7 @@ export const CANONICAL_PUBLIC_PATH_PREFIXES = [
   "/transcripts",
   "/discord",
   "/domains",
+  "/launcher",
 ] as const;
 const DASHBOARD_EMBEDDED_PATH_PREFIXES = ["/domains"] as const;
 const RESERVED_WORKSPACE_SUBDOMAINS = new Set(

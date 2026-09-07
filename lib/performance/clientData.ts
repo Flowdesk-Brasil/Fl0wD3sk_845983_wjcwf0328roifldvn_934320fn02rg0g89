@@ -108,8 +108,27 @@ function resolveRequestKey(input: RequestInfo | URL, init?: RequestInit) {
   return `${method}:${url}`;
 }
 
+export async function parseResponseJson<TValue>(response: Response): Promise<TValue> {
+  const raw = await response.text();
+  if (!raw.trim()) {
+    throw Object.assign(new Error("Resposta vazia do servidor."), {
+      responseStatus: response.status || 503,
+      retryable: true,
+    });
+  }
+
+  try {
+    return JSON.parse(raw) as TValue;
+  } catch {
+    throw Object.assign(new Error("Resposta invalida do servidor."), {
+      responseStatus: response.status || 503,
+      retryable: true,
+    });
+  }
+}
+
 async function parseJson<TValue>(response: Response) {
-  return (await response.json()) as TValue;
+  return parseResponseJson<TValue>(response);
 }
 
 export async function fetchClientData<TValue>(

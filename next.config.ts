@@ -8,6 +8,11 @@ const nextConfig: NextConfig = {
   trailingSlash: false,
   skipTrailingSlashRedirect: true,
   outputFileTracingRoot: appRoot,
+  outputFileTracingIncludes: {
+    "/api/auth/me/guilds/whitelist-agent": [
+      "./lib/servers/whitelist-agent-files/**/*",
+    ],
+  },
   poweredByHeader: false,
   productionBrowserSourceMaps: false,
   compress: true,

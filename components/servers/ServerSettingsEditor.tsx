@@ -35,18 +35,27 @@ import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { useNotificationEffect } from "@/components/notifications/NotificationsProvider";
 import { ServerSettingsEditorSkeleton } from "@/components/servers/ServerSettingsEditorSkeleton";
 import { TicketMessageBuilder } from "@/components/servers/TicketMessageBuilder";
+import { SorteioSettingsSection } from "@/components/servers/sorteio/SorteioSettingsSection";
+import { WhitelistSettingsSection } from "@/components/servers/whitelist/WhitelistSettingsSection";
 import { BatePontoHistoryPanel } from "@/components/servers/BatePontoHistoryPanel";
 import { BatePontoRankingPanel } from "@/components/servers/BatePontoRankingPanel";
 import { PermissionDeniedState } from "@/components/servers/PermissionDeniedState";
 import {
   ModuleCard,
   ModuleFieldsGrid,
-  ModuleHero,
   ModulePage,
   ModuleStat,
   optionLabel,
   optionLabels,
 } from "@/components/servers/module-ui/ModuleUi";
+import {
+  buildServerEditorChrome,
+  isModuleOverviewSection,
+  MODULE_ACTIVATION_BAR_COPY,
+  resolveModuleActivationKey,
+  type ModuleActivationKey,
+  type ServerEditorChrome,
+} from "@/lib/servers/serverEditorChrome";
 import {
   SERVER_SETTINGS_SAVE_BAR_EXIT_MS,
   SERVER_SETTINGS_SAVE_SUCCESS_VISIBLE_MS,
@@ -104,6 +113,20 @@ import {
   type TicketPanelLayout,
 } from "@/lib/servers/ticketPanelBuilder";
 import {
+  areSorteioSettingsDraftsEqual,
+  createEmptySorteioSettingsDraft,
+  normalizeSorteioSettingsDraft,
+  type SorteioSettingsDraft,
+} from "@/lib/servers/sorteioSettingsModel";
+import { sorteioActiveLayoutHasRequiredParts } from "@/lib/servers/sorteioPanelBuilder";
+import {
+  areWhitelistSettingsDraftsEqual,
+  createEmptyWhitelistSettingsDraft,
+  normalizeWhitelistSettingsDraft,
+  type WhitelistSettingsDraft,
+} from "@/lib/servers/whitelistSettingsModel";
+import { whitelistPanelHasRequiredParts } from "@/lib/servers/whitelistPanelBuilder";
+import {
   createDefaultWelcomeEntryLayout,
   createDefaultWelcomeExitLayout,
   normalizeWelcomeLayout,
@@ -149,6 +172,11 @@ type ServerSettingsSection =
   | "captcha_message"
   | "suggestions_overview"
   | "suggestions_message"
+  | "sorteio_overview"
+  | "sorteio_message"
+  | "whitelist_overview"
+  | "whitelist_database"
+  | "whitelist_message"
   | "bate_ponto_overview"
   | "bate_ponto_message"
   | "bate_ponto_ranking"
@@ -157,6 +185,8 @@ type ServerSettingsSection =
   | "security_autorole"
   | "security_logs"
   | "ticket_ai";
+
+export type { ServerSettingsSection };
 type PaymentStatus =
   | "pending"
   | "approved"
@@ -502,6 +532,7 @@ type ServerSettingsEditorProps = {
   settingsSection?: ServerSettingsSection;
   onTabChange?: (tab: EditorTab) => void;
   onUnsavedChangesChange?: (hasUnsavedChanges: boolean) => void;
+  onEditorChromeChange?: (chrome: ServerEditorChrome | null) => void;
   onPermissionsChange?: (perms: string[] | "full") => void;
   navigationBlockSignal?: number;
   onClose: () => void;
@@ -1262,6 +1293,37 @@ function isSettingsDraftDirty<T>(
   }
 
   return !areEqual(current, saved);
+}
+
+function hasDraftChangesBeyondEnabledToggle<T extends { enabled: boolean }>(
+  current: T | null,
+  saved: T | null,
+  hasLoaded: boolean,
+  areEqual: (left: T | null, right: T | null) => boolean,
+) {
+  if (!hasLoaded || !current || !saved) return false;
+  if (areEqual(current, saved)) return false;
+
+  return !areEqual({ ...current, enabled: saved.enabled }, saved);
+}
+
+function hasTicketDraftChangesBeyondModuleToggles(
+  current: ServerSettingsDraft | null,
+  saved: ServerSettingsDraft | null,
+  hasLoaded: boolean,
+) {
+  if (!hasLoaded || !current || !saved) return false;
+  if (areServerSettingsDraftsEqual(current, saved)) return false;
+
+  const moduleToggleCandidates = [
+    { ...current, enabled: saved.enabled },
+    { ...current, aiEnabled: saved.aiEnabled },
+    { ...current, enabled: saved.enabled, aiEnabled: saved.aiEnabled },
+  ];
+
+  return !moduleToggleCandidates.some((candidate) =>
+    areServerSettingsDraftsEqual(candidate, saved),
+  );
 }
 
 type DashboardInlineSwitchProps = {
@@ -2247,6 +2309,7 @@ export function ServerSettingsEditor({
   settingsSection = "overview",
   onTabChange: _onTabChange,
   onUnsavedChangesChange,
+  onEditorChromeChange,
   onPermissionsChange,
   navigationBlockSignal = 0,
   onClose,
@@ -2260,6 +2323,8 @@ export function ServerSettingsEditor({
 
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [pendingModuleActivation, setPendingModuleActivation] =
+    useState<ModuleActivationKey | null>(null);
   const [isSendingEmbed, setIsSendingEmbed] = useState(false);
   const isSendingEmbedRef = useRef(false);
   const hasLoadedDashboardSnapshotRef = useRef(false);
@@ -2343,6 +2408,26 @@ export function ServerSettingsEditor({
   );
   const [suggestionsSuggestionLayout, setSuggestionsSuggestionLayout] =
     useState<TicketPanelLayout>(createDefaultSuggestionPublishedLayout());
+  const emptySorteioDraft = createEmptySorteioSettingsDraft();
+  const [sorteioEnabled, setSorteioEnabled] = useState(false);
+  const [sorteioLogsChannelId, setSorteioLogsChannelId] = useState<string | null>(null);
+  const [sorteioCreateRoleIds, setSorteioCreateRoleIds] = useState<string[]>([]);
+  const [sorteioRerollRoleIds, setSorteioRerollRoleIds] = useState<string[]>([]);
+  const [sorteioDefaultWinnerCount, setSorteioDefaultWinnerCount] = useState(
+    emptySorteioDraft.defaultWinnerCount,
+  );
+  const [sorteioDefaultDurationMinutes, setSorteioDefaultDurationMinutes] = useState(
+    emptySorteioDraft.defaultDurationMinutes,
+  );
+  const [sorteioActiveLayout, setSorteioActiveLayout] = useState<TicketPanelLayout>(
+    emptySorteioDraft.activeLayout,
+  );
+  const [sorteioEndedLayout, setSorteioEndedLayout] = useState<TicketPanelLayout>(
+    emptySorteioDraft.endedLayout,
+  );
+  const emptyWhitelistDraft = createEmptyWhitelistSettingsDraft();
+  const [whitelistDraft, setWhitelistDraft] =
+    useState<WhitelistSettingsDraft>(emptyWhitelistDraft);
   const [batePontoEnabled, setBatePontoEnabled] = useState(false);
   const [batePontoPanelChannelId, setBatePontoPanelChannelId] = useState<string | null>(
     null,
@@ -2488,6 +2573,10 @@ export function ServerSettingsEditor({
         suggestionsPanelChannelId,
         suggestionsPublishChannelId,
         suggestionsLogsChannelId,
+        sorteioLogsChannelId,
+        whitelistDraft.panelChannelId,
+        whitelistDraft.reviewChannelId,
+        whitelistDraft.logsChannelId,
         batePontoPanelChannelId,
         batePontoLogsChannelId,
         antiLinkLogChannelId,
@@ -2507,6 +2596,11 @@ export function ServerSettingsEditor({
         ...refundApproverRoleIds,
         ...captchaVerifiedRoleIds,
         ...captchaBypassRoleIds,
+        ...sorteioCreateRoleIds,
+        ...sorteioRerollRoleIds,
+        ...whitelistDraft.approvedRoleIds,
+        ...whitelistDraft.deniedRoleIds,
+        ...whitelistDraft.reviewRoleIds,
         ...batePontoAllowedRoleIds,
         ...batePontoRequiredVoiceChannelIds,
         ...antiLinkIgnoredRoleIds,
@@ -2542,6 +2636,10 @@ export function ServerSettingsEditor({
     suggestionsLogsChannelId,
     suggestionsPanelChannelId,
     suggestionsPublishChannelId,
+    sorteioCreateRoleIds,
+    sorteioLogsChannelId,
+    sorteioRerollRoleIds,
+    whitelistDraft,
     batePontoAllowedRoleIds,
     batePontoRequiredVoiceChannelIds,
     batePontoLogsChannelId,
@@ -2570,6 +2668,10 @@ export function ServerSettingsEditor({
     useState<CaptchaSettingsDraft | null>(null);
   const [savedSuggestionSettingsDraft, setSavedSuggestionSettingsDraft] =
     useState<SuggestionSettingsDraft | null>(null);
+  const [savedSorteioSettingsDraft, setSavedSorteioSettingsDraft] =
+    useState<SorteioSettingsDraft | null>(null);
+  const [savedWhitelistSettingsDraft, setSavedWhitelistSettingsDraft] =
+    useState<WhitelistSettingsDraft | null>(null);
   const [savedBatePontoSettingsDraft, setSavedBatePontoSettingsDraft] =
     useState<BatePontoSettingsDraft | null>(null);
   const [savedAntiLinkSettingsDraft, setSavedAntiLinkSettingsDraft] =
@@ -2586,6 +2688,10 @@ export function ServerSettingsEditor({
   const savedCaptchaDraftRef = useRef<CaptchaSettingsDraft | null>(null);
   const currentSuggestionDraftRef = useRef<SuggestionSettingsDraft | null>(null);
   const savedSuggestionDraftRef = useRef<SuggestionSettingsDraft | null>(null);
+  const currentSorteioDraftRef = useRef<SorteioSettingsDraft | null>(null);
+  const savedSorteioDraftRef = useRef<SorteioSettingsDraft | null>(null);
+  const currentWhitelistDraftRef = useRef<WhitelistSettingsDraft | null>(null);
+  const savedWhitelistDraftRef = useRef<WhitelistSettingsDraft | null>(null);
   const currentBatePontoDraftRef = useRef<BatePontoSettingsDraft | null>(null);
   const savedBatePontoDraftRef = useRef<BatePontoSettingsDraft | null>(null);
   const currentAntiLinkDraftRef = useRef<AntiLinkSettingsDraft | null>(null);
@@ -2716,6 +2822,11 @@ export function ServerSettingsEditor({
         captcha_message: "server_manage_captcha_message",
         suggestions_overview: "server_manage_suggestions_overview",
         suggestions_message: "server_manage_suggestions_message",
+        sorteio_overview: "server_manage_sorteio_overview",
+        sorteio_message: "server_manage_sorteio_message",
+        whitelist_overview: "server_manage_whitelist_overview",
+        whitelist_database: "server_manage_whitelist_database",
+        whitelist_message: "server_manage_whitelist_message",
         bate_ponto_overview: "server_manage_bate_ponto_overview",
         bate_ponto_message: "server_manage_bate_ponto_message",
         bate_ponto_ranking: "server_manage_bate_ponto_ranking",
@@ -2786,6 +2897,16 @@ export function ServerSettingsEditor({
         currentSuggestionDraftRef.current,
         savedSuggestionDraftRef.current,
         areSuggestionSettingsDraftsEqual,
+      );
+      const shouldPreserveLocalSorteioDraft = isSettingsDraftDirty(
+        currentSorteioDraftRef.current,
+        savedSorteioDraftRef.current,
+        areSorteioSettingsDraftsEqual,
+      );
+      const shouldPreserveLocalWhitelistDraft = isSettingsDraftDirty(
+        currentWhitelistDraftRef.current,
+        savedWhitelistDraftRef.current,
+        areWhitelistSettingsDraftsEqual,
       );
       const shouldPreserveLocalBatePontoDraft = isSettingsDraftDirty(
         currentBatePontoDraftRef.current,
@@ -3026,6 +3147,79 @@ export function ServerSettingsEditor({
             payload.suggestionsSettings?.suggestionLayout,
           )
         : createDefaultSuggestionPublishedLayout();
+
+      const hasSorteioSettings = Boolean(payload.sorteioSettings);
+      const nextSorteioEnabled = Boolean(payload.sorteioSettings?.enabled);
+      const nextSorteioLogsChannelId = hasSorteioSettings
+        ? payload.sorteioSettings?.logsChannelId &&
+          textSet.has(payload.sorteioSettings.logsChannelId)
+          ? payload.sorteioSettings.logsChannelId
+          : null
+        : null;
+      const nextSorteioCreateRoleIds = hasSorteioSettings
+        ? Array.isArray(payload.sorteioSettings?.createRoleIds)
+          ? payload.sorteioSettings.createRoleIds.filter((id) => roleSet.has(id))
+          : []
+        : [];
+      const nextSorteioRerollRoleIds = hasSorteioSettings
+        ? Array.isArray(payload.sorteioSettings?.rerollRoleIds)
+          ? payload.sorteioSettings.rerollRoleIds.filter((id) => roleSet.has(id))
+          : []
+        : [];
+      const nextSorteioDefaultWinnerCount = hasSorteioSettings
+        ? Number(payload.sorteioSettings?.defaultWinnerCount ?? 1)
+        : 1;
+      const nextSorteioDefaultDurationMinutes = hasSorteioSettings
+        ? Number(payload.sorteioSettings?.defaultDurationMinutes ?? 60)
+        : 60;
+      const nextSorteioActiveLayout = hasSorteioSettings
+        ? normalizeSorteioSettingsDraft({
+            activeLayout: payload.sorteioSettings?.activeLayout,
+          }).activeLayout
+        : createEmptySorteioSettingsDraft().activeLayout;
+      const nextSorteioEndedLayout = hasSorteioSettings
+        ? normalizeSorteioSettingsDraft({
+            endedLayout: payload.sorteioSettings?.endedLayout,
+          }).endedLayout
+        : createEmptySorteioSettingsDraft().endedLayout;
+
+      const hasWhitelistSettings = Boolean(payload.whitelistSettings);
+      const nextWhitelistDraft = normalizeWhitelistSettingsDraft({
+        ...(payload.whitelistSettings || {}),
+        panelChannelId: hasWhitelistSettings
+          ? payload.whitelistSettings?.panelChannelId &&
+            textSet.has(payload.whitelistSettings.panelChannelId)
+            ? payload.whitelistSettings.panelChannelId
+            : null
+          : null,
+        reviewChannelId: hasWhitelistSettings
+          ? payload.whitelistSettings?.reviewChannelId &&
+            textSet.has(payload.whitelistSettings.reviewChannelId)
+            ? payload.whitelistSettings.reviewChannelId
+            : null
+          : null,
+        logsChannelId: hasWhitelistSettings
+          ? payload.whitelistSettings?.logsChannelId &&
+            textSet.has(payload.whitelistSettings.logsChannelId)
+            ? payload.whitelistSettings.logsChannelId
+            : null
+          : null,
+        approvedRoleIds: hasWhitelistSettings
+          ? Array.isArray(payload.whitelistSettings?.approvedRoleIds)
+            ? payload.whitelistSettings.approvedRoleIds.filter((id) => roleSet.has(id))
+            : []
+          : [],
+        deniedRoleIds: hasWhitelistSettings
+          ? Array.isArray(payload.whitelistSettings?.deniedRoleIds)
+            ? payload.whitelistSettings.deniedRoleIds.filter((id) => roleSet.has(id))
+            : []
+          : [],
+        reviewRoleIds: hasWhitelistSettings
+          ? Array.isArray(payload.whitelistSettings?.reviewRoleIds)
+            ? payload.whitelistSettings.reviewRoleIds.filter((id) => roleSet.has(id))
+            : []
+          : [],
+      } as Parameters<typeof normalizeWhitelistSettingsDraft>[0]);
 
       const hasBatePontoSettings = Boolean(payload.batePontoSettings);
       const nextBatePontoEnabled = Boolean(payload.batePontoSettings?.enabled);
@@ -3405,6 +3599,19 @@ export function ServerSettingsEditor({
         setSuggestionsPanelLayout(nextSuggestionsPanelLayout);
         setSuggestionsSuggestionLayout(nextSuggestionsSuggestionLayout);
       }
+      if (!shouldPreserveLocalSorteioDraft) {
+        setSorteioEnabled(nextSorteioEnabled);
+        setSorteioLogsChannelId(nextSorteioLogsChannelId);
+        setSorteioCreateRoleIds(nextSorteioCreateRoleIds);
+        setSorteioRerollRoleIds(nextSorteioRerollRoleIds);
+        setSorteioDefaultWinnerCount(nextSorteioDefaultWinnerCount);
+        setSorteioDefaultDurationMinutes(nextSorteioDefaultDurationMinutes);
+        setSorteioActiveLayout(nextSorteioActiveLayout);
+        setSorteioEndedLayout(nextSorteioEndedLayout);
+      }
+      if (!shouldPreserveLocalWhitelistDraft) {
+        setWhitelistDraft(nextWhitelistDraft);
+      }
       if (!shouldPreserveLocalBatePontoDraft) {
         setBatePontoEnabled(nextBatePontoEnabled);
         setBatePontoPanelChannelId(nextBatePontoPanelChannelId);
@@ -3543,6 +3750,23 @@ export function ServerSettingsEditor({
           }),
         );
       }
+      if (!shouldPreserveLocalSorteioDraft) {
+        setSavedSorteioSettingsDraft(
+          normalizeSorteioSettingsDraft({
+            enabled: nextSorteioEnabled,
+            logsChannelId: nextSorteioLogsChannelId,
+            createRoleIds: nextSorteioCreateRoleIds,
+            rerollRoleIds: nextSorteioRerollRoleIds,
+            defaultWinnerCount: nextSorteioDefaultWinnerCount,
+            defaultDurationMinutes: nextSorteioDefaultDurationMinutes,
+            activeLayout: nextSorteioActiveLayout,
+            endedLayout: nextSorteioEndedLayout,
+          }),
+        );
+      }
+      if (!shouldPreserveLocalWhitelistDraft) {
+        setSavedWhitelistSettingsDraft(nextWhitelistDraft);
+      }
       if (!shouldPreserveLocalBatePontoDraft) {
         setSavedBatePontoSettingsDraft(
           normalizeBatePontoSettingsDraft({
@@ -3677,6 +3901,8 @@ export function ServerSettingsEditor({
     setSavedWelcomeSettingsDraft(null);
     setSavedCaptchaSettingsDraft(null);
     setSavedSuggestionSettingsDraft(null);
+    setSavedSorteioSettingsDraft(null);
+    setSavedWhitelistSettingsDraft(null);
     setSavedAntiLinkSettingsDraft(null);
     setSavedAutoRoleSettingsDraft(null);
     setSavedSalesSettingsDraft(null);
@@ -3703,6 +3929,15 @@ export function ServerSettingsEditor({
     setSuggestionsLogsChannelId(null);
     setSuggestionsPanelLayout(createDefaultSuggestionPanelLayout());
     setSuggestionsSuggestionLayout(createDefaultSuggestionPublishedLayout());
+    setSorteioEnabled(false);
+    setSorteioLogsChannelId(null);
+    setSorteioCreateRoleIds([]);
+    setSorteioRerollRoleIds([]);
+    setSorteioDefaultWinnerCount(emptySorteioDraft.defaultWinnerCount);
+    setSorteioDefaultDurationMinutes(emptySorteioDraft.defaultDurationMinutes);
+    setSorteioActiveLayout(createEmptySorteioSettingsDraft().activeLayout);
+    setSorteioEndedLayout(createEmptySorteioSettingsDraft().endedLayout);
+    setWhitelistDraft(createEmptyWhitelistSettingsDraft());
     setWelcomeEnabled(false);
     setEntryPublicChannelId(null);
     setEntryLogChannelId(null);
@@ -4501,6 +4736,13 @@ export function ServerSettingsEditor({
   const isSuggestionsSection =
     settingsSection === "suggestions_overview" ||
     settingsSection === "suggestions_message";
+  const isSorteioSection =
+    settingsSection === "sorteio_overview" ||
+    settingsSection === "sorteio_message";
+  const isWhitelistSection =
+    settingsSection === "whitelist_overview" ||
+    settingsSection === "whitelist_database" ||
+    settingsSection === "whitelist_message";
   const isBatePontoSection =
     settingsSection === "bate_ponto_overview" ||
     settingsSection === "bate_ponto_message";
@@ -4510,6 +4752,7 @@ export function ServerSettingsEditor({
   const isWelcomeMessageSection = settingsSection === "entry_exit_message";
   const isCaptchaMessageSection = settingsSection === "captcha_message";
   const isSuggestionsMessageSection = settingsSection === "suggestions_message";
+  const isSorteioMessageSection = settingsSection === "sorteio_message";
   const isBatePontoMessageSection = settingsSection === "bate_ponto_message";
 
   const entryChannelsProvided = Boolean(
@@ -4627,6 +4870,40 @@ export function ServerSettingsEditor({
     settingsReadOnly,
   ]);
 
+  const requestFlowAiActivation = useCallback(() => {
+    if (isSaving || settingsReadOnly || aiEnabled) return;
+
+    setErrorMessage(null);
+
+    if (resolvedFlowAiPlanCode) {
+      setHasPendingFlowAiActivationRequest(false);
+
+      if (!isFlowAiEligiblePlanCode(resolvedFlowAiPlanCode)) {
+        setIsFlowAiUpgradeModalOpen(true);
+        return;
+      }
+
+      setAiEnabled(true);
+      return;
+    }
+
+    if (!isFlowAiPlanLoading && hasFlowAiPlanCheckError) {
+      setErrorMessage(
+        "Nao foi possivel verificar o plano agora. Tente novamente em alguns instantes.",
+      );
+      return;
+    }
+
+    setHasPendingFlowAiActivationRequest(true);
+  }, [
+    aiEnabled,
+    hasFlowAiPlanCheckError,
+    isFlowAiPlanLoading,
+    isSaving,
+    resolvedFlowAiPlanCode,
+    settingsReadOnly,
+  ]);
+
   const canSaveWelcome = Boolean(
     !settingsReadOnly &&
       !isLoading &&
@@ -4674,6 +4951,30 @@ export function ServerSettingsEditor({
           ticketPanelLayoutHasRequiredParts(suggestionsPanelLayout) &&
           ticketPanelLayoutHasAtMostOneFunctionButton(suggestionsPanelLayout) &&
           suggestionPublishedLayoutHasRequiredSlots(suggestionsSuggestionLayout))),
+  );
+  const isSorteioActiveLayoutInvalid =
+    sorteioEnabled && !sorteioActiveLayoutHasRequiredParts(sorteioActiveLayout);
+  const isSorteioEndedLayoutInvalid =
+    sorteioEnabled && !ticketPanelLayoutHasRenderableContent(sorteioEndedLayout);
+  const isSorteioMessageLayoutInvalid =
+    isSorteioActiveLayoutInvalid || isSorteioEndedLayoutInvalid;
+  const canSaveSorteio = Boolean(
+    !settingsReadOnly &&
+      !isLoading &&
+      !isSaving &&
+      (!sorteioEnabled ||
+        (sorteioActiveLayoutHasRequiredParts(sorteioActiveLayout) &&
+          ticketPanelLayoutHasRenderableContent(sorteioEndedLayout))),
+  );
+  const isWhitelistPanelLayoutInvalid =
+    whitelistDraft.enabled &&
+    !whitelistPanelHasRequiredParts(whitelistDraft.panelLayout);
+  const canSaveWhitelist = Boolean(
+    !settingsReadOnly &&
+      !isLoading &&
+      !isSaving &&
+      (!whitelistDraft.enabled ||
+        whitelistPanelHasRequiredParts(whitelistDraft.panelLayout)),
   );
   const batePontoFunctionButtonCount = countTicketPanelFunctionButtons(
     batePontoPanelLayout,
@@ -4795,6 +5096,16 @@ export function ServerSettingsEditor({
       batePontoPanelLayout.length &&
       ticketPanelLayoutHasRequiredParts(batePontoPanelLayout) &&
       ticketPanelLayoutHasAtMostOneFunctionButton(batePontoPanelLayout),
+  );
+  const canSendWhitelistEmbed = Boolean(
+    !settingsReadOnly &&
+      !isLoading &&
+      !isSaving &&
+      !isSendingEmbed &&
+      whitelistDraft.enabled &&
+      whitelistDraft.panelChannelId &&
+      whitelistDraft.panelLayout.length &&
+      whitelistPanelHasRequiredParts(whitelistDraft.panelLayout),
   );
 
   const currentSettingsDraft = useMemo(
@@ -4933,6 +5244,36 @@ export function ServerSettingsEditor({
       suggestionsSuggestionLayout,
     ],
   );
+  const currentSorteioDraft = useMemo(
+    () =>
+      normalizeSorteioSettingsDraft({
+        enabled: sorteioEnabled,
+        logsChannelId: sorteioLogsChannelId,
+        createRoleIds: sorteioCreateRoleIds,
+        rerollRoleIds: sorteioRerollRoleIds,
+        defaultWinnerCount: sorteioDefaultWinnerCount,
+        defaultDurationMinutes: sorteioDefaultDurationMinutes,
+        activeLayout: sorteioActiveLayout,
+        endedLayout: sorteioEndedLayout,
+      }),
+    [
+      sorteioActiveLayout,
+      sorteioCreateRoleIds,
+      sorteioDefaultDurationMinutes,
+      sorteioDefaultWinnerCount,
+      sorteioEnabled,
+      sorteioEndedLayout,
+      sorteioLogsChannelId,
+      sorteioRerollRoleIds,
+    ],
+  );
+  const currentWhitelistDraft = useMemo(() => {
+    const next = normalizeWhitelistSettingsDraft(whitelistDraft);
+    return {
+      ...next,
+      dbPassword: whitelistDraft.dbPassword,
+    };
+  }, [whitelistDraft]);
   const currentBatePontoDraft = useMemo(
     () =>
       normalizeBatePontoSettingsDraft({
@@ -5036,6 +5377,10 @@ export function ServerSettingsEditor({
   savedCaptchaDraftRef.current = savedCaptchaSettingsDraft;
   currentSuggestionDraftRef.current = currentSuggestionDraft;
   savedSuggestionDraftRef.current = savedSuggestionSettingsDraft;
+  currentSorteioDraftRef.current = currentSorteioDraft;
+  savedSorteioDraftRef.current = savedSorteioSettingsDraft;
+  currentWhitelistDraftRef.current = currentWhitelistDraft;
+  savedWhitelistDraftRef.current = savedWhitelistSettingsDraft;
   currentBatePontoDraftRef.current = currentBatePontoDraft;
   savedBatePontoDraftRef.current = savedBatePontoSettingsDraft;
   currentAntiLinkDraftRef.current = currentAntiLinkDraft;
@@ -5052,6 +5397,9 @@ export function ServerSettingsEditor({
   const hasLoadedCaptchaDraft = !isLoading && savedCaptchaSettingsDraft !== null;
   const hasLoadedSuggestionDraft =
     !isLoading && savedSuggestionSettingsDraft !== null;
+  const hasLoadedSorteioDraft = !isLoading && savedSorteioSettingsDraft !== null;
+  const hasLoadedWhitelistDraft =
+    !isLoading && savedWhitelistSettingsDraft !== null;
   const hasLoadedBatePontoDraft =
     !isLoading && savedBatePontoSettingsDraft !== null;
   const hasLoadedAntiLinkDraft =
@@ -5088,6 +5436,26 @@ export function ServerSettingsEditor({
         savedSuggestionSettingsDraft,
       ),
     [currentSuggestionDraft, hasLoadedSuggestionDraft, savedSuggestionSettingsDraft],
+  );
+  const hasSorteioUnsavedChanges = useMemo(
+    () =>
+      hasLoadedSorteioDraft &&
+      !areSorteioSettingsDraftsEqual(currentSorteioDraft, savedSorteioSettingsDraft),
+    [currentSorteioDraft, hasLoadedSorteioDraft, savedSorteioSettingsDraft],
+  );
+  const hasWhitelistUnsavedChanges = useMemo(
+    () =>
+      hasLoadedWhitelistDraft &&
+      (!areWhitelistSettingsDraftsEqual(
+        currentWhitelistDraft,
+        savedWhitelistSettingsDraft,
+      ) ||
+        Boolean(currentWhitelistDraft.dbPassword)),
+    [
+      currentWhitelistDraft,
+      hasLoadedWhitelistDraft,
+      savedWhitelistSettingsDraft,
+    ],
   );
   const hasBatePontoUnsavedChanges = useMemo(
     () =>
@@ -5151,6 +5519,10 @@ export function ServerSettingsEditor({
       ? hasLoadedCaptchaDraft
     : isSuggestionsSection
       ? hasLoadedSuggestionDraft
+    : isSorteioSection
+      ? hasLoadedSorteioDraft
+    : isWhitelistSection
+      ? hasLoadedWhitelistDraft
     : isBatePontoSection
       ? hasLoadedBatePontoDraft
     : isBatePontoRankingSection || isBatePontoHistorySection
@@ -5172,6 +5544,10 @@ export function ServerSettingsEditor({
       ? hasCaptchaUnsavedChanges
     : isSuggestionsSection
       ? hasSuggestionUnsavedChanges
+    : isSorteioSection
+      ? hasSorteioUnsavedChanges
+    : isWhitelistSection
+      ? hasWhitelistUnsavedChanges
     : isBatePontoSection
       ? hasBatePontoUnsavedChanges
     : isBatePontoRankingSection || isBatePontoHistorySection
@@ -5179,6 +5555,85 @@ export function ServerSettingsEditor({
     : isWelcomeSection
       ? hasWelcomeUnsavedChanges
       : hasTicketUnsavedChanges;
+  const hasFloatingSaveBarChanges = isAntiLinkSection
+    ? hasDraftChangesBeyondEnabledToggle(
+        currentAntiLinkDraft,
+        savedAntiLinkSettingsDraft,
+        hasLoadedAntiLinkDraft,
+        areAntiLinkSettingsDraftsEqual,
+      )
+    : isAutoRoleSection
+      ? hasDraftChangesBeyondEnabledToggle(
+          currentAutoRoleDraft,
+          savedAutoRoleSettingsDraft,
+          hasLoadedAutoRoleDraft,
+          areAutoRoleSettingsDraftsEqual,
+        ) || autoRoleSyncExistingMembers
+    : isSalesSettingsSection
+      ? hasDraftChangesBeyondEnabledToggle(
+          currentSalesDraft,
+          savedSalesSettingsDraft,
+          hasLoadedSalesDraft,
+          areSalesSettingsDraftsEqual,
+        )
+    : isSalesSection
+      ? false
+    : isSecurityLogsSection
+      ? hasDraftChangesBeyondEnabledToggle(
+          currentSecurityLogsDraft,
+          savedSecurityLogsDraft,
+          hasLoadedSecurityLogsDraft,
+          areSecurityLogsSettingsDraftsEqual,
+        )
+    : isCaptchaSection
+      ? hasDraftChangesBeyondEnabledToggle(
+          currentCaptchaDraft,
+          savedCaptchaSettingsDraft,
+          hasLoadedCaptchaDraft,
+          areCaptchaSettingsDraftsEqual,
+        )
+    : isSuggestionsSection
+      ? hasDraftChangesBeyondEnabledToggle(
+          currentSuggestionDraft,
+          savedSuggestionSettingsDraft,
+          hasLoadedSuggestionDraft,
+          areSuggestionSettingsDraftsEqual,
+        )
+    : isSorteioSection
+      ? hasDraftChangesBeyondEnabledToggle(
+          currentSorteioDraft,
+          savedSorteioSettingsDraft,
+          hasLoadedSorteioDraft,
+          areSorteioSettingsDraftsEqual,
+        )
+    : isWhitelistSection
+      ? hasDraftChangesBeyondEnabledToggle(
+          currentWhitelistDraft,
+          savedWhitelistSettingsDraft,
+          hasLoadedWhitelistDraft,
+          areWhitelistSettingsDraftsEqual,
+        ) || Boolean(currentWhitelistDraft.dbPassword)
+    : isBatePontoSection
+      ? hasDraftChangesBeyondEnabledToggle(
+          currentBatePontoDraft,
+          savedBatePontoSettingsDraft,
+          hasLoadedBatePontoDraft,
+          areBatePontoSettingsDraftsEqual,
+        )
+    : isBatePontoRankingSection || isBatePontoHistorySection
+      ? false
+    : isWelcomeSection
+      ? hasDraftChangesBeyondEnabledToggle(
+          currentWelcomeDraft,
+          savedWelcomeSettingsDraft,
+          hasLoadedWelcomeDraft,
+          areWelcomeSettingsDraftsEqual,
+        )
+      : hasTicketDraftChangesBeyondModuleToggles(
+          currentSettingsDraft,
+          savedSettingsDraft,
+          hasLoadedTicketDraft,
+        );
 
   const canResetSettings = Boolean(
     !settingsReadOnly &&
@@ -5199,6 +5654,10 @@ export function ServerSettingsEditor({
           ? savedCaptchaSettingsDraft
         : isSuggestionsSection
           ? savedSuggestionSettingsDraft
+        : isSorteioSection
+          ? savedSorteioSettingsDraft
+        : isWhitelistSection
+          ? savedWhitelistSettingsDraft
         : isBatePontoSection
           ? savedBatePontoSettingsDraft
         : isWelcomeSection
@@ -5226,6 +5685,10 @@ export function ServerSettingsEditor({
         ? canSaveCaptcha
       : isSuggestionsSection
         ? canSaveSuggestions
+      : isSorteioSection
+        ? canSaveSorteio
+      : isWhitelistSection
+        ? canSaveWhitelist
       : isBatePontoSection
         ? canSaveBatePonto
       : isWelcomeSection
@@ -5234,12 +5697,105 @@ export function ServerSettingsEditor({
         ? canSaveTicketAi
         : canSaveTicket) && hasUnsavedChanges,
   );
+  const moduleActivationKey = resolveModuleActivationKey({
+    section: settingsSection,
+    salesEnabled,
+    ticketEnabled,
+    aiEnabled,
+    welcomeEnabled,
+    captchaEnabled,
+    suggestionsEnabled,
+    sorteioEnabled,
+    whitelistEnabled: whitelistDraft.enabled,
+    batePontoEnabled,
+    antiLinkEnabled,
+    autoRoleEnabled,
+    securityLogsEnabled: securityLogsDraft.enabled,
+  });
+  const moduleActivationBarCopy = moduleActivationKey
+    ? MODULE_ACTIVATION_BAR_COPY[moduleActivationKey]
+    : null;
+  const activateCurrentModule = useCallback(() => {
+    if (isSaving || settingsReadOnly || !moduleActivationKey) return;
+
+    if (moduleActivationKey !== "flowai") {
+      setPendingModuleActivation(moduleActivationKey);
+    }
+
+    switch (moduleActivationKey) {
+      case "sales":
+        setSalesEnabled(true);
+        return;
+      case "ticket":
+        setTicketEnabled(true);
+        return;
+      case "flowai":
+        requestFlowAiActivation();
+        return;
+      case "welcome":
+        setWelcomeEnabled(true);
+        return;
+      case "captcha":
+        setCaptchaEnabled(true);
+        return;
+      case "suggestions":
+        setSuggestionsEnabled(true);
+        return;
+      case "sorteio":
+        setSorteioEnabled(true);
+        return;
+      case "whitelist":
+        setWhitelistDraft((current) => ({ ...current, enabled: true }));
+        return;
+      case "bate_ponto":
+        setBatePontoEnabled(true);
+        return;
+      case "antilink":
+        setHasDismissedAntiLinkModal(true);
+        setAntiLinkEnabled(true);
+        return;
+      case "autorole":
+        setAutoRoleEnabled(true);
+        return;
+      case "security_logs":
+        setSecurityLogsDraft((current) => ({
+          ...current,
+          enabled: true,
+        }));
+        return;
+      default:
+        return;
+    }
+  }, [
+    isSaving,
+    moduleActivationKey,
+    requestFlowAiActivation,
+    settingsReadOnly,
+  ]);
+  const activateModuleDisabled =
+    isSaving ||
+    settingsReadOnly ||
+    (moduleActivationKey === "flowai" && hasPendingFlowAiActivationRequest);
+  const showFloatingActivateBar = Boolean(
+    activeTab === "settings" &&
+      !settingsReadOnly &&
+      !isLoading &&
+      moduleActivationBarCopy,
+  );
   const showFloatingSaveBar =
     activeTab === "settings" &&
     !settingsReadOnly &&
     hasLoadedSettingsDraft &&
-    (hasUnsavedChanges || isSaving || showSaveSuccessBar);
-  const showSaveBarActions = !showSaveSuccessBar || hasUnsavedChanges || isSaving;
+    (hasFloatingSaveBarChanges || hasUnsavedChanges || isSaving || showSaveSuccessBar) &&
+    !showFloatingActivateBar;
+  const floatingBarMode: "save" | "activate" | null = showFloatingActivateBar
+    ? "activate"
+    : showFloatingSaveBar
+      ? "save"
+      : null;
+  const showFloatingBar = floatingBarMode !== null;
+  const showSaveBarActions =
+    !showSaveSuccessBar || hasFloatingSaveBarChanges || hasUnsavedChanges || isSaving;
   const showInlineMessages = Boolean(
     isViewerOnly || isUnauthorizedForSection || locked || errorMessage,
   );
@@ -5255,6 +5811,9 @@ export function ServerSettingsEditor({
   const captchaControlsDisabled = isSaving || settingsReadOnly || !captchaEnabled;
   const suggestionsControlsDisabled =
     isSaving || settingsReadOnly || !suggestionsEnabled;
+  const sorteioControlsDisabled = isSaving || settingsReadOnly || !sorteioEnabled;
+  const whitelistControlsDisabled =
+    isSaving || settingsReadOnly || !whitelistDraft.enabled;
   const batePontoControlsDisabled =
     isSaving || settingsReadOnly || !batePontoEnabled;
   const antiLinkControlsDisabled =
@@ -5277,36 +5836,51 @@ export function ServerSettingsEditor({
   const showInvalidTicketSaveState =
     isTicketMessageSection &&
     ticketEnabled &&
-    hasUnsavedChanges &&
+    hasFloatingSaveBarChanges &&
     !isSaving &&
     !showSaveSuccessBar &&
     isTicketMessageLayoutInvalid;
   const showInvalidWelcomeSaveState =
     isWelcomeMessageSection &&
     welcomeEnabled &&
-    hasUnsavedChanges &&
+    hasFloatingSaveBarChanges &&
     !isSaving &&
     !showSaveSuccessBar &&
     isWelcomeMessageLayoutInvalid;
   const showInvalidCaptchaSaveState =
     isCaptchaMessageSection &&
     captchaEnabled &&
-    hasUnsavedChanges &&
+    hasFloatingSaveBarChanges &&
     !isSaving &&
     !showSaveSuccessBar &&
     isCaptchaMessageLayoutInvalid;
   const showInvalidSuggestionsSaveState =
     isSuggestionsSection &&
     suggestionsEnabled &&
-    hasUnsavedChanges &&
+    hasFloatingSaveBarChanges &&
     !isSaving &&
     !showSaveSuccessBar &&
     ((settingsSection === "suggestions_message" && isSuggestionsMessageLayoutInvalid) ||
       (settingsSection === "suggestions_overview" && isSuggestionsPublishLayoutInvalid));
+  const showInvalidSorteioSaveState =
+    isSorteioSection &&
+    sorteioEnabled &&
+    hasFloatingSaveBarChanges &&
+    !isSaving &&
+    !showSaveSuccessBar &&
+    ((settingsSection === "sorteio_message" && isSorteioMessageLayoutInvalid) ||
+      (settingsSection === "sorteio_overview" && isSorteioActiveLayoutInvalid));
+  const showInvalidWhitelistSaveState =
+    isWhitelistSection &&
+    whitelistDraft.enabled &&
+    hasFloatingSaveBarChanges &&
+    !isSaving &&
+    !showSaveSuccessBar &&
+    isWhitelistPanelLayoutInvalid;
   const showInvalidBatePontoSaveState =
     isBatePontoSection &&
     batePontoEnabled &&
-    hasUnsavedChanges &&
+    hasFloatingSaveBarChanges &&
     !isSaving &&
     !showSaveSuccessBar &&
     ((settingsSection === "bate_ponto_message" && isBatePontoMessageLayoutInvalid) ||
@@ -5314,11 +5888,11 @@ export function ServerSettingsEditor({
         !ticketPanelLayoutHasRenderableContent(batePontoLogLayout)));
   const showSaveBarSuccessState =
     showSaveSuccessBar &&
-    !hasUnsavedChanges &&
+    !hasFloatingSaveBarChanges &&
     !isSaving;
   const showBlockedNavigationSaveState =
     showNavigationBlockedSaveState &&
-    hasUnsavedChanges &&
+    hasFloatingSaveBarChanges &&
     !isSaving &&
     !showSaveSuccessBar;
   const showSaveBarErrorState =
@@ -5326,6 +5900,8 @@ export function ServerSettingsEditor({
     showInvalidWelcomeSaveState ||
     showInvalidCaptchaSaveState ||
     showInvalidSuggestionsSaveState ||
+    showInvalidSorteioSaveState ||
+    showInvalidWhitelistSaveState ||
     showInvalidBatePontoSaveState ||
     showBlockedNavigationSaveState;
   const saveActionVisualEnabled = canPersistSettings || isSaving;
@@ -5349,6 +5925,12 @@ export function ServerSettingsEditor({
           : hasSuggestionsTooManyFunctionButtons
           ? "Existe mais de um botao funcional no embed"
           : "Nao da para salvar uma mensagem vazia"
+      : showInvalidSorteioSaveState
+        ? settingsSection === "sorteio_message" && isSorteioEndedLayoutInvalid
+          ? "O template encerrado precisa manter pelo menos um conteudo valido"
+          : "A mensagem ativa precisa de conteudo e dos botoes fixos Entrar e Engrenagem"
+      : showInvalidWhitelistSaveState
+        ? "A mensagem da whitelist precisa de conteudo e do botao Solicitar whitelist"
       : showInvalidBatePontoSaveState
         ? settingsSection === "bate_ponto_overview"
           ? "O template de log precisa manter pelo menos um conteudo valido"
@@ -5359,7 +5941,7 @@ export function ServerSettingsEditor({
           ? "Adicione pelo menos um conteudo na mensagem"
       : showBlockedNavigationSaveState
           ? "Salve as alteracoes antes de sair desta secao."
-          : !canPersistSettings && hasUnsavedChanges
+          : !canPersistSettings && hasFloatingSaveBarChanges
             ? isSecuritySection
               ? isAntiLinkSection
                 ? "Defina o canal de log para continuar"
@@ -5368,6 +5950,10 @@ export function ServerSettingsEditor({
                 ? "Complete canal principal e cargos verificados para continuar"
               : isSuggestionsSection
                 ? "Complete canais do painel e publicacao para continuar"
+              : isSorteioSection
+                ? "Complete a mensagem ativa com conteudo e botoes fixos para continuar"
+              : isWhitelistSection
+                ? "Complete a mensagem do painel com conteudo e o botao Solicitar whitelist"
               : isBatePontoSection
                 ? "Complete canal do painel e mensagens validas para continuar"
               : isWelcomeSection
@@ -5388,7 +5974,7 @@ export function ServerSettingsEditor({
           ? "Preencha a mensagem de entrada ou saida com pelo menos um bloco de texto."
         : showBlockedNavigationSaveState
           ? "Voce tentou trocar de opcao na sidebar com mudancas pendentes. Salve ou redefina antes de continuar."
-        : !canPersistSettings && hasUnsavedChanges
+        : !canPersistSettings && hasFloatingSaveBarChanges
           ? isSecuritySection
             ? isAntiLinkSection
               ? "Escolha um canal de log para o modulo anti-link."
@@ -5397,6 +5983,12 @@ export function ServerSettingsEditor({
               ? "Complete canal principal e cargos verificados para continuar."
             : isSuggestionsSection
               ? "Complete canais do painel e publicacao para continuar."
+            : isSorteioSection
+              ? settingsSection === "sorteio_message"
+                ? "Mantenha conteudo valido nos templates ativo e encerrado, com os botoes fixos do sorteio ativo."
+                : "Mantenha a mensagem ativa valida antes de salvar as configuracoes do modulo."
+            : isWhitelistSection
+              ? "Mantenha conteudo valido e o botao fixo Solicitar whitelist antes de salvar."
             : isBatePontoSection
               ? settingsSection === "bate_ponto_message"
                 ? "Complete a mensagem do painel com conteudo e um botao funcional."
@@ -5449,7 +6041,7 @@ export function ServerSettingsEditor({
 
   useEffect(() => {
     if (!navigationBlockSignal) return;
-    if (!hasUnsavedChanges || isSaving || showSaveSuccessBar) return;
+    if (!hasFloatingSaveBarChanges || isSaving || showSaveSuccessBar) return;
     if (activeTab !== "settings") return;
 
     setShowNavigationBlockedSaveState(true);
@@ -5462,7 +6054,7 @@ export function ServerSettingsEditor({
     }, 2800);
   }, [
     activeTab,
-    hasUnsavedChanges,
+    hasFloatingSaveBarChanges,
     isSaving,
     navigationBlockSignal,
     showSaveSuccessBar,
@@ -5477,10 +6069,10 @@ export function ServerSettingsEditor({
   }, [activeTab, guildId, settingsSection]);
 
   useEffect(() => {
-    if (!hasUnsavedChanges || isSaving || showSaveSuccessBar) {
+    if (!hasFloatingSaveBarChanges || isSaving || showSaveSuccessBar) {
       setShowNavigationBlockedSaveState(false);
     }
-  }, [hasUnsavedChanges, isSaving, showSaveSuccessBar]);
+  }, [hasFloatingSaveBarChanges, isSaving, showSaveSuccessBar]);
 
   useEffect(() => {
     return () => {
@@ -5560,7 +6152,7 @@ export function ServerSettingsEditor({
   );
 
   useEffect(() => {
-    if (showFloatingSaveBar) {
+    if (showFloatingBar) {
       setIsSaveBarRendered(true);
       setIsSaveBarExiting(false);
       return;
@@ -5577,7 +6169,7 @@ export function ServerSettingsEditor({
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [isSaveBarRendered, showFloatingSaveBar]);
+  }, [isSaveBarRendered, showFloatingBar]);
 
   const persistPlanSettings = useCallback(
     async (input: {
@@ -6243,6 +6835,31 @@ export function ServerSettingsEditor({
     recurringMethodDraftId,
   ]);
 
+  const handleSorteioDraftChange = useCallback((patch: Partial<SorteioSettingsDraft>) => {
+    if ("logsChannelId" in patch) {
+      setSorteioLogsChannelId(patch.logsChannelId ?? null);
+    }
+    if ("createRoleIds" in patch) {
+      setSorteioCreateRoleIds(patch.createRoleIds ?? []);
+    }
+    if ("rerollRoleIds" in patch) {
+      setSorteioRerollRoleIds(patch.rerollRoleIds ?? []);
+    }
+    if ("defaultWinnerCount" in patch && patch.defaultWinnerCount !== undefined) {
+      setSorteioDefaultWinnerCount(patch.defaultWinnerCount);
+    }
+    if ("defaultDurationMinutes" in patch && patch.defaultDurationMinutes !== undefined) {
+      setSorteioDefaultDurationMinutes(patch.defaultDurationMinutes);
+    }
+  }, []);
+
+  const handleWhitelistDraftChange = useCallback(
+    (patch: Partial<WhitelistSettingsDraft>) => {
+      setWhitelistDraft((current) => ({ ...current, ...patch }));
+    },
+    [],
+  );
+
   const handleResetSettings = useCallback(() => {
     if (!canResetSettings) return;
 
@@ -6318,6 +6935,20 @@ export function ServerSettingsEditor({
           ? savedSuggestionSettingsDraft.suggestionLayout
           : createDefaultSuggestionPublishedLayout(),
       );
+    } else if (isSorteioSection && savedSorteioSettingsDraft) {
+      setSorteioEnabled(savedSorteioSettingsDraft.enabled);
+      setSorteioLogsChannelId(savedSorteioSettingsDraft.logsChannelId);
+      setSorteioCreateRoleIds(savedSorteioSettingsDraft.createRoleIds);
+      setSorteioRerollRoleIds(savedSorteioSettingsDraft.rerollRoleIds);
+      setSorteioDefaultWinnerCount(savedSorteioSettingsDraft.defaultWinnerCount);
+      setSorteioDefaultDurationMinutes(savedSorteioSettingsDraft.defaultDurationMinutes);
+      setSorteioActiveLayout(savedSorteioSettingsDraft.activeLayout);
+      setSorteioEndedLayout(savedSorteioSettingsDraft.endedLayout);
+    } else if (isWhitelistSection && savedWhitelistSettingsDraft) {
+      setWhitelistDraft({
+        ...savedWhitelistSettingsDraft,
+        dbPassword: "",
+      });
     } else if (isBatePontoSection && savedBatePontoSettingsDraft) {
       setBatePontoEnabled(savedBatePontoSettingsDraft.enabled);
       setBatePontoPanelChannelId(savedBatePontoSettingsDraft.panelChannelId);
@@ -6374,6 +7005,8 @@ export function ServerSettingsEditor({
     isAutoRoleSection,
     isCaptchaSection,
     isSuggestionsSection,
+    isSorteioSection,
+    isWhitelistSection,
     isBatePontoSection,
     isSalesSettingsSection,
     isSecurityLogsSection,
@@ -6382,11 +7015,158 @@ export function ServerSettingsEditor({
     savedAutoRoleSettingsDraft,
     savedCaptchaSettingsDraft,
     savedSuggestionSettingsDraft,
+    savedSorteioSettingsDraft,
+    savedWhitelistSettingsDraft,
     savedBatePontoSettingsDraft,
     savedSalesSettingsDraft,
     savedSecurityLogsDraft,
     savedSettingsDraft,
     savedWelcomeSettingsDraft,
+  ]);
+
+  useEffect(() => {
+    if (!onEditorChromeChange) return;
+
+    const moduleActionsDisabled = isSaving || settingsReadOnly;
+    let moduleActions: ServerEditorChrome["moduleActions"] = null;
+
+    if (isModuleOverviewSection(settingsSection)) {
+      const enabled =
+        settingsSection === "sales_overview"
+          ? salesEnabled
+          : settingsSection === "overview"
+            ? ticketEnabled
+            : settingsSection === "ticket_ai"
+              ? aiEnabled
+              : settingsSection === "entry_exit_overview"
+                ? welcomeEnabled
+                : settingsSection === "suggestions_overview"
+                  ? suggestionsEnabled
+                  : settingsSection === "sorteio_overview"
+                    ? sorteioEnabled
+                  : settingsSection === "whitelist_overview"
+                    ? whitelistDraft.enabled
+                  : settingsSection === "bate_ponto_overview"
+                    ? batePontoEnabled
+                    : settingsSection === "captcha_overview"
+                      ? captchaEnabled
+                      : settingsSection === "security_antilink"
+                        ? antiLinkEnabled
+                        : autoRoleEnabled;
+
+      moduleActions = {
+        enabled,
+        disabled:
+          moduleActionsDisabled ||
+          (settingsSection === "ticket_ai" && hasPendingFlowAiActivationRequest),
+        canReset: canResetSettings,
+        onToggle: () => {
+          if (moduleActionsDisabled) return;
+          switch (settingsSection) {
+            case "sales_overview":
+              setSalesEnabled((current) => !current);
+              return;
+            case "overview":
+              setTicketEnabled((current) => !current);
+              return;
+            case "ticket_ai":
+              if (aiEnabled) {
+                setHasPendingFlowAiActivationRequest(false);
+                setAiEnabled(false);
+                return;
+              }
+              setErrorMessage(null);
+              if (resolvedFlowAiPlanCode) {
+                setHasPendingFlowAiActivationRequest(false);
+                if (!isFlowAiEligiblePlanCode(resolvedFlowAiPlanCode)) {
+                  setIsFlowAiUpgradeModalOpen(true);
+                  return;
+                }
+                setAiEnabled(true);
+                return;
+              }
+              if (!isFlowAiPlanLoading && hasFlowAiPlanCheckError) {
+                setErrorMessage(
+                  "Nao foi possivel verificar o plano agora. Tente novamente em alguns instantes.",
+                );
+                return;
+              }
+              setHasPendingFlowAiActivationRequest(true);
+              return;
+            case "entry_exit_overview":
+              setWelcomeEnabled((current) => !current);
+              return;
+            case "suggestions_overview":
+              setSuggestionsEnabled((current) => !current);
+              return;
+            case "sorteio_overview":
+              setSorteioEnabled((current) => !current);
+              return;
+            case "whitelist_overview":
+              setWhitelistDraft((current) => ({
+                ...current,
+                enabled: !current.enabled,
+              }));
+              return;
+            case "bate_ponto_overview":
+              setBatePontoEnabled((current) => !current);
+              return;
+            case "captcha_overview":
+              setCaptchaEnabled((current) => !current);
+              return;
+            case "security_antilink":
+              setHasDismissedAntiLinkModal(true);
+              setAntiLinkEnabled((current) => !current);
+              return;
+            case "security_autorole":
+              setAutoRoleEnabled((current) => {
+                const next = !current;
+                if (!next) setAutoRoleSyncExistingMembers(false);
+                return next;
+              });
+              return;
+            default:
+              return;
+          }
+        },
+        onReset: handleResetSettings,
+      };
+    }
+
+    onEditorChromeChange(
+      buildServerEditorChrome({
+        section: settingsSection,
+        moduleActions,
+        ticketAiDescription: flowAiHeaderDescription,
+      }),
+    );
+
+    return () => {
+      onEditorChromeChange(null);
+    };
+  }, [
+    aiEnabled,
+    antiLinkEnabled,
+    autoRoleEnabled,
+    batePontoEnabled,
+    canResetSettings,
+    captchaEnabled,
+    flowAiHeaderDescription,
+    handleResetSettings,
+    hasFlowAiPlanCheckError,
+    hasPendingFlowAiActivationRequest,
+    isFlowAiPlanLoading,
+    isSaving,
+    onEditorChromeChange,
+    resolvedFlowAiPlanCode,
+    salesEnabled,
+    settingsReadOnly,
+    settingsSection,
+    sorteioEnabled,
+    whitelistDraft.enabled,
+    suggestionsEnabled,
+    ticketEnabled,
+    welcomeEnabled,
   ]);
 
   const handleSave = useCallback(async () => {
@@ -6407,6 +7187,8 @@ export function ServerSettingsEditor({
       sales: savedSalesSettingsDraft,
       captcha: savedCaptchaSettingsDraft,
       suggestions: savedSuggestionSettingsDraft,
+      sorteio: savedSorteioSettingsDraft,
+      whitelist: savedWhitelistSettingsDraft,
       batePonto: savedBatePontoSettingsDraft,
       welcome: savedWelcomeSettingsDraft,
       settings: savedSettingsDraft,
@@ -6415,6 +7197,7 @@ export function ServerSettingsEditor({
     let dashboardCachePatch: Parameters<typeof patchCachedServerDashboardSettings>[1] | null =
       null;
     let savedSuccessMessage: string | null = null;
+    let postSaveWarning: string | null = null;
     try {
       if (isAutoRoleSection) {
         const response = await fetch("/api/auth/me/guilds/autorole-settings", {
@@ -6856,6 +7639,199 @@ export function ServerSettingsEditor({
                 : new Date().toISOString(),
           },
         };
+      } else if (isSorteioSection) {
+        const response = await fetch("/api/auth/me/guilds/sorteio-settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            guildId,
+            enabled: sorteioEnabled,
+            logsChannelId: sorteioLogsChannelId,
+            createRoleIds: sorteioCreateRoleIds,
+            rerollRoleIds: sorteioRerollRoleIds,
+            defaultWinnerCount: sorteioDefaultWinnerCount,
+            defaultDurationMinutes: sorteioDefaultDurationMinutes,
+            activeLayout: sorteioActiveLayout,
+            endedLayout: sorteioEndedLayout,
+          }),
+        });
+
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) {
+          throw new Error(
+            payload.message || "Falha ao salvar configuracoes de sorteios.",
+          );
+        }
+
+        const nextSorteioDraft = normalizeSorteioSettingsDraft({
+          enabled: payload.settings?.enabled === true,
+          logsChannelId:
+            typeof payload.settings?.logsChannelId === "string"
+              ? payload.settings.logsChannelId
+              : null,
+          createRoleIds: Array.isArray(payload.settings?.createRoleIds)
+            ? payload.settings.createRoleIds.filter(
+                (id: unknown): id is string => typeof id === "string",
+              )
+            : [],
+          rerollRoleIds: Array.isArray(payload.settings?.rerollRoleIds)
+            ? payload.settings.rerollRoleIds.filter(
+                (id: unknown): id is string => typeof id === "string",
+              )
+            : [],
+          defaultWinnerCount: Number(
+            payload.settings?.defaultWinnerCount ?? sorteioDefaultWinnerCount,
+          ),
+          defaultDurationMinutes: Number(
+            payload.settings?.defaultDurationMinutes ?? sorteioDefaultDurationMinutes,
+          ),
+          activeLayout: payload.settings?.activeLayout,
+          endedLayout: payload.settings?.endedLayout,
+        });
+
+        setSorteioEnabled(nextSorteioDraft.enabled);
+        setSorteioLogsChannelId(nextSorteioDraft.logsChannelId);
+        setSorteioCreateRoleIds(nextSorteioDraft.createRoleIds);
+        setSorteioRerollRoleIds(nextSorteioDraft.rerollRoleIds);
+        setSorteioDefaultWinnerCount(nextSorteioDraft.defaultWinnerCount);
+        setSorteioDefaultDurationMinutes(nextSorteioDraft.defaultDurationMinutes);
+        setSorteioActiveLayout(nextSorteioDraft.activeLayout);
+        setSorteioEndedLayout(nextSorteioDraft.endedLayout);
+        setSavedSorteioSettingsDraft(nextSorteioDraft);
+        dashboardCachePatch = {
+          sorteioSettings: {
+            enabled: nextSorteioDraft.enabled,
+            logsChannelId: nextSorteioDraft.logsChannelId,
+            createRoleIds: nextSorteioDraft.createRoleIds,
+            rerollRoleIds: nextSorteioDraft.rerollRoleIds,
+            defaultWinnerCount: nextSorteioDraft.defaultWinnerCount,
+            defaultDurationMinutes: nextSorteioDraft.defaultDurationMinutes,
+            activeLayout: nextSorteioDraft.activeLayout,
+            endedLayout: nextSorteioDraft.endedLayout,
+            updatedAt:
+              typeof payload.settings?.updatedAt === "string"
+                ? payload.settings.updatedAt
+                : new Date().toISOString(),
+          },
+        };
+      } else if (isWhitelistSection) {
+        const response = await fetch("/api/auth/me/guilds/whitelist-settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            guildId,
+            enabled: currentWhitelistDraft.enabled,
+            panelChannelId: currentWhitelistDraft.panelChannelId,
+            reviewChannelId: currentWhitelistDraft.reviewChannelId,
+            logsChannelId: currentWhitelistDraft.logsChannelId,
+            approvedRoleIds: currentWhitelistDraft.approvedRoleIds,
+            deniedRoleIds: currentWhitelistDraft.deniedRoleIds,
+            reviewRoleIds: currentWhitelistDraft.reviewRoleIds,
+            identifierKind: currentWhitelistDraft.identifierKind,
+            identifierLabel: currentWhitelistDraft.identifierLabel,
+            identifierPlaceholder: currentWhitelistDraft.identifierPlaceholder,
+            approvalMode: currentWhitelistDraft.approvalMode,
+            connectionMode: currentWhitelistDraft.connectionMode,
+            dbEngine: currentWhitelistDraft.dbEngine,
+            dbHost: currentWhitelistDraft.dbHost,
+            dbPort: currentWhitelistDraft.dbPort,
+            dbName: currentWhitelistDraft.dbName,
+            dbUser: currentWhitelistDraft.dbUser,
+            dbSsl: currentWhitelistDraft.dbSsl,
+            dbPassword: currentWhitelistDraft.dbPassword || "",
+            mapping: currentWhitelistDraft.mapping,
+            mappingStatus: currentWhitelistDraft.mappingStatus,
+            panelLayout: currentWhitelistDraft.panelLayout,
+          }),
+        });
+
+        const raw = await response.text();
+        let payload: {
+          ok?: boolean;
+          message?: string;
+          settings?: (Partial<WhitelistSettingsDraft> & { updatedAt?: string }) | null;
+        } = {};
+        try {
+          payload = raw ? (JSON.parse(raw) as typeof payload) : {};
+        } catch {
+          throw new Error(
+            "Falha ao salvar a whitelist. Confirme se o SQL 152 e 153 foram executados no Supabase.",
+          );
+        }
+        if (!response.ok || !payload.ok) {
+          throw new Error(
+            payload.message || "Falha ao salvar configuracoes de whitelist.",
+          );
+        }
+
+        const nextWhitelistDraft = {
+          ...normalizeWhitelistSettingsDraft(payload.settings || currentWhitelistDraft),
+          dbPassword: "",
+        };
+        setWhitelistDraft(nextWhitelistDraft);
+        setSavedWhitelistSettingsDraft(nextWhitelistDraft);
+        dashboardCachePatch = {
+          whitelistSettings: {
+            enabled: nextWhitelistDraft.enabled,
+            panelChannelId: nextWhitelistDraft.panelChannelId,
+            reviewChannelId: nextWhitelistDraft.reviewChannelId,
+            logsChannelId: nextWhitelistDraft.logsChannelId,
+            panelLayout: nextWhitelistDraft.panelLayout,
+            approvedRoleIds: nextWhitelistDraft.approvedRoleIds,
+            deniedRoleIds: nextWhitelistDraft.deniedRoleIds,
+            reviewRoleIds: nextWhitelistDraft.reviewRoleIds,
+            identifierKind: nextWhitelistDraft.identifierKind,
+            identifierLabel: nextWhitelistDraft.identifierLabel,
+            identifierPlaceholder: nextWhitelistDraft.identifierPlaceholder,
+            approvalMode: nextWhitelistDraft.approvalMode,
+            connectionMode: nextWhitelistDraft.connectionMode,
+            dbEngine: nextWhitelistDraft.dbEngine,
+            dbHost: nextWhitelistDraft.dbHost,
+            dbPort: nextWhitelistDraft.dbPort,
+            dbName: nextWhitelistDraft.dbName,
+            dbUser: nextWhitelistDraft.dbUser,
+            dbSsl: nextWhitelistDraft.dbSsl,
+            hasDbPassword: nextWhitelistDraft.hasDbPassword,
+            mapping: nextWhitelistDraft.mapping,
+            mappingStatus: nextWhitelistDraft.mappingStatus,
+            lastHealthOk: nextWhitelistDraft.lastHealthOk,
+            lastHealthAt: nextWhitelistDraft.lastHealthAt,
+            lastHealthError: nextWhitelistDraft.lastHealthError,
+            updatedAt:
+              typeof payload.settings?.updatedAt === "string"
+                ? payload.settings.updatedAt
+                : new Date().toISOString(),
+          },
+        };
+
+        if (
+          nextWhitelistDraft.enabled &&
+          nextWhitelistDraft.panelChannelId &&
+          whitelistPanelHasRequiredParts(nextWhitelistDraft.panelLayout)
+        ) {
+          const embedResponse = await fetch("/api/auth/me/guilds/whitelist-panel-message", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              guildId,
+              panelChannelId: nextWhitelistDraft.panelChannelId,
+              panelLayout: nextWhitelistDraft.panelLayout,
+              identifierLabel: nextWhitelistDraft.identifierLabel,
+            }),
+          });
+          const embedRaw = await embedResponse.text();
+          let embedPayload: { ok?: boolean; message?: string } = {};
+          try {
+            embedPayload = embedRaw ? (JSON.parse(embedRaw) as typeof embedPayload) : {};
+          } catch {
+            embedPayload = {};
+          }
+          if (!embedResponse.ok || !embedPayload.ok) {
+            postSaveWarning =
+              embedPayload.message ||
+              "Configuracao salva, mas o embed da whitelist nao foi publicado no canal.";
+          }
+        }
       } else if (isBatePontoSection) {
         const legacyFields = deriveLegacyTicketPanelFields(batePontoPanelLayout);
         const response = await fetch("/api/auth/me/guilds/bate-ponto-settings", {
@@ -7207,6 +8183,9 @@ export function ServerSettingsEditor({
       await waitUntilMinServerSettingsSaveUi(saveStartedAtMs);
       setSuccessMessage(savedSuccessMessage || "Configuracoes salvas com sucesso.");
       setShowSaveSuccessBar(true);
+      if (postSaveWarning) {
+        setErrorMessage(postSaveWarning);
+      }
     } catch (error) {
       await waitUntilMinServerSettingsSaveUi(saveStartedAtMs);
       if (isAutoRoleSection) {
@@ -7221,6 +8200,26 @@ export function ServerSettingsEditor({
         setSavedCaptchaSettingsDraft(previousSaved.captcha);
       } else if (isSuggestionsSection) {
         setSavedSuggestionSettingsDraft(previousSaved.suggestions);
+      } else if (isSorteioSection) {
+        setSavedSorteioSettingsDraft(previousSaved.sorteio);
+        if (previousSaved.sorteio) {
+          setSorteioEnabled(previousSaved.sorteio.enabled);
+          setSorteioLogsChannelId(previousSaved.sorteio.logsChannelId);
+          setSorteioCreateRoleIds(previousSaved.sorteio.createRoleIds);
+          setSorteioRerollRoleIds(previousSaved.sorteio.rerollRoleIds);
+          setSorteioDefaultWinnerCount(previousSaved.sorteio.defaultWinnerCount);
+          setSorteioDefaultDurationMinutes(previousSaved.sorteio.defaultDurationMinutes);
+          setSorteioActiveLayout(previousSaved.sorteio.activeLayout);
+          setSorteioEndedLayout(previousSaved.sorteio.endedLayout);
+        }
+      } else if (isWhitelistSection) {
+        setSavedWhitelistSettingsDraft(previousSaved.whitelist);
+        if (previousSaved.whitelist) {
+          setWhitelistDraft({
+            ...previousSaved.whitelist,
+            dbPassword: currentWhitelistDraft.dbPassword,
+          });
+        }
       } else if (isBatePontoSection) {
         setSavedBatePontoSettingsDraft(previousSaved.batePonto);
       } else if (isWelcomeSection) {
@@ -7290,6 +8289,8 @@ export function ServerSettingsEditor({
     currentSalesDraft,
     currentSettingsDraft,
     currentSuggestionDraft,
+    currentSorteioDraft,
+    currentWhitelistDraft,
     currentBatePontoDraft,
     currentWelcomeDraft,
     savedAntiLinkSettingsDraft,
@@ -7299,6 +8300,8 @@ export function ServerSettingsEditor({
     savedSecurityLogsDraft,
     savedSettingsDraft,
     savedSuggestionSettingsDraft,
+    savedSorteioSettingsDraft,
+    savedWhitelistSettingsDraft,
     savedBatePontoSettingsDraft,
     savedWelcomeSettingsDraft,
     entryPublicLayout,
@@ -7318,6 +8321,8 @@ export function ServerSettingsEditor({
     isAutoRoleSection,
     isCaptchaSection,
     isSuggestionsSection,
+    isSorteioSection,
+    isWhitelistSection,
     isBatePontoSection,
     isSalesSettingsSection,
     isSecurityLogsSection,
@@ -7350,6 +8355,8 @@ export function ServerSettingsEditor({
     setSavedAutoRoleSettingsDraft,
     setSavedCaptchaSettingsDraft,
     setSavedSuggestionSettingsDraft,
+    setSavedSorteioSettingsDraft,
+    setSavedWhitelistSettingsDraft,
     setSavedBatePontoSettingsDraft,
     setSavedSalesSettingsDraft,
     setSavedSecurityLogsDraft,
@@ -7361,10 +8368,71 @@ export function ServerSettingsEditor({
     suggestionsPanelLayout,
     suggestionsPublishChannelId,
     suggestionsSuggestionLayout,
+    sorteioEnabled,
+    sorteioLogsChannelId,
+    sorteioCreateRoleIds,
+    sorteioRerollRoleIds,
+    sorteioDefaultWinnerCount,
+    sorteioDefaultDurationMinutes,
+    sorteioActiveLayout,
+    sorteioEndedLayout,
     ticketEnabled,
     ticketsCategoryId,
     welcomeEnabled,
     currentSecurityLogsDraft,
+  ]);
+
+  useEffect(() => {
+    if (!pendingModuleActivation || isSaving || settingsReadOnly || !hasLoadedSettingsDraft) {
+      return;
+    }
+
+    const isModuleEnabled =
+      pendingModuleActivation === "sorteio"
+        ? sorteioEnabled
+        : pendingModuleActivation === "whitelist"
+          ? whitelistDraft.enabled
+        : pendingModuleActivation === "captcha"
+          ? captchaEnabled
+          : pendingModuleActivation === "suggestions"
+            ? suggestionsEnabled
+            : pendingModuleActivation === "bate_ponto"
+              ? batePontoEnabled
+              : pendingModuleActivation === "welcome"
+                ? welcomeEnabled
+                : pendingModuleActivation === "sales"
+                  ? salesEnabled
+                  : pendingModuleActivation === "ticket"
+                    ? ticketEnabled
+                    : pendingModuleActivation === "antilink"
+                      ? antiLinkEnabled
+                      : pendingModuleActivation === "autorole"
+                        ? autoRoleEnabled
+                        : pendingModuleActivation === "security_logs"
+                          ? securityLogsDraft.enabled
+                          : false;
+
+    if (!isModuleEnabled) return;
+
+    setPendingModuleActivation(null);
+    void handleSave();
+  }, [
+    pendingModuleActivation,
+    sorteioEnabled,
+    whitelistDraft.enabled,
+    captchaEnabled,
+    suggestionsEnabled,
+    batePontoEnabled,
+    welcomeEnabled,
+    salesEnabled,
+    ticketEnabled,
+    antiLinkEnabled,
+    autoRoleEnabled,
+    securityLogsDraft.enabled,
+    isSaving,
+    settingsReadOnly,
+    hasLoadedSettingsDraft,
+    handleSave,
   ]);
 
   const handleSendEmbed = useCallback(async () => {
@@ -7475,6 +8543,53 @@ export function ServerSettingsEditor({
     guildId,
     suggestionsPanelChannelId,
     suggestionsPanelLayout,
+  ]);
+
+  const handleSendWhitelistEmbed = useCallback(async () => {
+    if (!canSendWhitelistEmbed || !whitelistDraft.panelChannelId) return;
+    if (isSendingEmbedRef.current) return;
+    isSendingEmbedRef.current = true;
+
+    setIsSendingEmbed(true);
+    setErrorMessage(null);
+
+    try {
+      const response = await fetch("/api/auth/me/guilds/whitelist-panel-message", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          guildId,
+          panelChannelId: whitelistDraft.panelChannelId,
+          panelLayout: whitelistDraft.panelLayout,
+          identifierLabel: whitelistDraft.identifierLabel,
+        }),
+      });
+      const raw = await response.text();
+      let payload: { ok?: boolean; message?: string } = {};
+      try {
+        payload = raw ? (JSON.parse(raw) as typeof payload) : {};
+      } catch {
+        throw new Error("Falha ao enviar o embed de whitelist.");
+      }
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.message || "Falha ao enviar o embed de whitelist.");
+      }
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Erro ao enviar o embed de whitelist.",
+      );
+    } finally {
+      isSendingEmbedRef.current = false;
+      setIsSendingEmbed(false);
+    }
+  }, [
+    canSendWhitelistEmbed,
+    guildId,
+    whitelistDraft.identifierLabel,
+    whitelistDraft.panelChannelId,
+    whitelistDraft.panelLayout,
   ]);
 
   const handleSendBatePontoEmbed = useCallback(async () => {
@@ -7949,23 +9064,6 @@ export function ServerSettingsEditor({
                     />
                   ) : settingsSection === "sales_overview" ? (
                     <ModulePage>
-                      <ModuleHero
-                        label="Modulo Vendas"
-                        title="Loja do servidor em operacao"
-                        description="Carrinhos, logs de pagamento e comprovantes ficam prontos quando o modulo estiver ativo. Salve para aplicar no Discord."
-                        icon={ShoppingBag}
-                        action={
-                          <DashboardInlineSwitch
-                            checked={salesEnabled}
-                            onChange={() => {
-                              if (isSaving || settingsReadOnly) return;
-                              setSalesEnabled((current) => !current);
-                            }}
-                            disabled={isSaving || settingsReadOnly}
-                            ariaLabel="Ativar ou desativar modulo de vendas"
-                          />
-                        }
-                      />
                       <div className="grid gap-[12px] md:grid-cols-2 xl:grid-cols-4">
                         <ModuleStat label="Status" value={salesEnabled ? "Ativo" : "Desligado"} hint="Loja e checkout" icon={ShoppingBag} delay={0.06} />
                         <ModuleStat label="Categoria" value={optionLabel(categoryOptions, salesCartsCategoryId)} hint="Onde o carrinho nasce" icon={Hash} delay={0.1} />
@@ -8041,23 +9139,6 @@ export function ServerSettingsEditor({
                     </div>
                   ) : settingsSection === "overview" ? (
                     <ModulePage>
-                      <ModuleHero
-                        label="Modulo Ticket"
-                        title="Central de atendimento"
-                        description="Painel, abertura, logs e permissoes ficam prontos quando o modulo estiver ativo. Salve para publicar no servidor."
-                        icon={Ticket}
-                        action={
-                          <DashboardInlineSwitch
-                            checked={ticketEnabled}
-                            onChange={() => {
-                              if (isSaving || settingsReadOnly) return;
-                              setTicketEnabled((current) => !current);
-                            }}
-                            disabled={isSaving || settingsReadOnly}
-                            ariaLabel="Ativar ou desativar modulo de tickets"
-                          />
-                        }
-                      />
                       <div className="grid gap-[12px] md:grid-cols-2 xl:grid-cols-4">
                         <ModuleStat label="Status" value={ticketEnabled ? "Ativo" : "Desligado"} hint="Atendimento ao vivo" icon={Ticket} delay={0.06} />
                         <ModuleStat label="Menu" value={optionLabel(textChannelOptions, menuChannelId)} hint="Canal do painel" icon={Hash} delay={0.1} />
@@ -8099,55 +9180,6 @@ export function ServerSettingsEditor({
                     </ModulePage>
                   ) : settingsSection === "ticket_ai" ? (
                     <div className="space-y-[14px]">
-                      <ModuleHero
-                        label="Modulo FlowAI"
-                        title="Atendimento com IA"
-                        description={`${flowAiHeaderDescription} O FlowAI aplica as regras da empresa e conduz reembolsos quando o modulo estiver ativo.`}
-                        icon={Settings2}
-                        action={
-                          <DashboardInlineSwitch
-                            checked={aiEnabled}
-                            onChange={() => {
-                              if (isSaving || settingsReadOnly) return;
-                              if (aiEnabled) {
-                                setHasPendingFlowAiActivationRequest(false);
-                                setAiEnabled(false);
-                                return;
-                              }
-
-                              setErrorMessage(null);
-
-                              if (resolvedFlowAiPlanCode) {
-                                setHasPendingFlowAiActivationRequest(false);
-
-                                if (!isFlowAiEligiblePlanCode(resolvedFlowAiPlanCode)) {
-                                  setIsFlowAiUpgradeModalOpen(true);
-                                  return;
-                                }
-
-                                setAiEnabled(true);
-                                return;
-                              }
-
-                              if (!isFlowAiPlanLoading && hasFlowAiPlanCheckError) {
-                                setErrorMessage(
-                                  "Nao foi possivel verificar o plano agora. Tente novamente em alguns instantes.",
-                                );
-                                return;
-                              }
-
-                              setHasPendingFlowAiActivationRequest(true);
-                            }}
-                            disabled={
-                              isSaving ||
-                              settingsReadOnly ||
-                              hasPendingFlowAiActivationRequest
-                            }
-                            ariaLabel="Ativar ou desativar modulo FlowAI"
-                          />
-                        }
-                      />
-
                       <div className="grid grid-cols-1 gap-[10px] sm:grid-cols-2 xl:grid-cols-4">
                         {flowAiChecklist.map((item) => (
                           <div
@@ -8496,23 +9528,6 @@ export function ServerSettingsEditor({
                     />
                   ) : settingsSection === "entry_exit_overview" ? (
                     <ModulePage>
-                      <ModuleHero
-                        label="Entrada e saida"
-                        title="Recepcao automatica"
-                        description="Mensagem publica e log privado para quem entra e sai. Salve para ativar no servidor."
-                        icon={LogIn}
-                        action={
-                          <DashboardInlineSwitch
-                            checked={welcomeEnabled}
-                            onChange={() => {
-                              if (isSaving || settingsReadOnly) return;
-                              setWelcomeEnabled((current) => !current);
-                            }}
-                            disabled={isSaving || settingsReadOnly}
-                            ariaLabel="Ativar ou desativar modulo de entrada e saida"
-                          />
-                        }
-                      />
                       <div className="grid gap-[12px] md:grid-cols-2 xl:grid-cols-4">
                         <ModuleStat label="Status" value={welcomeEnabled ? "Ativo" : "Desligado"} hint="Mensagens automaticas" icon={MessageSquare} delay={0.06} />
                         <ModuleStat label="Entrada publica" value={optionLabel(textChannelOptions, entryPublicChannelId)} hint="Boas-vindas" icon={LogIn} delay={0.1} />
@@ -8530,23 +9545,6 @@ export function ServerSettingsEditor({
                     </ModulePage>
                   ) : settingsSection === "suggestions_overview" ? (
                     <div className="space-y-[14px]">
-                      <ModuleHero
-                        label="Modulo Sugestoes"
-                        title="Ideias e votacoes"
-                        description="Painel, publicacao e logs. Salve para publicar o fluxo de sugestoes."
-                        icon={MessageSquare}
-                        action={
-                          <DashboardInlineSwitch
-                            checked={suggestionsEnabled}
-                            onChange={() => {
-                              if (isSaving || settingsReadOnly) return;
-                              setSuggestionsEnabled((current) => !current);
-                            }}
-                            disabled={isSaving || settingsReadOnly}
-                            ariaLabel="Ativar ou desativar modulo de sugestoes"
-                          />
-                        }
-                      />
                       <div className="grid gap-[12px] md:grid-cols-3">
                         <ModuleStat label="Painel" value={optionLabel(textChannelOptions, suggestionsPanelChannelId)} hint="Onde o membro envia" icon={Hash} delay={0.08} />
                         <ModuleStat label="Publicacao" value={optionLabel(textChannelOptions, suggestionsPublishChannelId)} hint="Onde a ideia aparece" icon={Hash} delay={0.12} />
@@ -8592,26 +9590,52 @@ export function ServerSettingsEditor({
                       description="Monte o embed publicado no canal do painel e envie a mensagem quando estiver pronta."
                       sendButtonLabel="Enviar embed de sugestoes"
                     />
+                  ) : settingsSection === "sorteio_overview" ||
+                    settingsSection === "sorteio_message" ? (
+                    <SorteioSettingsSection
+                      mode={
+                        settingsSection === "sorteio_overview" ? "overview" : "message"
+                      }
+                      guildId={guildId}
+                      disabled={isSaving || settingsReadOnly || sorteioControlsDisabled}
+                      draft={currentSorteioDraft}
+                      textChannelOptions={textChannelOptions}
+                      roleOptions={roleOptions}
+                      controlHeightPx={serverSettingsControlHeight}
+                      onChange={handleSorteioDraftChange}
+                      onActiveLayoutChange={setSorteioActiveLayout}
+                      onEndedLayoutChange={setSorteioEndedLayout}
+                    />
+                  ) : settingsSection === "whitelist_overview" ||
+                    settingsSection === "whitelist_database" ||
+                    settingsSection === "whitelist_message" ? (
+                    <WhitelistSettingsSection
+                      mode={
+                        settingsSection === "whitelist_overview"
+                          ? "overview"
+                          : settingsSection === "whitelist_database"
+                            ? "database"
+                            : "message"
+                      }
+                      guildId={guildId}
+                      disabled={isSaving || settingsReadOnly || whitelistControlsDisabled}
+                      draft={currentWhitelistDraft}
+                      textChannelOptions={textChannelOptions}
+                      roleOptions={roleOptions}
+                      controlHeightPx={serverSettingsControlHeight}
+                      onChange={handleWhitelistDraftChange}
+                      onPanelLayoutChange={(layout) =>
+                        setWhitelistDraft((current) => ({
+                          ...current,
+                          panelLayout: layout,
+                        }))
+                      }
+                      canSendEmbed={canSendWhitelistEmbed}
+                      isSendingEmbed={isSendingEmbed}
+                      onSendEmbed={handleSendWhitelistEmbed}
+                    />
                   ) : settingsSection === "bate_ponto_overview" ? (
                     <div className="space-y-[14px]">
-                      <ModuleHero
-                        label="Modulo Bate Ponto"
-                        title="Expediente e banco de horas"
-                        description="Painel, logs, cargos e regras de encerramento. Salve para aplicar na equipe."
-                        icon={Clock}
-                        action={
-                          <DashboardInlineSwitch
-                            checked={batePontoEnabled}
-                            onChange={() => {
-                              if (isSaving || settingsReadOnly) return;
-                              setBatePontoEnabled((current) => !current);
-                            }}
-                            disabled={isSaving || settingsReadOnly}
-                            ariaLabel="Ativar ou desativar modulo de bate ponto"
-                          />
-                        }
-                      />
-
                       <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div>
                           <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Bate Ponto</p>
@@ -8829,23 +9853,6 @@ export function ServerSettingsEditor({
                     <BatePontoHistoryPanel guildId={guildId} />
                   ) : settingsSection === "captcha_overview" ? (
                     <div className="space-y-[14px]">
-                      <ModuleHero
-                        label="Modulo Captcha"
-                        title="Verificacao na entrada"
-                        description="Painel, cargos e desafio visual. Salve para proteger o servidor."
-                        icon={ShieldCheck}
-                        action={
-                          <DashboardInlineSwitch
-                            checked={captchaEnabled}
-                            onChange={() => {
-                              if (isSaving || settingsReadOnly) return;
-                              setCaptchaEnabled((current) => !current);
-                            }}
-                            disabled={isSaving || settingsReadOnly}
-                            ariaLabel="Ativar ou desativar modulo de captcha"
-                          />
-                        }
-                      />
                       <div className="grid gap-[12px] md:grid-cols-2 xl:grid-cols-4">
                         <ModuleStat label="Status" value={captchaEnabled ? "Ativo" : "Desligado"} hint="Protecao de entrada" icon={ShieldCheck} delay={0.06} />
                         <ModuleStat label="Painel" value={optionLabel(textChannelOptions, captchaPanelChannelId)} hint="Canal principal" icon={Hash} delay={0.1} />
@@ -8986,25 +9993,6 @@ export function ServerSettingsEditor({
                     />
                   ) : settingsSection === "security_antilink" ? (
                     <div className="space-y-[14px]">
-                      <ModuleHero
-                        label="Modulo AntiLink"
-                        title="Protecao automatica"
-                        description="Bloqueia links externos, convites e ofuscacao assim que o evento acontece. Salve para aplicar no servidor."
-                        icon={ShieldX}
-                        action={
-                          <DashboardInlineSwitch
-                            checked={antiLinkEnabled}
-                            onChange={() => {
-                              if (isSaving || settingsReadOnly) return;
-                              setHasDismissedAntiLinkModal(true);
-                              setAntiLinkEnabled((current) => !current);
-                            }}
-                            disabled={isSaving || settingsReadOnly}
-                            ariaLabel="Ativar ou desativar modulo AntiLink"
-                          />
-                        }
-                      />
-
                       <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
                           <div>
@@ -9096,30 +10084,6 @@ export function ServerSettingsEditor({
                     </div>
                   ) : settingsSection === "security_autorole" ? (
                     <div className="space-y-[14px]">
-                      <ModuleHero
-                        label="Modulo AutoRole"
-                        title="Cargos automaticos"
-                        description="O bot adiciona os cargos em novos membros. Se quiser, sincronize quem ja esta no servidor."
-                        icon={Users}
-                        action={
-                          <DashboardInlineSwitch
-                            checked={autoRoleEnabled}
-                            onChange={() => {
-                              if (isSaving || settingsReadOnly) return;
-                              setAutoRoleEnabled((current) => {
-                                const next = !current;
-                                if (!next) {
-                                  setAutoRoleSyncExistingMembers(false);
-                                }
-                                return next;
-                              });
-                            }}
-                            disabled={isSaving || settingsReadOnly}
-                            ariaLabel="Ativar ou desativar modulo AutoRole"
-                          />
-                        }
-                      />
-
                       <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
                           <div>
@@ -10244,6 +11208,46 @@ export function ServerSettingsEditor({
                   />
 
                   <div className="relative z-10 flex flex-col gap-[16px] px-[18px] py-[16px] sm:px-[22px] sm:py-[18px] xl:flex-row xl:items-center xl:justify-between">
+                    {floatingBarMode === "activate" && moduleActivationBarCopy ? (
+                      <>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[16px] leading-[1.2] font-medium tracking-[-0.03em] text-[#D8D8D8]">
+                            {moduleActivationBarCopy.title}
+                          </p>
+                          <p className="mt-[8px] max-w-[680px] text-[13px] leading-[1.55] text-[#7F7F7F]">
+                            {moduleActivationBarCopy.description}
+                          </p>
+                        </div>
+
+                        <div className="flex shrink-0 flex-col-reverse gap-[10px] sm:flex-row sm:items-center">
+                          <button
+                            type="button"
+                            onClick={activateCurrentModule}
+                            disabled={activateModuleDisabled}
+                            className={`group relative inline-flex h-[46px] items-center justify-center overflow-hidden whitespace-nowrap rounded-[12px] px-6 text-[15px] leading-none font-semibold ${
+                              activateModuleDisabled ? "cursor-not-allowed" : ""
+                            }`}
+                          >
+                            <span
+                              aria-hidden="true"
+                              className={`absolute inset-0 rounded-[12px] transition-transform duration-150 ease-out ${
+                                activateModuleDisabled
+                                  ? "bg-[#111111]"
+                                  : "bg-[linear-gradient(180deg,#FFFFFF_0%,#D1D1D1_100%)] group-hover:scale-[1.02] group-active:scale-[0.985]"
+                              }`}
+                            />
+                            <span
+                              className={`relative z-10 inline-flex items-center justify-center whitespace-nowrap transition-opacity ${
+                                activateModuleDisabled ? "text-[#B7B7B7]" : "text-[#282828]"
+                              }`}
+                            >
+                              {moduleActivationBarCopy.buttonLabel}
+                            </span>
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
                     <div className="min-w-0 flex-1">
                       <p className="text-[16px] leading-[1.2] font-medium tracking-[-0.03em] text-[#D8D8D8]">
                         {floatingSaveBarTitle}
@@ -10319,6 +11323,8 @@ export function ServerSettingsEditor({
                       <div className="inline-flex h-[40px] shrink-0 items-center justify-center rounded-full border border-[rgba(155,214,148,0.28)] bg-[rgba(155,214,148,0.08)] px-[14px] text-[12px] font-medium text-[#9BD694]">
                         Tudo sincronizado
                       </div>
+                    )}
+                      </>
                     )}
                   </div>
                 </div>

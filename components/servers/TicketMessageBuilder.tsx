@@ -64,6 +64,22 @@ import {
   type TicketPanelSelectOption,
   type TicketPanelSeparatorComponent,
 } from "@/lib/servers/ticketPanelBuilder";
+import {
+  createDefaultSorteioActiveLayout,
+  createDefaultSorteioEndedLayout,
+  isSorteioLockedButtonComponent,
+  isUnsetSorteioActiveLayout,
+  normalizeSorteioActiveLayout,
+  normalizeSorteioEndedLayout,
+  resolveSorteioPreviewMarkdown,
+} from "@/lib/servers/sorteioPanelBuilder";
+import {
+  createDefaultWhitelistPanelLayout,
+  isUnsetWhitelistPanelLayout,
+  isWhitelistLockedButtonId,
+  normalizeWhitelistPanelLayout,
+  resolveWhitelistPreviewMarkdown,
+} from "@/lib/servers/whitelistPanelBuilder";
 
 type Props = {
   guildId: string;
@@ -85,7 +101,10 @@ type Props = {
     | "suggestions"
     | "suggestion_publish"
     | "bate_ponto"
-    | "bate_ponto_log";
+    | "bate_ponto_log"
+    | "sorteio_active"
+    | "sorteio_ended"
+    | "whitelist_panel";
 };
 
 type Scope = { parentId: string | null; componentId: string };
@@ -1690,7 +1709,13 @@ function TicketMessageBuilder({
               ? normalizeBatePontoPanelLayout(next)
               : layoutPreset === "bate_ponto_log"
                 ? normalizeBatePontoLogLayout(next)
-                : normalizeTicketPanelLayout(next),
+                : layoutPreset === "sorteio_active"
+                  ? normalizeSorteioActiveLayout(next)
+                  : layoutPreset === "sorteio_ended"
+                    ? normalizeSorteioEndedLayout(next)
+                    : layoutPreset === "whitelist_panel"
+                      ? normalizeWhitelistPanelLayout(next)
+                    : normalizeTicketPanelLayout(next),
     [layoutPreset],
   );
   const layout = useMemo(() => normalizeLayout(value), [normalizeLayout, value]);
@@ -1705,7 +1730,10 @@ function TicketMessageBuilder({
       layoutPreset !== "captcha" &&
       layoutPreset !== "suggestions" &&
       layoutPreset !== "bate_ponto" &&
-      layoutPreset !== "bate_ponto_log"
+      layoutPreset !== "bate_ponto_log" &&
+      layoutPreset !== "sorteio_active" &&
+      layoutPreset !== "sorteio_ended" &&
+      layoutPreset !== "whitelist_panel"
     ) {
       return;
     }
@@ -1722,11 +1750,18 @@ function TicketMessageBuilder({
           ? isUnsetSuggestionPanelLayout(value)
           : layoutPreset === "bate_ponto"
             ? isUnsetBatePontoPanelLayout(value)
-            : isUnsetBatePontoLogLayout(value);
+            : layoutPreset === "sorteio_active"
+              ? isUnsetSorteioActiveLayout(value)
+              : layoutPreset === "whitelist_panel"
+                ? isUnsetWhitelistPanelLayout(value)
+              : isUnsetBatePontoLogLayout(value);
 
     if (
       layoutPreset === "bate_ponto" ||
-      layoutPreset === "bate_ponto_log"
+      layoutPreset === "bate_ponto_log" ||
+      layoutPreset === "sorteio_active" ||
+      layoutPreset === "sorteio_ended" ||
+      layoutPreset === "whitelist_panel"
     ) {
       if (!isEmpty) {
         didSyncPresetDefaultsRef.current = true;
@@ -1742,7 +1777,13 @@ function TicketMessageBuilder({
       onChange(
         layoutPreset === "bate_ponto"
           ? createDefaultBatePontoPanelLayout()
-          : createDefaultBatePontoLogLayout(),
+          : layoutPreset === "sorteio_active"
+            ? createDefaultSorteioActiveLayout()
+            : layoutPreset === "sorteio_ended"
+              ? createDefaultSorteioEndedLayout()
+              : layoutPreset === "whitelist_panel"
+                ? createDefaultWhitelistPanelLayout()
+              : createDefaultBatePontoLogLayout(),
       );
       return;
     }
@@ -1763,9 +1804,15 @@ function TicketMessageBuilder({
         ? createDefaultCaptchaPanelLayout()
         : layoutPreset === "suggestions"
           ? createDefaultSuggestionPanelLayout()
-          : layoutPreset === "bate_ponto"
-            ? createDefaultBatePontoPanelLayout()
-            : createDefaultBatePontoLogLayout(),
+        : layoutPreset === "bate_ponto"
+          ? createDefaultBatePontoPanelLayout()
+          : layoutPreset === "sorteio_active"
+            ? createDefaultSorteioActiveLayout()
+            : layoutPreset === "sorteio_ended"
+              ? createDefaultSorteioEndedLayout()
+              : layoutPreset === "whitelist_panel"
+                ? createDefaultWhitelistPanelLayout()
+              : createDefaultBatePontoLogLayout(),
     );
   }, [layoutPreset, onChange, value]);
 
@@ -1807,6 +1854,28 @@ function TicketMessageBuilder({
   const openButtonEmojiPickerRef = useRef<ButtonEmojiTarget | null>(null);
   layoutRef.current = layout;
   openButtonEmojiPickerRef.current = openButtonEmojiPicker;
+  const isSorteioLockedScope = useCallback(
+    (scope: Scope) => {
+      const locksSorteio = layoutPreset === "sorteio_active";
+      const locksWhitelist = layoutPreset === "whitelist_panel";
+      if (!locksSorteio && !locksWhitelist) return false;
+
+      const component = scope.parentId
+        ? layout
+            .find(
+              (item): item is TicketPanelContainerComponent =>
+                item.type === "container" && item.id === scope.parentId,
+            )
+            ?.children.find((child) => child.id === scope.componentId) ?? null
+        : layout.find((item) => item.id === scope.componentId) ?? null;
+
+      if (component?.type !== "button") return false;
+      return locksSorteio
+        ? isSorteioLockedButtonComponent(component)
+        : isWhitelistLockedButtonId(component.id);
+    },
+    [layout, layoutPreset],
+  );
   const functionalButtonCount = useMemo(() => countTicketPanelFunctionButtons(layout), [layout]);
   const draggedComponent = useMemo(() => {
     if (!dragState) {
@@ -2240,20 +2309,22 @@ function TicketMessageBuilder({
   }, [closeButtonEmojiPicker, updateButtonEmoji]);
 
   const removeComponent = useCallback((scope: Scope) => {
+    if (isSorteioLockedScope(scope)) return;
     if (scope.parentId) {
       updateContainerChildren(scope.parentId, (children) => children.filter((child) => child.id !== scope.componentId));
       return;
     }
     commit(layout.filter((component) => component.id !== scope.componentId));
-  }, [commit, layout, updateContainerChildren]);
+  }, [commit, isSorteioLockedScope, layout, updateContainerChildren]);
 
   const moveComponent = useCallback((scope: Scope, direction: -1 | 1) => {
+    if (isSorteioLockedScope(scope)) return;
     if (scope.parentId) {
       updateContainerChildren(scope.parentId, (children) => moveById(children, scope.componentId, direction));
       return;
     }
     commit(moveById(layout, scope.componentId, direction));
-  }, [commit, layout, updateContainerChildren]);
+  }, [commit, isSorteioLockedScope, layout, updateContainerChildren]);
 
   const canDropAccessoryAtScope = useCallback((scope: Scope) => {
     if (!dragState || disabled || !draggedAccessory) {
@@ -3028,7 +3099,24 @@ function TicketMessageBuilder({
     if (component.type === "image") return <div className="grid gap-[12px]"><Field value={component.url} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "image" ? { ...current, url: next.slice(0, 1000), alt: "" } : current) : updateRoot(scope.componentId, (current) => current.type === "image" ? { ...current, url: next.slice(0, 1000), alt: "" } : current)} placeholder="URL da imagem" disabled={disabled} /></div>;
     if (component.type === "file") return <div className="grid gap-[12px] xl:grid-cols-2"><Field value={component.name} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "file" ? { ...current, name: next.slice(0, 120) } : current) : updateRoot(scope.componentId, (current) => current.type === "file" ? { ...current, name: next.slice(0, 120) } : current)} placeholder="Nome do arquivo" disabled={disabled} /><Field value={component.sizeLabel} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "file" ? { ...current, sizeLabel: next.slice(0, 60) } : current) : updateRoot(scope.componentId, (current) => current.type === "file" ? { ...current, sizeLabel: next.slice(0, 60) } : current)} placeholder="Ex.: PDF | 1.2 MB" disabled={disabled} /></div>;
     if (component.type === "separator") return <div className="grid grid-cols-3 gap-[8px]">{(["sm", "md", "lg"] as TicketPanelSeparatorComponent["spacing"][]).map((spacing) => <button key={spacing} type="button" disabled={disabled} onClick={() => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "separator" ? { ...current, spacing } : current) : updateRoot(scope.componentId, (current) => current.type === "separator" ? { ...current, spacing } : current)} className={cn("rounded-[14px] border px-[12px] py-[11px] text-[12px] font-medium transition-colors duration-200", component.spacing === spacing ? "border-[#F2F2F2] bg-[#111111] text-[#F2F2F2]" : "border-[#1C1C1C] bg-[#141414] text-[#818181] hover:bg-[#171717]")}>{spacing === "sm" ? "Espaco curto" : spacing === "md" ? "Espaco medio" : "Espaco amplo"}</button>)}</div>;
-    if (component.type === "button") return <div className="space-y-[12px]"><Field value={component.label} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "button" ? { ...current, label: next.slice(0, 80) } : current) : updateRoot(scope.componentId, (current) => current.type === "button" ? { ...current, label: next.slice(0, 80) } : current)} placeholder="Texto do botao funcional" disabled={disabled} /><p className="text-[12px] leading-[1.55] text-[#787878]">Use este CTA como o botao principal que abre o ticket. O builder aceita apenas um desse tipo.</p><div className="grid grid-cols-2 gap-[8px] min-[920px]:grid-cols-4">{BUTTON_STYLES.map((style) => <button key={style.value} type="button" disabled={disabled} onClick={() => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "button" ? { ...current, style: style.value } : current) : updateRoot(scope.componentId, (current) => current.type === "button" ? { ...current, style: style.value } : current)} className={cn("rounded-[14px] border px-[10px] py-[10px] text-[12px] font-medium transition-colors duration-200", component.style === style.value ? "border-[#F2F2F2] bg-[#111111] text-[#F2F2F2]" : "border-[#1C1C1C] bg-[#141414] text-[#818181] hover:bg-[#171717]")}>{style.label}</button>)}</div></div>;
+    if (component.type === "button") {
+      if (isSorteioLockedScope(scope)) {
+        return (
+          <div className="rounded-[16px] border border-[#1C1C1C] bg-[#141414] px-[14px] py-[12px]">
+            <p className="text-[12px] font-medium uppercase tracking-[0.14em] text-[#6A6A6A]">
+              Botao fixo
+            </p>
+            <p className="mt-[8px] text-[13px] leading-[1.55] text-[#8A8A8A]">
+              {layoutPreset === "whitelist_panel"
+                ? "Este botao e obrigatorio na whitelist e nao pode ser editado ou removido."
+                : "Este botao e obrigatorio no sorteio ativo e nao pode ser editado ou removido."}
+            </p>
+          </div>
+        );
+      }
+
+      return <div className="space-y-[12px]"><Field value={component.label} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "button" ? { ...current, label: next.slice(0, 80) } : current) : updateRoot(scope.componentId, (current) => current.type === "button" ? { ...current, label: next.slice(0, 80) } : current)} placeholder="Texto do botao funcional" disabled={disabled} /><p className="text-[12px] leading-[1.55] text-[#787878]">Use este CTA como o botao principal que abre o ticket. O builder aceita apenas um desse tipo.</p><div className="grid grid-cols-2 gap-[8px] min-[920px]:grid-cols-4">{BUTTON_STYLES.map((style) => <button key={style.value} type="button" disabled={disabled} onClick={() => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "button" ? { ...current, style: style.value } : current) : updateRoot(scope.componentId, (current) => current.type === "button" ? { ...current, style: style.value } : current)} className={cn("rounded-[14px] border px-[10px] py-[10px] text-[12px] font-medium transition-colors duration-200", component.style === style.value ? "border-[#F2F2F2] bg-[#111111] text-[#F2F2F2]" : "border-[#1C1C1C] bg-[#141414] text-[#818181] hover:bg-[#171717]")}>{style.label}</button>)}</div></div>;
+    }
     if (component.type === "link_button") return <div className="grid gap-[12px] xl:grid-cols-2"><Field value={component.label} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "link_button" ? { ...current, label: next.slice(0, 80) } : current) : updateRoot(scope.componentId, (current) => current.type === "link_button" ? { ...current, label: next.slice(0, 80) } : current)} placeholder="Texto do botao" disabled={disabled} /><Field value={component.url} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "link_button" ? { ...current, url: next.slice(0, 1000) } : current) : updateRoot(scope.componentId, (current) => current.type === "link_button" ? { ...current, url: next.slice(0, 1000) } : current)} placeholder="https://seu-link.com" disabled={disabled} /></div>;
     return <div className="space-y-[12px]"><Field value={component.placeholder} onChange={(next) => scope.parentId ? updateChild(scope.parentId, scope.componentId, (current) => current.type === "select" ? { ...current, placeholder: next.slice(0, 100) } : current) : updateRoot(scope.componentId, (current) => current.type === "select" ? { ...current, placeholder: next.slice(0, 100) } : current)} placeholder="Placeholder do menu" disabled={disabled} />{renderSelectOptions(component, scope)}</div>;
   };
@@ -3041,6 +3129,7 @@ function TicketMessageBuilder({
     nested = false,
   ) => {
     const canDrop = Boolean(dragState);
+    const isLockedSorteioComponent = isSorteioLockedScope(scope);
     return (
       <div
         key={scopeKey(scope)}
@@ -3080,8 +3169,8 @@ function TicketMessageBuilder({
             <div className="flex shrink-0 items-center gap-[8px] pt-[2px]">
               <IconButton
                 label="Mover componente"
-                disabled={disabled}
-                draggable={!disabled}
+                disabled={disabled || isLockedSorteioComponent}
+                draggable={!disabled && !isLockedSorteioComponent}
                 onDragStart={(event) => {
                   if (disabled) return;
                   const nextDrag: DragState = scope.parentId
@@ -3100,6 +3189,7 @@ function TicketMessageBuilder({
                 <GripVertical className="h-[15px] w-[15px]" strokeWidth={2.1} />
               </IconButton>
               {component.type === "button" || component.type === "link_button" ? (
+                !isLockedSorteioComponent ? (
                 <IconButton
                   dataTicketButtonEmojiTrigger
                   label={
@@ -3137,6 +3227,7 @@ function TicketMessageBuilder({
                     <Smile className="h-[15px] w-[15px]" strokeWidth={2.1} />
                   )}
                 </IconButton>
+                ) : null
               ) : null}
             </div>
 
@@ -3188,16 +3279,17 @@ function TicketMessageBuilder({
           </div>
 
           <div className="flex shrink-0 items-center gap-[8px]">
-            <IconButton label="Subir componente" disabled={disabled} onClick={() => moveComponent(scope, -1)}>
+            <IconButton label="Subir componente" disabled={disabled || isLockedSorteioComponent} onClick={() => moveComponent(scope, -1)}>
               <ChevronUp className="h-[15px] w-[15px]" strokeWidth={2.1} />
             </IconButton>
-            <IconButton label="Descer componente" disabled={disabled} onClick={() => moveComponent(scope, 1)}>
+            <IconButton label="Descer componente" disabled={disabled || isLockedSorteioComponent} onClick={() => moveComponent(scope, 1)}>
               <ChevronDown className="h-[15px] w-[15px]" strokeWidth={2.1} />
             </IconButton>
             <IconButton
               label="Remover componente"
               disabled={
                 disabled ||
+                isLockedSorteioComponent ||
                 (layoutPreset === "suggestion_publish" &&
                   component.type === "content" &&
                   isSuggestionMemberSlotMarkdown(component.markdown))
@@ -3503,7 +3595,11 @@ function TicketMessageBuilder({
               username: viewerUsername ?? undefined,
               memberId: viewerDiscordId ?? undefined,
             })
-          : item.markdown,
+          : layoutPreset === "sorteio_active" || layoutPreset === "sorteio_ended"
+            ? resolveSorteioPreviewMarkdown(item.markdown)
+            : layoutPreset === "whitelist_panel"
+              ? resolveWhitelistPreviewMarkdown(item.markdown)
+            : item.markdown,
       guildId,
       layoutPreset === "bate_ponto_log" ? batePontoLogMentionMap : undefined,
     )}</div>{item.accessory ? <div className="justify-self-start min-[520px]:justify-self-end">{previewAccessory(item.accessory, handlePreviewLinkIntent, resolvedThumbnailPreviewUrl, guildId)}</div> : null}</div>;

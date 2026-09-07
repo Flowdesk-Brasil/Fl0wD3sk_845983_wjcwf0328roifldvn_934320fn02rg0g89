@@ -13,6 +13,7 @@ import {
 } from "@/lib/seo/flowCwv";
 import { RouteInteractionRecovery } from "@/components/RouteInteractionRecovery";
 import { RoutePrefetcher } from "@/components/RoutePrefetcher";
+import { ConsoleSecurityNotice } from "@/components/ConsoleSecurityNotice";
 import { SessionRevocationWatcher } from "@/components/auth/SessionRevocationWatcher";
 import { authConfig } from "@/lib/auth/config";
 
@@ -61,6 +62,7 @@ export default async function RootLayout({
           payload={buildFlowCwvSiteGraph()}
         />
         <NotificationsProvider>
+          <ConsoleSecurityNotice />
           <RoutePrefetcher />
           <RouteInteractionRecovery />
           <SessionRevocationWatcher enabled={hasSessionCookie} />

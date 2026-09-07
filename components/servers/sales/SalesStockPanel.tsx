@@ -26,7 +26,6 @@ import {
   ServerDiscordRelinkState,
   ServerEmptyState,
   ServerIconFrame,
-  ServerSectionHeading,
   ServerSurface,
   ServerTextInput,
 } from "@/components/servers/ServerUi";
@@ -1190,13 +1189,7 @@ export function SalesStockPanel({
 
   return (
     <div className="space-y-[18px]">
-      {!selectedProduct ? (
-        <ServerSectionHeading
-          eyebrow="Modulo Vendas"
-          title="Estoque"
-          description="Gerencie entregas digitais por produto com dados separados para envio automatico ao comprador."
-        />
-      ) : (
+      {!selectedProduct ? null : (
         <div className="flex flex-col gap-[14px] lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
             <ServerButton

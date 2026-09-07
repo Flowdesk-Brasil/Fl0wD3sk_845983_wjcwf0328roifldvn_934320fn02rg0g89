@@ -30,6 +30,11 @@ export type ServerSettingsSkeletonSection =
   | "captcha_message"
   | "suggestions_overview"
   | "suggestions_message"
+  | "sorteio_overview"
+  | "sorteio_message"
+  | "whitelist_overview"
+  | "whitelist_database"
+  | "whitelist_message"
   | "bate_ponto_overview"
   | "bate_ponto_message"
   | "bate_ponto_ranking"
@@ -96,6 +101,8 @@ function resolveSkeletonContent(
     settingsSection === "entry_exit_message" ||
     settingsSection === "captcha_message" ||
     settingsSection === "suggestions_message" ||
+    settingsSection === "sorteio_message" ||
+    settingsSection === "whitelist_message" ||
     settingsSection === "bate_ponto_message"
   ) {
     return <MessageSkeleton />;
@@ -113,7 +120,13 @@ function resolveSkeletonContent(
     return <ListSkeleton />;
   }
 
-  if (settingsSection === "ticket_ai" || settingsSection === "captcha_overview") {
+  if (
+    settingsSection === "ticket_ai" ||
+    settingsSection === "captcha_overview" ||
+    settingsSection === "sorteio_overview" ||
+    settingsSection === "whitelist_overview" ||
+    settingsSection === "whitelist_database"
+  ) {
     return <ModuleSettingsSkeleton stats={4} fields={6} />;
   }
 

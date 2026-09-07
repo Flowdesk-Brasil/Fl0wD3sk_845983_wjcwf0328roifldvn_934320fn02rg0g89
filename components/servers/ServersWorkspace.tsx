@@ -21,6 +21,7 @@ import {
   Ellipsis,
   FolderKanban,
   Grid2x2,
+  Gift,
   HardDrive,
   LayoutDashboard,
   LifeBuoy,
@@ -29,6 +30,7 @@ import {
   PlugZap,
   Search as SearchLucide,
   Settings2,
+  Fingerprint,
   Shield,
   ShieldCheck,
   Lightbulb,
@@ -50,6 +52,8 @@ import { CreateTeamModal } from "@/components/teams/CreateTeamModal";
 import { ServerHomeOverview } from "@/components/servers/ServerHomeOverview";
 import { ServerSettingsEditor } from "@/components/servers/ServerSettingsEditor";
 import { ServerSettingsEditorSkeleton } from "@/components/servers/ServerSettingsEditorSkeleton";
+import { ModuleActionsMenu } from "@/components/servers/module-ui/ModuleUi";
+import type { ServerEditorChrome } from "@/lib/servers/serverEditorChrome";
 import { PermissionDeniedState } from "@/components/servers/PermissionDeniedState";
 import { resolveAddServerTargetHref } from "@/lib/plans/addServerFlow";
 import {
@@ -145,6 +149,11 @@ type ServerSettingsSection =
   | "captcha_message"
   | "suggestions_overview"
   | "suggestions_message"
+  | "sorteio_overview"
+  | "sorteio_message"
+  | "whitelist_overview"
+  | "whitelist_database"
+  | "whitelist_message"
   | "bate_ponto_overview"
   | "bate_ponto_message"
   | "bate_ponto_ranking"
@@ -155,6 +164,8 @@ type ServerSettingsSection =
   | "ticket_ai";
 type FilterOption = "all" | ManagedServerStatus;
 type ViewMode = "overview" | "list";
+
+const SERVER_ACCESS_DENIED_MESSAGE = "Voce nao tem permissao neste servidor.";
 type CreateTeamStep = "name" | "servers" | "members";
 
 type ServersApiResponse = {
@@ -200,7 +211,7 @@ const FILTER_LABEL: Record<FilterOption, string> = {
 
 type SidebarItem = {
   label: string;
-  kind: "home" | "overview" | "settings" | "sales" | "ticket" | "entry_exit" | "captcha" | "suggestions" | "bate_ponto" | "security" | "dashboard";
+  kind: "home" | "overview" | "settings" | "sales" | "ticket" | "entry_exit" | "captcha" | "suggestions" | "sorteio" | "whitelist" | "bate_ponto" | "security" | "dashboard";
   tab?: ServerEditorTab | null;
   settingsSection?: ServerSettingsSection | null;
   disabled?: boolean;
@@ -429,6 +440,91 @@ const SUGGESTIONS_SIDEBAR_ITEMS: SidebarItem[] = [
       "painel",
       "botao",
       "ideias",
+    ],
+  },
+];
+
+const SORTEIO_SIDEBAR_ITEMS: SidebarItem[] = [
+  {
+    label: "Configurando Sorteios",
+    kind: "sorteio",
+    tab: "settings",
+    settingsSection: "sorteio_overview",
+    requiredPermission: "server_manage_sorteio_overview",
+    searchAliases: [
+      "sorteio",
+      "sorteios",
+      "giveaway",
+      "config",
+      "permissoes",
+      "logs",
+      "reroll",
+    ],
+  },
+  {
+    label: "Configurando Mensagem",
+    kind: "sorteio",
+    tab: "settings",
+    settingsSection: "sorteio_message",
+    requiredPermission: "server_manage_sorteio_message",
+    searchAliases: [
+      "sorteio",
+      "mensagem",
+      "embed",
+      "template",
+      "ativo",
+      "encerrado",
+    ],
+  },
+];
+
+const WHITELIST_SIDEBAR_ITEMS: SidebarItem[] = [
+  {
+    label: "Configurando Whitelist",
+    kind: "whitelist",
+    tab: "settings",
+    settingsSection: "whitelist_overview",
+    requiredPermission: "server_manage_whitelist_overview",
+    searchAliases: [
+      "whitelist",
+      "fivem",
+      "cidade",
+      "config",
+      "canais",
+      "cargos",
+      "painel",
+      "aprovacao",
+    ],
+  },
+  {
+    label: "Banco e Mapping",
+    kind: "whitelist",
+    tab: "settings",
+    settingsSection: "whitelist_database",
+    requiredPermission: "server_manage_whitelist_database",
+    searchAliases: [
+      "whitelist",
+      "banco",
+      "database",
+      "mysql",
+      "mapping",
+      "schema",
+      "conexao",
+    ],
+  },
+  {
+    label: "Configurando Mensagem",
+    kind: "whitelist",
+    tab: "settings",
+    settingsSection: "whitelist_message",
+    requiredPermission: "server_manage_whitelist_message",
+    searchAliases: [
+      "whitelist",
+      "mensagem",
+      "embed",
+      "painel",
+      "botao",
+      "solicitar",
     ],
   },
 ];
@@ -679,7 +775,7 @@ function parseWorkspaceRoute(pathname: string | null): {
     }
 
     if (
-      /^\/\d{10,25}(?:\/(?:overview|sales\/(?:overview|categories(?:\/create)?|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|captcha\/(?:overview|message)|suggestions\/(?:overview|message)|bate-ponto\/(?:overview|message|ranking|history)|security\/(?:antilink|autorole|logs))?)?$/.test(
+      /^\/\d{10,25}(?:\/(?:overview|sales\/(?:overview|categories(?:\/create)?|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|captcha\/(?:overview|message)|suggestions\/(?:overview|message)|sorteios\/(?:overview|message)|whitelist\/(?:overview|database|message)|bate-ponto\/(?:overview|message|ranking|history)|security\/(?:antilink|autorole|logs))?)?$/.test(
         comparablePathname,
       )
     ) {
@@ -800,6 +896,36 @@ function parseWorkspaceRoute(pathname: string | null): {
     };
   }
 
+  const sorteioSectionMatch = normalizedPathname.match(
+    /^\/servers\/(\d{10,25})\/sorteios\/(overview|message)\/?$/,
+  );
+  if (sorteioSectionMatch) {
+    return {
+      guildId: sorteioSectionMatch[1],
+      tab: "settings",
+      settingsSection:
+        sorteioSectionMatch[2] === "overview"
+          ? "sorteio_overview"
+          : "sorteio_message",
+    };
+  }
+
+  const whitelistSectionMatch = normalizedPathname.match(
+    /^\/servers\/(\d{10,25})\/whitelist\/(overview|database|message)\/?$/,
+  );
+  if (whitelistSectionMatch) {
+    return {
+      guildId: whitelistSectionMatch[1],
+      tab: "settings",
+      settingsSection:
+        whitelistSectionMatch[2] === "overview"
+          ? "whitelist_overview"
+          : whitelistSectionMatch[2] === "database"
+            ? "whitelist_database"
+            : "whitelist_message",
+    };
+  }
+
   const batePontoSectionMatch = normalizedPathname.match(
     /^\/servers\/(\d{10,25})\/bate-ponto\/(overview|message|ranking|history)\/?$/,
   );
@@ -864,7 +990,7 @@ function isServersWorkspacePath(pathname: string) {
     return true;
   }
 
-  return /^\/\d{10,25}(?:\/(?:overview|sales\/(?:overview|categories|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|captcha\/(?:overview|message)|suggestions\/(?:overview|message)|bate-ponto\/(?:overview|message|ranking|history)|security\/(?:antilink|autorole|logs))?)?\/?$/.test(
+  return /^\/\d{10,25}(?:\/(?:overview|sales\/(?:overview|categories|products|stock(?:\/edit\/prd-[0-9]{8})?|payment-methods|coupons-gifts(?:\/(?:create|edit\/[^/]+))?)|tickets\/(?:overview|message|flowai)|entry-exit\/(?:overview|message)|captcha\/(?:overview|message)|suggestions\/(?:overview|message)|sorteios\/(?:overview|message)|whitelist\/(?:overview|database|message)|bate-ponto\/(?:overview|message|ranking|history)|security\/(?:antilink|autorole|logs))?)?\/?$/.test(
     pathname,
   );
 }
@@ -997,28 +1123,19 @@ function FilterIcon() {
 }
 
 function ServersEmptyState({
-  onPrimaryAction,
   selectedTeamName,
-  syncContent,
 }: {
-  onPrimaryAction?: (() => void) | null;
   selectedTeamName?: string | null;
-  syncContent?: ServersSyncContent | null;
 }) {
-  const title = syncContent?.title || "Nenhum servidor encontrado";
-  const description = syncContent?.description
-    || (selectedTeamName
-      ? `Nao ha servidores vinculados para ${selectedTeamName} com o filtro atual.`
-      : "Ajuste a busca ou os filtros para encontrar um servidor.");
+  const title = "Nenhum servidor encontrado";
+  const description = selectedTeamName
+    ? `Nao ha servidores vinculados para ${selectedTeamName} com o filtro atual.`
+    : "Ajuste a busca ou os filtros para encontrar um servidor.";
 
   return (
     <div className="flex flex-col items-center justify-center rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[20px] py-[48px] text-center">
       <div className="flex h-[34px] w-[34px] items-center justify-center rounded-[12px] border border-[#1C1C1C] bg-[#141414]">
-        {syncContent ? (
-          <Shield className="h-[16px] w-[16px] text-[#C4C4C8]" />
-        ) : (
-          <FolderKanban className="h-[16px] w-[16px] text-[#C4C4C8]" />
-        )}
+        <FolderKanban className="h-[16px] w-[16px] text-[#C4C4C8]" />
       </div>
       <p className="mt-[16px] text-[16px] font-semibold tracking-[-0.03em] text-[#F2F2F3]">
         {title}
@@ -1026,51 +1143,43 @@ function ServersEmptyState({
       <p className="mt-[8px] max-w-[400px] text-[13px] leading-[1.6] text-[#8B8B90]">
         {description}
       </p>
-      {syncContent && onPrimaryAction ? (
-        <button
-          type="button"
-          onClick={onPrimaryAction}
-          className="mt-[18px] inline-flex h-[42px] items-center justify-center rounded-[12px] border border-[rgba(0,98,255,0.28)] bg-[rgba(0,98,255,0.12)] px-[16px] text-[13px] font-medium text-[#B9D2FF] transition-colors hover:border-[rgba(0,98,255,0.38)] hover:bg-[rgba(0,98,255,0.18)]"
-        >
-          {syncContent.actionLabel}
-        </button>
-      ) : null}
     </div>
   );
 }
 
-function ServersSyncBanner({
-  diagnosticsFingerprint,
-  onAction,
+function ServerAccessDeniedPanel() {
+  return (
+    <div className="flex flex-col items-center justify-center rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[20px] py-[48px] text-center">
+      <div className="flex h-[34px] w-[34px] items-center justify-center rounded-[12px] border border-[#1C1C1C] bg-[#141414]">
+        <Shield className="h-[16px] w-[16px] text-[#C4C4C8]" />
+      </div>
+      <p className="mt-[16px] text-[16px] font-semibold tracking-[-0.03em] text-[#F2F2F3]">
+        {SERVER_ACCESS_DENIED_MESSAGE}
+      </p>
+    </div>
+  );
+}
+
+function ServersTopSyncAlert({
   syncContent,
+  onAction,
 }: {
-  diagnosticsFingerprint?: string | null;
-  onAction: () => void;
   syncContent: ServersSyncContent;
+  onAction: () => void;
 }) {
   return (
-    <div className="rounded-[24px] border border-[rgba(0,98,255,0.2)] bg-[linear-gradient(180deg,rgba(8,14,26,0.98)_0%,rgba(5,8,15,0.98)_100%)] p-[18px] shadow-[0_20px_60px_rgba(0,0,0,0.32)]">
-      <div className="flex flex-col gap-[16px] lg:flex-row lg:items-center lg:justify-between">
-        <div className="min-w-0">
-          <span className="inline-flex items-center rounded-full border border-[rgba(0,98,255,0.24)] bg-[rgba(0,98,255,0.1)] px-[10px] py-[6px] text-[11px] leading-none font-semibold uppercase tracking-[0.16em] text-[#9FC3FF]">
-            {syncContent.badgeLabel}
-          </span>
-          <p className="mt-[14px] text-[17px] leading-[1.35] font-medium tracking-[-0.03em] text-[#EAF1FF]">
-            {syncContent.title}
-          </p>
-          <p className="mt-[8px] max-w-[720px] text-[13px] leading-[1.6] text-[#8D99AD]">
-            {syncContent.description}
-          </p>
-          {diagnosticsFingerprint ? (
-            <p className="mt-[10px] text-[11px] uppercase tracking-[0.16em] text-[#5E6D86]">
-              Diagnostico FlowSecure: {diagnosticsFingerprint}
-            </p>
-          ) : null}
-        </div>
+    <div className="fixed inset-x-0 top-0 z-[1400] h-[42px] overflow-hidden bg-[#FFAD4D] text-white md:h-[46px]">
+      <div className="mx-auto flex h-full w-full max-w-[1440px] items-center justify-between gap-[10px] px-[14px] md:gap-[16px] md:px-[22px]">
+        <span className="hidden shrink-0 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/90 md:inline">
+          {syncContent.badgeLabel}
+        </span>
+        <p className="min-w-0 flex-1 truncate text-center text-[12px] font-medium tracking-[-0.02em] md:text-[13px]">
+          {syncContent.title}
+        </p>
         <button
           type="button"
           onClick={onAction}
-          className="inline-flex h-[44px] shrink-0 items-center justify-center rounded-[13px] border border-[rgba(0,98,255,0.28)] bg-[rgba(0,98,255,0.14)] px-[18px] text-[13px] font-semibold text-[#C8DBFF] transition-colors hover:border-[rgba(0,98,255,0.42)] hover:bg-[rgba(0,98,255,0.2)]"
+          className="inline-flex h-[30px] shrink-0 items-center justify-center rounded-full border border-white/35 bg-transparent px-[13px] text-[11px] font-semibold text-white transition-colors hover:bg-white/12 md:h-[32px] md:px-[16px] md:text-[12px]"
         >
           {syncContent.actionLabel}
         </button>
@@ -1255,6 +1364,8 @@ function SidebarNavIcon({
     entry_exit: ArrowRightLeft,
     captcha: ShieldCheck,
     suggestions: Lightbulb,
+    sorteio: Gift,
+    whitelist: Fingerprint,
     bate_ponto: Clock,
     security: Shield,
     sales: ShoppingBag,
@@ -1706,9 +1817,7 @@ export function ServersWorkspace({
   const [savedAccounts, setSavedAccounts] = useState<SavedPanelAccount[]>([]);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
-  const [isDiscordReconnectModalOpen, setIsDiscordReconnectModalOpen] = useState(
-    !currentAccount.discordUserId,
-  );
+  const [isDiscordReconnectModalOpen, setIsDiscordReconnectModalOpen] = useState(false);
   const [teamActionMessage, setTeamActionMessage] = useState<string | null>(null);
   const [teamActionError, setTeamActionError] = useState<string | null>(null);
   const [isCreatingTeam, setIsCreatingTeam] = useState(false);
@@ -1718,6 +1827,7 @@ export function ServersWorkspace({
   const [selectedSettingsSectionForConfig, setSelectedSettingsSectionForConfig] =
     useState<ServerSettingsSection>(initialSettingsSection);
   const [hasUnsavedSettingsChanges, setHasUnsavedSettingsChanges] = useState(false);
+  const [editorChrome, setEditorChrome] = useState<ServerEditorChrome | null>(null);
   const [navigationBlockSignal, setNavigationBlockSignal] = useState(0);
   const hasUnsavedSettingsChangesRef = useRef(false);
   const [isSalesSidebarOpen, setIsSalesSidebarOpen] = useState(false);
@@ -1725,6 +1835,8 @@ export function ServersWorkspace({
   const [isEntryExitSidebarOpen, setIsEntryExitSidebarOpen] = useState(false);
   const [isCaptchaSidebarOpen, setIsCaptchaSidebarOpen] = useState(false);
   const [isSuggestionsSidebarOpen, setIsSuggestionsSidebarOpen] = useState(false);
+  const [isSorteioSidebarOpen, setIsSorteioSidebarOpen] = useState(false);
+  const [isWhitelistSidebarOpen, setIsWhitelistSidebarOpen] = useState(false);
   const [isBatePontoSidebarOpen, setIsBatePontoSidebarOpen] = useState(false);
   const [isSecuritySidebarOpen, setIsSecuritySidebarOpen] = useState(false);
   const [currentDashboardPermissions, setCurrentDashboardPermissions] = useState<string[] | "full">([]);
@@ -2395,15 +2507,10 @@ export function ServersWorkspace({
     [selectedTeamId, teams],
   );
   useEffect(() => {
-    if (!currentAccount.discordUserId) {
-      setIsDiscordReconnectModalOpen(true);
-      return;
-    }
-
     if (!isDiscordRelinkRequired) {
       setIsDiscordReconnectModalOpen(false);
     }
-  }, [currentAccount.discordUserId, isDiscordRelinkRequired]);
+  }, [isDiscordRelinkRequired]);
 
   useBodyScrollLock(isCreateTeamModalOpen || isDiscordReconnectModalOpen);
   const linkedGuildIdsInTeams = useMemo(
@@ -2425,8 +2532,6 @@ export function ServersWorkspace({
     () => servers.filter((server) => server.isPanelVisible),
     [servers],
   );
-  const emptyStateSyncContent =
-    panelVisibleServers.length === 0 ? serversSyncContent : null;
   const teamServerOptions = useMemo(
     () =>
       [...teamServers].sort((a, b) =>
@@ -2605,6 +2710,46 @@ export function ServersWorkspace({
       )
       .map((entry) => entry.item);
   }, [isEditingServer, normalizedSidebarQuery]);
+  const filteredSorteioSidebarItems = useMemo(() => {
+    if (!isEditingServer) return [];
+
+    const items = SORTEIO_SIDEBAR_ITEMS;
+
+    if (!normalizedSidebarQuery) return items;
+
+    return items
+      .map((item) => {
+        const haystack = [item.label, ...(item.searchAliases || [])].join(" ");
+        return { item, score: getSearchScore(haystack, normalizedSidebarQuery) };
+      })
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) =>
+        a.score !== b.score
+          ? b.score - a.score
+          : a.item.label.localeCompare(b.item.label, "pt-BR"),
+      )
+      .map((entry) => entry.item);
+  }, [isEditingServer, normalizedSidebarQuery]);
+  const filteredWhitelistSidebarItems = useMemo(() => {
+    if (!isEditingServer) return [];
+
+    const items = WHITELIST_SIDEBAR_ITEMS;
+
+    if (!normalizedSidebarQuery) return items;
+
+    return items
+      .map((item) => {
+        const haystack = [item.label, ...(item.searchAliases || [])].join(" ");
+        return { item, score: getSearchScore(haystack, normalizedSidebarQuery) };
+      })
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) =>
+        a.score !== b.score
+          ? b.score - a.score
+          : a.item.label.localeCompare(b.item.label, "pt-BR"),
+      )
+      .map((entry) => entry.item);
+  }, [isEditingServer, normalizedSidebarQuery]);
   const filteredBatePontoSidebarItems = useMemo(() => {
     if (!isEditingServer) return [];
 
@@ -2686,6 +2831,17 @@ export function ServersWorkspace({
     selectedEditorTabForConfig === "settings" &&
     (selectedSettingsSectionForConfig === "suggestions_overview" ||
       selectedSettingsSectionForConfig === "suggestions_message");
+  const isSorteioGroupActive =
+    isEditingServer &&
+    selectedEditorTabForConfig === "settings" &&
+    (selectedSettingsSectionForConfig === "sorteio_overview" ||
+      selectedSettingsSectionForConfig === "sorteio_message");
+  const isWhitelistGroupActive =
+    isEditingServer &&
+    selectedEditorTabForConfig === "settings" &&
+    (selectedSettingsSectionForConfig === "whitelist_overview" ||
+      selectedSettingsSectionForConfig === "whitelist_database" ||
+      selectedSettingsSectionForConfig === "whitelist_message");
   const isBatePontoGroupActive =
     isEditingServer &&
     selectedEditorTabForConfig === "settings" &&
@@ -2707,6 +2863,8 @@ export function ServersWorkspace({
       setIsEntryExitSidebarOpen(true);
       setIsCaptchaSidebarOpen(true);
       setIsSuggestionsSidebarOpen(true);
+      setIsSorteioSidebarOpen(true);
+      setIsWhitelistSidebarOpen(true);
       setIsBatePontoSidebarOpen(true);
       setIsSecuritySidebarOpen(true);
       return;
@@ -2751,6 +2909,15 @@ export function ServersWorkspace({
       case "suggestions_message":
         setIsSuggestionsSidebarOpen(true);
         break;
+      case "sorteio_overview":
+      case "sorteio_message":
+        setIsSorteioSidebarOpen(true);
+        break;
+      case "whitelist_overview":
+      case "whitelist_database":
+      case "whitelist_message":
+        setIsWhitelistSidebarOpen(true);
+        break;
       case "bate_ponto_overview":
       case "bate_ponto_message":
       case "bate_ponto_ranking":
@@ -2775,6 +2942,7 @@ export function ServersWorkspace({
   useEffect(() => {
     if (!selectedGuildIdForConfig) {
       setHasUnsavedSettingsChanges(false);
+      setEditorChrome(null);
     }
   }, [selectedGuildIdForConfig]);
 
@@ -2896,6 +3064,21 @@ export function ServersWorkspace({
     }
     if (settingsSection === "suggestions_overview") {
       return `/servers/${encodedGuildId}/suggestions/overview/`;
+    }
+    if (settingsSection === "sorteio_message") {
+      return `/servers/${encodedGuildId}/sorteios/message/`;
+    }
+    if (settingsSection === "sorteio_overview") {
+      return `/servers/${encodedGuildId}/sorteios/overview/`;
+    }
+    if (settingsSection === "whitelist_message") {
+      return `/servers/${encodedGuildId}/whitelist/message/`;
+    }
+    if (settingsSection === "whitelist_database") {
+      return `/servers/${encodedGuildId}/whitelist/database/`;
+    }
+    if (settingsSection === "whitelist_overview") {
+      return `/servers/${encodedGuildId}/whitelist/overview/`;
     }
     if (settingsSection === "bate_ponto_message") {
       return `/servers/${encodedGuildId}/bate-ponto/message/`;
@@ -3019,9 +3202,12 @@ export function ServersWorkspace({
     };
   }, [syncBrowserHistoryServerRoute]);
 
-  const openProjectsOverview = useCallback((mode: "push" | "replace" = "push") => {
+  const openProjectsOverview = useCallback((
+    mode: "push" | "replace" = "push",
+    options?: { message?: string | null },
+  ) => {
     applySelectedServerRouteState(null, "settings", "overview");
-    setErrorMessage(null);
+    setErrorMessage(options?.message ?? null);
     setPendingWorkspacePaneKey(buildWorkspacePaneKey(null, "settings", "overview"));
     navigateToUrl("/servers/", mode);
   }, [applySelectedServerRouteState, navigateToUrl]);
@@ -3046,6 +3232,11 @@ export function ServersWorkspace({
       buildServerConfigUrl(guildId, "settings", "captcha_message"),
       buildServerConfigUrl(guildId, "settings", "suggestions_overview"),
       buildServerConfigUrl(guildId, "settings", "suggestions_message"),
+      buildServerConfigUrl(guildId, "settings", "sorteio_overview"),
+      buildServerConfigUrl(guildId, "settings", "sorteio_message"),
+      buildServerConfigUrl(guildId, "settings", "whitelist_overview"),
+      buildServerConfigUrl(guildId, "settings", "whitelist_database"),
+      buildServerConfigUrl(guildId, "settings", "whitelist_message"),
       buildServerConfigUrl(guildId, "settings", "bate_ponto_overview"),
       buildServerConfigUrl(guildId, "settings", "bate_ponto_message"),
       buildServerConfigUrl(guildId, "settings", "bate_ponto_ranking"),
@@ -3529,8 +3720,15 @@ export function ServersWorkspace({
       null,
     [panelVisibleServers, selectedGuildIdForConfig],
   );
-  const shouldShowServersSyncBanner = Boolean(
-    serversSyncContent && (panelVisibleServers.length > 0 || isDiscordRelinkRequired),
+  const isServerAccessDenied = errorMessage === SERVER_ACCESS_DENIED_MESSAGE;
+  const isInaccessibleGuildRoute = Boolean(
+    selectedGuildIdForConfig && !isLoading && !selectedServer,
+  );
+  const shouldShowDiscordSyncTopAlert = Boolean(
+    serversSyncContent &&
+      !isInaccessibleGuildRoute &&
+      !isServerAccessDenied &&
+      (panelVisibleServers.length > 0 || isDiscordRelinkRequired),
   );
   const workspaceAlertMessage = useMemo(
     () =>
@@ -3542,6 +3740,7 @@ export function ServersWorkspace({
     [isEditingServer, panelVisibleServers, selectedServer],
   );
   const hasWorkspaceAlert = Boolean(workspaceAlertMessage);
+  const hasTopPanelAlert = hasWorkspaceAlert || shouldShowDiscordSyncTopAlert;
   const isEditorViewerOnly = useMemo(() => {
     if (!selectedServer) return false;
     return !(selectedServer.canManage && selectedServer.accessMode === "owner");
@@ -3590,6 +3789,21 @@ export function ServersWorkspace({
     if (section === "suggestions_message") {
       return perms.has("server_manage_suggestions_message");
     }
+    if (section === "sorteio_overview") {
+      return perms.has("server_manage_sorteio_overview");
+    }
+    if (section === "sorteio_message") {
+      return perms.has("server_manage_sorteio_message");
+    }
+    if (section === "whitelist_overview") {
+      return perms.has("server_manage_whitelist_overview");
+    }
+    if (section === "whitelist_database") {
+      return perms.has("server_manage_whitelist_database");
+    }
+    if (section === "whitelist_message") {
+      return perms.has("server_manage_whitelist_message");
+    }
     if (section === "bate_ponto_overview") {
       return perms.has("server_manage_bate_ponto_overview");
     }
@@ -3617,12 +3831,14 @@ export function ServersWorkspace({
     (errorMessage === "Acesso negado." || (Array.isArray(currentDashboardPermissions) && currentDashboardPermissions.length === 0));
   
   const shouldShowEditorSkeleton =
-    Boolean(selectedGuildIdForConfig) && (isLoading || (!selectedServer && !errorMessage));
+    Boolean(selectedGuildIdForConfig) &&
+    (isLoading || (!selectedServer && !errorMessage && !isInaccessibleGuildRoute));
   const shouldShowEditorUnavailableState =
     Boolean(selectedGuildIdForConfig) &&
     !selectedServer &&
     !isLoading &&
-    Boolean(errorMessage || servers.length > 0);
+    Boolean(errorMessage || servers.length > 0) &&
+    !isInaccessibleGuildRoute;
   const shouldShowEditorHeaderSkeleton =
     Boolean(selectedGuildIdForConfig) && !selectedServer;
   const shouldShowWorkspacePaneSkeleton = Boolean(
@@ -3663,6 +3879,17 @@ export function ServersWorkspace({
       return;
     }
 
+    if (
+      !panelVisibleServers.some(
+        (server) => server.guildId === selectedGuildIdForConfig,
+      )
+    ) {
+      openProjectsOverview("replace", {
+        message: SERVER_ACCESS_DENIED_MESSAGE,
+      });
+      return;
+    }
+
     if (selectedServerRecoveryRef.current.guildId !== selectedGuildIdForConfig) {
       selectedServerRecoveryRef.current = {
         guildId: selectedGuildIdForConfig,
@@ -3679,18 +3906,29 @@ export function ServersWorkspace({
       attempts: selectedServerRecoveryRef.current.attempts + 1,
     };
     requestServersReload();
-  }, [isLoading, requestServersReload, selectedGuildIdForConfig, selectedServer]);
+  }, [
+    isLoading,
+    openProjectsOverview,
+    panelVisibleServers,
+    requestServersReload,
+    selectedGuildIdForConfig,
+    selectedServer,
+  ]);
 
   const panelTitle = isEditingServer
-    ? `Servidor ${selectedServer?.guildName || ""}`.trim()
+    ? editorChrome?.title ?? `Servidor ${selectedServer?.guildName || ""}`.trim()
     : selectedTeam
       ? selectedTeam.name
       : "Seus projetos";
   const panelDescription = isEditingServer
-    ? "Gerencie tickets, canais e cargos do servidor em um fluxo unico, mais limpo e mais atual."
+    ? editorChrome?.description ??
+      "Gerencie tickets, canais e cargos do servidor em um fluxo unico, mais limpo e mais atual."
     : selectedTeam
       ? `Servidores da equipe ${selectedTeam.name}. Abra um projeto para ver vendas, tickets e a saude da operacao.`
       : "Abra um servidor para a visao geral de vendas e tickets, ou gerencie a equipe pelo seletor ao lado.";
+  const panelEyebrow = isEditingServer
+    ? editorChrome?.eyebrow ?? "Configurando servidor"
+    : null;
   const teamSummaryLabel = isTeamsLoading
     ? "Carregando equipes..."
     : selectedTeam
@@ -3899,6 +4137,8 @@ export function ServersWorkspace({
         filteredEntryExitSidebarItems.length ||
         filteredCaptchaSidebarItems.length ||
         filteredSuggestionsSidebarItems.length ||
+        filteredSorteioSidebarItems.length ||
+        filteredWhitelistSidebarItems.length ||
         filteredBatePontoSidebarItems.length ||
         filteredSecuritySidebarItems.length ? (
           <>
@@ -4305,6 +4545,142 @@ export function ServersWorkspace({
               </div>
             ) : null}
 
+            {filteredSorteioSidebarItems.length ? (
+              <div className="mt-[12px]">
+                <button
+                  type="button"
+                  onClick={() => setIsSorteioSidebarOpen((current) => !current)}
+                  className={fdNavGroupClass({ active: isSorteioGroupActive, open: isSorteioSidebarOpen })}
+                >
+                  <span className={`inline-flex h-[22px] w-[22px] items-center justify-center ${isSorteioGroupActive ? "text-[#F0F0F0]" : isSorteioSidebarOpen ? "text-[#C7C7C7]" : "text-[#8A8A8A] group-hover:text-[#DADADA]"}`}>
+                    <SidebarNavIcon kind="sorteio" active={isSorteioGroupActive} />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[15px] leading-none font-medium tracking-[-0.03em]">
+                    Sorteios
+                  </span>
+                  <span
+                    className={`transition-transform duration-200 ${
+                      isSorteioSidebarOpen || normalizedSidebarQuery
+                        ? "rotate-180 text-[#C9C9C9]"
+                        : "rotate-0 text-[#6F6F6F] group-hover:text-[#BEBEBE]"
+                    }`}
+                  >
+                    <SidebarDropdownChevronIcon />
+                  </span>
+                </button>
+
+                {isSorteioSidebarOpen || normalizedSidebarQuery ? (
+                  <div className="fd-nav-children">
+                    {filteredSorteioSidebarItems.map((item) => {
+                      const isDisabled = item.disabled || !selectedServer || !item.tab;
+                      const isActive =
+                        Boolean(
+                          item.tab &&
+                            selectedEditorTabForConfig === item.tab &&
+                            selectedSettingsSectionForConfig === item.settingsSection &&
+                            isEditingServer,
+                        );
+
+                        return (
+                          <button
+                            key={item.label}
+                            type="button"
+                            onMouseEnter={() => prefetchSelectedWorkspaceSections(item.tab)}
+                            onFocus={() => prefetchSelectedWorkspaceSections(item.tab)}
+                            onPointerDown={() => prefetchSelectedWorkspaceSections(item.tab)}
+                            onClick={() => {
+                              if (isDisabled || !selectedServer || !item.tab) return;
+                              handleSidebarSettingsSectionNavigation({
+                              guildId: selectedServer.guildId,
+                              tab: item.tab,
+                              settingsSection: item.settingsSection || "overview",
+                            });
+                          }}
+                          disabled={isDisabled}
+                          className={fdNavItemClass({ active: isActive, disabled: isDisabled })}
+                        >
+                          <span className={`inline-flex h-[20px] w-[20px] items-center justify-center ${isActive ? "text-[#F0F0F0]" : isDisabled ? "text-[#4A4A4A]" : "text-[#7F7F7F] group-hover:text-[#DADADA]"}`}>
+                            <SidebarNavIcon kind={item.kind} active={isActive} />
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-[14px] leading-none font-medium tracking-[-0.03em]">
+                            {item.label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {filteredWhitelistSidebarItems.length ? (
+              <div className="mt-[12px]">
+                <button
+                  type="button"
+                  onClick={() => setIsWhitelistSidebarOpen((current) => !current)}
+                  className={fdNavGroupClass({ active: isWhitelistGroupActive, open: isWhitelistSidebarOpen })}
+                >
+                  <span className={`inline-flex h-[22px] w-[22px] items-center justify-center ${isWhitelistGroupActive ? "text-[#F0F0F0]" : isWhitelistSidebarOpen ? "text-[#C7C7C7]" : "text-[#8A8A8A] group-hover:text-[#DADADA]"}`}>
+                    <SidebarNavIcon kind="whitelist" active={isWhitelistGroupActive} />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[15px] leading-none font-medium tracking-[-0.03em]">
+                    Whitelist
+                  </span>
+                  <span
+                    className={`transition-transform duration-200 ${
+                      isWhitelistSidebarOpen || normalizedSidebarQuery
+                        ? "rotate-180 text-[#C9C9C9]"
+                        : "rotate-0 text-[#6F6F6F] group-hover:text-[#BEBEBE]"
+                    }`}
+                  >
+                    <SidebarDropdownChevronIcon />
+                  </span>
+                </button>
+
+                {isWhitelistSidebarOpen || normalizedSidebarQuery ? (
+                  <div className="fd-nav-children">
+                    {filteredWhitelistSidebarItems.map((item) => {
+                      const isDisabled = item.disabled || !selectedServer || !item.tab;
+                      const isActive =
+                        Boolean(
+                          item.tab &&
+                            selectedEditorTabForConfig === item.tab &&
+                            selectedSettingsSectionForConfig === item.settingsSection &&
+                            isEditingServer,
+                        );
+
+                        return (
+                          <button
+                            key={item.label}
+                            type="button"
+                            onMouseEnter={() => prefetchSelectedWorkspaceSections(item.tab)}
+                            onFocus={() => prefetchSelectedWorkspaceSections(item.tab)}
+                            onPointerDown={() => prefetchSelectedWorkspaceSections(item.tab)}
+                            onClick={() => {
+                              if (isDisabled || !selectedServer || !item.tab) return;
+                              handleSidebarSettingsSectionNavigation({
+                              guildId: selectedServer.guildId,
+                              tab: item.tab,
+                              settingsSection: item.settingsSection || "overview",
+                            });
+                          }}
+                          disabled={isDisabled}
+                          className={fdNavItemClass({ active: isActive, disabled: isDisabled })}
+                        >
+                          <span className={`inline-flex h-[20px] w-[20px] items-center justify-center ${isActive ? "text-[#F0F0F0]" : isDisabled ? "text-[#4A4A4A]" : "text-[#7F7F7F] group-hover:text-[#DADADA]"}`}>
+                            <SidebarNavIcon kind={item.kind} active={isActive} />
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-[14px] leading-none font-medium tracking-[-0.03em]">
+                            {item.label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             {filteredBatePontoSidebarItems.length ? (
               <div className="mt-[12px]">
                 <button
@@ -4501,6 +4877,8 @@ export function ServersWorkspace({
           ...ENTRY_EXIT_SIDEBAR_ITEMS.map((item) => mapServerPaletteItem("Entrada e saida", item)),
           ...CAPTCHA_SIDEBAR_ITEMS.map((item) => mapServerPaletteItem("Captcha", item)),
           ...SUGGESTIONS_SIDEBAR_ITEMS.map((item) => mapServerPaletteItem("Sugestoes", item)),
+          ...SORTEIO_SIDEBAR_ITEMS.map((item) => mapServerPaletteItem("Sorteios", item)),
+          ...WHITELIST_SIDEBAR_ITEMS.map((item) => mapServerPaletteItem("Whitelist", item)),
           ...BATE_PONTO_SIDEBAR_ITEMS.map((item) => mapServerPaletteItem("Bate ponto", item)),
           ...SECURITY_SIDEBAR_ITEMS.map((item) => mapServerPaletteItem("Seguranca", item)),
         ]
@@ -4510,7 +4888,7 @@ export function ServersWorkspace({
   return (
     <PanelShell
       className="flowdesk-servers-ui"
-      hasAlert={hasWorkspaceAlert}
+      hasAlert={hasTopPanelAlert}
       crumb="FlowDesk"
       title={isEditingServer ? "Servidores" : panelTitle}
       account={{
@@ -4552,7 +4930,7 @@ export function ServersWorkspace({
         desktopSidebarSearchInputRef,
       )}
       alert={
-        workspaceAlertMessage ? (
+        hasWorkspaceAlert ? (
         <button
           type="button"
           onMouseEnter={() => warmBrowserRoute("/servers/plans", { router, prefetchDocument: true })}
@@ -4577,14 +4955,19 @@ export function ServersWorkspace({
             </span>
           </div>
         </button>
+        ) : shouldShowDiscordSyncTopAlert && serversSyncContent ? (
+          <ServersTopSyncAlert
+            syncContent={serversSyncContent}
+            onAction={handleServersSyncAction}
+          />
         ) : null
       }
     >
           <section className="min-w-0">
-            <LandingReveal delay={36} duration={240}>
-              <div className="relative z-[700] flex flex-col gap-[18px]">
-                <div className="flex flex-col gap-[14px] md:flex-row md:items-end md:justify-between">
-                  <div>
+            <LandingReveal delay={36} duration={240} className="relative z-[700]">
+              <div className="relative flex flex-col gap-[18px]">
+                <div className="flex flex-col gap-[14px] md:flex-row md:items-start md:justify-between">
+                  <div className="min-w-0 flex-1">
                     {shouldShowEditorHeaderSkeleton ? (
                       <div className="space-y-[12px]" aria-hidden="true">
                         <div className="flowdesk-shimmer h-[12px] w-[88px] rounded-full bg-[#171717]" />
@@ -4595,11 +4978,16 @@ export function ServersWorkspace({
                       selectedSettingsSectionForConfig === "home" ? null : (
                       <>
                         <p className="text-[12px] font-medium tracking-[0.02em] text-[#8B8B90]">
-                          {isEditingServer ? "Configurando servidor" : "Projetos"}
+                          {panelEyebrow ?? (isEditingServer ? "Configurando servidor" : "Projetos")}
                         </p>
-                        <h1 className="mt-[10px] text-[32px] leading-[1.05] font-semibold tracking-[-0.045em] text-[#F2F2F3] md:text-[40px]">
-                          {panelTitle}
-                        </h1>
+                        <div className="mt-[10px] flex items-start justify-between gap-[16px]">
+                          <h1 className="min-w-0 text-[32px] leading-[1.05] font-semibold tracking-[-0.045em] text-[#F2F2F3] md:text-[40px]">
+                            {panelTitle}
+                          </h1>
+                          {isEditingServer && editorChrome?.moduleActions ? (
+                            <ModuleActionsMenu actions={editorChrome.moduleActions} />
+                          ) : null}
+                        </div>
                         <p className="mt-[12px] max-w-[720px] text-[14px] leading-[1.6] text-[#8B8B90] md:text-[15px]">
                           {panelDescription}
                         </p>
@@ -4626,12 +5014,12 @@ export function ServersWorkspace({
                     </LandingActionButton>
                   ) : null}
                 </div>
-                {shouldShowServersSyncBanner && serversSyncContent ? (
-                  <ServersSyncBanner
-                    diagnosticsFingerprint={serversSync.diagnosticsFingerprint}
-                    onAction={handleServersSyncAction}
-                    syncContent={serversSyncContent}
-                  />
+                {!isEditingServer && isServerAccessDenied && filteredServers.length > 0 ? (
+                  <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
+                    <p className="text-[14px] font-medium text-[#F2F2F3]">
+                      {SERVER_ACCESS_DENIED_MESSAGE}
+                    </p>
+                  </div>
                 ) : null}
                 {!isEditingServer ? (
                   <div className="relative z-[900] space-y-[12px]">
@@ -4820,6 +5208,7 @@ export function ServersWorkspace({
                         });
                       }}
                       onUnsavedChangesChange={handleUnsavedSettingsChangesChange}
+                      onEditorChromeChange={setEditorChrome}
                       onPermissionsChange={setCurrentDashboardPermissions}
                       navigationBlockSignal={navigationBlockSignal}
                       onClose={() => {
@@ -4903,6 +5292,8 @@ export function ServersWorkspace({
                         <div>
                           <ServersOverviewSkeletonGrid />
                         </div>
+                      ) : isServerAccessDenied ? (
+                        <ServerAccessDeniedPanel />
                       ) : errorMessage ? (
                         <div className="py-[34px] text-center text-[13px] text-[#C2C2C2]">{errorMessage}</div>
                       ) : filteredServers.length ? (
@@ -4928,11 +5319,7 @@ export function ServersWorkspace({
                           ))}
                         </div>
                       ) : (
-                        <ServersEmptyState
-                          onPrimaryAction={emptyStateSyncContent ? handleServersSyncAction : null}
-                          selectedTeamName={selectedTeam?.name}
-                          syncContent={emptyStateSyncContent}
-                        />
+                        <ServersEmptyState selectedTeamName={selectedTeam?.name} />
                       )}
                     </div>
                   ) : (
@@ -4950,6 +5337,8 @@ export function ServersWorkspace({
                       </div>
                       {isLoading ? (
                         <ServersListSkeleton />
+                      ) : isServerAccessDenied ? (
+                        <ServerAccessDeniedPanel />
                       ) : errorMessage ? (
                         <div className="py-[34px] text-center text-[13px] text-[#C2C2C2]">{errorMessage}</div>
                       ) : filteredServers.length ? (
@@ -4975,11 +5364,7 @@ export function ServersWorkspace({
                           ))}
                         </div>
                       ) : (
-                        <ServersEmptyState
-                          onPrimaryAction={emptyStateSyncContent ? handleServersSyncAction : null}
-                          selectedTeamName={selectedTeam?.name}
-                          syncContent={emptyStateSyncContent}
-                        />
+                        <ServersEmptyState selectedTeamName={selectedTeam?.name} />
                       )}
                     </div>
                   )}

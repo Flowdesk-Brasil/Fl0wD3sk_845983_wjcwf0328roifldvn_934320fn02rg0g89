@@ -1,8 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { useState, useEffect } from "react";
 import { LandingReveal } from "@/components/landing/LandingReveal";
+import { MarketingLink } from "@/components/routing/MarketingLink";
 import { OFFICIAL_DISCORD_INVITE_URL } from "@/lib/discordLink/config";
 
 type FooterLinkItem = {
@@ -153,13 +153,14 @@ function FooterLink({ item }: { item: FooterLinkItem }) {
   }
 
   return (
-    <Link
+    <MarketingLink
       href={item.href}
+      prefetch={false}
       className={`${baseClassName} hover:bg-[rgba(255,255,255,0.045)] focus-visible:bg-[rgba(255,255,255,0.05)] focus-visible:outline-none`}
       style={{ color: "rgba(183, 183, 183, 0.56)" }}
     >
       {item.label}
-    </Link>
+    </MarketingLink>
   );
 }
 
@@ -243,8 +244,9 @@ export function LandingFooter({
 
         <LandingReveal delay={bottomDelay}>
           <div className="mt-[30px] flex flex-col gap-[18px] border-t border-[rgba(255,255,255,0.03)] pt-[18px] md:flex-row md:items-center md:justify-between">
-            <Link 
-              href="/status" 
+            <MarketingLink
+              href="/status"
+              prefetch={false}
               className="group flex items-center gap-[10px] transition-opacity hover:opacity-80"
             >
               <span 
@@ -257,7 +259,7 @@ export function LandingFooter({
               >
                 {statusMessage}
               </p>
-            </Link>
+            </MarketingLink>
 
             <div className="flex flex-wrap items-center gap-x-[18px] gap-y-[10px]">
               <FooterLink item={{ label: "Discord", href: OFFICIAL_DISCORD_INVITE_URL }} />

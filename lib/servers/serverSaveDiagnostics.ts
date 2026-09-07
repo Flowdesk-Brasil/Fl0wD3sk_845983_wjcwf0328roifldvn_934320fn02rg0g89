@@ -16,7 +16,10 @@ export type ServerSaveRouteName =
   | "captcha_settings"
   | "captcha_panel_dispatch"
   | "suggestions_settings"
-  | "suggestions_panel_dispatch";
+  | "suggestions_panel_dispatch"
+  | "sorteio_settings"
+  | "whitelist_settings"
+  | "whitelist_panel_dispatch";
 export type ServerSaveAccessMode = "owner" | "team" | "viewer" | "unknown";
 export type ServerSaveOutcome =
   | "payload_invalid"
@@ -102,12 +105,25 @@ export function resolveServerSaveAccessMode(input: {
 }
 
 export function recordServerSaveDiagnostic(
-  input: RecordServerSaveDiagnosticInput,
+  input: RecordServerSaveDiagnosticInput | null | undefined,
 ) {
+  if (!input) {
+    console.error("[server-save] diagnostico ignorado: contexto ausente.");
+    return null;
+  }
+  const context = input.context;
+  if (!context?.route) {
+    console.error(
+      "[server-save] diagnostico ignorado: contexto ausente.",
+      input && typeof input === "object" ? Object.keys(input) : input,
+    );
+    return null;
+  }
+
   const entry: ServerSaveDiagnosticEntry = {
-    route: input.context.route,
-    requestId: input.context.requestId,
-    guildId: input.context.guildId,
+    route: context.route,
+    requestId: context.requestId,
+    guildId: context.guildId,
     authUserId:
       typeof input.authUserId === "number" ? input.authUserId : null,
     accessMode: input.accessMode || "unknown",
@@ -118,7 +134,7 @@ export function recordServerSaveDiagnostic(
     outcome: input.outcome,
     httpStatus: input.httpStatus,
     detail: input.detail || null,
-    durationMs: Math.max(0, Date.now() - input.context.startedAtMs),
+    durationMs: Math.max(0, Date.now() - context.startedAtMs),
     recordedAt: new Date().toISOString(),
     meta: input.meta || null,
   };

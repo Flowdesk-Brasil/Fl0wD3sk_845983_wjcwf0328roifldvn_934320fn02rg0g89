@@ -28,6 +28,8 @@ export type FlowSecurePurpose =
   | "dev_auth_token"
   | "dev_certificate_token"
   | "dev_login_token"
+  | "launcher_login_token"
+  | "launcher_access_token"
   | "diagnostic_fingerprint"
   | "hosting_env_secret"
   | "hosting_github_token"

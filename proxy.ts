@@ -41,6 +41,7 @@ import {
   resolveCanonicalHostOrigin,
   resolveAuthOrigin,
 } from "@/lib/routing/subdomains";
+import { isNextAppRouterDataRequest } from "@/lib/routing/nextAppRouterDataRequest";
 
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const DEFAULT_PAYMENT_CHECKOUT_PATH = "/payment";
@@ -89,6 +90,10 @@ function isOAuthHandshakePath(pathname: string) {
 
 function isPasswordResetPath(pathname: string) {
   return pathname === "/pass" || pathname.startsWith("/pass/");
+}
+
+function isLauncherAuthPath(pathname: string) {
+  return pathname === "/launcher" || pathname.startsWith("/launcher/");
 }
 
 function requiresSameOriginProtection(pathname: string, method: string) {
@@ -352,6 +357,19 @@ function maybeBuildCanonicalAuthRedirect(
     }
   }
 
+  if (isLauncherAuthPath(pathname)) {
+    const targetLocation = new URL(
+      `${pathname}${request.nextUrl.search}`,
+      resolveAuthOrigin(request),
+    ).toString();
+
+    if (targetLocation !== currentLocation) {
+      return buildRedirectResponse(request, requestId, csp, targetLocation);
+    }
+
+    return null;
+  }
+
   if (
     pathname === "/api/auth/discord/callback" ||
     pathname === "/api/auth/discord/callback/" ||
@@ -488,6 +506,16 @@ function maybeBuildCanonicalWorkspaceRedirect(
     );
 
     if (targetLocation && targetLocation !== currentLocation) {
+      if (isNextAppRouterDataRequest(request)) {
+        return buildRewriteResponse(
+          request,
+          requestHeaders,
+          requestId,
+          csp,
+          pathname,
+        );
+      }
+
       return buildRedirectResponse(request, requestId, csp, targetLocation, 308);
     }
 
@@ -498,7 +526,10 @@ function maybeBuildCanonicalWorkspaceRedirect(
     return null;
   }
 
-  if (hostArea === "login" && isPasswordResetPath(pathname)) {
+  if (
+    hostArea === "login" &&
+    (isPasswordResetPath(pathname) || isLauncherAuthPath(pathname))
+  ) {
     return null;
   }
 
@@ -510,7 +541,10 @@ function maybeBuildCanonicalWorkspaceRedirect(
     hostArea === "dashboard" && isDashboardEmbeddedPath(pathname);
 
   if (isCanonicalPublicPath(pathname) && !shouldKeepDashboardPathInWorkspace) {
-    const fallbackArea = pathname.startsWith("/login") ? "account" : "public";
+    const fallbackArea =
+      pathname.startsWith("/login") || pathname.startsWith("/launcher")
+        ? "account"
+        : "public";
     const targetLocation = buildCanonicalUrlFromInternalPath(
       request,
       `${pathname}${request.nextUrl.search}`,

@@ -24,7 +24,6 @@ import {
   ServerEmptyState,
   ServerIconFrame,
   ServerMoreActionsMenu,
-  ServerSectionHeading,
   ServerSurface,
   ServerTextInput,
   cn,
@@ -383,22 +382,17 @@ export function SalesCouponsGiftsListPanel({
 
   return (
     <div className="space-y-[18px]">
-      <ServerSectionHeading
-        eyebrow="Vendas"
-        title="Cupons e gifts"
-        description="Crie descontos, gifts e promocoes com validade, limite de uso e regras de aplicacao por produto."
-        action={
-          <ServerButton
-            disabled={readOnly}
-            onClick={() => router.push(getCreatePath(guildId))}
-            variant="primary"
-            size="lg"
-          >
-            <Plus className="h-[16px] w-[16px]" />
-            Criar Cupom ou Gift
-          </ServerButton>
-        }
-      />
+      <div className="flex justify-end">
+        <ServerButton
+          disabled={readOnly}
+          onClick={() => router.push(getCreatePath(guildId))}
+          variant="primary"
+          size="lg"
+        >
+          <Plus className="h-[16px] w-[16px]" />
+          Criar Cupom ou Gift
+        </ServerButton>
+      </div>
 
       <ServerSurface className="overflow-visible">
         <div className="flex flex-col gap-[12px] border-b border-[#171717] px-[18px] py-[16px] lg:flex-row lg:items-center lg:justify-between lg:px-[22px]">
