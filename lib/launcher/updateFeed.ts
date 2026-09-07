@@ -2,6 +2,13 @@ const FILE_NAME = "FlowdeskLauncher-Setup.exe";
 const GH_OWNER = process.env.LAUNCHER_GITHUB_OWNER || "Flowdesk-Brasil";
 const GH_REPO =
   process.env.LAUNCHER_GITHUB_REPO || "flow_bot_ri324j9804hf8hfrhe98f489ta11";
+const PUBLIC_DOWNLOAD_ORIGINS = [
+  process.env.LAUNCHER_PUBLIC_DOWNLOAD_ORIGIN,
+  process.env.NEXT_PUBLIC_APP_URL,
+  "https://www.flwdesk.com",
+]
+  .map((value) => String(value || "").replace(/\/+$/, ""))
+  .filter(Boolean);
 
 type GithubAsset = {
   name?: string;
@@ -65,25 +72,43 @@ function findAsset(release: GithubRelease, fileName: string) {
   );
 }
 
-function publicDownloadUrl(requestUrl: string | URL | undefined, fileName: string) {
-  if (!requestUrl) return null;
-  try {
-    return new URL(`/downloads/${fileName}`, requestUrl).toString();
-  } catch {
-    return null;
+function looksLikeBinaryDownload(response: Response) {
+  const type = String(response.headers.get("content-type") || "").toLowerCase();
+  const length = Number(response.headers.get("content-length") || 0);
+  if (type.includes("text/html") || type.includes("text/javascript") || type.includes("application/json")) {
+    return false;
   }
+  return (
+    type.includes("octet-stream") ||
+    type.includes("msdownload") ||
+    type.includes("exe") ||
+    type.includes("yaml") ||
+    type.includes("yml") ||
+    (Number.isFinite(length) && length > 1_000_000)
+  );
 }
 
-async function tryPublicDownload(requestUrl: string | URL | undefined, fileName: string) {
-  const url = publicDownloadUrl(requestUrl, fileName);
-  if (!url) return null;
-  const response = await fetch(url, { method: "HEAD", cache: "no-store" }).catch(() => null);
-  if (!response?.ok) return null;
-  return url;
+async function tryPublicOriginDownload(fileName: string) {
+  for (const origin of [...new Set(PUBLIC_DOWNLOAD_ORIGINS)]) {
+    const url = `${origin}/downloads/${fileName}`;
+    const response = await fetch(url, {
+      method: "HEAD",
+      cache: "no-store",
+      redirect: "manual",
+    }).catch(() => null);
+    if (response?.ok && looksLikeBinaryDownload(response)) {
+      return url;
+    }
+  }
+  return null;
 }
 
-export async function resolveLauncherUpdateYml(requestUrl?: string | URL) {
-  const publicUrl = await tryPublicDownload(requestUrl, "latest.yml");
+function githubLatestDownloadUrl(fileName: string) {
+  return `https://github.com/${GH_OWNER}/${GH_REPO}/releases/latest/download/${fileName}`;
+}
+
+export async function resolveLauncherUpdateYml() {
+  const publicUrl = await tryPublicOriginDownload("latest.yml");
   if (publicUrl) {
     const local = await fetch(publicUrl, { cache: "no-store" }).catch(() => null);
     const text = local?.ok ? await local.text() : "";
@@ -104,16 +129,19 @@ export async function resolveLauncherUpdateYml(requestUrl?: string | URL) {
 
 export async function resolveLauncherArtifactUrl(
   fileName: string,
-  requestUrl?: string | URL,
 ): Promise<LauncherArtifact | null> {
-  const publicUrl = await tryPublicDownload(requestUrl, fileName);
+  const release = await fetchLatestLauncherRelease();
+  const asset = release
+    ? findAsset(release, fileName) || findAsset(release, FILE_NAME)
+    : null;
+  if (asset?.browser_download_url) {
+    return { kind: "url", url: asset.browser_download_url };
+  }
+
+  const publicUrl = await tryPublicOriginDownload(fileName);
   if (publicUrl) return { kind: "url", url: publicUrl };
 
-  const release = await fetchLatestLauncherRelease();
-  if (!release) return null;
-  const asset = findAsset(release, fileName) || findAsset(release, FILE_NAME);
-  if (!asset?.browser_download_url) return null;
-  return { kind: "url", url: asset.browser_download_url };
+  return { kind: "url", url: githubLatestDownloadUrl(fileName) };
 }
 
 export { FILE_NAME as LAUNCHER_SETUP_FILE_NAME };

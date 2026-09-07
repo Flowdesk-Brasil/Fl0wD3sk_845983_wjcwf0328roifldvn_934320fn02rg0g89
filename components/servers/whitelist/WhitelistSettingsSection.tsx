@@ -208,10 +208,37 @@ export function WhitelistSettingsSection({
     setActionMessage(null);
     try {
       onChange({ connectionMode: "agent" });
-      window.location.href = `/api/launcher/download?guildId=${encodeURIComponent(guildId)}`;
+      const response = await fetch(
+        `/api/launcher/download?guildId=${encodeURIComponent(guildId)}`,
+        {
+          method: "GET",
+          credentials: "same-origin",
+          headers: { Accept: "application/json" },
+        },
+      );
+      const payload = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        url?: string;
+        fileName?: string;
+        message?: string;
+      };
+      if (!response.ok || !payload.ok || !payload.url) {
+        throw new Error(
+          payload.message ||
+            "O instalador ainda nao esta publicado. Depois do merge, o GitHub gera o Setup.",
+        );
+      }
+      const link = document.createElement("a");
+      link.href = payload.url;
+      link.download = payload.fileName || "FlowdeskLauncher-Setup.exe";
+      link.rel = "noopener noreferrer";
+      link.target = "_blank";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
       setActionTone("ok");
       setActionMessage(
-        "Baixando o Setup. Instale, entre na Flowdesk e este servidor vincula sozinho.",
+        "Download iniciado. Instale, entre na Flowdesk e este servidor vincula sozinho.",
       );
     } catch (error) {
       setActionTone("error");

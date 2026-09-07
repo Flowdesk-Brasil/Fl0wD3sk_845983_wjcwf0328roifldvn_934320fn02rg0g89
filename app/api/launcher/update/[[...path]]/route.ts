@@ -6,14 +6,14 @@ import {
 } from "@/lib/launcher/updateFeed";
 
 export async function GET(
-  request: Request,
+  _request: Request,
   context: { params: Promise<{ path?: string[] }> },
 ) {
   const params = await context.params;
   const fileName = (params.path || []).join("/") || "latest.yml";
 
   if (!fileName || fileName === "latest.yml") {
-    const yml = await resolveLauncherUpdateYml(request.url);
+    const yml = await resolveLauncherUpdateYml();
     if (!yml) {
       return applyNoStoreHeaders(
         NextResponse.json(
@@ -40,7 +40,7 @@ export async function GET(
     );
   }
 
-  const artifact = await resolveLauncherArtifactUrl(safeName, request.url);
+  const artifact = await resolveLauncherArtifactUrl(safeName);
   if (!artifact) {
     return applyNoStoreHeaders(
       NextResponse.json(

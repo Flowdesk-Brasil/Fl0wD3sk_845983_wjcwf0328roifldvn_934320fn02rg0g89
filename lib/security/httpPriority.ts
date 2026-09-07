@@ -1,7 +1,7 @@
 import type { NextRequest, NextResponse } from "next/server";
 import { getServerEnv } from "@/lib/serverEnv";
 
-const STATIC_PUBLIC_ASSET_PREFIXES = ["/cdn/", "/icons/"] as const;
+const STATIC_PUBLIC_ASSET_PREFIXES = ["/cdn/", "/icons/", "/downloads/"] as const;
 const STATIC_PUBLIC_ROOT_FILE_PATTERN =
   /^\/[^/]+\.(?:png|jpe?g|gif|webp|svg|ico|txt|xml|json|webmanifest|woff2?|ttf|otf)$/i;
 const HIGH_TRANSPORT_PRIORITY = "u=0, i";
