@@ -46,10 +46,10 @@ const OPTIONAL_SNOWFLAKE = flowSecureDto.string({
   rejectThreatPatterns: false,
 });
 
-function isMissingApprovalModeColumn(error: { message?: string; code?: string } | null) {
+function isMissingOptionalColumn(error: { message?: string; code?: string } | null, column: string) {
   const message = String(error?.message || "").toLowerCase();
   const code = String(error?.code || "");
-  return code === "42703" || message.includes("approval_mode");
+  return code === "42703" || message.includes(column);
 }
 
 async function ensureGuildAccess(guildId: string, requiredPermission: TeamRolePermission) {
@@ -125,6 +125,7 @@ export async function POST(request: Request) {
         identifierKind: flowSecureDto.optional(flowSecureDto.string({ maxLength: 32 })),
         identifierLabel: flowSecureDto.optional(flowSecureDto.string({ maxLength: 45, allowEmpty: true })),
         identifierPlaceholder: flowSecureDto.optional(flowSecureDto.string({ maxLength: 80, allowEmpty: true })),
+        nicknameFormat: flowSecureDto.optional(flowSecureDto.string({ maxLength: 80, allowEmpty: true })),
         approvalMode: flowSecureDto.optional(flowSecureDto.string({ maxLength: 16 })),
         connectionMode: flowSecureDto.optional(flowSecureDto.string({ maxLength: 16 })),
         dbEngine: flowSecureDto.optional(flowSecureDto.string({ maxLength: 16 })),
@@ -237,7 +238,10 @@ export async function POST(request: Request) {
       ? encryptWhitelistSecret(incomingPassword, guildId)
       : existing.data?.db_password_cipher || null;
 
-    const mapping = resolveCityWhitelistMapping(body.mapping);
+    const mapping = {
+      ...resolveCityWhitelistMapping(body.mapping),
+      nicknameFormat: draft.nicknameFormat,
+    };
     let dbHost: string | null = null;
     try {
       dbHost = resolvePublicCityDbHost({
@@ -268,6 +272,7 @@ export async function POST(request: Request) {
       identifier_kind: draft.identifierKind,
       identifier_label: draft.identifierLabel,
       identifier_placeholder: draft.identifierPlaceholder,
+      nickname_format: draft.nicknameFormat,
       approval_mode: draft.approvalMode,
       connection_mode: "direct",
       db_engine: draft.dbEngine,
@@ -286,7 +291,13 @@ export async function POST(request: Request) {
       .from("guild_whitelist_settings")
       .upsert(row, { onConflict: "guild_id" });
 
-    if (upsert.error && isMissingApprovalModeColumn(upsert.error)) {
+    if (upsert.error && isMissingOptionalColumn(upsert.error, "nickname_format")) {
+      const { nickname_format: _ignored, ...rowWithoutNickname } = row;
+      upsert = await supabase
+        .from("guild_whitelist_settings")
+        .upsert(rowWithoutNickname, { onConflict: "guild_id" });
+    }
+    if (upsert.error && isMissingOptionalColumn(upsert.error, "approval_mode")) {
       const { approval_mode: _ignored, ...rowWithoutApprovalMode } = row;
       upsert = await supabase
         .from("guild_whitelist_settings")
@@ -301,15 +312,15 @@ export async function POST(request: Request) {
       ...draft,
       connectionMode: "direct" as const,
       dbHost: dbHost || "",
-      dbPassword: "",
-      hasDbPassword: Boolean(nextCipher),
+      dbPassword: incomingPassword || draft.dbPassword || "",
+      hasDbPassword: Boolean(nextCipher || incomingPassword || draft.dbPassword),
       mapping,
     };
 
     await writeServerSettingsVaultSnapshotSafe({
       guildId,
       moduleKey: "whitelist_settings",
-      payload: publicSnapshot,
+      payload: { ...publicSnapshot, dbPassword: "" },
       configuredByUserId: authUserId,
     });
 

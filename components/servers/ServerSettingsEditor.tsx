@@ -5446,11 +5446,10 @@ export function ServerSettingsEditor({
   const hasWhitelistUnsavedChanges = useMemo(
     () =>
       hasLoadedWhitelistDraft &&
-      (!areWhitelistSettingsDraftsEqual(
+      !areWhitelistSettingsDraftsEqual(
         currentWhitelistDraft,
         savedWhitelistSettingsDraft,
-      ) ||
-        Boolean(currentWhitelistDraft.dbPassword)),
+      ),
     [
       currentWhitelistDraft,
       hasLoadedWhitelistDraft,
@@ -5612,7 +5611,7 @@ export function ServerSettingsEditor({
           savedWhitelistSettingsDraft,
           hasLoadedWhitelistDraft,
           areWhitelistSettingsDraftsEqual,
-        ) || Boolean(currentWhitelistDraft.dbPassword)
+        )
     : isBatePontoSection
       ? hasDraftChangesBeyondEnabledToggle(
           currentBatePontoDraft,
@@ -6947,7 +6946,6 @@ export function ServerSettingsEditor({
     } else if (isWhitelistSection && savedWhitelistSettingsDraft) {
       setWhitelistDraft({
         ...savedWhitelistSettingsDraft,
-        dbPassword: "",
       });
     } else if (isBatePontoSection && savedBatePontoSettingsDraft) {
       setBatePontoEnabled(savedBatePontoSettingsDraft.enabled);
@@ -7730,6 +7728,7 @@ export function ServerSettingsEditor({
             identifierKind: currentWhitelistDraft.identifierKind,
             identifierLabel: currentWhitelistDraft.identifierLabel,
             identifierPlaceholder: currentWhitelistDraft.identifierPlaceholder,
+            nicknameFormat: currentWhitelistDraft.nicknameFormat,
             approvalMode: currentWhitelistDraft.approvalMode,
             connectionMode: currentWhitelistDraft.connectionMode,
             dbEngine: currentWhitelistDraft.dbEngine,
@@ -7766,7 +7765,10 @@ export function ServerSettingsEditor({
 
         const nextWhitelistDraft = {
           ...normalizeWhitelistSettingsDraft(payload.settings || currentWhitelistDraft),
-          dbPassword: "",
+          dbPassword:
+            (typeof payload.settings?.dbPassword === "string" && payload.settings.dbPassword) ||
+            currentWhitelistDraft.dbPassword ||
+            "",
         };
         setWhitelistDraft(nextWhitelistDraft);
         setSavedWhitelistSettingsDraft(nextWhitelistDraft);

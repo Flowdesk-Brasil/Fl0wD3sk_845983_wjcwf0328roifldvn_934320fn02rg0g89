@@ -56,8 +56,24 @@ export function sanitizeDbError(error: unknown) {
       message: "Digite a senha do banco novamente no campo Senha e teste. A senha salva nao pode ser lida.",
     };
   }
-  if (lowered.includes("access denied") || lowered.includes("password") || lowered.includes("authentication")) {
-    return { code: "invalid_credentials", message: "Usuario ou senha do MySQL invalidos." };
+  if (lowered.includes("nao chegaram no launcher") || lowered.includes("digite a senha no painel")) {
+    return {
+      code: "missing_credentials",
+      message: "Digite a senha do MySQL no painel e clique em Conectar banco.",
+    };
+  }
+  if (lowered.includes("plugin") || lowered.includes("caching_sha2") || lowered.includes("not supported auth")) {
+    return {
+      code: "auth_plugin",
+      message: "O MySQL recusou o plugin de autenticacao. No HeidiSQL, altere o usuario para mysql_native_password.",
+    };
+  }
+  if (lowered.includes("access denied") || lowered.includes("er_access_denied")) {
+    return {
+      code: "invalid_credentials",
+      message:
+        "O MySQL recusou o usuario. Use no painel o mesmo usuario e senha do HeidiSQL nesta VPS (muitas vezes e root).",
+    };
   }
   if (
     lowered.includes("enotfound") ||
@@ -131,22 +147,11 @@ export async function withCityDatabase<T>(
     }
   }
 
-  const connection = await mysql.createConnection({
-    host: target.host,
-    port: target.port,
-    database: target.database,
-    user: target.user,
-    password: target.password,
-    ssl: target.ssl ? { rejectUnauthorized: false } : undefined,
-    connectTimeout: CONNECT_TIMEOUT_MS,
-    enableKeepAlive: true,
-    insecureAuth: true,
-    charset: "utf8mb4",
-  });
+  const connection = await connectRemoteMysql(target);
   try {
     return await fn(async (sql, params = []) => {
       const [rows] = await withQueryTimeout(
-        connection.execute(sql, params as never[]),
+        connection.query(sql, params as never[]),
         "Consulta",
       );
       return (Array.isArray(rows) ? rows : []) as Record<string, unknown>[];
@@ -154,6 +159,40 @@ export async function withCityDatabase<T>(
   } finally {
     await connection.end().catch(() => null);
   }
+}
+
+async function connectRemoteMysql(target: WhitelistDbTarget) {
+  const database = String(target.database || "").replace(/[`\\]/g, "");
+  const ports = [...new Set([Number(target.port || 3306), 3306].filter((value) => value >= 1))];
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (const port of ports) {
+      try {
+        const connection = await mysql.createConnection({
+          host: target.host,
+          port,
+          user: target.user,
+          password: target.password || "",
+          connectTimeout: CONNECT_TIMEOUT_MS,
+          enableKeepAlive: true,
+          insecureAuth: true,
+          charset: "utf8mb4",
+        });
+        if (database) {
+          try {
+            await connection.query(`USE \`${database}\``);
+          } catch (error) {
+            await connection.end().catch(() => null);
+            throw error;
+          }
+        }
+        return connection;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Nao foi possivel abrir o MySQL da cidade.");
 }
 
 export async function testCityDatabase(target: WhitelistDbTarget) {
@@ -329,6 +368,7 @@ export function settingsToDbTarget(input: {
   ssl: boolean;
   passwordCipher: string | null;
   passwordOverride?: string | null;
+  allowEmptyPassword?: boolean;
 }): WhitelistDbTarget {
   if (!input.host || !input.database || !input.user) {
     throw new Error("Informe o IP/host da VPS, o nome do banco e o usuario da integracao.");
@@ -338,6 +378,7 @@ export function settingsToDbTarget(input: {
     cipher: input.passwordCipher,
     guildId: input.guildId,
     override: input.passwordOverride,
+    allowEmpty: input.allowEmptyPassword === true,
   });
   return {
     engine: input.engine,

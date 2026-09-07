@@ -13,12 +13,14 @@ import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { sanitizeDbError, settingsToDbTarget } from "@/lib/servers/whitelistCityDb";
 import { runCityWhitelistAction } from "@/lib/servers/cityDatabaseGateway";
-import { createVrpUsersMapping } from "@/lib/servers/whitelistMapping";
+import { normalizeWhitelistMapping } from "@/lib/servers/whitelistMapping";
 import { resolvePublicCityDbHost } from "@/lib/servers/whitelistHost";
 import {
+  decryptWhitelistSecret,
   encryptWhitelistSecret,
   resolveWhitelistDbPassword,
 } from "@/lib/servers/whitelistSecret";
+import { resolveCityDbLogin } from "@/lib/servers/cityDbDefaults";
 
 export async function POST(request: Request) {
   const invalid = ensureSameOriginJsonMutationRequest(request);
@@ -75,11 +77,36 @@ export async function POST(request: Request) {
       .eq("guild_id", guildId)
       .maybeSingle();
 
-    const resolvedSecret = resolveWhitelistDbPassword({
-      cipher: existing.data?.db_password_cipher,
-      guildId,
-      override: String(body.dbPassword || ""),
+    const passwordProvided = Object.prototype.hasOwnProperty.call(body, "dbPassword");
+    const typedPassword = String(body.dbPassword ?? "");
+    const requestedUser = String(body.dbUser || existing.data?.db_user || "").trim();
+    let resolvedSecret = { password: "", reencrypt: true };
+    try {
+      resolvedSecret = resolveWhitelistDbPassword({
+        cipher: existing.data?.db_password_cipher,
+        guildId,
+        override: passwordProvided ? typedPassword : undefined,
+        allowEmpty: true,
+      });
+    } catch {
+      resolvedSecret = { password: passwordProvided ? typedPassword : "", reencrypt: true };
+    }
+    const login = resolveCityDbLogin({
+      user: requestedUser,
+      password: resolvedSecret.password,
     });
+    resolvedSecret = { password: login.password, reencrypt: true };
+    const mapping = normalizeWhitelistMapping(body.mapping || existing.data?.mapping);
+    const passwordCipher = resolvedSecret.password
+      ? encryptWhitelistSecret(resolvedSecret.password, guildId) ||
+        resolvedSecret.password
+      : null;
+    if (
+      resolvedSecret.password &&
+      decryptWhitelistSecret(passwordCipher, guildId) !== resolvedSecret.password
+    ) {
+      throw new Error("Nao consegui proteger a senha do MySQL. Tente de novo em alguns segundos.");
+    }
     const target = settingsToDbTarget({
       guildId,
       engine: (String(body.dbEngine || existing.data?.db_engine || "mysql") as
@@ -92,11 +119,12 @@ export async function POST(request: Request) {
         publicIp: existing.data?.agent_public_ip,
       }),
       port: Number(body.dbPort || existing.data?.db_port || 3306),
-      database: String(body.dbName || existing.data?.db_name || ""),
-      user: String(body.dbUser || existing.data?.db_user || ""),
+      database: String(body.dbName || existing.data?.db_name || "skips"),
+      user: login.user,
       ssl: false,
       passwordCipher: existing.data?.db_password_cipher || null,
       passwordOverride: resolvedSecret.password,
+      allowEmptyPassword: !resolvedSecret.password,
     });
 
     const credentialPatch = {
@@ -107,16 +135,32 @@ export async function POST(request: Request) {
       db_name: target.database,
       db_user: target.user,
       db_ssl: false,
-      db_password_cipher: encryptWhitelistSecret(resolvedSecret.password, guildId),
-      mapping: createVrpUsersMapping(),
+      db_password_cipher: passwordCipher,
+      mapping,
     };
-    await supabase.from("guild_whitelist_settings").update(credentialPatch).eq("guild_id", guildId);
+    const saved = await supabase
+      .from("guild_whitelist_settings")
+      .update(credentialPatch)
+      .eq("guild_id", guildId)
+      .select("guild_id");
+    if (!saved.data?.length) {
+      const inserted = await supabase.from("guild_whitelist_settings").insert({
+        guild_id: guildId,
+        enabled: false,
+        mapping_status: "validated",
+        configured_by_user_id: sessionData.authSession.user.id,
+        ...credentialPatch,
+      });
+      if (inserted.error) {
+        throw new Error(inserted.error.message || "Nao consegui salvar a senha do MySQL.");
+      }
+    }
 
     const result = await runCityWhitelistAction({
       guildId,
       action,
       target,
-      mapping: createVrpUsersMapping(),
+      mapping,
       identifierValue: String(body.identifierValue || ""),
     });
 
@@ -144,7 +188,7 @@ export async function POST(request: Request) {
       db_name: target.database,
       db_user: target.user,
       db_port: target.port,
-      mapping: createVrpUsersMapping(),
+      mapping,
       mapping_status: "validated",
       last_health_at: new Date().toISOString(),
       last_health_ok: true,

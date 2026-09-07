@@ -108,7 +108,7 @@ const MODULE_OVERVIEW_COPY: Record<
     tag: "Whitelist",
     title: "Whitelist FiveM",
     description:
-      "Painel no Discord, aprovacao automatica ou analise da staff, e o identificador usado para localizar o jogador na cidade.",
+      "Painel no Discord, modo de aprovacao, cargos e o formato do apelido depois que o ID e liberado.",
   },
   bate_ponto_overview: {
     tag: "Bate-ponto",
@@ -149,7 +149,7 @@ const MODULE_MESSAGE_COPY: Partial<
     tag: "Whitelist",
     title: "Banco e mapping",
     description:
-      "Informe o IP publico da VPS da cidade, teste a conexao e confirme o mapping. Sem o IP correto a FlowDesk nao alcanca o banco remoto.",
+      "Conecte o banco da cidade, escolha a tabela da whitelist e teste a integracao com o launcher na VPS.",
   },
   whitelist_message: {
     tag: "Whitelist",

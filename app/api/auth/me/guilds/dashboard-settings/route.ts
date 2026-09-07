@@ -52,6 +52,7 @@ import {
   looksLikePublicCityDbHost,
   normalizeCityDbHost,
 } from "@/lib/servers/whitelistHost";
+import { decryptWhitelistSecret } from "@/lib/servers/whitelistSecret";
 
 const GUILD_CATEGORY = 4;
 const GUILD_TEXT = 0;
@@ -821,6 +822,7 @@ function buildSorteioPayload(input: {
 }
 
 function buildWhitelistPayload(input: {
+  guildId: string;
   record: Record<string, unknown> | null;
   snapshot: Record<string, unknown> | null;
   textSet: Set<string>;
@@ -841,6 +843,7 @@ function buildWhitelistPayload(input: {
       identifierKind: "discord_id",
       identifierLabel: "ID / License",
       identifierPlaceholder: "Ex: 1 ou license:xxxx",
+      nicknameFormat: "{nome} | {ID}",
       approvalMode: "manual",
       connectionMode: "direct",
       dbEngine: "mysql",
@@ -849,6 +852,7 @@ function buildWhitelistPayload(input: {
       dbName: "",
       dbUser: "",
       dbSsl: false,
+      dbPassword: "",
       hasDbPassword: false,
       mapping: normalizeWhitelistMapping(null),
       mappingStatus: "draft",
@@ -875,6 +879,13 @@ function buildWhitelistPayload(input: {
     }
     return null;
   };
+
+  const savedPassword = decryptWhitelistSecret(
+    typeof input.record?.db_password_cipher === "string"
+      ? input.record.db_password_cipher
+      : "",
+    input.guildId,
+  );
 
   return {
     enabled:
@@ -910,6 +921,14 @@ function buildWhitelistPayload(input: {
         input.record?.identifier_placeholder ??
         "Ex: 1 ou license:xxxx",
     ),
+    nicknameFormat: String(
+      input.snapshot?.nicknameFormat ??
+        input.record?.nickname_format ??
+        (input.record?.mapping && typeof input.record.mapping === "object"
+          ? (input.record.mapping as { nicknameFormat?: unknown }).nicknameFormat
+          : "") ??
+        "{nome} | {ID}",
+    ),
     approvalMode: String(
       input.snapshot?.approvalMode ?? input.record?.approval_mode ?? "manual",
     ) === "automatic"
@@ -930,9 +949,8 @@ function buildWhitelistPayload(input: {
     dbName: String(input.snapshot?.dbName ?? input.record?.db_name ?? ""),
     dbUser: String(input.snapshot?.dbUser ?? input.record?.db_user ?? ""),
     dbSsl: Boolean(input.snapshot?.dbSsl ?? input.record?.db_ssl),
-    hasDbPassword: Boolean(
-      input.snapshot?.hasDbPassword ?? input.record?.db_password_cipher,
-    ),
+    dbPassword: savedPassword,
+    hasDbPassword: Boolean(savedPassword || input.record?.db_password_cipher),
     mapping: normalizeWhitelistMapping(
       input.snapshot?.mapping ?? input.record?.mapping,
     ),
@@ -1863,6 +1881,7 @@ export async function GET(request: Request) {
             : null),
       }),
       whitelistSettings: buildWhitelistPayload({
+        guildId,
         record: toRecordOrNull(whitelistResult.data),
         snapshot: toRecordOrNull(secureSnapshots.get("whitelist_settings")?.payload),
         textSet,

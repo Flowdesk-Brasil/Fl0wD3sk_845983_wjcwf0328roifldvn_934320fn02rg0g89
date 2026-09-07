@@ -134,9 +134,38 @@ export function mappingUsesJoin(mapping: WhitelistMapping) {
 }
 
 export function resolveCityWhitelistMapping(value: unknown): WhitelistMapping {
-  const mapping = normalizeWhitelistMapping(value);
-  return isMappingComplete(mapping) ? mapping : createVrpUsersMapping();
+  return normalizeWhitelistMapping(value);
 }
+
+export const WHITELIST_MAPPING_PRESETS = [
+  {
+    id: "vrp",
+    label: "vRP",
+    mapping: createVrpUsersMapping(),
+  },
+  {
+    id: "esx",
+    label: "ESX",
+    mapping: {
+      ...createEmptyWhitelistMapping(),
+      playerTable: "users",
+      playerIdColumn: "id",
+      whitelistColumn: "whitelisted",
+      playerIdKind: "character_id" as const,
+    },
+  },
+  {
+    id: "qbcore",
+    label: "QBCore",
+    mapping: {
+      ...createEmptyWhitelistMapping(),
+      playerTable: "players",
+      playerIdColumn: "citizenid",
+      whitelistColumn: "whitelisted",
+      playerIdKind: "character_id" as const,
+    },
+  },
+] as const;
 
 export function isMappingComplete(mapping: WhitelistMapping) {
   if (!mapping.playerTable || !mapping.playerIdColumn || !mapping.whitelistColumn) {

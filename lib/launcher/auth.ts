@@ -14,6 +14,7 @@ import { normalizeWhitelistMapping } from "@/lib/servers/whitelistMapping";
 import { isWhitelistAgentOperation } from "@/lib/servers/whitelistAgent";
 import { invalidateDashboardSettingsCache } from "@/lib/servers/serverDashboardSettingsCache";
 import { looksLikePublicCityDbHost, normalizeCityDbHost } from "@/lib/servers/whitelistHost";
+import { resolveCityDbLogin } from "@/lib/servers/cityDbDefaults";
 
 const LOGIN_TTL_MINUTES = 10;
 const ACCESS_TTL_HOURS = 12;
@@ -287,9 +288,6 @@ async function upsertLauncherGuildBinding(input: {
     agent_public_id: input.devicePublicId,
     agent_last_seen_at: now,
     configured_by_user_id: input.authUserId,
-    last_health_at: now,
-    last_health_ok: online,
-    last_health_error: input.error || null,
   };
   if (observedIp) {
     patch.agent_public_ip = observedIp;
@@ -698,29 +696,47 @@ export async function buildLauncherSyncPayload(session: LauncherSession, body: R
     /* Jobs are optional. Heartbeat already marked the launcher online. */
   }
 
-  const password = safeDecryptWhitelistPassword(
-    settings.data?.db_password_cipher,
-    session.guildId,
-  );
+  const jobCityDb = jobs
+    .map((job) => {
+      const payload =
+        job.payload && typeof job.payload === "object"
+          ? (job.payload as Record<string, unknown>)
+          : {};
+      return payload.cityDb && typeof payload.cityDb === "object"
+        ? (payload.cityDb as Record<string, unknown>)
+        : null;
+    })
+    .find((item) => item && (item.password || item.user || item.database));
+  const password =
+    safeDecryptWhitelistPassword(settings.data?.db_password_cipher, session.guildId) ||
+    String(jobCityDb?.password || "");
+  const login = resolveCityDbLogin({
+    user: String(settings.data?.db_user || jobCityDb?.user || ""),
+    password,
+  });
 
   return {
     ok: true,
     message: jobs.length ? "Ha tarefas da whitelist." : "Conectado.",
     jobs,
     config: {
-      engine: settings.data?.db_engine || "mysql",
-      host:
-        looksLikePublicCityDbHost(String(settings.data?.db_host || ""))
-          ? normalizeCityDbHost(String(settings.data?.db_host || ""))
-          : looksLikePublicCityDbHost(String(settings.data?.agent_public_ip || ""))
-            ? normalizeCityDbHost(String(settings.data?.agent_public_ip || ""))
-            : "",
-      port: Number(settings.data?.db_port || 3306),
-      database: settings.data?.db_name || "",
-      user: settings.data?.db_user || "",
-      password,
-      ssl: settings.data?.db_ssl === true,
+      engine: settings.data?.db_engine || jobCityDb?.engine || "mysql",
+      host: "127.0.0.1",
+      port: Number(settings.data?.db_port || jobCityDb?.port || 3306),
+      database: String(settings.data?.db_name || jobCityDb?.database || "skips"),
+      user: login.user,
+      password: login.password,
+      ssl: false,
       mapping,
+      db: {
+        engine: settings.data?.db_engine || jobCityDb?.engine || "mysql",
+        host: "127.0.0.1",
+        port: Number(settings.data?.db_port || jobCityDb?.port || 3306),
+        database: String(settings.data?.db_name || jobCityDb?.database || "skips"),
+        user: login.user,
+        password: login.password,
+        ssl: false,
+      },
     },
   };
 }
@@ -730,7 +746,7 @@ export async function getLauncherStatusForGuild(guildId: string) {
   const [device, settings] = await Promise.all([
     supabase
       .from("launcher_devices")
-      .select("connection_status, last_seen_at, last_error, hostname, label, device_public_id, observed_ip")
+      .select("connection_status, last_seen_at, last_error, hostname, label, device_public_id, observed_ip, app_version")
       .eq("guild_id", guildId)
       .order("last_seen_at", { ascending: false })
       .limit(1),
@@ -762,6 +778,7 @@ export async function getLauncherStatusForGuild(guildId: string) {
     label: row?.label || null,
     lastSeenAt,
     lastError: row?.last_error || null,
+    appVersion: row?.app_version ? String(row.app_version) : null,
     paired,
     publicId: row?.device_public_id || settings.data?.agent_public_id || null,
     observedIp:

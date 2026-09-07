@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import { Check, Database, Download, Hash, MonitorSmartphone, Shield, TriangleAlert, Users } from "lucide-react";
+import { Check, Database, Download, Eye, EyeOff, Hash, MonitorSmartphone, Shield, TriangleAlert, Users } from "lucide-react";
 import { ConfigStepMultiSelect } from "@/components/config/ConfigStepMultiSelect";
 import { ConfigStepSelect } from "@/components/config/ConfigStepSelect";
 import { TicketMessageBuilder } from "@/components/servers/TicketMessageBuilder";
@@ -15,7 +15,13 @@ import {
 } from "@/components/servers/module-ui/ModuleUi";
 import type { WhitelistSettingsDraft } from "@/lib/servers/whitelistSettingsModel";
 import { looksLikePublicCityDbHost } from "@/lib/servers/whitelistHost";
-import { createVrpUsersMapping, IDENTIFIER_KINDS } from "@/lib/servers/whitelistMapping";
+import { cityDbProvisionSql, resolveCityDbLogin } from "@/lib/servers/cityDbDefaults";
+import { previewNicknameFormat } from "@/lib/servers/whitelistNickname";
+import {
+  IDENTIFIER_KINDS,
+  WHITELIST_MAPPING_PRESETS,
+  type WhitelistMapping,
+} from "@/lib/servers/whitelistMapping";
 import { WHITELIST_TOKEN_HINTS } from "@/lib/servers/whitelistPanelBuilder";
 import type { TicketPanelLayout } from "@/lib/servers/ticketPanelBuilder";
 
@@ -99,11 +105,14 @@ export function WhitelistSettingsSection({
   const [busy, setBusy] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [actionTone, setActionTone] = useState<"ok" | "error">("ok");
+  const [showPassword, setShowPassword] = useState(false);
+  const [sqlCopied, setSqlCopied] = useState(false);
   const [liveLauncher, setLiveLauncher] = useState<{
     paired: boolean;
     online: boolean;
     hostname: string | null;
     publicIp: string | null;
+    appVersion: string | null;
   } | null>(null);
   const launcherPaired = liveLauncher?.paired ?? draft.agentPaired;
   const launcherOnline = liveLauncher?.online ?? draft.agentOnline;
@@ -128,12 +137,14 @@ export function WhitelistSettingsSection({
           online?: boolean;
           hostname?: string | null;
           publicIp?: string | null;
+          appVersion?: string | null;
         };
         if (cancelled || !payload.ok) return;
         setLiveLauncher({
           paired: Boolean(payload.paired),
           online: Boolean(payload.online),
           hostname: typeof payload.hostname === "string" ? payload.hostname : null,
+          appVersion: typeof payload.appVersion === "string" ? payload.appVersion : null,
           publicIp:
             typeof payload.publicIp === "string" && looksLikePublicCityDbHost(payload.publicIp)
               ? payload.publicIp
@@ -159,11 +170,6 @@ export function WhitelistSettingsSection({
     onChange({ dbHost: detectedPublicIp, connectionMode: "direct" });
   }, [detectedPublicIp, draft.dbHost, onChange]);
 
-  useEffect(() => {
-    if (draft.mapping.playerTable || draft.mapping.whitelistColumn) return;
-    onChange({ mapping: createVrpUsersMapping() });
-  }, [draft.mapping.playerTable, draft.mapping.whitelistColumn, onChange]);
-
   async function connectDatabase() {
     setBusy("test");
     setActionMessage(null);
@@ -173,12 +179,25 @@ export function WhitelistSettingsSection({
           "Informe o IP publico da VPS ou deixe o launcher aberto la para a Flowdesk detectar.",
         );
       }
-      if (!draft.dbName.trim() || !draft.dbUser.trim()) {
-        throw new Error("Preencha o nome do banco e o usuario.");
+      const login = resolveCityDbLogin({
+        user: draft.dbUser,
+        password: draft.dbPassword,
+      });
+      const dbName = draft.dbName.trim();
+      if (!login.user || !login.password || !dbName) {
+        throw new Error("Preencha o nome do banco, o usuario e a senha do MariaDB.");
       }
-      if (!draft.dbPassword.trim() && !draft.hasDbPassword) {
-        throw new Error("Digite a senha do banco para conectar.");
+      if (/^\*[0-9A-Fa-f]{40}$/.test(login.password.trim())) {
+        throw new Error(
+          "Esse valor e o hash do HeidiSQL, nao a senha. Informe a senha em texto do usuario do banco.",
+        );
       }
+      onChange({
+        dbUser: login.user,
+        dbPassword: login.password,
+        hasDbPassword: Boolean(login.password),
+        dbName,
+      });
       const response = await fetch("/api/auth/me/guilds/whitelist-actions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -188,11 +207,11 @@ export function WhitelistSettingsSection({
           dbEngine: draft.dbEngine === "postgres" ? "postgres" : "mysql",
           dbHost: looksLikePublicCityDbHost(draft.dbHost) ? draft.dbHost : detectedPublicIp,
           dbPort: draft.dbPort || 3306,
-          dbName: draft.dbName,
-          dbUser: draft.dbUser,
+          dbName,
+          dbUser: login.user,
           dbSsl: false,
-          dbPassword: draft.dbPassword || undefined,
-          mapping: createVrpUsersMapping(),
+          dbPassword: login.password,
+          mapping: draft.mapping,
         }),
       });
       const payload = await response.json();
@@ -200,13 +219,18 @@ export function WhitelistSettingsSection({
         throw new Error(payload.message || "Nao foi possivel conectar no MySQL.");
       }
       onChange({
-        mapping: createVrpUsersMapping(),
+        mapping: draft.mapping,
         mappingStatus: "validated",
         dbHost: looksLikePublicCityDbHost(draft.dbHost) ? draft.dbHost : detectedPublicIp,
         connectionMode: "direct",
+        dbPassword: login.password,
+        hasDbPassword: Boolean(login.password),
       });
       setActionTone("ok");
-      setActionMessage(payload.message || "Banco conectado. A whitelist usa vrp_users.whitelisted.");
+      const tableHint = draft.mapping.playerTable
+        ? `${draft.mapping.playerTable}.${draft.mapping.whitelistColumn || "..."}`
+        : "Defina a tabela e a coluna abaixo";
+      setActionMessage(payload.message || `Banco conectado. Whitelist: ${tableHint}.`);
     } catch (error) {
       setActionTone("error");
       setActionMessage(error instanceof Error ? error.message : "Falha ao conectar no banco.");
@@ -250,7 +274,7 @@ export function WhitelistSettingsSection({
       link.remove();
       setActionTone("ok");
       setActionMessage(
-        "Download iniciado. Instale o launcher na VPS, entre na Flowdesk e deixe o app abrir as portas. O banco e configurado daqui.",
+        "Download iniciado. Instale o launcher na VPS da cidade, entre com sua conta Flowdesk e mantenha o aplicativo aberto.",
       );
     } catch (error) {
       setActionTone("error");
@@ -303,7 +327,7 @@ export function WhitelistSettingsSection({
         <ModuleCard
           label="Canais e cargos"
           title="Fluxo no Discord"
-          description="Escolha se a staff analisa cada pedido ou se o ID informado ja libera a whitelist automaticamente."
+          description="Defina canais, cargos e como o apelido do membro fica no Discord depois da liberacao."
           delay={0.16}
         >
           <ModuleFieldsGrid>
@@ -418,6 +442,22 @@ export function WhitelistSettingsSection({
                 className={fieldClassName}
               />
             </div>
+            <div className="xl:col-span-2">
+              <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">
+                Formato do apelido
+              </label>
+              <input
+                value={draft.nicknameFormat}
+                placeholder="{nome} | {ID}"
+                onChange={(event) => onChange({ nicknameFormat: event.currentTarget.value })}
+                disabled={disabled}
+                className={fieldClassName}
+              />
+              <p className="mt-[8px] text-[12px] leading-[1.5] text-[#6F6F74]">
+                Use {"{nome}"} para o nome do Discord e {"{ID}"} para o identificador liberado.
+                Exemplo: {previewNicknameFormat(draft.nicknameFormat)}
+              </p>
+            </div>
           </div>
         </ModuleCard>
       </ModulePage>
@@ -430,7 +470,7 @@ export function WhitelistSettingsSection({
         <ModuleCard
           label="Passo 1"
           title="Launcher na VPS"
-          description="Instale uma vez na VPS da cidade, entre na Flowdesk e deixe o app aberto. Ele publica o IP e libera as portas do MySQL."
+          description="Instale o launcher na VPS da cidade, entre com a conta Flowdesk e mantenha o aplicativo aberto para o painel falar com o banco local."
           delay={0.12}
         >
           <div className="overflow-hidden rounded-[22px] border border-[rgba(255,255,255,0.06)] bg-[linear-gradient(180deg,#101010_0%,#0B0B0B_100%)]">
@@ -448,10 +488,10 @@ export function WhitelistSettingsSection({
                   </div>
                   <p className="mt-[4px] text-[13px] leading-[1.55] text-[#8A8A8E]">
                     {launcherOnline
-                      ? `VPS no ar${liveLauncher?.hostname ? ` · ${liveLauncher.hostname}` : ""}${detectedPublicIp ? ` · ${detectedPublicIp}` : ""}. Pode configurar o banco daqui.`
+                      ? `Conectado${liveLauncher?.hostname ? ` · ${liveLauncher.hostname}` : ""}${detectedPublicIp ? ` · ${detectedPublicIp}` : ""}.`
                       : launcherPaired
-                        ? "Launcher vinculado. Abra o app na VPS. Se a conexao falhar, ele abre o script de portas sozinho."
-                        : "Baixe o Setup, instale na VPS e faca login. Este servidor vincula sozinho."}
+                        ? "Launcher vinculado. Abra o aplicativo na VPS da cidade para continuar."
+                        : "Baixe o instalador, instale na VPS da cidade e entre com sua conta Flowdesk."}
                   </p>
                 </div>
               </div>
@@ -492,8 +532,8 @@ export function WhitelistSettingsSection({
 
         <ModuleCard
           label="Passo 2"
-          title="Dados do MySQL"
-          description="So estes quatro campos. A Flowdesk ja usa vrp_users.whitelisted: NULL vira 1. Sem mapping, sem schema, sem SSL."
+          title="Dados do banco"
+          description="Informe o IP publico da VPS e as credenciais do banco da cidade. Use o mesmo usuario e senha que voce criar no HeidiSQL."
           delay={0.16}
         >
           <div className="grid grid-cols-1 gap-[16px] xl:grid-cols-2">
@@ -501,8 +541,8 @@ export function WhitelistSettingsSection({
               label="IP publico da VPS"
               hint={
                 detectedPublicIp
-                  ? `Detectado pelo launcher: ${detectedPublicIp}`
-                  : "O launcher preenche sozinho. Nao use 127.0.0.1."
+                  ? `Detectado automaticamente: ${detectedPublicIp}`
+                  : "Use o IP publico da VPS. O launcher preenche este campo quando estiver online."
               }
             >
               <input
@@ -514,9 +554,9 @@ export function WhitelistSettingsSection({
                 className={fieldClassName}
               />
             </LabeledField>
-            <LabeledField label="Nome do banco" hint="Exemplo: skips">
+            <LabeledField label="Nome do banco" hint="Nome do banco da cidade no HeidiSQL, por exemplo vrp ou essence.">
               <input
-                placeholder="skips"
+                placeholder="nome_do_banco"
                 value={draft.dbName}
                 autoComplete="off"
                 onChange={(event) => onChange({ dbName: event.currentTarget.value })}
@@ -524,7 +564,10 @@ export function WhitelistSettingsSection({
                 className={fieldClassName}
               />
             </LabeledField>
-            <LabeledField label="Usuario" hint="Usuario do MySQL, nao o Discord.">
+            <LabeledField
+              label="Usuario"
+              hint="Usuario do MariaDB criado para a Flowdesk acessar o banco da cidade."
+            >
               <input
                 placeholder="usuario"
                 value={draft.dbUser}
@@ -536,21 +579,38 @@ export function WhitelistSettingsSection({
             </LabeledField>
             <LabeledField
               label="Senha"
-              hint="Digite de novo se o teste pedir. A senha e gravada criptografada."
+              hint="Senha em texto do usuario. Nao cole o hash que comeca com * no HeidiSQL."
             >
-              <input
-                type="password"
-                autoComplete="new-password"
-                placeholder={
-                  draft.hasDbPassword ? "Senha salva. Digite para conectar de novo" : "Senha do MySQL"
-                }
-                value={draft.dbPassword}
-                onChange={(event) => onChange({ dbPassword: event.currentTarget.value })}
-                disabled={disabled}
-                className={fieldClassName}
-              />
+              <div className="relative">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  autoComplete="off"
+                  placeholder="senha do usuario"
+                  value={draft.dbPassword}
+                  onChange={(event) =>
+                    onChange({
+                      dbPassword: event.currentTarget.value,
+                      hasDbPassword: Boolean(event.currentTarget.value),
+                    })
+                  }
+                  disabled={disabled}
+                  className={`${fieldClassName} pr-[46px]`}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((value) => !value)}
+                  className="absolute top-1/2 right-[12px] -translate-y-1/2 text-[#8A8A8E] transition-colors hover:text-[#F4F4F5]"
+                  aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
+                >
+                  {showPassword ? (
+                    <EyeOff className="h-[16px] w-[16px]" strokeWidth={1.8} />
+                  ) : (
+                    <Eye className="h-[16px] w-[16px]" strokeWidth={1.8} />
+                  )}
+                </button>
+              </div>
             </LabeledField>
-            <LabeledField label="Porta" hint="MySQL padrao: 3306">
+            <LabeledField label="Porta" hint="Porta padrao do MariaDB/MySQL: 3306.">
               <input
                 type="number"
                 placeholder="3306"
@@ -566,12 +626,145 @@ export function WhitelistSettingsSection({
         </ModuleCard>
 
         <ModuleCard
+          label="Passo 2b"
+          title="Tabela e coluna"
+          description="Escolha a tabela e as colunas da whitelist no banco da cidade. Os atalhos so preenchem um modelo inicial."
+          delay={0.17}
+        >
+          <div className="mb-[14px] flex flex-wrap gap-[8px]">
+            {WHITELIST_MAPPING_PRESETS.map((preset) => {
+              const active =
+                draft.mapping.playerTable === preset.mapping.playerTable &&
+                draft.mapping.playerIdColumn === preset.mapping.playerIdColumn &&
+                draft.mapping.whitelistColumn === preset.mapping.whitelistColumn;
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onChange({ mapping: { ...draft.mapping, ...preset.mapping } })}
+                  className={`inline-flex h-[32px] items-center rounded-full px-[12px] text-[12px] font-semibold ${
+                    active
+                      ? "bg-white text-[#111]"
+                      : "border border-[#1C1C1C] bg-[#141414] text-[#8A8A8E] hover:text-[#F4F4F5]"
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="grid grid-cols-1 gap-[16px] xl:grid-cols-3">
+            <LabeledField label="Tabela" hint="Exemplo: vrp_users, users, players.">
+              <input
+                placeholder="vrp_users"
+                value={draft.mapping.playerTable}
+                autoComplete="off"
+                onChange={(event) =>
+                  onChange({
+                    mapping: {
+                      ...draft.mapping,
+                      playerTable: event.currentTarget.value,
+                    } satisfies WhitelistMapping,
+                  })
+                }
+                disabled={disabled}
+                className={fieldClassName}
+              />
+            </LabeledField>
+            <LabeledField label="Coluna do ID" hint="A coluna que identifica o jogador. Exemplo: id, citizenid.">
+              <input
+                placeholder="id"
+                value={draft.mapping.playerIdColumn}
+                autoComplete="off"
+                onChange={(event) =>
+                  onChange({
+                    mapping: {
+                      ...draft.mapping,
+                      playerIdColumn: event.currentTarget.value,
+                    },
+                  })
+                }
+                disabled={disabled}
+                className={fieldClassName}
+              />
+            </LabeledField>
+            <LabeledField
+              label="Coluna da whitelist"
+              hint="A coluna que vira 1 quando o player e aprovado."
+            >
+              <input
+                placeholder="whitelisted"
+                value={draft.mapping.whitelistColumn}
+                autoComplete="off"
+                onChange={(event) =>
+                  onChange({
+                    mapping: {
+                      ...draft.mapping,
+                      whitelistColumn: event.currentTarget.value,
+                    },
+                  })
+                }
+                disabled={disabled}
+                className={fieldClassName}
+              />
+            </LabeledField>
+          </div>
+        </ModuleCard>
+
+        <ModuleCard
+          label="Tutorial"
+          title="Criar o usuario do banco"
+          description="Crie no HeidiSQL um usuario com o mesmo nome, senha e banco preenchidos acima. Execute o SQL como administrador e depois teste a conexao aqui."
+          delay={0.18}
+        >
+          <ol className="mb-[14px] list-decimal space-y-[8px] pl-[18px] text-[13px] leading-[1.55] text-[#8A8A8E]">
+            <li>Abra o HeidiSQL com um usuario administrador e selecione o banco informado no campo Nome do banco.</li>
+            <li>Abra a aba Consulta e cole o SQL de exemplo. Ele usa o usuario e a senha dos campos acima.</li>
+            <li>Execute o comando. O usuario precisa existir em localhost e 127.0.0.1.</li>
+            <li>Volte ao painel e clique em Conectar banco com o launcher aberto na VPS.</li>
+          </ol>
+          <pre className="overflow-x-auto rounded-[14px] border border-[#1C1C1C] bg-[#141414] px-[14px] py-[12px] text-[12px] leading-[1.6] text-[#D1D1D1]">
+            {cityDbProvisionSql(
+              draft.dbUser || "flowdesk",
+              draft.dbPassword || "sua_senha",
+              draft.dbName || "nome_do_banco",
+            )}
+          </pre>
+          <div className="mt-[12px] flex flex-wrap items-center gap-[10px]">
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard
+                  .writeText(
+                    cityDbProvisionSql(
+                      draft.dbUser || "flowdesk",
+                      draft.dbPassword || "sua_senha",
+                      draft.dbName || "nome_do_banco",
+                    ),
+                  )
+                  .then(() => {
+                    setSqlCopied(true);
+                    window.setTimeout(() => setSqlCopied(false), 2000);
+                  });
+              }}
+              className="inline-flex h-[36px] items-center rounded-full bg-white px-[14px] text-[13px] font-semibold text-[#111]"
+            >
+              {sqlCopied ? "SQL copiado" : "Copiar SQL"}
+            </button>
+            <p className="text-[12px] text-[#6F6F74]">
+              O exemplo e atualizado automaticamente com os dados preenchidos nos campos.
+            </p>
+          </div>
+        </ModuleCard>
+
+        <ModuleCard
           label="Passo 3"
           title="Conectar"
           description={
             launcherOnline
-              ? "Com o launcher no ar, a Flowdesk tenta o MySQL direto. Se a porta estiver fechada na internet, o SQL roda dentro da VPS."
-              : "Abra o launcher na VPS antes de conectar. Sem ele, a porta 3306 costuma estar fechada daqui."
+              ? "O launcher na VPS testa o usuario e o banco informados acima."
+              : "Abra o launcher na VPS antes de testar a conexao."
           }
           delay={0.2}
         >
@@ -585,7 +778,9 @@ export function WhitelistSettingsSection({
                     : "Ainda nao testado"}
               </p>
               <p className="mt-[4px] text-[13px] leading-[1.55] text-[#8A8A8E]">
-                Script vRP: tabela vrp_users, coluna whitelisted.
+                {draft.mapping.playerTable && draft.mapping.whitelistColumn
+                  ? `Whitelist: ${draft.mapping.playerTable}.${draft.mapping.whitelistColumn}`
+                  : "Defina a tabela e a coluna da whitelist no passo anterior."}
               </p>
             </div>
             <button

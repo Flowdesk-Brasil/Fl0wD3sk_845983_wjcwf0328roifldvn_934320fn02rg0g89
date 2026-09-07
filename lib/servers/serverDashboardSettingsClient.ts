@@ -120,6 +120,7 @@ type ServerDashboardSettingsPayload = {
     identifierKind: string;
     identifierLabel: string;
     identifierPlaceholder: string;
+    nicknameFormat: string;
     approvalMode: string;
     connectionMode: string;
     dbEngine: string;
@@ -128,6 +129,7 @@ type ServerDashboardSettingsPayload = {
     dbName: string;
     dbUser: string;
     dbSsl: boolean;
+    dbPassword?: string;
     hasDbPassword: boolean;
     mapping: Record<string, unknown>;
     mappingStatus: string;
