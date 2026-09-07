@@ -41,6 +41,7 @@ import {
   resolveCanonicalHostOrigin,
   resolveAuthOrigin,
 } from "@/lib/routing/subdomains";
+import { isNextAppRouterDataRequest } from "@/lib/routing/nextAppRouterDataRequest";
 
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const DEFAULT_PAYMENT_CHECKOUT_PATH = "/payment";
@@ -488,6 +489,16 @@ function maybeBuildCanonicalWorkspaceRedirect(
     );
 
     if (targetLocation && targetLocation !== currentLocation) {
+      if (isNextAppRouterDataRequest(request)) {
+        return buildRewriteResponse(
+          request,
+          requestHeaders,
+          requestId,
+          csp,
+          pathname,
+        );
+      }
+
       return buildRedirectResponse(request, requestId, csp, targetLocation, 308);
     }
 

@@ -8,6 +8,7 @@ import { usePathname } from "next/navigation";
 
 import { LandingActionButton } from "@/components/landing/LandingActionButton";
 import { LandingReveal } from "@/components/landing/LandingReveal";
+import { MarketingLink } from "@/components/routing/MarketingLink";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { OFFICIAL_DISCORD_INVITE_URL } from "@/lib/discordLink/config";
 
@@ -216,8 +217,9 @@ function DesktopMenuCard({
   onNavigate?: () => void;
 }) {
   return (
-    <Link
+    <MarketingLink
       href={item.href}
+      prefetch={false}
       onClick={onNavigate}
       className="group flex items-start gap-[14px] rounded-[18px] px-[14px] py-[12px] transition-[background-color,transform] duration-200 ease-out hover:bg-[rgba(255,255,255,0.035)]"
     >
@@ -232,7 +234,7 @@ function DesktopMenuCard({
           {item.description}
         </p>
       </div>
-    </Link>
+    </MarketingLink>
   );
 }
 
@@ -246,13 +248,14 @@ function DesktopMenuSideLink({
   onNavigate?: () => void;
 }) {
   return (
-    <Link
+    <MarketingLink
       href={href}
+      prefetch={false}
       onClick={onNavigate}
       className="inline-flex self-start rounded-[14px] px-[12px] py-[10px] -mx-[12px] text-[18px] leading-none font-normal text-[rgba(183,183,183,0.7)] transition-[background-color,color] duration-200 hover:bg-[rgba(255,255,255,0.04)] hover:text-[rgba(218,218,218,0.92)]"
     >
       {label}
-    </Link>
+    </MarketingLink>
   );
 }
 
@@ -418,8 +421,9 @@ function NavLink({
   "data-flowdesk-visible"?: "true" | "false";
 }) {
   return (
-    <Link
+    <MarketingLink
       href={item.href}
+      prefetch={false}
       onClick={onClick}
       style={style}
       data-flowdesk-visible={dataFlowdeskVisible}
@@ -435,7 +439,7 @@ function NavLink({
           <ChevronIcon className={isActive ? "rotate-180" : ""} />
         ) : null}
       </span>
-    </Link>
+    </MarketingLink>
   );
 }
 
@@ -1333,13 +1337,14 @@ export function LandingHeader({
               >
                 <LandingReveal delay={500}>
                   <div className="flowdesk-landing-soft-motion flex h-[46px] shrink-0 items-center">
-                    <Link
+                    <MarketingLink
                       href={documentationHref}
+                      prefetch={false}
                       onPointerEnter={() => closeDesktopMenu(90)}
                       className="inline-flex h-[46px] items-center rounded-[16px] px-[16px] py-[10px] whitespace-nowrap text-[20px] leading-none font-normal text-[#B7B7B7] transition-[background-color,color] duration-200 hover:bg-[#0F0F0F] hover:text-[rgba(218,218,218,0.92)]"
                     >
                       Docs
-                    </Link>
+                    </MarketingLink>
                   </div>
                 </LandingReveal>
 

@@ -1,5 +1,5 @@
-import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
+import { MarketingLink } from "@/components/routing/MarketingLink";
 
 type LandingActionButtonProps = {
   href?: string;
@@ -71,12 +71,13 @@ export function LandingActionButton({
   }
 
   return (
-    <Link
+    <MarketingLink
       href={href}
       style={style}
       onClick={onClick}
       data-flowdesk-visible={dataFlowdeskVisible}
       className={composedClassName}
+      prefetch={false}
     >
       <span
         aria-hidden="true"
@@ -87,6 +88,6 @@ export function LandingActionButton({
       >
         {children}
       </span>
-    </Link>
+    </MarketingLink>
   );
 }
