@@ -780,7 +780,8 @@ export function SalesDescriptionEditor({
         value={value}
         onChange={(event) => commitEditorValue(event.target.value)}
         onKeyDown={(event) => {
-          const key = event.key.toLowerCase();
+          const key = String(event.key || "").toLowerCase();
+          if (!key) return;
           const isModifier = event.ctrlKey || event.metaKey;
           if (!isModifier || event.altKey) return;
 

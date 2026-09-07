@@ -17,8 +17,13 @@ import type {
   DomainCheckResponseData,
   DomainCheckResult,
 } from "@/lib/openprovider/types";
+import { applyTldCatalogFallback } from "@/lib/domains/tldCatalog";
 import { DomainProviderError, asProviderError } from "./errors";
 import { normalizePhoneParts, splitContactName } from "./http";
+
+const OPENPROVIDER_CHECK_CHUNK = 10;
+const AVAILABLE_STATUSES = new Set(["free", "available", "unused"]);
+const TAKEN_STATUSES = new Set(["in use", "inuse", "active", "taken", "reserved", "occupied"]);
 
 type OpenproviderData = Record<string, unknown>;
 
@@ -37,6 +42,10 @@ function requireParsed(fqdn: string) {
   return parsed;
 }
 
+function normalizeOpenproviderStatus(status?: string) {
+  return String(status || "").trim().toLowerCase().replace(/[_-]+/g, " ");
+}
+
 function mapAvailabilityResult(
   parsed: ReturnType<typeof requireParsed>,
   result: DomainCheckResult,
@@ -44,20 +53,54 @@ function mapAvailabilityResult(
   const regular = result.price?.reseller || result.price?.product;
   const premiumPrice = result.premium?.price?.create || 0;
   const price = Number(regular?.price || premiumPrice || 0);
-  return {
+  const status = normalizeOpenproviderStatus(result.status);
+  const unsupported = /not supported|invalid extension|tldnotsupported|unsupported/i.test(result.reason || "");
+  const failed = !status || status === "failed" || status === "error" || status === "unknown";
+  return applyTldCatalogFallback({
     fqdn: parsed.fqdn,
     sld: parsed.sld,
     tld: parsed.tld,
-    isAvailable: result.status === "free",
+    isAvailable: AVAILABLE_STATUSES.has(status),
     isPremium: Boolean(result.is_premium),
-    supported: !/not supported|invalid extension/i.test(result.reason || ""),
+    supported: !unsupported && !failed && (AVAILABLE_STATUSES.has(status) || TAKEN_STATUSES.has(status)),
     registrationCost: price,
     renewalCost: price,
     transferCost: price,
     currency: regular?.currency || result.premium?.currency || "EUR",
     provider: "openprovider",
-    reason: result.reason || null,
-  };
+    reason: result.reason || result.status || null,
+  });
+}
+
+async function checkAvailabilityChunk(parsed: ReturnType<typeof requireParsed>[]) {
+  const response = await openProviderClient.post<DomainCheckResponseData>("domains/check", {
+    domains: parsed.map((domain) => ({ name: domain.sld, extension: domain.tld })),
+    with_price: true,
+  });
+  const results = response.data?.results || [];
+  const byFqdn = new Map(
+    results.map((result) => [String(result.domain || "").trim().toLowerCase(), result]),
+  );
+  return parsed.map((domain, index) => {
+    const result = byFqdn.get(domain.fqdn) || results[index];
+    if (!result) {
+      return {
+        fqdn: domain.fqdn,
+        sld: domain.sld,
+        tld: domain.tld,
+        isAvailable: false,
+        isPremium: false,
+        supported: false,
+        registrationCost: 0,
+        renewalCost: 0,
+        transferCost: 0,
+        currency: "EUR",
+        provider: "openprovider" as const,
+        reason: "A Openprovider nao retornou este dominio.",
+      };
+    }
+    return mapAvailabilityResult(domain, result);
+  });
 }
 
 async function checkAvailabilityBatch(fqdns: string[]) {
@@ -66,30 +109,17 @@ async function checkAvailabilityBatch(fqdns: string[]) {
   }
 
   const parsed = fqdns.map(requireParsed);
-  const response = await openProviderClient.post<DomainCheckResponseData>("domains/check", {
-    domains: parsed.map((domain) => ({ name: domain.sld, extension: domain.tld })),
-    with_price: true,
-  });
-  const results = response.data?.results || [];
-  if (!results.length) {
-    throw new DomainProviderError("openprovider", "temporary", "Resposta vazia da Openprovider.", 502);
+  const chunks: ReturnType<typeof requireParsed>[][] = [];
+  for (let index = 0; index < parsed.length; index += OPENPROVIDER_CHECK_CHUNK) {
+    chunks.push(parsed.slice(index, index + OPENPROVIDER_CHECK_CHUNK));
   }
 
-  const byFqdn = new Map(
-    results.map((result) => [String(result.domain || "").trim().toLowerCase(), result]),
-  );
-  return parsed.map((domain, index) => {
-    const result = byFqdn.get(domain.fqdn) || results[index];
-    if (!result) {
-      throw new DomainProviderError(
-        "openprovider",
-        "temporary",
-        `A Openprovider nao retornou resultado para ${domain.fqdn}.`,
-        502,
-      );
-    }
-    return mapAvailabilityResult(domain, result);
-  });
+  const results = await Promise.all(chunks.map((chunk) => checkAvailabilityChunk(chunk)));
+  const flattened = results.flat();
+  if (!flattened.some((item) => item.supported)) {
+    throw new DomainProviderError("openprovider", "temporary", "Resposta vazia da Openprovider.", 502);
+  }
+  return flattened;
 }
 
 function mapError(error: unknown) {

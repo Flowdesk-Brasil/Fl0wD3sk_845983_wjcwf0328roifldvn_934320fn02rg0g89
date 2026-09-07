@@ -13,6 +13,7 @@ import {
 import { domainProviderOrchestrator } from "../lib/domains/provider";
 import { providerFetchJson } from "../lib/domains/providers/http";
 import { searchDomains } from "../lib/domains/search";
+import { applyTldCatalogFallback, getTldCatalogPrice } from "../lib/domains/tldCatalog";
 
 test("domain pricing converts to BRL and applies exactly 20 percent", () => {
   const result = applyDomainMarkup({
@@ -162,5 +163,60 @@ test("safe provider requests recover once after a 429 response", async () => {
     assert.equal(response.data.ok, true);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test("tld catalog fills missing registration prices including com.br", () => {
+  const catalog = getTldCatalogPrice("com.br");
+  assert.ok(catalog && catalog.register > 0);
+  const priced = applyTldCatalogFallback({
+    tld: "com.br",
+    registrationCost: 0,
+    renewalCost: 0,
+    transferCost: 0,
+    currency: "",
+  });
+  assert.ok(priced.registrationCost > 0);
+  assert.equal(priced.currency, "USD");
+});
+
+test("domain search keeps available results when providers fail and RDAP says free", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalOpenproviderUsername = process.env.OPENPROVIDER_USERNAME;
+  const originalOpenproviderPassword = process.env.OPENPROVIDER_PASSWORD;
+  const originalSpaceshipKey = process.env.SPACESHIP_API_KEY;
+  const originalSpaceshipSecret = process.env.SPACESHIP_API_SECRET;
+
+  process.env.OPENPROVIDER_USERNAME = "";
+  process.env.OPENPROVIDER_PASSWORD = "";
+  process.env.SPACESHIP_API_KEY = "";
+  process.env.SPACESHIP_API_SECRET = "";
+  globalThis.fetch = (async (input) => {
+    const url = String(input);
+    if (url.includes("rdap")) {
+      return new Response("", { status: 404 });
+    }
+    return new Response(JSON.stringify({ rates: { BRL: 5.5 } }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  try {
+    const result = await searchDomains("marcaunicaflowdeskrdapxyz");
+    assert.ok(result.results.length > 0);
+    assert.ok(result.results.some((item) => item.isAvailable && item.checkState === "available"));
+    assert.ok(result.results.every((item) => item.checkState !== "unknown"));
+    assert.ok((result.results.find((item) => item.extension === "com")?.price || 0) > 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalOpenproviderUsername === undefined) delete process.env.OPENPROVIDER_USERNAME;
+    else process.env.OPENPROVIDER_USERNAME = originalOpenproviderUsername;
+    if (originalOpenproviderPassword === undefined) delete process.env.OPENPROVIDER_PASSWORD;
+    else process.env.OPENPROVIDER_PASSWORD = originalOpenproviderPassword;
+    if (originalSpaceshipKey === undefined) delete process.env.SPACESHIP_API_KEY;
+    else process.env.SPACESHIP_API_KEY = originalSpaceshipKey;
+    if (originalSpaceshipSecret === undefined) delete process.env.SPACESHIP_API_SECRET;
+    else process.env.SPACESHIP_API_SECRET = originalSpaceshipSecret;
   }
 });

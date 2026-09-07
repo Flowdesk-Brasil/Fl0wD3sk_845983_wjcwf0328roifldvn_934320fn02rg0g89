@@ -1,6 +1,8 @@
 import {
   createTicketPanelComponentId,
+  deriveLegacyTicketPanelFields,
   normalizeTicketPanelLayout,
+  type LegacyTicketPanelFields,
   type TicketPanelButtonComponent,
   type TicketPanelContainerComponent,
   type TicketPanelContentComponent,
@@ -48,9 +50,7 @@ export function createDefaultWhitelistPanelLayout(): TicketPanelLayout {
         [
           "## Whitelist da cidade",
           "",
-          "Clique no botao abaixo e informe seu **{{identifier_label}}** para entrar na analise.",
-          "",
-          "-# A equipe confirma o pedido e o sistema sincroniza automaticamente com o banco da cidade.",
+          "Clique no botao abaixo e informe seu identificador para entrar na analise.",
         ].join("\n"),
       ),
     ],
@@ -63,7 +63,19 @@ function ensureLockedButton(layout: TicketPanelLayout): TicketPanelLayout {
     (component) =>
       !(component.type === "button" && isWhitelistLockedButtonId(component.id)),
   );
-  return [...without, createLockedRequestButton()];
+  const existing = layout.find(
+    (component): component is TicketPanelButtonComponent =>
+      component.type === "button" && isWhitelistLockedButtonId(component.id),
+  );
+  const lockedButton: TicketPanelButtonComponent = {
+    ...(existing || createLockedRequestButton()),
+    id: WHITELIST_LOCKED_REQUEST_ID,
+    type: "button",
+    label: String(existing?.label || "").trim() || "Solicitar whitelist",
+    style: existing?.style || "primary",
+    disabled: false,
+  };
+  return [...without, lockedButton];
 }
 
 export function normalizeWhitelistPanelLayout(value: unknown): TicketPanelLayout {
@@ -141,4 +153,25 @@ export function resolveWhitelistPreviewMarkdown(markdown: string) {
     .join("Cidade Flow")
     .split("{{identifier_label}}")
     .join("ID / License");
+}
+
+export function deriveLegacyWhitelistPanelFields(
+  layout: TicketPanelLayout,
+): LegacyTicketPanelFields {
+  const normalized = normalizeWhitelistPanelLayout(layout);
+  const lockedButton = normalized.find(
+    (component): component is TicketPanelButtonComponent =>
+      component.type === "button" && isWhitelistLockedButtonId(component.id),
+  );
+  const withoutSelects = normalized.filter(
+    (component) => component.type !== "select",
+  ) as TicketPanelLayout;
+  const derived = deriveLegacyTicketPanelFields(withoutSelects);
+  if (lockedButton) {
+    return {
+      ...derived,
+      panelButtonLabel: lockedButton.label.trim() || "Solicitar whitelist",
+    };
+  }
+  return derived;
 }

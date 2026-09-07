@@ -1,6 +1,6 @@
 import type { TicketPanelLayout } from "@/lib/servers/ticketPanelBuilder";
 import {
-  createVrpUsersMapping,
+  createEmptyWhitelistMapping,
   normalizeIdentifierKind,
   resolveCityWhitelistMapping,
   type WhitelistConnectionMode,
@@ -18,6 +18,32 @@ import {
   looksLikePublicCityDbHost,
   normalizeCityDbHost,
 } from "@/lib/servers/whitelistHost";
+import { resolveCityDbLogin } from "@/lib/servers/cityDbDefaults";
+import { normalizeNicknameFormat } from "@/lib/servers/whitelistNickname";
+
+export function isWhitelistModuleActive(
+  input?: {
+    enabled?: boolean | null;
+    panelChannelId?: string | null;
+    panelMessageId?: string | null;
+    mapping?: {
+      playerTable?: string | null;
+      whitelistColumn?: string | null;
+    } | Record<string, unknown> | null;
+  } | null,
+) {
+  if (!input) return false;
+  if (input.enabled === true) return true;
+  if (input.panelChannelId || input.panelMessageId) return true;
+  const mapping = input.mapping && typeof input.mapping === "object" ? input.mapping : null;
+  return Boolean(
+    mapping &&
+      "playerTable" in mapping &&
+      "whitelistColumn" in mapping &&
+      mapping.playerTable &&
+      mapping.whitelistColumn,
+  );
+}
 
 export type WhitelistSettingsDraft = {
   enabled: boolean;
@@ -31,6 +57,7 @@ export type WhitelistSettingsDraft = {
   identifierKind: WhitelistIdentifierKind;
   identifierLabel: string;
   identifierPlaceholder: string;
+  nicknameFormat: string;
   approvalMode: "manual" | "automatic";
   connectionMode: WhitelistConnectionMode;
   dbEngine: WhitelistDbEngine;
@@ -66,6 +93,10 @@ export function normalizeWhitelistSettingsDraft(
   const dbHost = looksLikePublicCityDbHost(requestedHost)
     ? requestedHost
     : publicIp;
+  const login = resolveCityDbLogin({
+    user: input?.dbUser,
+    password: input?.dbPassword,
+  });
   return {
     enabled: input?.enabled === true,
     panelChannelId:
@@ -93,8 +124,14 @@ export function normalizeWhitelistSettingsDraft(
     identifierKind: normalizeIdentifierKind(input?.identifierKind),
     identifierLabel: String(input?.identifierLabel || "ID / License").slice(0, 45),
     identifierPlaceholder: String(
-      input?.identifierPlaceholder || "Ex: 1 ou license:xxxx",
+      input?.identifierPlaceholder || "Informe seu ID, license ou token",
     ).slice(0, 80),
+    nicknameFormat: normalizeNicknameFormat(
+      input?.nicknameFormat ||
+        (input?.mapping && typeof input.mapping === "object"
+          ? (input.mapping as { nicknameFormat?: unknown }).nicknameFormat
+          : ""),
+    ),
     approvalMode: String(input?.approvalMode || "manual") === "automatic" ? "automatic" : "manual",
     connectionMode: "direct",
     dbEngine:
@@ -102,11 +139,13 @@ export function normalizeWhitelistSettingsDraft(
     dbHost: isLoopbackCityDbHost(dbHost) ? "" : dbHost,
     dbPort: Number.isFinite(port) && port >= 1 && port <= 65535 ? Math.floor(port) : 3306,
     dbName: String(input?.dbName || "").trim(),
-    dbUser: String(input?.dbUser || "").trim(),
+    dbUser: login.user,
     dbSsl: input?.dbSsl === true,
-    dbPassword: "",
-    hasDbPassword: input?.hasDbPassword === true,
-    mapping: input?.mapping ? resolveCityWhitelistMapping(input.mapping) : createVrpUsersMapping(),
+    dbPassword: login.password,
+    hasDbPassword: Boolean(login.password) || input?.hasDbPassword === true,
+    mapping: input?.mapping
+      ? resolveCityWhitelistMapping(input.mapping)
+      : createEmptyWhitelistMapping(),
     mappingStatus:
       status === "validated" || status === "invalid" ? status : "validated",
     lastHealthOk: input?.lastHealthOk === true,
@@ -138,7 +177,9 @@ export function areWhitelistSettingsDraftsEqual(
   if (!left || !right) return false;
   const strip = (draft: WhitelistSettingsDraft) => ({
     ...draft,
-    dbPassword: "",
+    lastHealthOk: false,
+    lastHealthAt: null,
+    lastHealthError: null,
     agentOnline: false,
     agentLastSeenAt: null,
     agentPublicIp: null,

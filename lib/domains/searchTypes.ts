@@ -1,7 +1,10 @@
+export type DomainCheckState = "available" | "taken" | "unknown";
+
 export interface DomainSearchResult {
   domain: string;
   extension: string;
   status: string;
+  checkState: DomainCheckState;
   isAvailable: boolean;
   price: number;
   currency: string;

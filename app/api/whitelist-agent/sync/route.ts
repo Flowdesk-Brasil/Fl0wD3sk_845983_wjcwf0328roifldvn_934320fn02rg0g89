@@ -71,18 +71,13 @@ export async function POST(request: Request) {
       .update({
         agent_last_seen_at: new Date().toISOString(),
         agent_public_ip: publicIp,
-        last_health_at: new Date().toISOString(),
-        last_health_ok: true,
-        last_health_error: null,
       })
       .eq("guild_id", guildId);
     if (healthUpdate.error) {
       await supabase
         .from("guild_whitelist_settings")
         .update({
-          last_health_at: new Date().toISOString(),
-          last_health_ok: true,
-          last_health_error: null,
+          agent_last_seen_at: new Date().toISOString(),
         })
         .eq("guild_id", guildId);
     }

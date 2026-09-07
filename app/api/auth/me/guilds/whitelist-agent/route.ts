@@ -86,6 +86,7 @@ export async function POST(request: Request) {
           status: launcher.status,
           lastSeenAt: launcher.lastSeenAt,
           hostname: launcher.hostname,
+          appVersion: launcher.appVersion || null,
           publicIp: launcher.observedIp || existing.data?.agent_public_ip || null,
           lastHealthOk: existing.data?.last_health_ok === true,
           lastHealthAt: existing.data?.last_health_at || null,

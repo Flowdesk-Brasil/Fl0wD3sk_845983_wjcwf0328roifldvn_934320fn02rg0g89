@@ -122,6 +122,7 @@ import { sorteioActiveLayoutHasRequiredParts } from "@/lib/servers/sorteioPanelB
 import {
   areWhitelistSettingsDraftsEqual,
   createEmptyWhitelistSettingsDraft,
+  isWhitelistModuleActive,
   normalizeWhitelistSettingsDraft,
   type WhitelistSettingsDraft,
 } from "@/lib/servers/whitelistSettingsModel";
@@ -2692,6 +2693,7 @@ export function ServerSettingsEditor({
   const savedSorteioDraftRef = useRef<SorteioSettingsDraft | null>(null);
   const currentWhitelistDraftRef = useRef<WhitelistSettingsDraft | null>(null);
   const savedWhitelistDraftRef = useRef<WhitelistSettingsDraft | null>(null);
+  const activeWhitelistGuildIdRef = useRef<string | null>(null);
   const currentBatePontoDraftRef = useRef<BatePontoSettingsDraft | null>(null);
   const savedBatePontoDraftRef = useRef<BatePontoSettingsDraft | null>(null);
   const currentAntiLinkDraftRef = useRef<AntiLinkSettingsDraft | null>(null);
@@ -2903,11 +2905,13 @@ export function ServerSettingsEditor({
         savedSorteioDraftRef.current,
         areSorteioSettingsDraftsEqual,
       );
-      const shouldPreserveLocalWhitelistDraft = isSettingsDraftDirty(
-        currentWhitelistDraftRef.current,
-        savedWhitelistDraftRef.current,
-        areWhitelistSettingsDraftsEqual,
-      );
+      const shouldPreserveLocalWhitelistDraft =
+        activeWhitelistGuildIdRef.current === guildId &&
+        isSettingsDraftDirty(
+          currentWhitelistDraftRef.current,
+          savedWhitelistDraftRef.current,
+          areWhitelistSettingsDraftsEqual,
+        );
       const shouldPreserveLocalBatePontoDraft = isSettingsDraftDirty(
         currentBatePontoDraftRef.current,
         savedBatePontoDraftRef.current,
@@ -3186,6 +3190,11 @@ export function ServerSettingsEditor({
       const hasWhitelistSettings = Boolean(payload.whitelistSettings);
       const nextWhitelistDraft = normalizeWhitelistSettingsDraft({
         ...(payload.whitelistSettings || {}),
+        enabled: isWhitelistModuleActive({
+          enabled: payload.whitelistSettings?.enabled === true,
+          panelChannelId: payload.whitelistSettings?.panelChannelId,
+          mapping: payload.whitelistSettings?.mapping,
+        }),
         panelChannelId: hasWhitelistSettings
           ? payload.whitelistSettings?.panelChannelId &&
             textSet.has(payload.whitelistSettings.panelChannelId)
@@ -3612,6 +3621,7 @@ export function ServerSettingsEditor({
       if (!shouldPreserveLocalWhitelistDraft) {
         setWhitelistDraft(nextWhitelistDraft);
       }
+      activeWhitelistGuildIdRef.current = guildId;
       if (!shouldPreserveLocalBatePontoDraft) {
         setBatePontoEnabled(nextBatePontoEnabled);
         setBatePontoPanelChannelId(nextBatePontoPanelChannelId);
@@ -3982,6 +3992,14 @@ export function ServerSettingsEditor({
     setSecurityLogsDraft(createDefaultSecurityLogsSettingsDraft());
     setDashboardPermissions([]);
   }, [guildId, initialTab]);
+
+  useEffect(() => {
+    activeWhitelistGuildIdRef.current = null;
+    setWhitelistDraft(createEmptyWhitelistSettingsDraft());
+    setSavedWhitelistSettingsDraft(null);
+    currentWhitelistDraftRef.current = null;
+    savedWhitelistDraftRef.current = null;
+  }, [guildId]);
 
   useEffect(() => {
     function handleOutsideClick(event: MouseEvent) {
@@ -5102,7 +5120,7 @@ export function ServerSettingsEditor({
       !isLoading &&
       !isSaving &&
       !isSendingEmbed &&
-      whitelistDraft.enabled &&
+      isWhitelistModuleActive(whitelistDraft) &&
       whitelistDraft.panelChannelId &&
       whitelistDraft.panelLayout.length &&
       whitelistPanelHasRequiredParts(whitelistDraft.panelLayout),
@@ -5446,11 +5464,10 @@ export function ServerSettingsEditor({
   const hasWhitelistUnsavedChanges = useMemo(
     () =>
       hasLoadedWhitelistDraft &&
-      (!areWhitelistSettingsDraftsEqual(
+      !areWhitelistSettingsDraftsEqual(
         currentWhitelistDraft,
         savedWhitelistSettingsDraft,
-      ) ||
-        Boolean(currentWhitelistDraft.dbPassword)),
+      ),
     [
       currentWhitelistDraft,
       hasLoadedWhitelistDraft,
@@ -5612,7 +5629,7 @@ export function ServerSettingsEditor({
           savedWhitelistSettingsDraft,
           hasLoadedWhitelistDraft,
           areWhitelistSettingsDraftsEqual,
-        ) || Boolean(currentWhitelistDraft.dbPassword)
+        )
     : isBatePontoSection
       ? hasDraftChangesBeyondEnabledToggle(
           currentBatePontoDraft,
@@ -5706,7 +5723,7 @@ export function ServerSettingsEditor({
     captchaEnabled,
     suggestionsEnabled,
     sorteioEnabled,
-    whitelistEnabled: whitelistDraft.enabled,
+    whitelistEnabled: isWhitelistModuleActive(whitelistDraft),
     batePontoEnabled,
     antiLinkEnabled,
     autoRoleEnabled,
@@ -5813,7 +5830,7 @@ export function ServerSettingsEditor({
     isSaving || settingsReadOnly || !suggestionsEnabled;
   const sorteioControlsDisabled = isSaving || settingsReadOnly || !sorteioEnabled;
   const whitelistControlsDisabled =
-    isSaving || settingsReadOnly || !whitelistDraft.enabled;
+    isSaving || settingsReadOnly || !isWhitelistModuleActive(whitelistDraft);
   const batePontoControlsDisabled =
     isSaving || settingsReadOnly || !batePontoEnabled;
   const antiLinkControlsDisabled =
@@ -6947,7 +6964,6 @@ export function ServerSettingsEditor({
     } else if (isWhitelistSection && savedWhitelistSettingsDraft) {
       setWhitelistDraft({
         ...savedWhitelistSettingsDraft,
-        dbPassword: "",
       });
     } else if (isBatePontoSection && savedBatePontoSettingsDraft) {
       setBatePontoEnabled(savedBatePontoSettingsDraft.enabled);
@@ -7045,7 +7061,7 @@ export function ServerSettingsEditor({
                   : settingsSection === "sorteio_overview"
                     ? sorteioEnabled
                   : settingsSection === "whitelist_overview"
-                    ? whitelistDraft.enabled
+                    ? isWhitelistModuleActive(whitelistDraft)
                   : settingsSection === "bate_ponto_overview"
                     ? batePontoEnabled
                     : settingsSection === "captcha_overview"
@@ -7730,6 +7746,7 @@ export function ServerSettingsEditor({
             identifierKind: currentWhitelistDraft.identifierKind,
             identifierLabel: currentWhitelistDraft.identifierLabel,
             identifierPlaceholder: currentWhitelistDraft.identifierPlaceholder,
+            nicknameFormat: currentWhitelistDraft.nicknameFormat,
             approvalMode: currentWhitelistDraft.approvalMode,
             connectionMode: currentWhitelistDraft.connectionMode,
             dbEngine: currentWhitelistDraft.dbEngine,
@@ -7766,7 +7783,10 @@ export function ServerSettingsEditor({
 
         const nextWhitelistDraft = {
           ...normalizeWhitelistSettingsDraft(payload.settings || currentWhitelistDraft),
-          dbPassword: "",
+          dbPassword:
+            (typeof payload.settings?.dbPassword === "string" && payload.settings.dbPassword) ||
+            currentWhitelistDraft.dbPassword ||
+            "",
         };
         setWhitelistDraft(nextWhitelistDraft);
         setSavedWhitelistSettingsDraft(nextWhitelistDraft);
@@ -7783,6 +7803,7 @@ export function ServerSettingsEditor({
             identifierKind: nextWhitelistDraft.identifierKind,
             identifierLabel: nextWhitelistDraft.identifierLabel,
             identifierPlaceholder: nextWhitelistDraft.identifierPlaceholder,
+            nicknameFormat: nextWhitelistDraft.nicknameFormat,
             approvalMode: nextWhitelistDraft.approvalMode,
             connectionMode: nextWhitelistDraft.connectionMode,
             dbEngine: nextWhitelistDraft.dbEngine,

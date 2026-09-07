@@ -5,8 +5,10 @@ import type {
   DomainProviderName,
 } from "@/lib/domains/adapter";
 import { DomainProviderError, asProviderError } from "./providers/errors";
+import { checkPublicAvailabilityBatch } from "./providers/rdap";
 import { openproviderAdapter } from "./providers/openprovider";
 import { spaceshipAdapter } from "./providers/spaceship";
+import { applyTldCatalogFallback } from "./tldCatalog";
 
 // Hover/OpenSRS remains implemented but is intentionally disabled from runtime.
 const ACTIVE_PROVIDERS: DomainProviderAdapter[] = [
@@ -121,6 +123,11 @@ function validateAvailabilityResult(
       422,
     );
   }
+  const priced = applyTldCatalogFallback(result);
+  result.registrationCost = priced.registrationCost;
+  result.renewalCost = priced.renewalCost;
+  result.transferCost = priced.transferCost;
+  result.currency = priced.currency;
   if (result.isAvailable && result.registrationCost <= 0) {
     return new DomainProviderError(
       provider.name,
@@ -360,7 +367,40 @@ export class DomainProviderOrchestrator {
           });
           state.lastError = mapped;
         }
-        if (!mapped.allowsFallback) break;
+      }
+    }
+
+    const unresolved = Array.from(pending.keys());
+    if (unresolved.length) {
+      try {
+        const publicResults = await checkPublicAvailabilityBatch(unresolved);
+        const byFqdn = new Map(publicResults.map((item) => [item.fqdn, item]));
+        for (const fqdn of unresolved) {
+          const state = pending.get(fqdn);
+          const result = byFqdn.get(fqdn);
+          if (!state || !result) continue;
+          const item: DomainAvailabilityBatchItem = {
+            fqdn,
+            value: result,
+            provider: result.provider,
+            attempts: [
+              ...state.attempts.map(cloneAttempt),
+              {
+                provider: result.provider,
+                operation: "check",
+                ok: true,
+                fallbackUsed: true,
+                message: "Consulta publica de disponibilidade.",
+              },
+            ],
+            error: null,
+          };
+          resolved.set(fqdn, item);
+          pending.delete(fqdn);
+          setCachedAvailability(item);
+        }
+      } catch {
+        // Public RDAP is a last-resort hint only.
       }
     }
 

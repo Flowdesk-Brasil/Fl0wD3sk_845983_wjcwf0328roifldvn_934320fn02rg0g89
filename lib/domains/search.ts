@@ -68,11 +68,12 @@ function unknownResult(item: DomainAvailabilityBatchItem): DomainSearchResult {
     domain: item.fqdn,
     extension: parsed?.tld || item.fqdn.split(".").slice(1).join("."),
     status: "unknown",
+    checkState: "unknown",
     isAvailable: false,
     price: 0,
     currency: "BRL",
     isPremium: false,
-    reason: item.error?.message || "Consulta indisponivel.",
+    reason: item.error?.message || "Consulta indisponivel. Tente novamente.",
     whois: "",
   };
 }
@@ -102,6 +103,7 @@ async function mapBatchResults(items: DomainAvailabilityBatchItem[]) {
       domain: result.fqdn,
       extension: result.tld,
       status: result.isAvailable ? "free" : "in use",
+      checkState: result.isAvailable ? "available" : "taken",
       isAvailable: result.isAvailable,
       price,
       currency: "BRL",
@@ -199,9 +201,27 @@ export async function searchDomains(query: string): Promise<DomainSearchResponse
 
 export async function streamSearchDomains(
   query: string,
-  onChunk: (payload: { results: DomainSearchResult[]; isIntermediate: boolean }) => void,
+  onChunk: (payload: {
+    exactDomain: string | null;
+    searchedTlds: string[];
+    results: DomainSearchResult[];
+    isIntermediate: boolean;
+    exchangeRate?: number;
+  }) => void,
 ) {
   const response = await searchDomains(query);
-  onChunk({ results: response.results, isIntermediate: false });
+  const unknownCount = response.results.filter((item) => item.checkState === "unknown").length;
+  if (response.results.length > 0 && unknownCount === response.results.length) {
+    throw new Error(
+      response.results[0]?.reason || "A consulta de dominios nao respondeu. Tente novamente.",
+    );
+  }
+
+  onChunk({
+    exactDomain: response.exactDomain,
+    searchedTlds: response.searchedTlds,
+    results: response.results,
+    isIntermediate: false,
+  });
   return response;
 }

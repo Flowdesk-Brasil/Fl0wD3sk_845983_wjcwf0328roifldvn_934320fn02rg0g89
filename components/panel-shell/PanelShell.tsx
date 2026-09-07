@@ -57,9 +57,11 @@ export function PanelShell({
   useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
       if (event.defaultPrevented || event.repeat) return;
+      const key = String(event.key || "").toLowerCase();
+      if (!key) return;
       const isPaletteShortcut =
-        (event.key.toLowerCase() === "k" && (event.ctrlKey || event.metaKey)) ||
-        (event.key.toLowerCase() === "f" && !event.ctrlKey && !event.metaKey && !event.altKey);
+        (key === "k" && (event.ctrlKey || event.metaKey)) ||
+        (key === "f" && !event.ctrlKey && !event.metaKey && !event.altKey);
 
       if (!isPaletteShortcut) return;
 

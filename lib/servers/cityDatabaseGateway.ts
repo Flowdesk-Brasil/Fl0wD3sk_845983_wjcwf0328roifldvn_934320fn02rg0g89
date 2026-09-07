@@ -157,6 +157,7 @@ async function runViaVps(
       ...mappingPayload(mapping, identifierValue),
       cityDb: {
         engine: target.engine,
+        host: "localhost",
         port: target.port,
         database: target.database,
         user: target.user,
@@ -179,13 +180,19 @@ async function runViaVps(
   }
   const result = (finished.result || {}) as Record<string, unknown>;
   if (result.ok === false) {
+    const code = String(result.code || "db_error");
+    const raw = String(result.message || "Falha no MySQL da VPS.");
+    const message =
+      code === "invalid_credentials"
+        ? "O launcher recusou o usuario ou a senha do banco. Confira as credenciais e se o usuario existe no MariaDB da VPS."
+        : raw;
     return {
       ok: false,
       via: "vps",
       host,
       port,
-      code: String(result.code || "db_error"),
-      message: viaMessage("vps", String(result.message || "Falha no MySQL da VPS.")),
+      code,
+      message: viaMessage("vps", message),
     };
   }
 
@@ -206,9 +213,9 @@ async function runViaVps(
       latencyMs: Number(result.latencyMs || 0) || undefined,
       message: viaMessage(
         "vps",
-        hasVrpUsers
-          ? `MySQL ok nesta VPS (${Number(result.latencyMs || 0)}ms). Tabela vrp_users encontrada.`
-          : `MySQL ok nesta VPS (${Number(result.latencyMs || 0)}ms). Confira se o nome do banco tem a tabela vrp_users.`,
+        mapping.playerTable
+          ? `Banco ok nesta VPS (${Number(result.latencyMs || 0)}ms). Usando ${mapping.playerTable}.${mapping.whitelistColumn || "..."}.`
+          : `Banco ok nesta VPS (${Number(result.latencyMs || 0)}ms). Defina a tabela e a coluna da whitelist.`,
       ),
     };
   }
@@ -322,11 +329,16 @@ export async function runCityWhitelistAction(input: {
     );
   }
 
-  return runViaVps(
+  const first = await runViaVps(
     input.guildId,
     input.action,
     mapping,
     identifierValue,
     input.target,
   );
+  if (first.ok || (first.code !== "invalid_credentials" && first.code !== "missing_credentials")) {
+    return first;
+  }
+  await new Promise((resolve) => setTimeout(resolve, 2500));
+  return runViaVps(input.guildId, input.action, mapping, identifierValue, input.target);
 }
