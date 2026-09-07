@@ -14,6 +14,7 @@ import {
   optionLabels,
 } from "@/components/servers/module-ui/ModuleUi";
 import type { WhitelistSettingsDraft } from "@/lib/servers/whitelistSettingsModel";
+import { looksLikePublicCityDbHost } from "@/lib/servers/whitelistHost";
 import { IDENTIFIER_KINDS } from "@/lib/servers/whitelistMapping";
 import { WHITELIST_TOKEN_HINTS } from "@/lib/servers/whitelistPanelBuilder";
 import type { TicketPanelLayout } from "@/lib/servers/ticketPanelBuilder";
@@ -103,9 +104,15 @@ export function WhitelistSettingsSection({
     paired: boolean;
     online: boolean;
     hostname: string | null;
+    publicIp: string | null;
   } | null>(null);
   const launcherPaired = liveLauncher?.paired ?? draft.agentPaired;
   const launcherOnline = liveLauncher?.online ?? draft.agentOnline;
+  const detectedPublicIp =
+    liveLauncher?.publicIp ||
+    (looksLikePublicCityDbHost(String(draft.agentPublicIp || ""))
+      ? String(draft.agentPublicIp)
+      : "");
 
   useEffect(() => {
     let cancelled = false;
@@ -121,12 +128,17 @@ export function WhitelistSettingsSection({
           paired?: boolean;
           online?: boolean;
           hostname?: string | null;
+          publicIp?: string | null;
         };
         if (cancelled || !payload.ok) return;
         setLiveLauncher({
           paired: Boolean(payload.paired),
           online: Boolean(payload.online),
           hostname: typeof payload.hostname === "string" ? payload.hostname : null,
+          publicIp:
+            typeof payload.publicIp === "string" && looksLikePublicCityDbHost(payload.publicIp)
+              ? payload.publicIp
+              : null,
         });
       } catch {
         /* keep the last known status */
@@ -142,18 +154,23 @@ export function WhitelistSettingsSection({
     };
   }, [guildId]);
 
+  useEffect(() => {
+    if (!detectedPublicIp) return;
+    if (looksLikePublicCityDbHost(draft.dbHost)) return;
+    onChange({ dbHost: detectedPublicIp, connectionMode: "direct" });
+  }, [detectedPublicIp, draft.dbHost, onChange]);
+
   async function runAction(kind: "test" | "inspect" | "validate") {
     setBusy(kind);
     setActionMessage(null);
     try {
-      if (draft.connectionMode !== "agent") {
-        if (!draft.dbName.trim() || !draft.dbUser.trim()) {
-          throw new Error("Informe o nome do banco e o usuario da integracao.");
-        }
-      } else {
-        if (!draft.dbName.trim() || !draft.dbUser.trim()) {
-          throw new Error("Informe o banco, o usuario e a senha usados na cidade.");
-        }
+      if (!looksLikePublicCityDbHost(draft.dbHost || detectedPublicIp)) {
+        throw new Error(
+          "Informe o IP publico da VPS ou conecte o launcher nela para a Flowdesk detectar.",
+        );
+      }
+      if (!draft.dbName.trim() || !draft.dbUser.trim()) {
+        throw new Error("Informe o nome do banco e o usuario da integracao.");
       }
       const response = await fetch("/api/auth/me/guilds/whitelist-actions", {
         method: "POST",
@@ -162,7 +179,7 @@ export function WhitelistSettingsSection({
           guildId,
           action: kind,
           dbEngine: draft.dbEngine,
-          dbHost: draft.dbHost,
+          dbHost: looksLikePublicCityDbHost(draft.dbHost) ? draft.dbHost : detectedPublicIp,
           dbPort: draft.dbPort,
           dbName: draft.dbName,
           dbUser: draft.dbUser,
@@ -207,7 +224,7 @@ export function WhitelistSettingsSection({
     setBusy("agent");
     setActionMessage(null);
     try {
-      onChange({ connectionMode: "agent" });
+      onChange({ connectionMode: "direct" });
       const response = await fetch(
         `/api/launcher/download?guildId=${encodeURIComponent(guildId)}`,
         {
@@ -238,7 +255,7 @@ export function WhitelistSettingsSection({
       link.remove();
       setActionTone("ok");
       setActionMessage(
-        "Download iniciado. Instale, entre na Flowdesk e este servidor vincula sozinho.",
+        "Download iniciado. Instale o launcher na VPS, entre na Flowdesk e deixe o app abrir as portas. O banco e configurado daqui.",
       );
     } catch (error) {
       setActionTone("error");
@@ -276,7 +293,13 @@ export function WhitelistSettingsSection({
           <ModuleStat
             label="Banco"
             value={draft.lastHealthOk ? "Saudavel" : draft.lastHealthAt ? "Instavel" : "Nao testado"}
-            hint={launcherOnline ? "Launcher online" : "Aguardando launcher"}
+            hint={
+              looksLikePublicCityDbHost(draft.dbHost || detectedPublicIp)
+                ? draft.dbHost || detectedPublicIp
+                : launcherOnline
+                  ? "IP publico pendente"
+                  : "Aguardando VPS"
+            }
             icon={Database}
             delay={0.18}
           />
@@ -412,7 +435,7 @@ export function WhitelistSettingsSection({
         <ModuleCard
           label="Integracao"
           title="Banco da cidade"
-          description="Instale o Flowdesk Launcher na VPS, entre com a conta Flowdesk e deixe o app aberto. Aqui voce so informa o banco local e as regras da whitelist. O IP da maquina e detectado automaticamente."
+          description="O launcher so vincula a VPS e libera as portas. O painel, daqui do seu PC, grava o IP publico e as credenciais e a Flowdesk conecta direto no banco."
           delay={0.12}
         >
           <div className="overflow-hidden rounded-[22px] border border-[rgba(255,255,255,0.06)] bg-[linear-gradient(180deg,#101010_0%,#0B0B0B_100%)]">
@@ -425,15 +448,15 @@ export function WhitelistSettingsSection({
                   <div className="flex flex-wrap items-center gap-[8px]">
                     <p className="text-[14px] font-semibold text-[#F4F4F5]">Flowdesk Launcher</p>
                     <span className="rounded-full bg-[#171717] px-[8px] py-[3px] text-[10px] font-semibold tracking-[0.14em] text-[#8A8A8E] uppercase">
-                      Auto bind
+                      VPS
                     </span>
                   </div>
                   <p className="mt-[4px] text-[13px] leading-[1.55] text-[#8A8A8E]">
                     {launcherOnline
-                      ? `Conectado${liveLauncher?.hostname ? ` em ${liveLauncher.hostname}` : ""}. O painel ja enxerga este computador.`
+                      ? `VPS vinculada${liveLauncher?.hostname ? ` (${liveLauncher.hostname})` : ""}${detectedPublicIp ? ` · ${detectedPublicIp}` : ""}. Portas prontas para o painel conectar.`
                       : launcherPaired
-                        ? "Launcher vinculado. Aguardando o proximo sinal ao vivo."
-                        : "Um instalador. Login da Flowdesk. Este servidor vincula sozinho, sem codigo."}
+                        ? "Launcher vinculado. Abra o app na VPS para publicar o IP e as portas."
+                        : "Instale na VPS da cidade, entre na Flowdesk e este servidor vincula sozinho."}
                   </p>
                 </div>
               </div>
@@ -471,6 +494,23 @@ export function WhitelistSettingsSection({
             ) : null}
           </div>
           <div className="mt-[16px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
+            <LabeledField
+              label="IP / host publico"
+              hint={
+                detectedPublicIp
+                  ? `Detectado pelo launcher: ${detectedPublicIp}. Nao use 127.0.0.1.`
+                  : "IP publico da VPS. O launcher preenche sozinho depois do vinculo."
+              }
+            >
+              <input
+                placeholder={detectedPublicIp || "187.45.12.30"}
+                value={draft.dbHost}
+                autoComplete="off"
+                onChange={(event) => onChange({ dbHost: event.currentTarget.value })}
+                disabled={disabled}
+                className={fieldClassName}
+              />
+            </LabeledField>
             <ConfigStepSelect
               label="Tipo do banco"
               placeholder="Engine"
@@ -491,7 +531,7 @@ export function WhitelistSettingsSection({
             />
             <LabeledField
               label="Porta do banco"
-              hint="Padrao MySQL/MariaDB 3306. PostgreSQL costuma ser 5432."
+              hint="O launcher libera 3306 e 5432 no firewall da VPS. MySQL escuta 3306."
             >
               <input
                 type="number"

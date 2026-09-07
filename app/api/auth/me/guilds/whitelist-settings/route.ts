@@ -36,6 +36,7 @@ import { whitelistPanelHasRequiredParts } from "@/lib/servers/whitelistPanelBuil
 import { encryptWhitelistSecret } from "@/lib/servers/whitelistSecret";
 import { normalizeWhitelistMapping } from "@/lib/servers/whitelistMapping";
 import { deriveLegacyTicketPanelFields } from "@/lib/servers/ticketPanelBuilder";
+import { looksLikePublicCityDbHost, resolvePublicCityDbHost } from "@/lib/servers/whitelistHost";
 
 const OPTIONAL_SNOWFLAKE = flowSecureDto.string({
   maxLength: 20,
@@ -216,7 +217,7 @@ export async function POST(request: Request) {
     const supabase = getSupabaseAdminClientOrThrow();
     const existing = await supabase
       .from("guild_whitelist_settings")
-      .select("db_password_cipher")
+      .select("db_password_cipher, db_host, agent_public_ip")
       .eq("guild_id", guildId)
       .maybeSingle();
 
@@ -237,6 +238,20 @@ export async function POST(request: Request) {
       : existing.data?.db_password_cipher || null;
 
     const mapping = normalizeWhitelistMapping(body.mapping);
+    let dbHost: string | null = null;
+    try {
+      dbHost = resolvePublicCityDbHost({
+        requested: draft.dbHost,
+        saved: existing.data?.db_host,
+        publicIp: existing.data?.agent_public_ip,
+      });
+    } catch (error) {
+      const typedHost = String(draft.dbHost || "").trim();
+      if (typedHost || incomingPassword) throw error;
+    }
+    if (dbHost && !looksLikePublicCityDbHost(dbHost)) {
+      dbHost = null;
+    }
     const row = {
       guild_id: guildId,
       enabled: draft.enabled,
@@ -254,9 +269,9 @@ export async function POST(request: Request) {
       identifier_label: draft.identifierLabel,
       identifier_placeholder: draft.identifierPlaceholder,
       approval_mode: draft.approvalMode,
-      connection_mode: "agent",
+      connection_mode: "direct",
       db_engine: draft.dbEngine,
-      db_host: "127.0.0.1",
+      db_host: dbHost,
       db_port: draft.dbPort,
       db_name: draft.dbName || null,
       db_user: draft.dbUser || null,
@@ -284,6 +299,8 @@ export async function POST(request: Request) {
 
     const publicSnapshot = {
       ...draft,
+      connectionMode: "direct" as const,
+      dbHost: dbHost || "",
       dbPassword: "",
       hasDbPassword: Boolean(nextCipher),
       mapping,

@@ -23,8 +23,8 @@ export type WhitelistDbTarget = {
   ssl: boolean;
 };
 
-const CONNECT_TIMEOUT_MS = 8000;
-const QUERY_TIMEOUT_MS = 8000;
+const CONNECT_TIMEOUT_MS = 12000;
+const QUERY_TIMEOUT_MS = 12000;
 
 function withQueryTimeout<T>(promise: Promise<T>, label: string) {
   return Promise.race([
@@ -48,7 +48,7 @@ export function sanitizeDbError(error: unknown) {
     return {
       code: "offline",
       message:
-        "A FlowDesk na nuvem nao alcanca o MySQL da VPS (firewall/NAT). Use o Agent/Bridge no Banco e Mapping: instale o launcher na VPS e deixe-o aberto. No modo Agent a porta 3306 nao precisa ficar publica.",
+        "A Flowdesk nao alcanca o banco neste IP. No launcher, clique em Preparar conexao para abrir a porta. No MySQL/MariaDB, bind-address precisa ser 0.0.0.0 e o usuario deve aceitar conexao remota.",
     };
   }
   if (lowered.includes("not allowed") || lowered.includes("host is not allowed") || lowered.includes("is not allowed to connect")) {

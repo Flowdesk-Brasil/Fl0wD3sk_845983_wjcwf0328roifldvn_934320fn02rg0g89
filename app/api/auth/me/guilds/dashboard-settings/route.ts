@@ -48,6 +48,10 @@ import {
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { getEffectiveDashboardPermissions } from "@/lib/teams/userTeams";
 import { getLauncherStatusForGuild } from "@/lib/launcher/auth";
+import {
+  looksLikePublicCityDbHost,
+  normalizeCityDbHost,
+} from "@/lib/servers/whitelistHost";
 
 const GUILD_CATEGORY = 4;
 const GUILD_TEXT = 0;
@@ -911,11 +915,17 @@ function buildWhitelistPayload(input: {
     ) === "automatic"
       ? "automatic"
       : "manual",
-    connectionMode: String(
-      input.snapshot?.connectionMode ?? input.record?.connection_mode ?? "direct",
-    ),
+    connectionMode: "direct",
     dbEngine: String(input.snapshot?.dbEngine ?? input.record?.db_engine ?? "mysql"),
-    dbHost: String(input.snapshot?.dbHost ?? input.record?.db_host ?? ""),
+    dbHost: (() => {
+      const requested = normalizeCityDbHost(
+        String(input.snapshot?.dbHost ?? input.record?.db_host ?? ""),
+      );
+      const publicIp = normalizeCityDbHost(String(input.record?.agent_public_ip || ""));
+      if (looksLikePublicCityDbHost(requested)) return requested;
+      if (looksLikePublicCityDbHost(publicIp)) return publicIp;
+      return "";
+    })(),
     dbPort: Number(input.snapshot?.dbPort ?? input.record?.db_port ?? 3306) || 3306,
     dbName: String(input.snapshot?.dbName ?? input.record?.db_name ?? ""),
     dbUser: String(input.snapshot?.dbUser ?? input.record?.db_user ?? ""),
@@ -1435,10 +1445,16 @@ async function withLiveLauncherStatus(
         agentOnline: Boolean(launcher.online || settings.agentOnline),
         agentLastSeenAt: launcher.lastSeenAt || settings.agentLastSeenAt || null,
         agentPublicId: settings.agentPublicId || launcher.publicId || null,
-        connectionMode:
-          launcher.paired || settings.agentPaired || settings.agentPublicId
-            ? "agent"
-            : settings.connectionMode,
+        connectionMode: "direct",
+        agentPublicIp: launcher.observedIp || settings.agentPublicIp || null,
+        dbHost: (() => {
+          const currentHost = normalizeCityDbHost(String(settings.dbHost || ""));
+          if (looksLikePublicCityDbHost(currentHost)) return currentHost;
+          const detected = normalizeCityDbHost(
+            String(launcher.observedIp || settings.agentPublicIp || ""),
+          );
+          return looksLikePublicCityDbHost(detected) ? detected : "";
+        })(),
       },
     };
   } catch {

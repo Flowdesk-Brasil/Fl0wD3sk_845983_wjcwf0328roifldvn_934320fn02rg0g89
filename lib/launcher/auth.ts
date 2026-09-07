@@ -13,6 +13,7 @@ import { decryptWhitelistSecret } from "@/lib/servers/whitelistSecret";
 import { normalizeWhitelistMapping } from "@/lib/servers/whitelistMapping";
 import { isWhitelistAgentOperation } from "@/lib/servers/whitelistAgent";
 import { invalidateDashboardSettingsCache } from "@/lib/servers/serverDashboardSettingsCache";
+import { looksLikePublicCityDbHost, normalizeCityDbHost } from "@/lib/servers/whitelistHost";
 
 const LOGIN_TTL_MINUTES = 10;
 const ACCESS_TTL_HOURS = 12;
@@ -250,38 +251,55 @@ async function upsertLauncherGuildBinding(input: {
   const supabase = getSupabaseAdminClientOrThrow();
   const now = new Date().toISOString();
   const online = !input.error;
+  const observedIp = looksLikePublicCityDbHost(String(input.observedIp || ""))
+    ? normalizeCityDbHost(String(input.observedIp || ""))
+    : "";
+  const devicePatch: Record<string, unknown> = {
+    guild_id: input.guildId,
+    connection_status: online ? "online" : "error",
+    last_error: input.error || null,
+    last_seen_at: now,
+    app_version: input.appVersion || undefined,
+  };
+  if (observedIp) devicePatch.observed_ip = observedIp;
   const deviceUpdate = await supabase
     .from("launcher_devices")
-    .update({
-      guild_id: input.guildId,
-      connection_status: online ? "online" : "error",
-      last_error: input.error || null,
-      last_seen_at: now,
-      observed_ip: input.observedIp || null,
-      app_version: input.appVersion || undefined,
-    })
+    .update(devicePatch)
     .eq("id", input.deviceId);
   if (deviceUpdate.error) {
     throw new Error(deviceUpdate.error.message || "Falha ao vincular o dispositivo.");
   }
 
-  const patch = {
+  const existing = await supabase
+    .from("guild_whitelist_settings")
+    .select("guild_id, db_host, agent_public_ip")
+    .eq("guild_id", input.guildId)
+    .maybeSingle();
+  const savedHost = looksLikePublicCityDbHost(String(existing.data?.db_host || ""))
+    ? normalizeCityDbHost(String(existing.data?.db_host || ""))
+    : "";
+  const keptPublicIp = looksLikePublicCityDbHost(String(existing.data?.agent_public_ip || ""))
+    ? normalizeCityDbHost(String(existing.data?.agent_public_ip || ""))
+    : "";
+  const patch: Record<string, unknown> = {
     guild_id: input.guildId,
-    connection_mode: "agent" as const,
-    db_host: "127.0.0.1",
+    connection_mode: "direct",
     agent_public_id: input.devicePublicId,
     agent_last_seen_at: now,
-    agent_public_ip: input.observedIp || null,
     configured_by_user_id: input.authUserId,
     last_health_at: now,
     last_health_ok: online,
     last_health_error: input.error || null,
   };
-  const existing = await supabase
-    .from("guild_whitelist_settings")
-    .select("guild_id")
-    .eq("guild_id", input.guildId)
-    .maybeSingle();
+  if (observedIp) {
+    patch.agent_public_ip = observedIp;
+    if (!savedHost) patch.db_host = observedIp;
+  } else if (keptPublicIp) {
+    patch.agent_public_ip = keptPublicIp;
+    if (!savedHost) patch.db_host = keptPublicIp;
+  } else if (!savedHost) {
+    patch.db_host = null;
+  }
   const write = existing.data
     ? await supabase.from("guild_whitelist_settings").update(patch).eq("guild_id", input.guildId)
     : await supabase.from("guild_whitelist_settings").insert({ ...patch, enabled: false });
@@ -528,7 +546,11 @@ export async function revokeLauncherSession(session: LauncherSession) {
     .eq("id", session.deviceId);
 }
 
-export async function bindLauncherGuild(session: LauncherSession, guildId: string) {
+export async function bindLauncherGuild(
+  session: LauncherSession,
+  guildId: string,
+  input?: { observedIp?: string | null },
+) {
   const allowed = (session.servers || []).some((server) => server.guildId === guildId);
   if (!allowed) {
     throw new Error("Este servidor nao esta disponivel para a conta conectada.");
@@ -538,6 +560,7 @@ export async function bindLauncherGuild(session: LauncherSession, guildId: strin
     devicePublicId: session.devicePublicId,
     authUserId: session.authUserId,
     guildId,
+    observedIp: input?.observedIp,
     requirePanel: false,
   });
 }
@@ -562,15 +585,18 @@ export async function markLauncherHeartbeat(
     });
     return;
   }
+  const awaitingPatch: Record<string, unknown> = {
+    connection_status: "awaiting_server",
+    last_seen_at: now,
+    last_error: input.error || null,
+    app_version: input.appVersion || undefined,
+  };
+  if (looksLikePublicCityDbHost(String(input.observedIp || ""))) {
+    awaitingPatch.observed_ip = normalizeCityDbHost(String(input.observedIp || ""));
+  }
   const deviceUpdate = await supabase
     .from("launcher_devices")
-    .update({
-      connection_status: "awaiting_server",
-      last_seen_at: now,
-      last_error: input.error || null,
-      observed_ip: input.observedIp || null,
-      app_version: input.appVersion || undefined,
-    })
+    .update(awaitingPatch)
     .eq("id", session.deviceId);
   if (deviceUpdate.error) {
     throw new Error(deviceUpdate.error.message || "Falha no heartbeat do launcher.");
@@ -585,7 +611,7 @@ export async function buildLauncherSyncPayload(session: LauncherSession, body: R
   const settings = await supabase
     .from("guild_whitelist_settings")
     .select(
-      "guild_id, mapping, db_engine, db_port, db_name, db_user, db_ssl, db_password_cipher, connection_mode",
+      "guild_id, mapping, db_engine, db_host, db_port, db_name, db_user, db_ssl, db_password_cipher, connection_mode, agent_public_ip",
     )
     .eq("guild_id", session.guildId)
     .maybeSingle();
@@ -683,7 +709,12 @@ export async function buildLauncherSyncPayload(session: LauncherSession, body: R
     jobs,
     config: {
       engine: settings.data?.db_engine || "mysql",
-      host: "127.0.0.1",
+      host:
+        looksLikePublicCityDbHost(String(settings.data?.db_host || ""))
+          ? normalizeCityDbHost(String(settings.data?.db_host || ""))
+          : looksLikePublicCityDbHost(String(settings.data?.agent_public_ip || ""))
+            ? normalizeCityDbHost(String(settings.data?.agent_public_ip || ""))
+            : "",
       port: Number(settings.data?.db_port || 3306),
       database: settings.data?.db_name || "",
       user: settings.data?.db_user || "",
@@ -699,13 +730,13 @@ export async function getLauncherStatusForGuild(guildId: string) {
   const [device, settings] = await Promise.all([
     supabase
       .from("launcher_devices")
-      .select("connection_status, last_seen_at, last_error, hostname, label, device_public_id")
+      .select("connection_status, last_seen_at, last_error, hostname, label, device_public_id, observed_ip")
       .eq("guild_id", guildId)
       .order("last_seen_at", { ascending: false })
       .limit(1),
     supabase
       .from("guild_whitelist_settings")
-      .select("agent_public_id, agent_token_hash, agent_last_seen_at")
+      .select("agent_public_id, agent_token_hash, agent_last_seen_at, agent_public_ip")
       .eq("guild_id", guildId)
       .maybeSingle(),
   ]);
@@ -733,5 +764,11 @@ export async function getLauncherStatusForGuild(guildId: string) {
     lastError: row?.last_error || null,
     paired,
     publicId: row?.device_public_id || settings.data?.agent_public_id || null,
+    observedIp:
+      looksLikePublicCityDbHost(String(row?.observed_ip || ""))
+        ? normalizeCityDbHost(String(row?.observed_ip || ""))
+        : looksLikePublicCityDbHost(String(settings.data?.agent_public_ip || ""))
+          ? normalizeCityDbHost(String(settings.data?.agent_public_ip || ""))
+          : null,
   };
 }
