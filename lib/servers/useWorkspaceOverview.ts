@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  parseResponseJson,
   readClientDataCache,
   writeClientDataCache,
 } from "@/lib/performance/clientData";
@@ -27,8 +28,8 @@ export type WorkspaceOverviewPayload = {
   activity: Array<{ title: string; meta: string; at: string | null }>;
 };
 
-const RETRY_DELAYS_MS = [0, 400, 1100, 2200];
-const REQUEST_TIMEOUT_MS = 14_000;
+const RETRY_DELAYS_MS = [0, 350, 900, 1800, 2800];
+const REQUEST_TIMEOUT_MS = 16_000;
 const CACHE_TTL_MS = 90_000;
 
 function sleep(ms: number) {
@@ -40,7 +41,11 @@ function cacheKeyForGuild(guildId: string) {
 }
 
 function isRetryableStatus(status: number) {
-  return status === 401 || status === 408 || status === 429 || status >= 500;
+  return status === 0 || status === 401 || status === 408 || status === 429 || status >= 500;
+}
+
+function isValidOverview(payload: WorkspaceOverviewPayload | null | undefined): payload is WorkspaceOverviewPayload {
+  return Boolean(payload?.ok && payload.stats && Array.isArray(payload.chart));
 }
 
 async function fetchOverviewPayload(guildId: string, signal: AbortSignal) {
@@ -50,11 +55,18 @@ async function fetchOverviewPayload(guildId: string, signal: AbortSignal) {
       credentials: "same-origin",
       signal,
       cache: "no-store",
+      headers: {
+        Accept: "application/json",
+      },
     },
   );
 
-  const payload = (await response.json()) as WorkspaceOverviewPayload;
-  return { response, payload };
+  try {
+    const payload = await parseResponseJson<WorkspaceOverviewPayload>(response);
+    return { response, payload };
+  } catch {
+    return { response, payload: null };
+  }
 }
 
 export function useWorkspaceOverview(guildId: string) {
@@ -71,78 +83,87 @@ export function useWorkspaceOverview(guildId: string) {
 
   const load = useCallback(
     async (options?: { force?: boolean }) => {
+      if (!guildId) return;
+
       const requestId = ++requestIdRef.current;
       const hasCachedData = Boolean(dataRef.current);
       const force = options?.force === true;
 
-      if (hasCachedData && !force) {
+      if (hasCachedData) {
         setIsRefreshing(true);
+        if (!force) {
+          setErrorMessage(null);
+        }
       } else {
         setIsLoading(true);
+        setErrorMessage(null);
       }
-      setErrorMessage(null);
 
       let lastMessage = "Nao foi possivel carregar a visao geral.";
 
-      for (let attempt = 0; attempt < RETRY_DELAYS_MS.length; attempt += 1) {
-        if (requestId !== requestIdRef.current) return;
-
-        if (RETRY_DELAYS_MS[attempt] > 0) {
-          await sleep(RETRY_DELAYS_MS[attempt]);
-        }
-        if (requestId !== requestIdRef.current) return;
-
-        const controller = new AbortController();
-        const timeoutId = window.setTimeout(
-          () => controller.abort("workspace_overview_timeout"),
-          REQUEST_TIMEOUT_MS,
-        );
-
-        try {
-          const { response, payload } = await fetchOverviewPayload(guildId, controller.signal);
-
+      try {
+        for (let attempt = 0; attempt < RETRY_DELAYS_MS.length; attempt += 1) {
           if (requestId !== requestIdRef.current) return;
 
-          if (payload?.ok) {
-            setData(payload);
-            writeClientDataCache(key, payload, CACHE_TTL_MS, "session");
-            setErrorMessage(null);
+          if (RETRY_DELAYS_MS[attempt] > 0) {
+            await sleep(RETRY_DELAYS_MS[attempt]);
+          }
+          if (requestId !== requestIdRef.current) return;
+
+          const controller = new AbortController();
+          const timeoutId = window.setTimeout(
+            () => controller.abort("workspace_overview_timeout"),
+            REQUEST_TIMEOUT_MS,
+          );
+
+          try {
+            const { response, payload } = await fetchOverviewPayload(guildId, controller.signal);
+            if (requestId !== requestIdRef.current) return;
+
+            if (isValidOverview(payload)) {
+              setData(payload);
+              writeClientDataCache(key, payload, CACHE_TTL_MS, "session");
+              setErrorMessage(null);
+              return;
+            }
+
+            lastMessage = payload?.message || lastMessage;
+            const shouldRetry =
+              !payload || isRetryableStatus(response.status) || attempt < RETRY_DELAYS_MS.length - 1;
+
+            if (shouldRetry && attempt < RETRY_DELAYS_MS.length - 1) {
+              continue;
+            }
+
+            if (!dataRef.current) {
+              setErrorMessage(lastMessage);
+            }
             return;
-          }
+          } catch (error) {
+            if (requestId !== requestIdRef.current) return;
 
-          lastMessage = payload?.message || lastMessage;
+            if (error instanceof DOMException && error.name === "AbortError") {
+              lastMessage = "A visao geral demorou para responder. Tente novamente.";
+            } else if (error instanceof Error && error.message) {
+              lastMessage = error.message;
+            }
 
-          if (isRetryableStatus(response.status) && attempt < RETRY_DELAYS_MS.length - 1) {
-            continue;
-          }
+            if (attempt < RETRY_DELAYS_MS.length - 1) {
+              continue;
+            }
 
-          if (!dataRef.current) {
-            setErrorMessage(lastMessage);
+            if (!dataRef.current) {
+              setErrorMessage(lastMessage);
+            }
+            return;
+          } finally {
+            window.clearTimeout(timeoutId);
           }
-          return;
-        } catch (error) {
-          if (requestId !== requestIdRef.current) return;
-
-          if (error instanceof DOMException && error.name === "AbortError") {
-            lastMessage = "A visao geral demorou para responder. Tente novamente.";
-          } else if (error instanceof Error && error.message) {
-            lastMessage = error.message;
-          }
-
-          if (attempt < RETRY_DELAYS_MS.length - 1) {
-            continue;
-          }
-
-          if (!dataRef.current) {
-            setErrorMessage(lastMessage);
-          }
-          return;
-        } finally {
-          window.clearTimeout(timeoutId);
-          if (requestId === requestIdRef.current) {
-            setIsLoading(false);
-            setIsRefreshing(false);
-          }
+        }
+      } finally {
+        if (requestId === requestIdRef.current) {
+          setIsLoading(false);
+          setIsRefreshing(false);
         }
       }
     },
@@ -154,7 +175,6 @@ export function useWorkspaceOverview(guildId: string) {
     setData(cached);
     setIsLoading(!cached);
     setErrorMessage(null);
-    requestIdRef.current += 1;
     void load({ force: Boolean(cached) });
     return () => {
       requestIdRef.current += 1;

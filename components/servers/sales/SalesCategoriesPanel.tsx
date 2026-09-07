@@ -28,7 +28,6 @@ import {
   ServerEmptyState,
   ServerIconFrame,
   ServerMoreActionsMenu,
-  ServerSectionHeading,
   ServerSurface,
   ServerTextInput,
 } from "@/components/servers/ServerUi";
@@ -286,22 +285,17 @@ export function SalesCategoriesListPanel({
 
   return (
     <div className="space-y-[18px]">
-      <ServerSectionHeading
-        eyebrow="Vendas"
-        title="Categorias da loja"
-        description="Organize acessos, contas, passes, robux e qualquer colecao que depois tambem pode virar vitrine web."
-        action={
-          <ServerButton
-            disabled={createDisabled}
-            onClick={() => router.push(getCreatePath(guildId))}
-            variant="primary"
-            size="lg"
-          >
-            <Plus className="h-[16px] w-[16px]" />
-            Adicionar Categoria
-          </ServerButton>
-        }
-      />
+      <div className="flex justify-end">
+        <ServerButton
+          disabled={createDisabled}
+          onClick={() => router.push(getCreatePath(guildId))}
+          variant="primary"
+          size="lg"
+        >
+          <Plus className="h-[16px] w-[16px]" />
+          Adicionar Categoria
+        </ServerButton>
+      </div>
 
       <ServerSurface className="overflow-hidden">
         <div className="flex flex-col gap-[12px] border-b border-[#171717] px-[18px] py-[16px] sm:flex-row sm:items-center sm:justify-between sm:px-[22px]">

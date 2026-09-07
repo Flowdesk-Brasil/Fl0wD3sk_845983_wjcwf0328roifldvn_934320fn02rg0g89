@@ -1,0 +1,7 @@
+-- Domínios Flowdesk — aponte para o schema consolidado
+--
+-- No Supabase SQL Editor, abra e execute o conteúdo completo de:
+--   sql/149_domains_platform.sql
+--
+-- Esse arquivo substitui 004_domains.sql + 005_domain_multi_provider.sql.
+-- É idempotente: pode rodar de novo sem quebrar.

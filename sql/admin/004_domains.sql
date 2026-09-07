@@ -1,9 +1,10 @@
 -- =============================================================================
--- FlowDesk — Subsistema de Domínios
+-- FlowDesk — Subsistema de Domínios (legado)
 -- Migration: 004_domains.sql
 -- =============================================================================
--- Execute no Supabase SQL Editor (painel > SQL Editor).
--- Ordem de execução: após 001_admin_panel.sql, 002_admin_seed.sql, 003_*.sql
+-- IMPORTANTE: use o arquivo consolidado e idempotente:
+--   ../../sql/149_domains_platform.sql
+-- Ele inclui 004 + 005 + RLS service_role. Pode rodar quantas vezes quiser.
 -- =============================================================================
 
 -- ─── 1. Contatos do titular ───────────────────────────────────────────────────

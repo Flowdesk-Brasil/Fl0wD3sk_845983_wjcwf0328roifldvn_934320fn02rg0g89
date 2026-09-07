@@ -41,12 +41,18 @@ import { PermissionDeniedState } from "@/components/servers/PermissionDeniedStat
 import {
   ModuleCard,
   ModuleFieldsGrid,
-  ModuleHero,
   ModulePage,
   ModuleStat,
   optionLabel,
   optionLabels,
 } from "@/components/servers/module-ui/ModuleUi";
+import {
+  buildServerEditorChrome,
+  isModuleOverviewSection,
+  MODULE_ACTIVATION_BAR_COPY,
+  resolveModuleActivationKey,
+  type ServerEditorChrome,
+} from "@/lib/servers/serverEditorChrome";
 import {
   SERVER_SETTINGS_SAVE_BAR_EXIT_MS,
   SERVER_SETTINGS_SAVE_SUCCESS_VISIBLE_MS,
@@ -157,6 +163,8 @@ type ServerSettingsSection =
   | "security_autorole"
   | "security_logs"
   | "ticket_ai";
+
+export type { ServerSettingsSection };
 type PaymentStatus =
   | "pending"
   | "approved"
@@ -502,6 +510,7 @@ type ServerSettingsEditorProps = {
   settingsSection?: ServerSettingsSection;
   onTabChange?: (tab: EditorTab) => void;
   onUnsavedChangesChange?: (hasUnsavedChanges: boolean) => void;
+  onEditorChromeChange?: (chrome: ServerEditorChrome | null) => void;
   onPermissionsChange?: (perms: string[] | "full") => void;
   navigationBlockSignal?: number;
   onClose: () => void;
@@ -1262,6 +1271,37 @@ function isSettingsDraftDirty<T>(
   }
 
   return !areEqual(current, saved);
+}
+
+function hasDraftChangesBeyondEnabledToggle<T extends { enabled: boolean }>(
+  current: T | null,
+  saved: T | null,
+  hasLoaded: boolean,
+  areEqual: (left: T | null, right: T | null) => boolean,
+) {
+  if (!hasLoaded || !current || !saved) return false;
+  if (areEqual(current, saved)) return false;
+
+  return !areEqual({ ...current, enabled: saved.enabled }, saved);
+}
+
+function hasTicketDraftChangesBeyondModuleToggles(
+  current: ServerSettingsDraft | null,
+  saved: ServerSettingsDraft | null,
+  hasLoaded: boolean,
+) {
+  if (!hasLoaded || !current || !saved) return false;
+  if (areServerSettingsDraftsEqual(current, saved)) return false;
+
+  const moduleToggleCandidates = [
+    { ...current, enabled: saved.enabled },
+    { ...current, aiEnabled: saved.aiEnabled },
+    { ...current, enabled: saved.enabled, aiEnabled: saved.aiEnabled },
+  ];
+
+  return !moduleToggleCandidates.some((candidate) =>
+    areServerSettingsDraftsEqual(candidate, saved),
+  );
 }
 
 type DashboardInlineSwitchProps = {
@@ -2247,6 +2287,7 @@ export function ServerSettingsEditor({
   settingsSection = "overview",
   onTabChange: _onTabChange,
   onUnsavedChangesChange,
+  onEditorChromeChange,
   onPermissionsChange,
   navigationBlockSignal = 0,
   onClose,
@@ -4627,6 +4668,40 @@ export function ServerSettingsEditor({
     settingsReadOnly,
   ]);
 
+  const requestFlowAiActivation = useCallback(() => {
+    if (isSaving || settingsReadOnly || aiEnabled) return;
+
+    setErrorMessage(null);
+
+    if (resolvedFlowAiPlanCode) {
+      setHasPendingFlowAiActivationRequest(false);
+
+      if (!isFlowAiEligiblePlanCode(resolvedFlowAiPlanCode)) {
+        setIsFlowAiUpgradeModalOpen(true);
+        return;
+      }
+
+      setAiEnabled(true);
+      return;
+    }
+
+    if (!isFlowAiPlanLoading && hasFlowAiPlanCheckError) {
+      setErrorMessage(
+        "Nao foi possivel verificar o plano agora. Tente novamente em alguns instantes.",
+      );
+      return;
+    }
+
+    setHasPendingFlowAiActivationRequest(true);
+  }, [
+    aiEnabled,
+    hasFlowAiPlanCheckError,
+    isFlowAiPlanLoading,
+    isSaving,
+    resolvedFlowAiPlanCode,
+    settingsReadOnly,
+  ]);
+
   const canSaveWelcome = Boolean(
     !settingsReadOnly &&
       !isLoading &&
@@ -5179,6 +5254,71 @@ export function ServerSettingsEditor({
     : isWelcomeSection
       ? hasWelcomeUnsavedChanges
       : hasTicketUnsavedChanges;
+  const hasFloatingSaveBarChanges = isAntiLinkSection
+    ? hasDraftChangesBeyondEnabledToggle(
+        currentAntiLinkDraft,
+        savedAntiLinkSettingsDraft,
+        hasLoadedAntiLinkDraft,
+        areAntiLinkSettingsDraftsEqual,
+      )
+    : isAutoRoleSection
+      ? hasDraftChangesBeyondEnabledToggle(
+          currentAutoRoleDraft,
+          savedAutoRoleSettingsDraft,
+          hasLoadedAutoRoleDraft,
+          areAutoRoleSettingsDraftsEqual,
+        ) || autoRoleSyncExistingMembers
+    : isSalesSettingsSection
+      ? hasDraftChangesBeyondEnabledToggle(
+          currentSalesDraft,
+          savedSalesSettingsDraft,
+          hasLoadedSalesDraft,
+          areSalesSettingsDraftsEqual,
+        )
+    : isSalesSection
+      ? false
+    : isSecurityLogsSection
+      ? hasDraftChangesBeyondEnabledToggle(
+          currentSecurityLogsDraft,
+          savedSecurityLogsDraft,
+          hasLoadedSecurityLogsDraft,
+          areSecurityLogsSettingsDraftsEqual,
+        )
+    : isCaptchaSection
+      ? hasDraftChangesBeyondEnabledToggle(
+          currentCaptchaDraft,
+          savedCaptchaSettingsDraft,
+          hasLoadedCaptchaDraft,
+          areCaptchaSettingsDraftsEqual,
+        )
+    : isSuggestionsSection
+      ? hasDraftChangesBeyondEnabledToggle(
+          currentSuggestionDraft,
+          savedSuggestionSettingsDraft,
+          hasLoadedSuggestionDraft,
+          areSuggestionSettingsDraftsEqual,
+        )
+    : isBatePontoSection
+      ? hasDraftChangesBeyondEnabledToggle(
+          currentBatePontoDraft,
+          savedBatePontoSettingsDraft,
+          hasLoadedBatePontoDraft,
+          areBatePontoSettingsDraftsEqual,
+        )
+    : isBatePontoRankingSection || isBatePontoHistorySection
+      ? false
+    : isWelcomeSection
+      ? hasDraftChangesBeyondEnabledToggle(
+          currentWelcomeDraft,
+          savedWelcomeSettingsDraft,
+          hasLoadedWelcomeDraft,
+          areWelcomeSettingsDraftsEqual,
+        )
+      : hasTicketDraftChangesBeyondModuleToggles(
+          currentSettingsDraft,
+          savedSettingsDraft,
+          hasLoadedTicketDraft,
+        );
 
   const canResetSettings = Boolean(
     !settingsReadOnly &&
@@ -5234,12 +5374,92 @@ export function ServerSettingsEditor({
         ? canSaveTicketAi
         : canSaveTicket) && hasUnsavedChanges,
   );
+  const moduleActivationKey = resolveModuleActivationKey({
+    section: settingsSection,
+    salesEnabled,
+    ticketEnabled,
+    aiEnabled,
+    welcomeEnabled,
+    captchaEnabled,
+    suggestionsEnabled,
+    batePontoEnabled,
+    antiLinkEnabled,
+    autoRoleEnabled,
+    securityLogsEnabled: securityLogsDraft.enabled,
+  });
+  const moduleActivationBarCopy = moduleActivationKey
+    ? MODULE_ACTIVATION_BAR_COPY[moduleActivationKey]
+    : null;
+  const activateCurrentModule = useCallback(() => {
+    if (isSaving || settingsReadOnly || !moduleActivationKey) return;
+
+    switch (moduleActivationKey) {
+      case "sales":
+        setSalesEnabled(true);
+        return;
+      case "ticket":
+        setTicketEnabled(true);
+        return;
+      case "flowai":
+        requestFlowAiActivation();
+        return;
+      case "welcome":
+        setWelcomeEnabled(true);
+        return;
+      case "captcha":
+        setCaptchaEnabled(true);
+        return;
+      case "suggestions":
+        setSuggestionsEnabled(true);
+        return;
+      case "bate_ponto":
+        setBatePontoEnabled(true);
+        return;
+      case "antilink":
+        setHasDismissedAntiLinkModal(true);
+        setAntiLinkEnabled(true);
+        return;
+      case "autorole":
+        setAutoRoleEnabled(true);
+        return;
+      case "security_logs":
+        setSecurityLogsDraft((current) => ({
+          ...current,
+          enabled: true,
+        }));
+        return;
+      default:
+        return;
+    }
+  }, [
+    isSaving,
+    moduleActivationKey,
+    requestFlowAiActivation,
+    settingsReadOnly,
+  ]);
+  const activateModuleDisabled =
+    isSaving ||
+    settingsReadOnly ||
+    (moduleActivationKey === "flowai" && hasPendingFlowAiActivationRequest);
+  const showFloatingActivateBar = Boolean(
+    activeTab === "settings" &&
+      !settingsReadOnly &&
+      !isLoading &&
+      moduleActivationBarCopy,
+  );
   const showFloatingSaveBar =
     activeTab === "settings" &&
     !settingsReadOnly &&
     hasLoadedSettingsDraft &&
-    (hasUnsavedChanges || isSaving || showSaveSuccessBar);
-  const showSaveBarActions = !showSaveSuccessBar || hasUnsavedChanges || isSaving;
+    (hasFloatingSaveBarChanges || isSaving || showSaveSuccessBar) &&
+    !showFloatingActivateBar;
+  const floatingBarMode: "save" | "activate" | null = showFloatingActivateBar
+    ? "activate"
+    : showFloatingSaveBar
+      ? "save"
+      : null;
+  const showFloatingBar = floatingBarMode !== null;
+  const showSaveBarActions = !showSaveSuccessBar || hasFloatingSaveBarChanges || isSaving;
   const showInlineMessages = Boolean(
     isViewerOnly || isUnauthorizedForSection || locked || errorMessage,
   );
@@ -5277,28 +5497,28 @@ export function ServerSettingsEditor({
   const showInvalidTicketSaveState =
     isTicketMessageSection &&
     ticketEnabled &&
-    hasUnsavedChanges &&
+    hasFloatingSaveBarChanges &&
     !isSaving &&
     !showSaveSuccessBar &&
     isTicketMessageLayoutInvalid;
   const showInvalidWelcomeSaveState =
     isWelcomeMessageSection &&
     welcomeEnabled &&
-    hasUnsavedChanges &&
+    hasFloatingSaveBarChanges &&
     !isSaving &&
     !showSaveSuccessBar &&
     isWelcomeMessageLayoutInvalid;
   const showInvalidCaptchaSaveState =
     isCaptchaMessageSection &&
     captchaEnabled &&
-    hasUnsavedChanges &&
+    hasFloatingSaveBarChanges &&
     !isSaving &&
     !showSaveSuccessBar &&
     isCaptchaMessageLayoutInvalid;
   const showInvalidSuggestionsSaveState =
     isSuggestionsSection &&
     suggestionsEnabled &&
-    hasUnsavedChanges &&
+    hasFloatingSaveBarChanges &&
     !isSaving &&
     !showSaveSuccessBar &&
     ((settingsSection === "suggestions_message" && isSuggestionsMessageLayoutInvalid) ||
@@ -5306,7 +5526,7 @@ export function ServerSettingsEditor({
   const showInvalidBatePontoSaveState =
     isBatePontoSection &&
     batePontoEnabled &&
-    hasUnsavedChanges &&
+    hasFloatingSaveBarChanges &&
     !isSaving &&
     !showSaveSuccessBar &&
     ((settingsSection === "bate_ponto_message" && isBatePontoMessageLayoutInvalid) ||
@@ -5314,11 +5534,11 @@ export function ServerSettingsEditor({
         !ticketPanelLayoutHasRenderableContent(batePontoLogLayout)));
   const showSaveBarSuccessState =
     showSaveSuccessBar &&
-    !hasUnsavedChanges &&
+    !hasFloatingSaveBarChanges &&
     !isSaving;
   const showBlockedNavigationSaveState =
     showNavigationBlockedSaveState &&
-    hasUnsavedChanges &&
+    hasFloatingSaveBarChanges &&
     !isSaving &&
     !showSaveSuccessBar;
   const showSaveBarErrorState =
@@ -5359,7 +5579,7 @@ export function ServerSettingsEditor({
           ? "Adicione pelo menos um conteudo na mensagem"
       : showBlockedNavigationSaveState
           ? "Salve as alteracoes antes de sair desta secao."
-          : !canPersistSettings && hasUnsavedChanges
+          : !canPersistSettings && hasFloatingSaveBarChanges
             ? isSecuritySection
               ? isAntiLinkSection
                 ? "Defina o canal de log para continuar"
@@ -5388,7 +5608,7 @@ export function ServerSettingsEditor({
           ? "Preencha a mensagem de entrada ou saida com pelo menos um bloco de texto."
         : showBlockedNavigationSaveState
           ? "Voce tentou trocar de opcao na sidebar com mudancas pendentes. Salve ou redefina antes de continuar."
-        : !canPersistSettings && hasUnsavedChanges
+        : !canPersistSettings && hasFloatingSaveBarChanges
           ? isSecuritySection
             ? isAntiLinkSection
               ? "Escolha um canal de log para o modulo anti-link."
@@ -5449,7 +5669,7 @@ export function ServerSettingsEditor({
 
   useEffect(() => {
     if (!navigationBlockSignal) return;
-    if (!hasUnsavedChanges || isSaving || showSaveSuccessBar) return;
+    if (!hasFloatingSaveBarChanges || isSaving || showSaveSuccessBar) return;
     if (activeTab !== "settings") return;
 
     setShowNavigationBlockedSaveState(true);
@@ -5462,7 +5682,7 @@ export function ServerSettingsEditor({
     }, 2800);
   }, [
     activeTab,
-    hasUnsavedChanges,
+    hasFloatingSaveBarChanges,
     isSaving,
     navigationBlockSignal,
     showSaveSuccessBar,
@@ -5477,10 +5697,10 @@ export function ServerSettingsEditor({
   }, [activeTab, guildId, settingsSection]);
 
   useEffect(() => {
-    if (!hasUnsavedChanges || isSaving || showSaveSuccessBar) {
+    if (!hasFloatingSaveBarChanges || isSaving || showSaveSuccessBar) {
       setShowNavigationBlockedSaveState(false);
     }
-  }, [hasUnsavedChanges, isSaving, showSaveSuccessBar]);
+  }, [hasFloatingSaveBarChanges, isSaving, showSaveSuccessBar]);
 
   useEffect(() => {
     return () => {
@@ -5560,7 +5780,7 @@ export function ServerSettingsEditor({
   );
 
   useEffect(() => {
-    if (showFloatingSaveBar) {
+    if (showFloatingBar) {
       setIsSaveBarRendered(true);
       setIsSaveBarExiting(false);
       return;
@@ -5577,7 +5797,7 @@ export function ServerSettingsEditor({
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [isSaveBarRendered, showFloatingSaveBar]);
+  }, [isSaveBarRendered, showFloatingBar]);
 
   const persistPlanSettings = useCallback(
     async (input: {
@@ -6387,6 +6607,136 @@ export function ServerSettingsEditor({
     savedSecurityLogsDraft,
     savedSettingsDraft,
     savedWelcomeSettingsDraft,
+  ]);
+
+  useEffect(() => {
+    if (!onEditorChromeChange) return;
+
+    const moduleActionsDisabled = isSaving || settingsReadOnly;
+    let moduleActions: ServerEditorChrome["moduleActions"] = null;
+
+    if (isModuleOverviewSection(settingsSection)) {
+      const enabled =
+        settingsSection === "sales_overview"
+          ? salesEnabled
+          : settingsSection === "overview"
+            ? ticketEnabled
+            : settingsSection === "ticket_ai"
+              ? aiEnabled
+              : settingsSection === "entry_exit_overview"
+                ? welcomeEnabled
+                : settingsSection === "suggestions_overview"
+                  ? suggestionsEnabled
+                  : settingsSection === "bate_ponto_overview"
+                    ? batePontoEnabled
+                    : settingsSection === "captcha_overview"
+                      ? captchaEnabled
+                      : settingsSection === "security_antilink"
+                        ? antiLinkEnabled
+                        : autoRoleEnabled;
+
+      moduleActions = {
+        enabled,
+        disabled:
+          moduleActionsDisabled ||
+          (settingsSection === "ticket_ai" && hasPendingFlowAiActivationRequest),
+        canReset: canResetSettings,
+        onToggle: () => {
+          if (moduleActionsDisabled) return;
+          switch (settingsSection) {
+            case "sales_overview":
+              setSalesEnabled((current) => !current);
+              return;
+            case "overview":
+              setTicketEnabled((current) => !current);
+              return;
+            case "ticket_ai":
+              if (aiEnabled) {
+                setHasPendingFlowAiActivationRequest(false);
+                setAiEnabled(false);
+                return;
+              }
+              setErrorMessage(null);
+              if (resolvedFlowAiPlanCode) {
+                setHasPendingFlowAiActivationRequest(false);
+                if (!isFlowAiEligiblePlanCode(resolvedFlowAiPlanCode)) {
+                  setIsFlowAiUpgradeModalOpen(true);
+                  return;
+                }
+                setAiEnabled(true);
+                return;
+              }
+              if (!isFlowAiPlanLoading && hasFlowAiPlanCheckError) {
+                setErrorMessage(
+                  "Nao foi possivel verificar o plano agora. Tente novamente em alguns instantes.",
+                );
+                return;
+              }
+              setHasPendingFlowAiActivationRequest(true);
+              return;
+            case "entry_exit_overview":
+              setWelcomeEnabled((current) => !current);
+              return;
+            case "suggestions_overview":
+              setSuggestionsEnabled((current) => !current);
+              return;
+            case "bate_ponto_overview":
+              setBatePontoEnabled((current) => !current);
+              return;
+            case "captcha_overview":
+              setCaptchaEnabled((current) => !current);
+              return;
+            case "security_antilink":
+              setHasDismissedAntiLinkModal(true);
+              setAntiLinkEnabled((current) => !current);
+              return;
+            case "security_autorole":
+              setAutoRoleEnabled((current) => {
+                const next = !current;
+                if (!next) setAutoRoleSyncExistingMembers(false);
+                return next;
+              });
+              return;
+            default:
+              return;
+          }
+        },
+        onReset: handleResetSettings,
+      };
+    }
+
+    onEditorChromeChange(
+      buildServerEditorChrome({
+        section: settingsSection,
+        moduleActions,
+        ticketAiDescription: flowAiHeaderDescription,
+      }),
+    );
+
+    return () => {
+      onEditorChromeChange(null);
+    };
+  }, [
+    aiEnabled,
+    antiLinkEnabled,
+    autoRoleEnabled,
+    batePontoEnabled,
+    canResetSettings,
+    captchaEnabled,
+    flowAiHeaderDescription,
+    handleResetSettings,
+    hasFlowAiPlanCheckError,
+    hasPendingFlowAiActivationRequest,
+    isFlowAiPlanLoading,
+    isSaving,
+    onEditorChromeChange,
+    resolvedFlowAiPlanCode,
+    salesEnabled,
+    settingsReadOnly,
+    settingsSection,
+    suggestionsEnabled,
+    ticketEnabled,
+    welcomeEnabled,
   ]);
 
   const handleSave = useCallback(async () => {
@@ -7949,23 +8299,6 @@ export function ServerSettingsEditor({
                     />
                   ) : settingsSection === "sales_overview" ? (
                     <ModulePage>
-                      <ModuleHero
-                        label="Modulo Vendas"
-                        title="Loja do servidor em operacao"
-                        description="Carrinhos, logs de pagamento e comprovantes ficam prontos quando o modulo estiver ativo. Salve para aplicar no Discord."
-                        icon={ShoppingBag}
-                        action={
-                          <DashboardInlineSwitch
-                            checked={salesEnabled}
-                            onChange={() => {
-                              if (isSaving || settingsReadOnly) return;
-                              setSalesEnabled((current) => !current);
-                            }}
-                            disabled={isSaving || settingsReadOnly}
-                            ariaLabel="Ativar ou desativar modulo de vendas"
-                          />
-                        }
-                      />
                       <div className="grid gap-[12px] md:grid-cols-2 xl:grid-cols-4">
                         <ModuleStat label="Status" value={salesEnabled ? "Ativo" : "Desligado"} hint="Loja e checkout" icon={ShoppingBag} delay={0.06} />
                         <ModuleStat label="Categoria" value={optionLabel(categoryOptions, salesCartsCategoryId)} hint="Onde o carrinho nasce" icon={Hash} delay={0.1} />
@@ -8041,23 +8374,6 @@ export function ServerSettingsEditor({
                     </div>
                   ) : settingsSection === "overview" ? (
                     <ModulePage>
-                      <ModuleHero
-                        label="Modulo Ticket"
-                        title="Central de atendimento"
-                        description="Painel, abertura, logs e permissoes ficam prontos quando o modulo estiver ativo. Salve para publicar no servidor."
-                        icon={Ticket}
-                        action={
-                          <DashboardInlineSwitch
-                            checked={ticketEnabled}
-                            onChange={() => {
-                              if (isSaving || settingsReadOnly) return;
-                              setTicketEnabled((current) => !current);
-                            }}
-                            disabled={isSaving || settingsReadOnly}
-                            ariaLabel="Ativar ou desativar modulo de tickets"
-                          />
-                        }
-                      />
                       <div className="grid gap-[12px] md:grid-cols-2 xl:grid-cols-4">
                         <ModuleStat label="Status" value={ticketEnabled ? "Ativo" : "Desligado"} hint="Atendimento ao vivo" icon={Ticket} delay={0.06} />
                         <ModuleStat label="Menu" value={optionLabel(textChannelOptions, menuChannelId)} hint="Canal do painel" icon={Hash} delay={0.1} />
@@ -8099,55 +8415,6 @@ export function ServerSettingsEditor({
                     </ModulePage>
                   ) : settingsSection === "ticket_ai" ? (
                     <div className="space-y-[14px]">
-                      <ModuleHero
-                        label="Modulo FlowAI"
-                        title="Atendimento com IA"
-                        description={`${flowAiHeaderDescription} O FlowAI aplica as regras da empresa e conduz reembolsos quando o modulo estiver ativo.`}
-                        icon={Settings2}
-                        action={
-                          <DashboardInlineSwitch
-                            checked={aiEnabled}
-                            onChange={() => {
-                              if (isSaving || settingsReadOnly) return;
-                              if (aiEnabled) {
-                                setHasPendingFlowAiActivationRequest(false);
-                                setAiEnabled(false);
-                                return;
-                              }
-
-                              setErrorMessage(null);
-
-                              if (resolvedFlowAiPlanCode) {
-                                setHasPendingFlowAiActivationRequest(false);
-
-                                if (!isFlowAiEligiblePlanCode(resolvedFlowAiPlanCode)) {
-                                  setIsFlowAiUpgradeModalOpen(true);
-                                  return;
-                                }
-
-                                setAiEnabled(true);
-                                return;
-                              }
-
-                              if (!isFlowAiPlanLoading && hasFlowAiPlanCheckError) {
-                                setErrorMessage(
-                                  "Nao foi possivel verificar o plano agora. Tente novamente em alguns instantes.",
-                                );
-                                return;
-                              }
-
-                              setHasPendingFlowAiActivationRequest(true);
-                            }}
-                            disabled={
-                              isSaving ||
-                              settingsReadOnly ||
-                              hasPendingFlowAiActivationRequest
-                            }
-                            ariaLabel="Ativar ou desativar modulo FlowAI"
-                          />
-                        }
-                      />
-
                       <div className="grid grid-cols-1 gap-[10px] sm:grid-cols-2 xl:grid-cols-4">
                         {flowAiChecklist.map((item) => (
                           <div
@@ -8496,23 +8763,6 @@ export function ServerSettingsEditor({
                     />
                   ) : settingsSection === "entry_exit_overview" ? (
                     <ModulePage>
-                      <ModuleHero
-                        label="Entrada e saida"
-                        title="Recepcao automatica"
-                        description="Mensagem publica e log privado para quem entra e sai. Salve para ativar no servidor."
-                        icon={LogIn}
-                        action={
-                          <DashboardInlineSwitch
-                            checked={welcomeEnabled}
-                            onChange={() => {
-                              if (isSaving || settingsReadOnly) return;
-                              setWelcomeEnabled((current) => !current);
-                            }}
-                            disabled={isSaving || settingsReadOnly}
-                            ariaLabel="Ativar ou desativar modulo de entrada e saida"
-                          />
-                        }
-                      />
                       <div className="grid gap-[12px] md:grid-cols-2 xl:grid-cols-4">
                         <ModuleStat label="Status" value={welcomeEnabled ? "Ativo" : "Desligado"} hint="Mensagens automaticas" icon={MessageSquare} delay={0.06} />
                         <ModuleStat label="Entrada publica" value={optionLabel(textChannelOptions, entryPublicChannelId)} hint="Boas-vindas" icon={LogIn} delay={0.1} />
@@ -8530,23 +8780,6 @@ export function ServerSettingsEditor({
                     </ModulePage>
                   ) : settingsSection === "suggestions_overview" ? (
                     <div className="space-y-[14px]">
-                      <ModuleHero
-                        label="Modulo Sugestoes"
-                        title="Ideias e votacoes"
-                        description="Painel, publicacao e logs. Salve para publicar o fluxo de sugestoes."
-                        icon={MessageSquare}
-                        action={
-                          <DashboardInlineSwitch
-                            checked={suggestionsEnabled}
-                            onChange={() => {
-                              if (isSaving || settingsReadOnly) return;
-                              setSuggestionsEnabled((current) => !current);
-                            }}
-                            disabled={isSaving || settingsReadOnly}
-                            ariaLabel="Ativar ou desativar modulo de sugestoes"
-                          />
-                        }
-                      />
                       <div className="grid gap-[12px] md:grid-cols-3">
                         <ModuleStat label="Painel" value={optionLabel(textChannelOptions, suggestionsPanelChannelId)} hint="Onde o membro envia" icon={Hash} delay={0.08} />
                         <ModuleStat label="Publicacao" value={optionLabel(textChannelOptions, suggestionsPublishChannelId)} hint="Onde a ideia aparece" icon={Hash} delay={0.12} />
@@ -8594,24 +8827,6 @@ export function ServerSettingsEditor({
                     />
                   ) : settingsSection === "bate_ponto_overview" ? (
                     <div className="space-y-[14px]">
-                      <ModuleHero
-                        label="Modulo Bate Ponto"
-                        title="Expediente e banco de horas"
-                        description="Painel, logs, cargos e regras de encerramento. Salve para aplicar na equipe."
-                        icon={Clock}
-                        action={
-                          <DashboardInlineSwitch
-                            checked={batePontoEnabled}
-                            onChange={() => {
-                              if (isSaving || settingsReadOnly) return;
-                              setBatePontoEnabled((current) => !current);
-                            }}
-                            disabled={isSaving || settingsReadOnly}
-                            ariaLabel="Ativar ou desativar modulo de bate ponto"
-                          />
-                        }
-                      />
-
                       <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div>
                           <p className="text-[12px] uppercase tracking-[0.18em] text-[#5F5F5F]">Bate Ponto</p>
@@ -8829,23 +9044,6 @@ export function ServerSettingsEditor({
                     <BatePontoHistoryPanel guildId={guildId} />
                   ) : settingsSection === "captcha_overview" ? (
                     <div className="space-y-[14px]">
-                      <ModuleHero
-                        label="Modulo Captcha"
-                        title="Verificacao na entrada"
-                        description="Painel, cargos e desafio visual. Salve para proteger o servidor."
-                        icon={ShieldCheck}
-                        action={
-                          <DashboardInlineSwitch
-                            checked={captchaEnabled}
-                            onChange={() => {
-                              if (isSaving || settingsReadOnly) return;
-                              setCaptchaEnabled((current) => !current);
-                            }}
-                            disabled={isSaving || settingsReadOnly}
-                            ariaLabel="Ativar ou desativar modulo de captcha"
-                          />
-                        }
-                      />
                       <div className="grid gap-[12px] md:grid-cols-2 xl:grid-cols-4">
                         <ModuleStat label="Status" value={captchaEnabled ? "Ativo" : "Desligado"} hint="Protecao de entrada" icon={ShieldCheck} delay={0.06} />
                         <ModuleStat label="Painel" value={optionLabel(textChannelOptions, captchaPanelChannelId)} hint="Canal principal" icon={Hash} delay={0.1} />
@@ -8986,25 +9184,6 @@ export function ServerSettingsEditor({
                     />
                   ) : settingsSection === "security_antilink" ? (
                     <div className="space-y-[14px]">
-                      <ModuleHero
-                        label="Modulo AntiLink"
-                        title="Protecao automatica"
-                        description="Bloqueia links externos, convites e ofuscacao assim que o evento acontece. Salve para aplicar no servidor."
-                        icon={ShieldX}
-                        action={
-                          <DashboardInlineSwitch
-                            checked={antiLinkEnabled}
-                            onChange={() => {
-                              if (isSaving || settingsReadOnly) return;
-                              setHasDismissedAntiLinkModal(true);
-                              setAntiLinkEnabled((current) => !current);
-                            }}
-                            disabled={isSaving || settingsReadOnly}
-                            ariaLabel="Ativar ou desativar modulo AntiLink"
-                          />
-                        }
-                      />
-
                       <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
                           <div>
@@ -9096,30 +9275,6 @@ export function ServerSettingsEditor({
                     </div>
                   ) : settingsSection === "security_autorole" ? (
                     <div className="space-y-[14px]">
-                      <ModuleHero
-                        label="Modulo AutoRole"
-                        title="Cargos automaticos"
-                        description="O bot adiciona os cargos em novos membros. Se quiser, sincronize quem ja esta no servidor."
-                        icon={Users}
-                        action={
-                          <DashboardInlineSwitch
-                            checked={autoRoleEnabled}
-                            onChange={() => {
-                              if (isSaving || settingsReadOnly) return;
-                              setAutoRoleEnabled((current) => {
-                                const next = !current;
-                                if (!next) {
-                                  setAutoRoleSyncExistingMembers(false);
-                                }
-                                return next;
-                              });
-                            }}
-                            disabled={isSaving || settingsReadOnly}
-                            ariaLabel="Ativar ou desativar modulo AutoRole"
-                          />
-                        }
-                      />
-
                       <div className="rounded-[20px] border border-[#1C1C1C] bg-[#0D0D0D] px-[18px] py-[16px]">
                         <div className="flex flex-col gap-[12px] lg:flex-row lg:items-end lg:justify-between">
                           <div>
@@ -10244,6 +10399,46 @@ export function ServerSettingsEditor({
                   />
 
                   <div className="relative z-10 flex flex-col gap-[16px] px-[18px] py-[16px] sm:px-[22px] sm:py-[18px] xl:flex-row xl:items-center xl:justify-between">
+                    {floatingBarMode === "activate" && moduleActivationBarCopy ? (
+                      <>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[16px] leading-[1.2] font-medium tracking-[-0.03em] text-[#D8D8D8]">
+                            {moduleActivationBarCopy.title}
+                          </p>
+                          <p className="mt-[8px] max-w-[680px] text-[13px] leading-[1.55] text-[#7F7F7F]">
+                            {moduleActivationBarCopy.description}
+                          </p>
+                        </div>
+
+                        <div className="flex shrink-0 flex-col-reverse gap-[10px] sm:flex-row sm:items-center">
+                          <button
+                            type="button"
+                            onClick={activateCurrentModule}
+                            disabled={activateModuleDisabled}
+                            className={`group relative inline-flex h-[46px] items-center justify-center overflow-hidden whitespace-nowrap rounded-[12px] px-6 text-[15px] leading-none font-semibold ${
+                              activateModuleDisabled ? "cursor-not-allowed" : ""
+                            }`}
+                          >
+                            <span
+                              aria-hidden="true"
+                              className={`absolute inset-0 rounded-[12px] transition-transform duration-150 ease-out ${
+                                activateModuleDisabled
+                                  ? "bg-[#111111]"
+                                  : "bg-[linear-gradient(180deg,#FFFFFF_0%,#D1D1D1_100%)] group-hover:scale-[1.02] group-active:scale-[0.985]"
+                              }`}
+                            />
+                            <span
+                              className={`relative z-10 inline-flex items-center justify-center whitespace-nowrap transition-opacity ${
+                                activateModuleDisabled ? "text-[#B7B7B7]" : "text-[#282828]"
+                              }`}
+                            >
+                              {moduleActivationBarCopy.buttonLabel}
+                            </span>
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
                     <div className="min-w-0 flex-1">
                       <p className="text-[16px] leading-[1.2] font-medium tracking-[-0.03em] text-[#D8D8D8]">
                         {floatingSaveBarTitle}
@@ -10319,6 +10514,8 @@ export function ServerSettingsEditor({
                       <div className="inline-flex h-[40px] shrink-0 items-center justify-center rounded-full border border-[rgba(155,214,148,0.28)] bg-[rgba(155,214,148,0.08)] px-[14px] text-[12px] font-medium text-[#9BD694]">
                         Tudo sincronizado
                       </div>
+                    )}
+                      </>
                     )}
                   </div>
                 </div>

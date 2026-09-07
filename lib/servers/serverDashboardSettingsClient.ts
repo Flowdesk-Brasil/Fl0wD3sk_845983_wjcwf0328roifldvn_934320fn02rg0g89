@@ -1,5 +1,6 @@
 "use client";
 
+import { parseResponseJson } from "@/lib/performance/clientData";
 import type { TicketPanelLayout } from "@/lib/servers/ticketPanelBuilder";
 import type { WelcomeThumbnailMode } from "@/lib/servers/welcomeMessageBuilder";
 
@@ -354,7 +355,9 @@ async function requestServerDashboardSettings(
     },
   );
 
-  const payload = (await response.json()) as ServerDashboardSettingsApiResponse;
+  const payload = (await parseResponseJson(
+    response,
+  )) as ServerDashboardSettingsApiResponse;
 
   if (!response.ok || !payload.ok) {
     const message =

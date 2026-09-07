@@ -37,7 +37,6 @@ import {
   ServerEmptyState,
   ServerIconFrame,
   ServerMoreActionsMenu,
-  ServerSectionHeading,
   ServerSurface,
   ServerTextInput,
 } from "@/components/servers/ServerUi";
@@ -668,22 +667,17 @@ export function SalesProductsListPanel({
 
   return (
     <div className="space-y-[18px]">
-      <ServerSectionHeading
-        eyebrow="Vendas"
-        title="Produtos da loja"
-        description="Cadastre itens com midias, preco, estoque e publicacao para o Discord e para a futura vitrine web."
-        action={
-          <ServerButton
-            disabled={readOnly}
-            onClick={() => router.push(getCreatePath(guildId))}
-            variant="primary"
-            size="lg"
-          >
-            <Plus className="h-[16px] w-[16px]" />
-            Adicionar Produto
-          </ServerButton>
-        }
-      />
+      <div className="flex justify-end">
+        <ServerButton
+          disabled={readOnly}
+          onClick={() => router.push(getCreatePath(guildId))}
+          variant="primary"
+          size="lg"
+        >
+          <Plus className="h-[16px] w-[16px]" />
+          Adicionar Produto
+        </ServerButton>
+      </div>
 
       <ServerSurface className="overflow-hidden">
         <div className="flex flex-col gap-[12px] border-b border-[#171717] px-[18px] py-[16px] sm:flex-row sm:items-center sm:justify-between sm:px-[22px]">
