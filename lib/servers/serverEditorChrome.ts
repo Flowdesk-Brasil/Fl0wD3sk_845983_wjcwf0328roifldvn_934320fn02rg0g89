@@ -149,7 +149,7 @@ const MODULE_MESSAGE_COPY: Partial<
     tag: "Whitelist",
     title: "Banco e mapping",
     description:
-      "Conecte o banco da cidade, detecte o schema e confirme a regra de aprovacao sem SQL livre.",
+      "Informe o IP publico da VPS da cidade, teste a conexao e confirme o mapping. Sem o IP correto a FlowDesk nao alcanca o banco remoto.",
   },
   whitelist_message: {
     tag: "Whitelist",

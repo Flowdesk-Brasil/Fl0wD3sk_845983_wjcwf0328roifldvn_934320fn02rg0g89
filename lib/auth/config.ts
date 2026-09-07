@@ -232,7 +232,9 @@ function resolveRequestScopedRedirectUri(
       hostname === "0.0.0.0" ||
       hostname === "::1")
   ) {
-    return new URL(callbackPathname, `${request.nextUrl.protocol}//${request.nextUrl.host}`).toString();
+    const port = request.nextUrl.port;
+    const host = `localhost${port ? `:${port}` : ""}`;
+    return new URL(callbackPathname, `${request.nextUrl.protocol}//${host}`).toString();
   }
 
   if (runtime.mode === "local" && options?.preferFallbackForLocal) {

@@ -19,6 +19,11 @@ import {
   testWhitelistMapping,
 } from "@/lib/servers/whitelistCityDb";
 import { normalizeWhitelistMapping } from "@/lib/servers/whitelistMapping";
+import {
+  enqueueWhitelistAgentJob,
+  mappingPayload,
+  waitForWhitelistAgentJob,
+} from "@/lib/servers/whitelistAgentJobs";
 
 export async function POST(request: Request) {
   const invalid = ensureSameOriginJsonMutationRequest(request);
@@ -65,16 +70,106 @@ export async function POST(request: Request) {
     const existing = await supabase
       .from("guild_whitelist_settings")
       .select(
-        "db_engine, db_host, db_port, db_name, db_user, db_ssl, db_password_cipher, mapping, connection_mode",
+        "db_engine, db_host, db_port, db_name, db_user, db_ssl, db_password_cipher, mapping, connection_mode, agent_token_hash, agent_last_seen_at",
       )
       .eq("guild_id", guildId)
       .maybeSingle();
 
-    if (existing.data?.connection_mode === "agent" && !body.dbHost) {
+    if (action === "test" || action === "inspect" || action === "validate") {
+      const operation =
+        action === "inspect"
+          ? "INSPECT_SCHEMA"
+          : action === "validate"
+            ? "TEST_MAPPING"
+            : "TEST_CONNECTION";
+      if (action === "validate" && !String(body.identifierValue || "").trim()) {
+        return applyNoStoreHeaders(
+          NextResponse.json({
+            ok: false,
+            message: "Informe um identificador de teste para localizar o registro sem alterar dados.",
+          }),
+        );
+      }
+      const job = await enqueueWhitelistAgentJob({
+        guildId,
+        operation,
+        payload: mappingPayload(body.mapping || existing.data.mapping, String(body.identifierValue || "")),
+      });
+      const finished = await waitForWhitelistAgentJob(job.id);
+      if (finished.status !== "done") {
+        return applyNoStoreHeaders(
+          NextResponse.json({
+            ok: false,
+            message:
+              finished.error_message ||
+              "O launcher nao concluiu a tempo. Instale o Flowdesk Launcher na VPS, entre na conta e deixe-o aberto.",
+          }),
+        );
+      }
+      const result = (finished.result || {}) as Record<string, unknown>;
+      if (action === "inspect") {
+        await supabase
+          .from("guild_whitelist_settings")
+          .update({
+            last_health_at: new Date().toISOString(),
+            last_health_ok: true,
+            last_health_error: null,
+          })
+          .eq("guild_id", guildId);
+        return applyNoStoreHeaders(
+          NextResponse.json({
+            ok: true,
+            message: "Schema lido pelo Agent na VPS.",
+            tables: result.tables || [],
+            inferred: result.inferred || null,
+          }),
+        );
+      }
+      if (action === "validate") {
+        if (result.ok === false) {
+          await supabase
+            .from("guild_whitelist_settings")
+            .update({ mapping_status: "invalid" })
+            .eq("guild_id", guildId);
+          return applyNoStoreHeaders(
+            NextResponse.json({
+              ok: false,
+              message: String(result.message || "Mapping invalido no banco local."),
+            }),
+          );
+        }
+        await supabase
+          .from("guild_whitelist_settings")
+          .update({
+            mapping: normalizeWhitelistMapping(body.mapping || existing.data.mapping),
+            mapping_status: "validated",
+            last_health_at: new Date().toISOString(),
+            last_health_ok: true,
+            last_health_error: null,
+          })
+          .eq("guild_id", guildId);
+        return applyNoStoreHeaders(
+          NextResponse.json({
+            ok: true,
+            message: "Mapping validado pelo Agent, sem alterar dados.",
+            lookup: result,
+          }),
+        );
+      }
+      await supabase
+        .from("guild_whitelist_settings")
+        .update({
+          last_health_at: new Date().toISOString(),
+          last_health_ok: true,
+          last_health_error: null,
+          last_health_latency_ms: Number(result.latencyMs || 0) || null,
+        })
+        .eq("guild_id", guildId);
       return applyNoStoreHeaders(
         NextResponse.json({
-          ok: false,
-          message: "No modo Agent, o teste direto fica na VPS da cidade.",
+          ok: true,
+          message: `Agent conectou no banco local (${Number(result.latencyMs || 0)}ms).`,
+          latencyMs: result.latencyMs || 0,
         }),
       );
     }

@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Database, Hash, Shield, Users } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { Check, Database, Download, Hash, MonitorSmartphone, Shield, TriangleAlert, Users } from "lucide-react";
 import { ConfigStepMultiSelect } from "@/components/config/ConfigStepMultiSelect";
 import { ConfigStepSelect } from "@/components/config/ConfigStepSelect";
 import { TicketMessageBuilder } from "@/components/servers/TicketMessageBuilder";
@@ -55,6 +55,29 @@ const IDENTIFIER_OPTIONS = IDENTIFIER_KINDS.map((kind) => ({
                   : "Identificador personalizado",
 }));
 
+const fieldLabelClassName =
+  "mb-[8px] block text-[12px] font-medium text-[#5F5F5F]";
+
+function LabeledField({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div>
+      <label className={fieldLabelClassName}>{label}</label>
+      {children}
+      {hint ? (
+        <p className="mt-[8px] text-[12px] leading-[1.5] text-[#6F6F74]">{hint}</p>
+      ) : null}
+    </div>
+  );
+}
+
 const fieldClassName =
   "h-[48px] w-full rounded-[14px] fd-field border border-[#1C1C1C] bg-[#141414] px-[14px] text-[14px] text-[#D1D1D1] outline-none transition-all placeholder:text-[#6F6F74] focus:border-[#2A2A2E] disabled:cursor-not-allowed disabled:opacity-60";
 
@@ -76,11 +99,62 @@ export function WhitelistSettingsSection({
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [actionTone, setActionTone] = useState<"ok" | "error">("ok");
   const [probeIdentifier, setProbeIdentifier] = useState("");
+  const [liveLauncher, setLiveLauncher] = useState<{
+    paired: boolean;
+    online: boolean;
+    hostname: string | null;
+  } | null>(null);
+  const launcherPaired = liveLauncher?.paired ?? draft.agentPaired;
+  const launcherOnline = liveLauncher?.online ?? draft.agentOnline;
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const response = await fetch("/api/auth/me/guilds/whitelist-agent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ guildId, action: "status" }),
+        });
+        const payload = (await response.json()) as {
+          ok?: boolean;
+          paired?: boolean;
+          online?: boolean;
+          hostname?: string | null;
+        };
+        if (cancelled || !payload.ok) return;
+        setLiveLauncher({
+          paired: Boolean(payload.paired),
+          online: Boolean(payload.online),
+          hostname: typeof payload.hostname === "string" ? payload.hostname : null,
+        });
+      } catch {
+        /* keep the last known status */
+      }
+    };
+    void tick();
+    const timer = window.setInterval(() => {
+      void tick();
+    }, 7000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [guildId]);
 
   async function runAction(kind: "test" | "inspect" | "validate") {
     setBusy(kind);
     setActionMessage(null);
     try {
+      if (draft.connectionMode !== "agent") {
+        if (!draft.dbName.trim() || !draft.dbUser.trim()) {
+          throw new Error("Informe o nome do banco e o usuario da integracao.");
+        }
+      } else {
+        if (!draft.dbName.trim() || !draft.dbUser.trim()) {
+          throw new Error("Informe o banco, o usuario e a senha usados na cidade.");
+        }
+      }
       const response = await fetch("/api/auth/me/guilds/whitelist-actions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -129,6 +203,24 @@ export function WhitelistSettingsSection({
     }
   }
 
+  async function installAgent() {
+    setBusy("agent");
+    setActionMessage(null);
+    try {
+      onChange({ connectionMode: "agent" });
+      window.location.href = `/api/launcher/download?guildId=${encodeURIComponent(guildId)}`;
+      setActionTone("ok");
+      setActionMessage(
+        "Baixando o Setup. Instale, entre na Flowdesk e este servidor vincula sozinho.",
+      );
+    } catch (error) {
+      setActionTone("error");
+      setActionMessage(error instanceof Error ? error.message : "Falha ao baixar o instalador.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   if (mode === "overview") {
     return (
       <ModulePage>
@@ -157,7 +249,7 @@ export function WhitelistSettingsSection({
           <ModuleStat
             label="Banco"
             value={draft.lastHealthOk ? "Saudavel" : draft.lastHealthAt ? "Instavel" : "Nao testado"}
-            hint={draft.connectionMode === "agent" ? "Agent / Bridge" : "Conexao direta"}
+            hint={launcherOnline ? "Launcher online" : "Aguardando launcher"}
             icon={Database}
             delay={0.18}
           />
@@ -293,26 +385,65 @@ export function WhitelistSettingsSection({
         <ModuleCard
           label="Integracao"
           title="Banco da cidade"
-          description="Use um usuario dedicado, nunca root. A senha fica criptografada e nunca volta para o frontend."
+          description="Instale o Flowdesk Launcher na VPS, entre com a conta Flowdesk e deixe o app aberto. Aqui voce so informa o banco local e as regras da whitelist. O IP da maquina e detectado automaticamente."
           delay={0.12}
         >
-          <ModuleFieldsGrid>
-            <ConfigStepSelect
-              label="Modo"
-              placeholder="Modo"
-              options={[
-                { id: "direct", name: "Conexao direta" },
-                { id: "agent", name: "Agent / Bridge (VPS)" },
-              ]}
-              value={draft.connectionMode}
-              onChange={(value) =>
-                onChange({
-                  connectionMode: value === "agent" ? "agent" : "direct",
-                })
-              }
-              disabled={disabled}
-              controlHeightPx={controlHeightPx}
-            />
+          <div className="overflow-hidden rounded-[22px] border border-[rgba(255,255,255,0.06)] bg-[linear-gradient(180deg,#101010_0%,#0B0B0B_100%)]">
+            <div className="flex flex-col gap-[16px] px-[18px] py-[16px] sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 items-center gap-[14px]">
+                <div className="grid h-[42px] w-[42px] place-items-center rounded-[14px] border border-[rgba(255,255,255,0.06)] bg-[#141414] text-[#F4F4F5]">
+                  <MonitorSmartphone className="h-[18px] w-[18px]" strokeWidth={1.7} />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-[8px]">
+                    <p className="text-[14px] font-semibold text-[#F4F4F5]">Flowdesk Launcher</p>
+                    <span className="rounded-full bg-[#171717] px-[8px] py-[3px] text-[10px] font-semibold tracking-[0.14em] text-[#8A8A8E] uppercase">
+                      Auto bind
+                    </span>
+                  </div>
+                  <p className="mt-[4px] text-[13px] leading-[1.55] text-[#8A8A8E]">
+                    {launcherOnline
+                      ? `Conectado${liveLauncher?.hostname ? ` em ${liveLauncher.hostname}` : ""}. O painel ja enxerga este computador.`
+                      : launcherPaired
+                        ? "Launcher vinculado. Aguardando o proximo sinal ao vivo."
+                        : "Um instalador. Login da Flowdesk. Este servidor vincula sozinho, sem codigo."}
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-[10px] sm:justify-end">
+                {launcherOnline ? (
+                  <span className="inline-flex h-[32px] items-center gap-[6px] rounded-full bg-[rgba(134,239,172,0.08)] px-[10px] text-[12px] font-semibold text-[#86EFAC]">
+                    <Check className="h-[13px] w-[13px]" strokeWidth={2.2} />
+                    Conectado
+                  </span>
+                ) : launcherPaired ? (
+                  <span className="inline-flex h-[32px] items-center gap-[6px] rounded-full bg-[rgba(246,212,138,0.08)] px-[10px] text-[12px] font-semibold text-[#F6D48A]">
+                    <TriangleAlert className="h-[13px] w-[13px]" strokeWidth={2} />
+                    Aguardando
+                  </span>
+                ) : (
+                  <span className="inline-flex h-[32px] items-center rounded-full bg-[#141414] px-[10px] text-[12px] font-semibold text-[#9A9A9E]">
+                    Instalar
+                  </span>
+                )}
+                <button
+                  type="button"
+                  disabled={disabled || Boolean(busy)}
+                  onClick={() => void installAgent()}
+                  className="inline-flex h-[36px] items-center gap-[8px] rounded-full bg-white px-[14px] text-[13px] font-semibold text-[#111] transition-transform duration-200 hover:-translate-y-px disabled:opacity-50"
+                >
+                  <Download className="h-[15px] w-[15px]" />
+                  {busy === "agent" ? "Baixando..." : "Baixar Setup"}
+                </button>
+              </div>
+            </div>
+            {busy === "agent" ? (
+              <div className="h-[3px] overflow-hidden bg-[#141414]">
+                <div className="h-full w-1/2 animate-pulse bg-white" />
+              </div>
+            ) : null}
+          </div>
+          <div className="mt-[16px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
             <ConfigStepSelect
               label="Tipo do banco"
               placeholder="Engine"
@@ -331,25 +462,13 @@ export function WhitelistSettingsSection({
               disabled={disabled}
               controlHeightPx={controlHeightPx}
             />
-          </ModuleFieldsGrid>
-          {draft.connectionMode === "agent" ? (
-            <p className="mt-[14px] text-[13px] leading-[1.6] text-[#7B7B7B]">
-              O Agent recebe apenas comandos autenticados (GET_PLAYER, CHECK_WHITELIST,
-              APPROVE_WHITELIST, REMOVE_WHITELIST, TEST_MAPPING) e fala com o banco na VPS da
-              cidade, sem expor a porta publicamente.
-            </p>
-          ) : (
-            <div className="mt-[16px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
-              <input
-                placeholder="Host"
-                value={draft.dbHost}
-                onChange={(event) => onChange({ dbHost: event.currentTarget.value })}
-                disabled={disabled}
-                className={fieldClassName}
-              />
+            <LabeledField
+              label="Porta do banco"
+              hint="Padrao MySQL/MariaDB 3306. PostgreSQL costuma ser 5432."
+            >
               <input
                 type="number"
-                placeholder="Porta"
+                placeholder="3306"
                 value={draft.dbPort}
                 onChange={(event) =>
                   onChange({ dbPort: Number(event.currentTarget.value || 3306) })
@@ -357,44 +476,60 @@ export function WhitelistSettingsSection({
                 disabled={disabled}
                 className={fieldClassName}
               />
+            </LabeledField>
+            <LabeledField label="Nome do banco" hint="Database da cidade, nao o usuario.">
               <input
-                placeholder="Database"
+                placeholder="vrp / creative / essencialmode"
                 value={draft.dbName}
+                autoComplete="off"
                 onChange={(event) => onChange({ dbName: event.currentTarget.value })}
                 disabled={disabled}
                 className={fieldClassName}
               />
+            </LabeledField>
+            <LabeledField
+              label="Usuario da integracao"
+              hint="Crie um usuario so para a Flowdesk. Evite root."
+            >
               <input
-                placeholder="Usuario (nao use root)"
+                placeholder="flowdesk_whitelist"
                 value={draft.dbUser}
+                autoComplete="off"
                 onChange={(event) => onChange({ dbUser: event.currentTarget.value })}
                 disabled={disabled}
                 className={fieldClassName}
               />
+            </LabeledField>
+            <LabeledField
+              label="Senha"
+              hint="Fica criptografada no servidor. Nunca aparece de novo no painel."
+            >
               <input
                 type="password"
                 autoComplete="new-password"
-                placeholder={draft.hasDbPassword ? "Senha salva. Informe para trocar" : "Senha"}
+                placeholder={
+                  draft.hasDbPassword ? "Senha salva. Informe para trocar" : "Senha do usuario"
+                }
                 value={draft.dbPassword}
                 onChange={(event) => onChange({ dbPassword: event.currentTarget.value })}
                 disabled={disabled}
                 className={fieldClassName}
               />
-              <label className="flex items-center gap-[10px] text-[13px] text-[#8A8A8A]">
-                <input
-                  type="checkbox"
-                  checked={draft.dbSsl}
-                  onChange={(event) => onChange({ dbSsl: event.currentTarget.checked })}
-                  disabled={disabled}
-                />
-                Exigir SSL
-              </label>
-            </div>
-          )}
+            </LabeledField>
+            <label className="flex items-center gap-[10px] self-end pb-[6px] text-[13px] text-[#8A8A8A]">
+              <input
+                type="checkbox"
+                checked={draft.dbSsl}
+                onChange={(event) => onChange({ dbSsl: event.currentTarget.checked })}
+                disabled={disabled}
+              />
+              Exigir SSL
+            </label>
+          </div>
           <div className="mt-[16px] flex flex-wrap gap-[10px]">
             <button
               type="button"
-              disabled={disabled || Boolean(busy) || draft.connectionMode === "agent"}
+              disabled={disabled || Boolean(busy)}
               onClick={() => void runAction("test")}
               className="h-[42px] rounded-[12px] bg-[#1A1A1A] px-[14px] text-[13px] font-medium text-[#D1D1D1] disabled:opacity-50"
             >
@@ -402,7 +537,7 @@ export function WhitelistSettingsSection({
             </button>
             <button
               type="button"
-              disabled={disabled || Boolean(busy) || draft.connectionMode === "agent"}
+              disabled={disabled || Boolean(busy)}
               onClick={() => void runAction("inspect")}
               className="h-[42px] rounded-[12px] bg-[#1A1A1A] px-[14px] text-[13px] font-medium text-[#D1D1D1] disabled:opacity-50"
             >
@@ -512,7 +647,7 @@ export function WhitelistSettingsSection({
           <div className="mt-[16px] flex flex-wrap items-center gap-[10px]">
             <button
               type="button"
-              disabled={disabled || Boolean(busy) || draft.connectionMode === "agent"}
+              disabled={disabled || Boolean(busy)}
               onClick={() => void runAction("validate")}
               className="h-[42px] rounded-[12px] bg-white px-[14px] text-[13px] font-semibold text-[#282828] disabled:opacity-50"
             >

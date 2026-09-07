@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 
 type GoogleLoginButtonProps = {
@@ -42,6 +42,12 @@ export function GoogleLoginButton({
   disabled = false,
 }: GoogleLoginButtonProps) {
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const reset = () => setLoading(false);
+    window.addEventListener("pageshow", reset);
+    return () => window.removeEventListener("pageshow", reset);
+  }, []);
 
   function handleClick() {
     if (loading || disabled) return;

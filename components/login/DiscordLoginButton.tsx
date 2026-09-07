@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 
 type DiscordLoginButtonProps = {
@@ -30,6 +30,12 @@ export function DiscordLoginButton({
   label = "Continuar com Discord",
 }: DiscordLoginButtonProps) {
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const reset = () => setLoading(false);
+    window.addEventListener("pageshow", reset);
+    return () => window.removeEventListener("pageshow", reset);
+  }, []);
 
   function handleClick() {
     if (loading) return;

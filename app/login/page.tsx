@@ -193,6 +193,10 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
     redirect(nextPath || "/dashboard");
   }
 
+  if (currentUser && nextPath && !errorCode) {
+    redirect(nextPath);
+  }
+
   return (
     <main className="relative min-h-screen overflow-x-clip bg-[#040404] text-white">
       <LandingFrameLines />

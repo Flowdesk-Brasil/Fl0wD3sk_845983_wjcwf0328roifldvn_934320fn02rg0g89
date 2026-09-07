@@ -11,6 +11,7 @@ import {
   type WhitelistMapping,
 } from "@/lib/servers/whitelistMapping";
 import { decryptWhitelistSecret } from "@/lib/servers/whitelistSecret";
+import { assertCityDbHost } from "@/lib/servers/whitelistHost";
 
 export type WhitelistDbTarget = {
   engine: WhitelistDbEngine;
@@ -43,11 +44,19 @@ export function sanitizeDbError(error: unknown) {
   if (lowered.includes("access denied") || lowered.includes("password") || lowered.includes("authentication")) {
     return { code: "invalid_credentials", message: "Credencial do banco invalida." };
   }
-  if (lowered.includes("enotfound") || lowered.includes("econnrefused") || lowered.includes("connect")) {
-    return { code: "offline", message: "Banco offline ou host/porta inacessiveis." };
+  if (lowered.includes("enotfound") || lowered.includes("econnrefused") || lowered.includes("connect") || lowered.includes("etimedout")) {
+    return {
+      code: "offline",
+      message:
+        "A FlowDesk na nuvem nao alcanca o MySQL da VPS (firewall/NAT). Use o Agent/Bridge no Banco e Mapping: instale o launcher na VPS e deixe-o aberto. No modo Agent a porta 3306 nao precisa ficar publica.",
+    };
   }
-  if (lowered.includes("not allowed") || lowered.includes("host")) {
-    return { code: "ip_not_allowed", message: "O host da FlowDesk nao esta autorizado no banco da cidade." };
+  if (lowered.includes("not allowed") || lowered.includes("host is not allowed") || lowered.includes("is not allowed to connect")) {
+    return {
+      code: "ip_not_allowed",
+      message:
+        "O banco recusou o IP da FlowDesk. Libere o host da aplicacao no MySQL/MariaDB/PostgreSQL da cidade (GRANT / pg_hba).",
+    };
   }
   return { code: "db_error", message: "Nao foi possivel executar a operacao no banco da cidade." };
 }
@@ -238,8 +247,9 @@ export function settingsToDbTarget(input: {
   passwordOverride?: string | null;
 }): WhitelistDbTarget {
   if (!input.host || !input.database || !input.user) {
-    throw new Error("Informe host, banco e usuario da cidade.");
+    throw new Error("Informe o IP/host da VPS, o nome do banco e o usuario da integracao.");
   }
+  const host = assertCityDbHost(input.host);
   const password = input.passwordOverride
     ? input.passwordOverride
     : decryptWhitelistSecret(input.passwordCipher, input.guildId);
@@ -248,7 +258,7 @@ export function settingsToDbTarget(input: {
   }
   return {
     engine: input.engine,
-    host: input.host,
+    host,
     port: input.port,
     database: input.database,
     user: input.user,

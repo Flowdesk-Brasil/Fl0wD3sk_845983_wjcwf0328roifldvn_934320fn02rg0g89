@@ -92,6 +92,10 @@ function isPasswordResetPath(pathname: string) {
   return pathname === "/pass" || pathname.startsWith("/pass/");
 }
 
+function isLauncherAuthPath(pathname: string) {
+  return pathname === "/launcher" || pathname.startsWith("/launcher/");
+}
+
 function requiresSameOriginProtection(pathname: string, method: string) {
   if (!MUTATION_METHODS.has(method.toUpperCase())) {
     return false;
@@ -353,6 +357,19 @@ function maybeBuildCanonicalAuthRedirect(
     }
   }
 
+  if (isLauncherAuthPath(pathname)) {
+    const targetLocation = new URL(
+      `${pathname}${request.nextUrl.search}`,
+      resolveAuthOrigin(request),
+    ).toString();
+
+    if (targetLocation !== currentLocation) {
+      return buildRedirectResponse(request, requestId, csp, targetLocation);
+    }
+
+    return null;
+  }
+
   if (
     pathname === "/api/auth/discord/callback" ||
     pathname === "/api/auth/discord/callback/" ||
@@ -509,7 +526,10 @@ function maybeBuildCanonicalWorkspaceRedirect(
     return null;
   }
 
-  if (hostArea === "login" && isPasswordResetPath(pathname)) {
+  if (
+    hostArea === "login" &&
+    (isPasswordResetPath(pathname) || isLauncherAuthPath(pathname))
+  ) {
     return null;
   }
 
@@ -521,7 +541,10 @@ function maybeBuildCanonicalWorkspaceRedirect(
     hostArea === "dashboard" && isDashboardEmbeddedPath(pathname);
 
   if (isCanonicalPublicPath(pathname) && !shouldKeepDashboardPathInWorkspace) {
-    const fallbackArea = pathname.startsWith("/login") ? "account" : "public";
+    const fallbackArea =
+      pathname.startsWith("/login") || pathname.startsWith("/launcher")
+        ? "account"
+        : "public";
     const targetLocation = buildCanonicalUrlFromInternalPath(
       request,
       `${pathname}${request.nextUrl.search}`,

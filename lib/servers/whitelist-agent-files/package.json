@@ -1,0 +1,21 @@
+{
+  "name": "flowdesk-whitelist-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Launcher local da whitelist FlowDesk",
+  "main": "index.js",
+  "bin": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "build:exe": "npx --yes @yao-pkg/pkg index.js --targets node18-win-x64 --output FlowDesk-Whitelist-Agent.exe"
+  },
+  "dependencies": {
+    "mysql2": "^3.24.3",
+    "pg": "^8.23.0"
+  },
+  "pkg": {
+    "scripts": "executor.js",
+    "targets": ["node18-win-x64"],
+    "outputPath": "."
+  }
+}

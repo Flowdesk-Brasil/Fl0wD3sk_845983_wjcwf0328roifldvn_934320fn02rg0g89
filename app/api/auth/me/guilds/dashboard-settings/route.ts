@@ -47,6 +47,7 @@ import {
 } from "@/lib/servers/ticketAiSettings";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { getEffectiveDashboardPermissions } from "@/lib/teams/userTeams";
+import { getLauncherStatusForGuild } from "@/lib/launcher/auth";
 
 const GUILD_CATEGORY = 4;
 const GUILD_TEXT = 0;
@@ -850,6 +851,11 @@ function buildWhitelistPayload(input: {
       lastHealthOk: false,
       lastHealthAt: null,
       lastHealthError: null,
+      agentPublicId: null,
+      agentPaired: false,
+      agentOnline: false,
+      agentLastSeenAt: null,
+      agentPublicIp: null,
       updatedAt: input.updatedAt,
     };
   }
@@ -938,6 +944,21 @@ function buildWhitelistPayload(input: {
         : typeof input.record?.last_health_error === "string"
           ? input.record.last_health_error
           : null,
+    agentPublicId:
+      typeof input.record?.agent_public_id === "string"
+        ? input.record.agent_public_id
+        : null,
+    agentPaired: Boolean(input.record?.agent_token_hash || input.record?.agent_public_id),
+    agentOnline: Boolean(
+      typeof input.record?.agent_last_seen_at === "string" &&
+        Date.now() - Date.parse(input.record.agent_last_seen_at) < 45_000,
+    ),
+    agentLastSeenAt:
+      typeof input.record?.agent_last_seen_at === "string"
+        ? input.record.agent_last_seen_at
+        : null,
+    agentPublicIp:
+      typeof input.record?.agent_public_ip === "string" ? input.record.agent_public_ip : null,
     updatedAt: input.updatedAt,
   };
 }
@@ -1397,6 +1418,34 @@ async function ensureGuildAccess(guildId: string) {
   };
 }
 
+async function withLiveLauncherStatus(
+  guildId: string,
+  payload: Record<string, unknown>,
+) {
+  const current = payload.whitelistSettings;
+  if (!current || typeof current !== "object") return payload;
+  const settings = current as Record<string, unknown>;
+  try {
+    const launcher = await getLauncherStatusForGuild(guildId);
+    return {
+      ...payload,
+      whitelistSettings: {
+        ...settings,
+        agentPaired: Boolean(settings.agentPaired || settings.agentPublicId || launcher.paired),
+        agentOnline: Boolean(launcher.online || settings.agentOnline),
+        agentLastSeenAt: launcher.lastSeenAt || settings.agentLastSeenAt || null,
+        agentPublicId: settings.agentPublicId || launcher.publicId || null,
+        connectionMode:
+          launcher.paired || settings.agentPaired || settings.agentPublicId
+            ? "agent"
+            : settings.connectionMode,
+      },
+    };
+  } catch {
+    return payload;
+  }
+}
+
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
@@ -1433,7 +1482,9 @@ export async function GET(request: Request) {
     const cachedPayload =
       readDashboardSettingsCache<Record<string, unknown>>(cacheKey);
     if (cachedPayload) {
-      return applyNoStoreHeaders(NextResponse.json(cachedPayload));
+      return applyNoStoreHeaders(
+        NextResponse.json(await withLiveLauncherStatus(guildId, cachedPayload)),
+      );
     }
 
     const supabase = getSupabaseAdminClientOrThrow();
@@ -1447,7 +1498,7 @@ export async function GET(request: Request) {
       captchaResult,
       suggestionsResult,
       sorteioResult,
-      whitelistResult,
+      whitelistResultRaw,
       batePontoResult,
       antiLinkResult,
       autoRoleResult,
@@ -1501,7 +1552,7 @@ export async function GET(request: Request) {
       supabase
         .from("guild_whitelist_settings")
         .select(
-          "enabled, panel_channel_id, review_channel_id, logs_channel_id, panel_layout, approved_role_ids, denied_role_ids, review_role_ids, identifier_kind, identifier_label, identifier_placeholder, approval_mode, connection_mode, db_engine, db_host, db_port, db_name, db_user, db_ssl, db_password_cipher, mapping, mapping_status, last_health_ok, last_health_at, last_health_error, updated_at",
+          "enabled, panel_channel_id, review_channel_id, logs_channel_id, panel_layout, approved_role_ids, denied_role_ids, review_role_ids, identifier_kind, identifier_label, identifier_placeholder, approval_mode, connection_mode, db_engine, db_host, db_port, db_name, db_user, db_ssl, db_password_cipher, mapping, mapping_status, last_health_ok, last_health_at, last_health_error, agent_public_id, agent_token_hash, agent_last_seen_at, agent_public_ip, updated_at",
         )
         .eq("guild_id", guildId)
         .maybeSingle(),
@@ -1559,6 +1610,7 @@ export async function GET(request: Request) {
       }),
     ]);
 
+    let whitelistResult = whitelistResultRaw;
     const rawChannels = rawChannelsResult.ok ? rawChannelsResult.channels : null;
     const rawRoles = rawRolesResult.ok ? rawRolesResult.roles : null;
 
@@ -1610,9 +1662,22 @@ export async function GET(request: Request) {
       if (
         code !== "42P01" &&
         !(code === "42703" && message.includes("approval_mode")) &&
+        !(code === "42703" && message.includes("agent_")) &&
         !message.includes("guild_whitelist_settings")
       ) {
         throw new Error(whitelistResult.error.message);
+      }
+      if (code === "42703") {
+        const fallback = await supabase
+          .from("guild_whitelist_settings")
+          .select(
+            "enabled, panel_channel_id, review_channel_id, logs_channel_id, panel_layout, approved_role_ids, denied_role_ids, review_role_ids, identifier_kind, identifier_label, identifier_placeholder, approval_mode, connection_mode, db_engine, db_host, db_port, db_name, db_user, db_ssl, db_password_cipher, mapping, mapping_status, last_health_ok, last_health_at, last_health_error, updated_at",
+          )
+          .eq("guild_id", guildId)
+          .maybeSingle();
+        if (!fallback.error) {
+          whitelistResult = { ...fallback };
+        }
       }
     }
     if (batePontoResult.error) {
@@ -1897,7 +1962,9 @@ export async function GET(request: Request) {
       payload,
       DASHBOARD_SETTINGS_CACHE_TTL_MS,
     );
-    return applyNoStoreHeaders(NextResponse.json(payload));
+    return applyNoStoreHeaders(
+      NextResponse.json(await withLiveLauncherStatus(guildId, payload)),
+    );
   } catch (error) {
     return applyNoStoreHeaders(
       NextResponse.json(

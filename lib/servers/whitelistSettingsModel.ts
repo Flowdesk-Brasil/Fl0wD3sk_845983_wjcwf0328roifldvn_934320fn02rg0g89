@@ -13,6 +13,7 @@ import {
   createDefaultWhitelistPanelLayout,
   normalizeWhitelistPanelLayout,
 } from "@/lib/servers/whitelistPanelBuilder";
+import { normalizeCityDbHost } from "@/lib/servers/whitelistHost";
 
 export type WhitelistSettingsDraft = {
   enabled: boolean;
@@ -41,6 +42,11 @@ export type WhitelistSettingsDraft = {
   lastHealthOk: boolean;
   lastHealthAt: string | null;
   lastHealthError: string | null;
+  agentPublicId: string | null;
+  agentPaired: boolean;
+  agentOnline: boolean;
+  agentLastSeenAt: string | null;
+  agentPublicIp: string | null;
 };
 
 export function normalizeWhitelistSettingsDraft(
@@ -80,10 +86,10 @@ export function normalizeWhitelistSettingsDraft(
       input?.identifierPlaceholder || "Ex: 1 ou license:xxxx",
     ).slice(0, 80),
     approvalMode: String(input?.approvalMode || "manual") === "automatic" ? "automatic" : "manual",
-    connectionMode: mode === "agent" ? "agent" : "direct",
+    connectionMode: mode === "direct" ? "direct" : "agent",
     dbEngine:
       engine === "postgres" || engine === "mariadb" ? engine : "mysql",
-    dbHost: String(input?.dbHost || "").trim(),
+    dbHost: normalizeCityDbHost(String(input?.dbHost || "")),
     dbPort: Number.isFinite(port) && port >= 1 && port <= 65535 ? Math.floor(port) : 3306,
     dbName: String(input?.dbName || "").trim(),
     dbUser: String(input?.dbUser || "").trim(),
@@ -99,6 +105,14 @@ export function normalizeWhitelistSettingsDraft(
     lastHealthAt: typeof input?.lastHealthAt === "string" ? input.lastHealthAt : null,
     lastHealthError:
       typeof input?.lastHealthError === "string" ? input.lastHealthError : null,
+    agentPublicId:
+      typeof input?.agentPublicId === "string" && input.agentPublicId.trim()
+        ? input.agentPublicId.trim()
+        : null,
+    agentPaired: input?.agentPaired === true,
+    agentOnline: input?.agentOnline === true,
+    agentLastSeenAt: typeof input?.agentLastSeenAt === "string" ? input.agentLastSeenAt : null,
+    agentPublicIp: typeof input?.agentPublicIp === "string" ? input.agentPublicIp : null,
   };
 }
 
@@ -117,6 +131,9 @@ export function areWhitelistSettingsDraftsEqual(
   const strip = (draft: WhitelistSettingsDraft) => ({
     ...draft,
     dbPassword: "",
+    agentOnline: false,
+    agentLastSeenAt: null,
+    agentPublicIp: null,
   });
   return JSON.stringify(strip(left)) === JSON.stringify(strip(right));
 }
