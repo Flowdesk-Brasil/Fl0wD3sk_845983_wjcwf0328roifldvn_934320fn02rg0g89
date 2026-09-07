@@ -1,22 +1,19 @@
-import { createReadStream, statSync } from "fs";
-import { Readable } from "stream";
 import { NextResponse } from "next/server";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import {
-  LAUNCHER_SETUP_FILE_NAME,
   resolveLauncherArtifactUrl,
   resolveLauncherUpdateYml,
 } from "@/lib/launcher/updateFeed";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ path?: string[] }> },
 ) {
   const params = await context.params;
   const fileName = (params.path || []).join("/") || "latest.yml";
 
   if (!fileName || fileName === "latest.yml") {
-    const yml = await resolveLauncherUpdateYml();
+    const yml = await resolveLauncherUpdateYml(request.url);
     if (!yml) {
       return applyNoStoreHeaders(
         NextResponse.json(
@@ -43,7 +40,7 @@ export async function GET(
     );
   }
 
-  const artifact = await resolveLauncherArtifactUrl(safeName);
+  const artifact = await resolveLauncherArtifactUrl(safeName, request.url);
   if (!artifact) {
     return applyNoStoreHeaders(
       NextResponse.json(
@@ -52,19 +49,5 @@ export async function GET(
       ),
     );
   }
-  if (artifact.kind === "url") {
-    return applyNoStoreHeaders(NextResponse.redirect(artifact.url, 302));
-  }
-
-  const { size } = statSync(artifact.path);
-  const stream = createReadStream(artifact.path);
-  return new NextResponse(Readable.toWeb(stream) as unknown as ReadableStream, {
-    status: 200,
-    headers: {
-      "Content-Type": "application/octet-stream",
-      "Content-Length": String(size),
-      "Content-Disposition": `attachment; filename="${safeName || LAUNCHER_SETUP_FILE_NAME}"`,
-      "Cache-Control": "public, max-age=60",
-    },
-  });
+  return applyNoStoreHeaders(NextResponse.redirect(artifact.url, 302));
 }

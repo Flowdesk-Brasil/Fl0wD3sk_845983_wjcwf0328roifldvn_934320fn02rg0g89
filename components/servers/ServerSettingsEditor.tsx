@@ -3219,7 +3219,7 @@ export function ServerSettingsEditor({
             ? payload.whitelistSettings.reviewRoleIds.filter((id) => roleSet.has(id))
             : []
           : [],
-      });
+      } as Parameters<typeof normalizeWhitelistSettingsDraft>[0]);
 
       const hasBatePontoSettings = Boolean(payload.batePontoSettings);
       const nextBatePontoEnabled = Boolean(payload.batePontoSettings?.enabled);
@@ -7746,7 +7746,11 @@ export function ServerSettingsEditor({
         });
 
         const raw = await response.text();
-        let payload: { ok?: boolean; message?: string; settings?: unknown } = {};
+        let payload: {
+          ok?: boolean;
+          message?: string;
+          settings?: (Partial<WhitelistSettingsDraft> & { updatedAt?: string }) | null;
+        } = {};
         try {
           payload = raw ? (JSON.parse(raw) as typeof payload) : {};
         } catch {

@@ -1676,7 +1676,7 @@ export async function GET(request: Request) {
           .eq("guild_id", guildId)
           .maybeSingle();
         if (!fallback.error) {
-          whitelistResult = { ...fallback };
+          whitelistResult = fallback as unknown as typeof whitelistResult;
         }
       }
     }

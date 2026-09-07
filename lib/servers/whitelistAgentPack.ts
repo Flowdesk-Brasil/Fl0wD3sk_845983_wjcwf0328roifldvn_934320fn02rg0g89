@@ -28,7 +28,7 @@ export function buildWhitelistAgentZip(input: {
   }));
   files.push({
     name: "FlowDesk-Whitelist-Agent/agent.json",
-    content: JSON.stringify(
+    content: Buffer.from(JSON.stringify(
       {
         apiUrl: input.apiUrl,
         publicId: input.publicId,
@@ -45,7 +45,7 @@ export function buildWhitelistAgentZip(input: {
       },
       null,
       2,
-    ),
+    )),
   });
   return buildUncompressedZip(files);
 }

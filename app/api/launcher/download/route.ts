@@ -1,5 +1,3 @@
-import { createReadStream, statSync } from "fs";
-import { Readable } from "stream";
 import { NextResponse } from "next/server";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 import { buildLauncherBindGuildCookie } from "@/lib/launcher/auth";
@@ -8,10 +6,8 @@ import {
   resolveLauncherArtifactUrl,
 } from "@/lib/launcher/updateFeed";
 
-const FILE_NAME = LAUNCHER_SETUP_FILE_NAME;
-
 export async function GET(request: Request) {
-  const artifact = await resolveLauncherArtifactUrl(FILE_NAME);
+  const artifact = await resolveLauncherArtifactUrl(LAUNCHER_SETUP_FILE_NAME, request.url);
   if (!artifact) {
     return applyNoStoreHeaders(
       NextResponse.json(
@@ -27,23 +23,7 @@ export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   const guildId = requestUrl.searchParams.get("guildId") || "";
   const bindCookie = buildLauncherBindGuildCookie(guildId, requestUrl.hostname);
-  if (artifact.kind === "url") {
-    const response = NextResponse.redirect(artifact.url, 302);
-    if (bindCookie) response.headers.set("Set-Cookie", bindCookie);
-    return applyNoStoreHeaders(response);
-  }
-  const filePath = artifact.path;
-  const { size } = statSync(filePath);
-  const stream = createReadStream(filePath);
-  const webStream = Readable.toWeb(stream) as unknown as ReadableStream;
-  return new NextResponse(webStream, {
-    status: 200,
-    headers: {
-      "Content-Type": "application/octet-stream",
-      "Content-Length": String(size),
-      "Content-Disposition": `attachment; filename="${FILE_NAME}"`,
-      "Cache-Control": "private, no-store",
-      ...(bindCookie ? { "Set-Cookie": bindCookie } : {}),
-    },
-  });
+  const response = NextResponse.redirect(artifact.url, 302);
+  if (bindCookie) response.headers.set("Set-Cookie", bindCookie);
+  return applyNoStoreHeaders(response);
 }

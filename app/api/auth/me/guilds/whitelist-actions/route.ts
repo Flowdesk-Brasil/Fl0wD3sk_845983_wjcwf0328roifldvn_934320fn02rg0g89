@@ -93,7 +93,7 @@ export async function POST(request: Request) {
       const job = await enqueueWhitelistAgentJob({
         guildId,
         operation,
-        payload: mappingPayload(body.mapping || existing.data.mapping, String(body.identifierValue || "")),
+        payload: mappingPayload(body.mapping || existing.data?.mapping, String(body.identifierValue || "")),
       });
       const finished = await waitForWhitelistAgentJob(job.id);
       if (finished.status !== "done") {
@@ -141,7 +141,7 @@ export async function POST(request: Request) {
         await supabase
           .from("guild_whitelist_settings")
           .update({
-            mapping: normalizeWhitelistMapping(body.mapping || existing.data.mapping),
+            mapping: normalizeWhitelistMapping(body.mapping || existing.data?.mapping),
             mapping_status: "validated",
             last_health_at: new Date().toISOString(),
             last_health_ok: true,

@@ -37,6 +37,12 @@ yarn-error.log*
 # vercel
 .vercel
 
+# launcher binaries (published via GitHub Releases)
+/public/downloads/*.exe
+/public/downloads/*.blockmap
+/public/downloads/launcher/*.exe
+/public/downloads/launcher/*.blockmap
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

@@ -81,7 +81,9 @@ export async function withCityDatabase<T>(
       return await fn(async (sql, params = []) => {
         let placeholder = 0;
         const pgSql = sql.replace(/\?/g, () => `$${++placeholder}`);
-        const result = await withQueryTimeout(client.query(pgSql, params), "Consulta");
+        const result = (await withQueryTimeout(client.query(pgSql, params), "Consulta")) as {
+          rows?: Record<string, unknown>[];
+        };
         return (result.rows || []) as Record<string, unknown>[];
       });
     } finally {
@@ -100,7 +102,10 @@ export async function withCityDatabase<T>(
   });
   try {
     return await fn(async (sql, params = []) => {
-      const [rows] = await withQueryTimeout(connection.execute(sql, params), "Consulta");
+      const [rows] = await withQueryTimeout(
+        connection.execute(sql, params as never[]),
+        "Consulta",
+      );
       return (Array.isArray(rows) ? rows : []) as Record<string, unknown>[];
     });
   } finally {

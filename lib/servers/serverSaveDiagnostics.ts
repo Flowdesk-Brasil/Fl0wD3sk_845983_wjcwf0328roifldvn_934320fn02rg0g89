@@ -107,7 +107,11 @@ export function resolveServerSaveAccessMode(input: {
 export function recordServerSaveDiagnostic(
   input: RecordServerSaveDiagnosticInput | null | undefined,
 ) {
-  const context = input?.context;
+  if (!input) {
+    console.error("[server-save] diagnostico ignorado: contexto ausente.");
+    return null;
+  }
+  const context = input.context;
   if (!context?.route) {
     console.error(
       "[server-save] diagnostico ignorado: contexto ausente.",

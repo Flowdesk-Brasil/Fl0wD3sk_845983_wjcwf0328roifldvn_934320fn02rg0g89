@@ -1,6 +1,3 @@
-import { existsSync, readFileSync } from "fs";
-import { join } from "path";
-
 const FILE_NAME = "FlowdeskLauncher-Setup.exe";
 const GH_OWNER = process.env.LAUNCHER_GITHUB_OWNER || "Flowdesk-Brasil";
 const GH_REPO =
@@ -16,6 +13,11 @@ type GithubRelease = {
   assets?: GithubAsset[];
 };
 
+export type LauncherArtifact = {
+  kind: "url";
+  url: string;
+};
+
 function githubHeaders() {
   const headers: Record<string, string> = {
     Accept: "application/vnd.github+json",
@@ -24,15 +26,6 @@ function githubHeaders() {
   const token = process.env.LAUNCHER_GITHUB_TOKEN || process.env.GITHUB_TOKEN || "";
   if (token) headers.Authorization = `Bearer ${token}`;
   return headers;
-}
-
-export function localLauncherArtifactPath(fileName: string) {
-  const candidates = [
-    join(process.cwd(), "public", "downloads", "launcher", fileName),
-    join(process.cwd(), "public", "downloads", fileName),
-    join(process.cwd(), "..", "tools", "flowdesk-launcher", "dist", fileName),
-  ];
-  return candidates.find((candidate) => existsSync(candidate)) || null;
 }
 
 function releaseHasLauncherAssets(release: GithubRelease | null) {
@@ -72,9 +65,30 @@ function findAsset(release: GithubRelease, fileName: string) {
   );
 }
 
-export async function resolveLauncherUpdateYml() {
-  const localYml = localLauncherArtifactPath("latest.yml");
-  if (localYml) return readFileSync(localYml, "utf8");
+function publicDownloadUrl(requestUrl: string | URL | undefined, fileName: string) {
+  if (!requestUrl) return null;
+  try {
+    return new URL(`/downloads/${fileName}`, requestUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
+async function tryPublicDownload(requestUrl: string | URL | undefined, fileName: string) {
+  const url = publicDownloadUrl(requestUrl, fileName);
+  if (!url) return null;
+  const response = await fetch(url, { method: "HEAD", cache: "no-store" }).catch(() => null);
+  if (!response?.ok) return null;
+  return url;
+}
+
+export async function resolveLauncherUpdateYml(requestUrl?: string | URL) {
+  const publicUrl = await tryPublicDownload(requestUrl, "latest.yml");
+  if (publicUrl) {
+    const local = await fetch(publicUrl, { cache: "no-store" }).catch(() => null);
+    const text = local?.ok ? await local.text() : "";
+    if (text.includes("version:")) return text;
+  }
 
   const release = await fetchLatestLauncherRelease();
   if (!release) return null;
@@ -88,15 +102,18 @@ export async function resolveLauncherUpdateYml() {
   return ymlResponse.text();
 }
 
-export async function resolveLauncherArtifactUrl(fileName: string) {
-  const local = localLauncherArtifactPath(fileName);
-  if (local) return { kind: "file" as const, path: local };
+export async function resolveLauncherArtifactUrl(
+  fileName: string,
+  requestUrl?: string | URL,
+): Promise<LauncherArtifact | null> {
+  const publicUrl = await tryPublicDownload(requestUrl, fileName);
+  if (publicUrl) return { kind: "url", url: publicUrl };
 
   const release = await fetchLatestLauncherRelease();
   if (!release) return null;
   const asset = findAsset(release, fileName) || findAsset(release, FILE_NAME);
   if (!asset?.browser_download_url) return null;
-  return { kind: "url" as const, url: asset.browser_download_url };
+  return { kind: "url", url: asset.browser_download_url };
 }
 
 export { FILE_NAME as LAUNCHER_SETUP_FILE_NAME };
