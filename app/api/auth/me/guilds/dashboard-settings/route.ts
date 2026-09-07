@@ -36,6 +36,7 @@ import {
 } from "@/lib/servers/sorteioPanelBuilder";
 import { normalizeWhitelistPanelLayout } from "@/lib/servers/whitelistPanelBuilder";
 import { normalizeWhitelistMapping } from "@/lib/servers/whitelistMapping";
+import { isWhitelistModuleActive } from "@/lib/servers/whitelistSettingsModel";
 import {
   createDefaultWelcomeEntryLayout,
   createDefaultWelcomeExitLayout,
@@ -842,7 +843,7 @@ function buildWhitelistPayload(input: {
       reviewRoleIds: [],
       identifierKind: "discord_id",
       identifierLabel: "ID / License",
-      identifierPlaceholder: "Ex: 1 ou license:xxxx",
+      identifierPlaceholder: "Informe seu ID, license ou token",
       nicknameFormat: "{nome} | {ID}",
       approvalMode: "manual",
       connectionMode: "direct",
@@ -886,11 +887,22 @@ function buildWhitelistPayload(input: {
       : "",
     input.guildId,
   );
+  const panelChannelId = pickChannel("panelChannelId", "panel_channel_id");
+  const mapping = normalizeWhitelistMapping(
+    input.snapshot?.mapping ?? input.record?.mapping,
+  );
+  const panelMessageId = String(
+    input.snapshot?.panelMessageId ?? input.record?.panel_message_id ?? "",
+  ).trim();
 
   return {
-    enabled:
-      input.record?.enabled === true || input.snapshot?.enabled === true,
-    panelChannelId: pickChannel("panelChannelId", "panel_channel_id"),
+    enabled: isWhitelistModuleActive({
+      enabled: input.record?.enabled === true || input.snapshot?.enabled === true,
+      panelChannelId,
+      panelMessageId: panelMessageId || null,
+      mapping,
+    }),
+    panelChannelId,
     reviewChannelId: pickChannel("reviewChannelId", "review_channel_id"),
     logsChannelId: pickChannel("logsChannelId", "logs_channel_id"),
     panelLayout: normalizeWhitelistPanelLayout(
@@ -917,7 +929,7 @@ function buildWhitelistPayload(input: {
     identifierPlaceholder: String(
       input.snapshot?.identifierPlaceholder ??
         input.record?.identifier_placeholder ??
-        "Ex: 1 ou license:xxxx",
+        "Informe seu ID, license ou token",
     ),
     nicknameFormat: String(
       input.snapshot?.nicknameFormat ??
@@ -949,9 +961,7 @@ function buildWhitelistPayload(input: {
     dbSsl: Boolean(input.snapshot?.dbSsl ?? input.record?.db_ssl),
     dbPassword: savedPassword,
     hasDbPassword: Boolean(savedPassword || input.record?.db_password_cipher),
-    mapping: normalizeWhitelistMapping(
-      input.snapshot?.mapping ?? input.record?.mapping,
-    ),
+    mapping,
     mappingStatus: String(
       input.snapshot?.mappingStatus ?? input.record?.mapping_status ?? "draft",
     ),
@@ -1514,6 +1524,18 @@ export async function GET(request: Request) {
     const cachedPayload =
       readDashboardSettingsCache<Record<string, unknown>>(cacheKey);
     if (cachedPayload) {
+      const cachedWhitelist = cachedPayload.whitelistSettings;
+      if (cachedWhitelist && typeof cachedWhitelist === "object") {
+        const settings = cachedWhitelist as {
+          enabled?: boolean;
+          panelChannelId?: string | null;
+          mapping?: Record<string, unknown> | null;
+        };
+        cachedPayload.whitelistSettings = {
+          ...settings,
+          enabled: isWhitelistModuleActive(settings),
+        };
+      }
       return applyNoStoreHeaders(
         NextResponse.json(await withLiveLauncherStatus(guildId, cachedPayload)),
       );
@@ -1584,7 +1606,7 @@ export async function GET(request: Request) {
       supabase
         .from("guild_whitelist_settings")
         .select(
-          "enabled, panel_channel_id, review_channel_id, logs_channel_id, panel_layout, approved_role_ids, denied_role_ids, review_role_ids, identifier_kind, identifier_label, identifier_placeholder, approval_mode, connection_mode, db_engine, db_host, db_port, db_name, db_user, db_ssl, db_password_cipher, mapping, mapping_status, last_health_ok, last_health_at, last_health_error, agent_public_id, agent_token_hash, agent_last_seen_at, agent_public_ip, updated_at",
+          "enabled, panel_channel_id, review_channel_id, logs_channel_id, panel_layout, panel_message_id, approved_role_ids, denied_role_ids, review_role_ids, identifier_kind, identifier_label, identifier_placeholder, approval_mode, connection_mode, db_engine, db_host, db_port, db_name, db_user, db_ssl, db_password_cipher, mapping, mapping_status, last_health_ok, last_health_at, last_health_error, agent_public_id, agent_token_hash, agent_last_seen_at, agent_public_ip, updated_at",
         )
         .eq("guild_id", guildId)
         .maybeSingle(),
@@ -1703,7 +1725,7 @@ export async function GET(request: Request) {
         const fallback = await supabase
           .from("guild_whitelist_settings")
           .select(
-            "enabled, panel_channel_id, review_channel_id, logs_channel_id, panel_layout, approved_role_ids, denied_role_ids, review_role_ids, identifier_kind, identifier_label, identifier_placeholder, approval_mode, connection_mode, db_engine, db_host, db_port, db_name, db_user, db_ssl, db_password_cipher, mapping, mapping_status, last_health_ok, last_health_at, last_health_error, updated_at",
+            "enabled, panel_channel_id, review_channel_id, logs_channel_id, panel_layout, panel_message_id, approved_role_ids, denied_role_ids, review_role_ids, identifier_kind, identifier_label, identifier_placeholder, approval_mode, connection_mode, db_engine, db_host, db_port, db_name, db_user, db_ssl, db_password_cipher, mapping, mapping_status, last_health_ok, last_health_at, last_health_error, updated_at",
           )
           .eq("guild_id", guildId)
           .maybeSingle();

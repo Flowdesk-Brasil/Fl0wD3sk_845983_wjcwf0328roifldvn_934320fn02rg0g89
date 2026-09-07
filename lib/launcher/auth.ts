@@ -671,6 +671,22 @@ export async function buildLauncherSyncPayload(session: LauncherSession, body: R
       .eq("status", "claimed")
       .lt("claimed_at", staleCutoff);
 
+    const password =
+      safeDecryptWhitelistPassword(settings.data?.db_password_cipher, session.guildId);
+    const login = resolveCityDbLogin({
+      user: String(settings.data?.db_user || ""),
+      password,
+    });
+    const cityDb = {
+      engine: settings.data?.db_engine === "postgres" ? "postgres" : "mysql",
+      host: "127.0.0.1",
+      port: Number(settings.data?.db_port || 3306),
+      database: String(settings.data?.db_name || ""),
+      user: login.user,
+      password: login.password,
+      ssl: false,
+    };
+
     const queued = await supabase
       .from("guild_whitelist_agent_jobs")
       .select("id, operation, payload")
@@ -686,57 +702,82 @@ export async function buildLauncherSyncPayload(session: LauncherSession, body: R
         .eq("status", "queued");
       const payload =
         job.payload && typeof job.payload === "object" ? (job.payload as Record<string, unknown>) : {};
+      const incomingCityDb =
+        payload.cityDb && typeof payload.cityDb === "object"
+          ? (payload.cityDb as Record<string, unknown>)
+          : {};
       jobs.push({
         id: job.id,
         operation: job.operation,
-        payload: { ...payload, mapping: payload.mapping || mapping },
+        payload: {
+          ...payload,
+          mapping: payload.mapping || mapping,
+          cityDb: {
+            ...incomingCityDb,
+            engine: cityDb.engine || incomingCityDb.engine || "mysql",
+            host: "127.0.0.1",
+            port: Number(incomingCityDb.port || cityDb.port || 3306),
+            database: String(cityDb.database || incomingCityDb.database || ""),
+            user: String(cityDb.user || incomingCityDb.user || ""),
+            password: String(cityDb.password || incomingCityDb.password || ""),
+            ssl: false,
+          },
+        },
       });
     }
+
+    return {
+      ok: true,
+      message: jobs.length ? "Ha tarefas da whitelist." : "Conectado.",
+      jobs,
+      config: {
+        engine: cityDb.engine,
+        host: "127.0.0.1",
+        port: cityDb.port,
+        database: cityDb.database,
+        user: cityDb.user,
+        password: cityDb.password,
+        ssl: false,
+        mapping,
+        db: cityDb,
+      },
+    };
   } catch {
     /* Jobs are optional. Heartbeat already marked the launcher online. */
   }
 
-  const jobCityDb = jobs
-    .map((job) => {
-      const payload =
-        job.payload && typeof job.payload === "object"
-          ? (job.payload as Record<string, unknown>)
-          : {};
-      return payload.cityDb && typeof payload.cityDb === "object"
-        ? (payload.cityDb as Record<string, unknown>)
-        : null;
-    })
-    .find((item) => item && (item.password || item.user || item.database));
-  const password =
-    safeDecryptWhitelistPassword(settings.data?.db_password_cipher, session.guildId) ||
-    String(jobCityDb?.password || "");
+  const password = safeDecryptWhitelistPassword(
+    settings.data?.db_password_cipher,
+    session.guildId,
+  );
   const login = resolveCityDbLogin({
-    user: String(settings.data?.db_user || jobCityDb?.user || ""),
+    user: String(settings.data?.db_user || ""),
     password,
   });
+  const cityDb = {
+    engine: settings.data?.db_engine === "postgres" ? "postgres" : "mysql",
+    host: "127.0.0.1",
+    port: Number(settings.data?.db_port || 3306),
+    database: String(settings.data?.db_name || ""),
+    user: login.user,
+    password: login.password,
+    ssl: false,
+  };
 
   return {
     ok: true,
     message: jobs.length ? "Ha tarefas da whitelist." : "Conectado.",
     jobs,
     config: {
-      engine: settings.data?.db_engine || jobCityDb?.engine || "mysql",
+      engine: cityDb.engine,
       host: "127.0.0.1",
-      port: Number(settings.data?.db_port || jobCityDb?.port || 3306),
-      database: String(settings.data?.db_name || jobCityDb?.database || "skips"),
-      user: login.user,
-      password: login.password,
+      port: cityDb.port,
+      database: cityDb.database,
+      user: cityDb.user,
+      password: cityDb.password,
       ssl: false,
       mapping,
-      db: {
-        engine: settings.data?.db_engine || jobCityDb?.engine || "mysql",
-        host: "127.0.0.1",
-        port: Number(settings.data?.db_port || jobCityDb?.port || 3306),
-        database: String(settings.data?.db_name || jobCityDb?.database || "skips"),
-        user: login.user,
-        password: login.password,
-        ssl: false,
-      },
+      db: cityDb,
     },
   };
 }

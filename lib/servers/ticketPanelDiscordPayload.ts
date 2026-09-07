@@ -51,6 +51,7 @@ type JsonRecord = Record<string, unknown>;
 type BuildState = {
   hasInteractiveOpenAction: boolean;
   interactiveCustomId: string;
+  defaultButtonLabel?: string;
 };
 
 type AnyPanelComponent = TicketPanelComponent | TicketPanelContainerChild;
@@ -103,13 +104,18 @@ function buildButton(
   }
 
   state.hasInteractiveOpenAction = true;
+  const label =
+    component.label.trim() ||
+    state.defaultButtonLabel ||
+    DEFAULT_TICKET_PANEL_BUTTON_LABEL;
+  const safeEmoji = label ? emoji : null;
   return {
     type: COMPONENT_TYPE.BUTTON,
     custom_id: state.interactiveCustomId,
     style: resolveButtonStyle(component.style),
-    label: component.label.trim() || DEFAULT_TICKET_PANEL_BUTTON_LABEL,
+    label,
     disabled: Boolean(component.disabled),
-    ...(emoji ? { emoji } : {}),
+    ...(safeEmoji ? { emoji: safeEmoji } : {}),
   };
 }
 
@@ -345,6 +351,7 @@ export function buildTicketPanelDispatchPayload(
   options: {
     interactiveCustomId?: string;
     userAvatarUrl?: string | null;
+    defaultButtonLabel?: string;
   } = {},
 ) {
   let layout = normalizeTicketPanelLayout(layoutInput);
@@ -355,6 +362,7 @@ export function buildTicketPanelDispatchPayload(
   const state: BuildState = {
     hasInteractiveOpenAction: false,
     interactiveCustomId: options.interactiveCustomId || OPEN_TICKET_CUSTOM_ID,
+    defaultButtonLabel: options.defaultButtonLabel,
   };
 
   const components = buildComponentList(layout, state, options.userAvatarUrl);
@@ -367,7 +375,7 @@ export function buildTicketPanelDispatchPayload(
           type: COMPONENT_TYPE.BUTTON,
           custom_id: state.interactiveCustomId,
           style: BUTTON_STYLE.PRIMARY,
-          label: derived.panelButtonLabel || DEFAULT_TICKET_PANEL_BUTTON_LABEL,
+          label: derived.panelButtonLabel || options.defaultButtonLabel || DEFAULT_TICKET_PANEL_BUTTON_LABEL,
         },
       ],
     });

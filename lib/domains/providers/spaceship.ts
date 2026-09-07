@@ -8,6 +8,7 @@ import type {
   ProviderDomainDetail,
 } from "@/lib/domains/adapter";
 import { parseFqdn, tldRequiresBrDocument } from "@/lib/domains/adapter";
+import { applyTldCatalogFallback, getTldCatalogPrice } from "@/lib/domains/tldCatalog";
 import { DomainProviderError } from "./errors";
 import {
   normalizePhoneParts,
@@ -110,7 +111,7 @@ function domainPricing(tld: string, item: Record<string, unknown>) {
   const premiumRegister = premiumByOperation.get("register");
   const premiumRenew = premiumByOperation.get("renew");
   const premiumTransfer = premiumByOperation.get("transfer");
-  const catalog = parseTldPriceCatalog()[tld];
+  const catalog = parseTldPriceCatalog()[tld] || getTldCatalogPrice(tld);
   const itemPrice = Number(item.price || 0);
   const register = Number(premiumRegister?.price || itemPrice || catalog?.register || 0);
   const renew = Number(premiumRenew?.price || catalog?.renew || register || 0);
@@ -127,11 +128,11 @@ function domainPricing(tld: string, item: Record<string, unknown>) {
 }
 
 function availabilityState(item: Record<string, unknown>) {
-  const result = String(item.result || "");
+  const result = String(item.result || item.status || "").trim().toLowerCase();
   return {
     result,
-    available: result.toLowerCase() === "available",
-    supported: !/unsupported/i.test(result),
+    available: result === "available" || result === "free",
+    supported: Boolean(result) && !/unsupported|unknown|error|failed/i.test(result),
   };
 }
 
@@ -191,7 +192,7 @@ export const spaceshipAdapter: DomainProviderAdapter = {
     const item = response.data.domains?.[0] || {};
     const pricing = domainPricing(parsed.tld, item);
     const state = availabilityState(item);
-    return {
+    return applyTldCatalogFallback({
       fqdn: parsed.fqdn,
       sld: parsed.sld,
       tld: parsed.tld,
@@ -204,7 +205,7 @@ export const spaceshipAdapter: DomainProviderAdapter = {
       currency: pricing.currency,
       provider: "spaceship",
       reason: state.result || null,
-    };
+    });
   },
 
   async checkAvailabilityBatch(fqdns) {
@@ -216,12 +217,14 @@ export const spaceshipAdapter: DomainProviderAdapter = {
       trafficScope: "availability",
       retryOnRateLimit: true,
     });
-    const map = new Map((response.data.domains || []).map((item) => [String(item.domain), item]));
+    const map = new Map(
+      (response.data.domains || []).map((item) => [String(item.domain || "").trim().toLowerCase(), item]),
+    );
     return parsed.map((domain) => {
       const item = map.get(domain.fqdn) || {};
       const pricing = domainPricing(domain.tld, item);
       const state = availabilityState(item);
-      return {
+      return applyTldCatalogFallback({
         fqdn: domain.fqdn,
         sld: domain.sld,
         tld: domain.tld,
@@ -234,7 +237,7 @@ export const spaceshipAdapter: DomainProviderAdapter = {
         currency: pricing.currency,
         provider: "spaceship",
         reason: state.result || null,
-      };
+      });
     });
   },
 

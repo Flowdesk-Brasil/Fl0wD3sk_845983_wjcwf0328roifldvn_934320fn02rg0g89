@@ -21,6 +21,30 @@ import {
 import { resolveCityDbLogin } from "@/lib/servers/cityDbDefaults";
 import { normalizeNicknameFormat } from "@/lib/servers/whitelistNickname";
 
+export function isWhitelistModuleActive(
+  input?: {
+    enabled?: boolean | null;
+    panelChannelId?: string | null;
+    panelMessageId?: string | null;
+    mapping?: {
+      playerTable?: string | null;
+      whitelistColumn?: string | null;
+    } | Record<string, unknown> | null;
+  } | null,
+) {
+  if (!input) return false;
+  if (input.enabled === true) return true;
+  if (input.panelChannelId || input.panelMessageId) return true;
+  const mapping = input.mapping && typeof input.mapping === "object" ? input.mapping : null;
+  return Boolean(
+    mapping &&
+      "playerTable" in mapping &&
+      "whitelistColumn" in mapping &&
+      mapping.playerTable &&
+      mapping.whitelistColumn,
+  );
+}
+
 export type WhitelistSettingsDraft = {
   enabled: boolean;
   panelChannelId: string | null;
@@ -100,7 +124,7 @@ export function normalizeWhitelistSettingsDraft(
     identifierKind: normalizeIdentifierKind(input?.identifierKind),
     identifierLabel: String(input?.identifierLabel || "ID / License").slice(0, 45),
     identifierPlaceholder: String(
-      input?.identifierPlaceholder || "Ex: 1 ou license:xxxx",
+      input?.identifierPlaceholder || "Informe seu ID, license ou token",
     ).slice(0, 80),
     nicknameFormat: normalizeNicknameFormat(
       input?.nicknameFormat ||

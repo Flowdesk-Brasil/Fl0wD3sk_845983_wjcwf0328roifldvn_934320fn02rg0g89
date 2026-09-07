@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   assertUserAdminInGuildOrNull,
   fetchGuildChannelsByBot,
+  fetchGuildSummaryByBot,
   isGuildId,
   resolveSessionAccessToken,
 } from "@/lib/auth/discordGuildAccess";
@@ -40,6 +41,9 @@ import {
 const GUILD_TEXT = 0;
 const GUILD_ANNOUNCEMENT = 5;
 const WHITELIST_START_CUSTOM_ID = "whitelist:request";
+const WHITELIST_PANEL_DISPATCH_COOLDOWN_MS = 2_500;
+const whitelistPanelDispatchInflight = new Map<string, Promise<NextResponse>>();
+const whitelistPanelDispatchLastAt = new Map<string, number>();
 
 function resolveBotToken() {
   return process.env.DISCORD_BOT_TOKEN || process.env.DISCORD_TOKEN || null;
@@ -231,33 +235,35 @@ export async function POST(request: Request) {
     }
 
     const stored = await getStoredPanelMessageId(guildId);
+    const guildSummary = await fetchGuildSummaryByBot(guildId);
     const tokenizedLayout = applyWhitelistPanelTokens(panelLayout, {
-      guildName: panelChannel.name || "este servidor",
+      guildName: guildSummary?.name || "este servidor",
       identifierLabel: String(body.identifierLabel || stored.identifierLabel || "ID / License"),
     });
     const payload = buildTicketPanelDispatchPayload(tokenizedLayout, {
       interactiveCustomId: WHITELIST_START_CUSTOM_ID,
+      defaultButtonLabel: "Solicitar whitelist",
     });
 
-    const listResponse = await fetch(
-      `https://discord.com/api/v10/channels/${panelChannelId}/messages?limit=25`,
-      {
-        headers: { Authorization: `Bot ${botToken}` },
-        cache: "no-store",
-      },
-    );
-    if (!listResponse.ok) {
-      throw new Error("Falha ao buscar mensagens recentes do canal de whitelist.");
+    const lastDispatchAt = whitelistPanelDispatchLastAt.get(guildId) || 0;
+    if (Date.now() - lastDispatchAt < WHITELIST_PANEL_DISPATCH_COOLDOWN_MS) {
+      return applyNoStoreHeaders(
+        NextResponse.json(
+          { ok: false, message: "Aguarde alguns segundos antes de reenviar o embed." },
+          { status: 429 },
+        ),
+      );
     }
 
-    const recentMessages = (await listResponse.json()) as unknown[];
-    let managedMessage = recentMessages.find((message) =>
-      ticketPanelMessageLooksManaged(message, {
-        interactiveCustomId: WHITELIST_START_CUSTOM_ID,
-      }),
-    ) as { id?: string } | undefined;
+    const inflight = whitelistPanelDispatchInflight.get(guildId);
+    if (inflight) {
+      return applyNoStoreHeaders(await inflight);
+    }
 
-    if (!managedMessage && stored.messageId) {
+    const dispatchPromise = (async () => {
+    let managedMessage: { id?: string } | undefined;
+
+    if (stored.messageId) {
       const storedResponse = await fetch(
         `https://discord.com/api/v10/channels/${panelChannelId}/messages/${stored.messageId}`,
         {
@@ -272,9 +278,29 @@ export async function POST(request: Request) {
             interactiveCustomId: WHITELIST_START_CUSTOM_ID,
           })
         ) {
-          managedMessage = storedMessage;
+          managedMessage = storedMessage as { id?: string };
         }
       }
+    }
+
+    if (!managedMessage) {
+      const listResponse = await fetch(
+        `https://discord.com/api/v10/channels/${panelChannelId}/messages?limit=25`,
+        {
+          headers: { Authorization: `Bot ${botToken}` },
+          cache: "no-store",
+        },
+      );
+      if (!listResponse.ok) {
+        throw new Error("Falha ao buscar mensagens recentes do canal de whitelist.");
+      }
+
+      const recentMessages = (await listResponse.json()) as unknown[];
+      managedMessage = recentMessages.find((message) =>
+        ticketPanelMessageLooksManaged(message, {
+          interactiveCustomId: WHITELIST_START_CUSTOM_ID,
+        }),
+      ) as { id?: string } | undefined;
     }
 
     const dispatchResponse = await fetch(
@@ -324,6 +350,17 @@ export async function POST(request: Request) {
         messageId: dispatchedMessage.id,
       }),
     );
+    })();
+
+    whitelistPanelDispatchInflight.set(guildId, dispatchPromise);
+    try {
+      whitelistPanelDispatchLastAt.set(guildId, Date.now());
+      return await dispatchPromise;
+    } finally {
+      if (whitelistPanelDispatchInflight.get(guildId) === dispatchPromise) {
+        whitelistPanelDispatchInflight.delete(guildId);
+      }
+    }
   } catch (error) {
     recordServerSaveDiagnostic({
       context: diagnostic,

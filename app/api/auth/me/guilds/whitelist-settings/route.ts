@@ -31,11 +31,14 @@ import {
   ensureSameOriginJsonMutationRequest,
 } from "@/lib/security/http";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
-import { normalizeWhitelistSettingsDraft } from "@/lib/servers/whitelistSettingsModel";
+import {
+  isWhitelistModuleActive,
+  normalizeWhitelistSettingsDraft,
+} from "@/lib/servers/whitelistSettingsModel";
 import { whitelistPanelHasRequiredParts } from "@/lib/servers/whitelistPanelBuilder";
 import { encryptWhitelistSecret } from "@/lib/servers/whitelistSecret";
 import { resolveCityWhitelistMapping } from "@/lib/servers/whitelistMapping";
-import { deriveLegacyTicketPanelFields } from "@/lib/servers/ticketPanelBuilder";
+import { deriveLegacyWhitelistPanelFields } from "@/lib/servers/whitelistPanelBuilder";
 import { looksLikePublicCityDbHost, resolvePublicCityDbHost } from "@/lib/servers/whitelistHost";
 
 const OPTIONAL_SNOWFLAKE = flowSecureDto.string({
@@ -167,7 +170,7 @@ export async function POST(request: Request) {
 
     diagnostic = createServerSaveDiagnosticContext("whitelist_settings", guildId);
     const draft = normalizeWhitelistSettingsDraft(body);
-    const legacy = deriveLegacyTicketPanelFields(draft.panelLayout);
+    const legacy = deriveLegacyWhitelistPanelFields(draft.panelLayout);
 
     if (draft.enabled && !whitelistPanelHasRequiredParts(draft.panelLayout)) {
       recordServerSaveDiagnostic({
@@ -218,7 +221,9 @@ export async function POST(request: Request) {
     const supabase = getSupabaseAdminClientOrThrow();
     const existing = await supabase
       .from("guild_whitelist_settings")
-      .select("db_password_cipher, db_host, agent_public_ip")
+      .select(
+        "db_password_cipher, db_host, agent_public_ip, enabled, panel_channel_id, review_channel_id, logs_channel_id, panel_message_id, db_name, db_user, mapping, approval_mode, identifier_kind",
+      )
       .eq("guild_id", guildId)
       .maybeSingle();
 
@@ -238,10 +243,30 @@ export async function POST(request: Request) {
       ? encryptWhitelistSecret(incomingPassword, guildId)
       : existing.data?.db_password_cipher || null;
 
+    const existingMapping = resolveCityWhitelistMapping(existing.data?.mapping);
+    const incomingMapping = resolveCityWhitelistMapping(body.mapping);
     const mapping = {
-      ...resolveCityWhitelistMapping(body.mapping),
+      ...(incomingMapping.playerTable ? incomingMapping : existingMapping),
       nicknameFormat: draft.nicknameFormat,
     };
+    const existingActive = isWhitelistModuleActive({
+      enabled: existing.data?.enabled === true,
+      panelChannelId:
+        typeof existing.data?.panel_channel_id === "string"
+          ? existing.data.panel_channel_id
+          : null,
+      panelMessageId:
+        typeof existing.data?.panel_message_id === "string"
+          ? existing.data.panel_message_id
+          : null,
+      mapping: existingMapping,
+    });
+    const incomingWipesModule =
+      draft.enabled !== true &&
+      !draft.panelChannelId &&
+      !incomingMapping.playerTable;
+    const explicitDisable =
+      draft.enabled !== true && existing.data?.enabled === true && !incomingWipesModule;
     let dbHost: string | null = null;
     try {
       dbHost = resolvePublicCityDbHost({
@@ -256,12 +281,27 @@ export async function POST(request: Request) {
     if (dbHost && !looksLikePublicCityDbHost(dbHost)) {
       dbHost = null;
     }
+    const nextPanelChannelId = draft.panelChannelId || existing.data?.panel_channel_id || null;
+    const previousPanelChannelId =
+      typeof existing.data?.panel_channel_id === "string"
+        ? existing.data.panel_channel_id
+        : null;
+    const panelChannelChanged = Boolean(
+      nextPanelChannelId &&
+        previousPanelChannelId &&
+        nextPanelChannelId !== previousPanelChannelId,
+    );
     const row = {
       guild_id: guildId,
-      enabled: draft.enabled,
-      panel_channel_id: draft.panelChannelId,
-      review_channel_id: draft.reviewChannelId,
-      logs_channel_id: draft.logsChannelId,
+      enabled: incomingWipesModule
+        ? existingActive
+        : explicitDisable
+          ? false
+          : draft.enabled === true || existingActive || isWhitelistModuleActive(draft),
+      panel_channel_id: nextPanelChannelId,
+      review_channel_id: draft.reviewChannelId || existing.data?.review_channel_id || null,
+      logs_channel_id: draft.logsChannelId || existing.data?.logs_channel_id || null,
+      panel_message_id: panelChannelChanged ? null : existing.data?.panel_message_id || null,
       panel_layout: draft.panelLayout,
       panel_title: legacy.panelTitle || "Whitelist da cidade",
       panel_description: legacy.panelDescription || "",
@@ -269,7 +309,7 @@ export async function POST(request: Request) {
       approved_role_ids: draft.approvedRoleIds,
       denied_role_ids: draft.deniedRoleIds,
       review_role_ids: draft.reviewRoleIds,
-      identifier_kind: draft.identifierKind,
+      identifier_kind: draft.identifierKind || existing.data?.identifier_kind || "character_id",
       identifier_label: draft.identifierLabel,
       identifier_placeholder: draft.identifierPlaceholder,
       nickname_format: draft.nicknameFormat,
@@ -278,8 +318,8 @@ export async function POST(request: Request) {
       db_engine: draft.dbEngine,
       db_host: dbHost,
       db_port: draft.dbPort,
-      db_name: draft.dbName || null,
-      db_user: draft.dbUser || null,
+      db_name: draft.dbName || existing.data?.db_name || null,
+      db_user: draft.dbUser || existing.data?.db_user || null,
       db_ssl: draft.dbSsl,
       db_password_cipher: nextCipher,
       mapping,

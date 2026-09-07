@@ -13,7 +13,10 @@ import {
   optionLabel,
   optionLabels,
 } from "@/components/servers/module-ui/ModuleUi";
-import type { WhitelistSettingsDraft } from "@/lib/servers/whitelistSettingsModel";
+import {
+  isWhitelistModuleActive,
+  type WhitelistSettingsDraft,
+} from "@/lib/servers/whitelistSettingsModel";
 import { looksLikePublicCityDbHost } from "@/lib/servers/whitelistHost";
 import { cityDbProvisionSql, resolveCityDbLogin } from "@/lib/servers/cityDbDefaults";
 import { previewNicknameFormat } from "@/lib/servers/whitelistNickname";
@@ -71,7 +74,7 @@ function LabeledField({
   children,
 }: {
   label: string;
-  hint?: string;
+  hint?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -82,6 +85,43 @@ function LabeledField({
         <p className="mt-[8px] text-[12px] leading-[1.5] text-[#6F6F74]">{hint}</p>
       ) : null}
     </div>
+  );
+}
+
+function maskHost(value: string) {
+  return String(value || "").replace(/[0-9A-Za-z]/g, "•");
+}
+
+function SpoilerIp({
+  value,
+  revealed,
+  onToggle,
+  className = "",
+}: {
+  value: string;
+  revealed: boolean;
+  onToggle: () => void;
+  className?: string;
+}) {
+  if (!value) return null;
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      title={revealed ? "Ocultar IP" : "Mostrar IP"}
+      className={`inline-flex max-w-full items-center rounded-[8px] bg-[#1A1A1A] px-[8px] py-[2px] align-middle font-mono text-[12px] text-[#D1D1D1] transition-colors hover:bg-[#222] ${className}`}
+    >
+      <span
+        className={
+          revealed
+            ? ""
+            : "pointer-events-none select-none blur-[7px] [filter:blur(7px)]"
+        }
+        aria-hidden={!revealed}
+      >
+        {revealed ? value : maskHost(value)}
+      </span>
+    </button>
   );
 }
 
@@ -106,6 +146,7 @@ export function WhitelistSettingsSection({
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [actionTone, setActionTone] = useState<"ok" | "error">("ok");
   const [showPassword, setShowPassword] = useState(false);
+  const [showHost, setShowHost] = useState(false);
   const [sqlCopied, setSqlCopied] = useState(false);
   const [liveLauncher, setLiveLauncher] = useState<{
     paired: boolean;
@@ -290,7 +331,7 @@ export function WhitelistSettingsSection({
         <div className="grid gap-[12px] md:grid-cols-2 xl:grid-cols-4">
           <ModuleStat
             label="Status"
-            value={draft.enabled ? "Ativo" : "Desligado"}
+            value={isWhitelistModuleActive(draft) ? "Ativo" : "Desligado"}
             hint="Modulo de whitelist"
             icon={Shield}
             delay={0.06}
@@ -314,7 +355,7 @@ export function WhitelistSettingsSection({
             value={draft.lastHealthOk ? "Saudavel" : draft.lastHealthAt ? "Instavel" : "Nao testado"}
             hint={
               looksLikePublicCityDbHost(draft.dbHost || detectedPublicIp)
-                ? draft.dbHost || detectedPublicIp
+                ? "IP da VPS oculto"
                 : launcherOnline
                   ? "IP publico pendente"
                   : "Aguardando VPS"
@@ -487,11 +528,24 @@ export function WhitelistSettingsSection({
                     </span>
                   </div>
                   <p className="mt-[4px] text-[13px] leading-[1.55] text-[#8A8A8E]">
-                    {launcherOnline
-                      ? `Conectado${liveLauncher?.hostname ? ` · ${liveLauncher.hostname}` : ""}${detectedPublicIp ? ` · ${detectedPublicIp}` : ""}.`
-                      : launcherPaired
-                        ? "Launcher vinculado. Abra o aplicativo na VPS da cidade para continuar."
-                        : "Baixe o instalador, instale na VPS da cidade e entre com sua conta Flowdesk."}
+                    {launcherOnline ? (
+                      <>
+                        Conectado
+                        {liveLauncher?.hostname ? ` · ${liveLauncher.hostname}` : ""}
+                        {detectedPublicIp ? (
+                          <>
+                            {" · "}
+                            <SpoilerIp
+                              value={detectedPublicIp}
+                              revealed={showHost}
+                              onToggle={() => setShowHost((value) => !value)}
+                            />
+                          </>
+                        ) : null}
+                      </>
+                    ) : launcherPaired
+                      ? "Launcher vinculado. Abra o aplicativo na VPS da cidade para continuar."
+                      : "Baixe o instalador, instale na VPS da cidade e entre com sua conta Flowdesk."}
                   </p>
                 </div>
               </div>
@@ -541,18 +595,46 @@ export function WhitelistSettingsSection({
               label="IP publico da VPS"
               hint={
                 detectedPublicIp
-                  ? `Detectado automaticamente: ${detectedPublicIp}`
+                  ? "Detectado automaticamente. Clique no olho para ver o IP."
                   : "Use o IP publico da VPS. O launcher preenche este campo quando estiver online."
               }
             >
-              <input
-                placeholder={detectedPublicIp || "187.45.12.30"}
-                value={draft.dbHost}
-                autoComplete="off"
-                onChange={(event) => onChange({ dbHost: event.currentTarget.value })}
-                disabled={disabled}
-                className={fieldClassName}
-              />
+              <div className="relative">
+                <input
+                  placeholder="IP da VPS"
+                  value={draft.dbHost}
+                  autoComplete="off"
+                  spellCheck={false}
+                  onFocus={() => setShowHost(true)}
+                  onChange={(event) => {
+                    setShowHost(true);
+                    onChange({ dbHost: event.currentTarget.value });
+                  }}
+                  disabled={disabled}
+                  className={`${fieldClassName} pr-[46px] ${
+                    showHost || !draft.dbHost
+                      ? ""
+                      : "select-none caret-transparent blur-[6px] [-webkit-text-security:disc]"
+                  }`}
+                  style={
+                    showHost || !draft.dbHost
+                      ? undefined
+                      : { WebkitTextSecurity: "disc" }
+                  }
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowHost((value) => !value)}
+                  className="absolute top-1/2 right-[12px] z-[1] -translate-y-1/2 text-[#8A8A8E] transition-colors hover:text-[#F4F4F5]"
+                  aria-label={showHost ? "Ocultar IP" : "Mostrar IP"}
+                >
+                  {showHost ? (
+                    <EyeOff className="h-[16px] w-[16px]" strokeWidth={1.8} />
+                  ) : (
+                    <Eye className="h-[16px] w-[16px]" strokeWidth={1.8} />
+                  )}
+                </button>
+              </div>
             </LabeledField>
             <LabeledField label="Nome do banco" hint="Nome do banco da cidade no HeidiSQL, por exemplo vrp ou essence.">
               <input

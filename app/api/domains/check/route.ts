@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getCurrencyToBRLRate } from "@/lib/currency";
 import {
   checkLocalRateLimit,
   getJsonSecurityHeaders,
@@ -8,6 +9,7 @@ import { streamSearchDomains } from "@/lib/domains/search";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 export async function POST(req: Request) {
   const requestId = Math.random().toString(36).slice(2, 8);
@@ -39,12 +41,20 @@ export async function POST(req: Request) {
     }
 
     const encoder = new TextEncoder();
+    const exchangeRate = await getCurrencyToBRLRate("USD").catch(() => 5.65);
     const stream = new ReadableStream({
       async start(controller) {
         try {
           await streamSearchDomains(domain, (chunk) => {
             controller.enqueue(
-              encoder.encode(`${JSON.stringify({ ...chunk, exchangeRate: 1, requestId, ok: true })}\n`),
+              encoder.encode(
+                `${JSON.stringify({
+                  ...chunk,
+                  exchangeRate: chunk.exchangeRate || exchangeRate,
+                  requestId,
+                  ok: true,
+                })}\n`,
+              ),
             );
           });
         } catch (error) {
@@ -66,9 +76,10 @@ export async function POST(req: Request) {
     return new Response(stream, {
       headers: {
         ...getJsonSecurityHeaders(requestId),
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache, no-transform",
+        "Content-Type": "application/x-ndjson; charset=utf-8",
+        "Cache-Control": "no-cache, no-store, no-transform",
         Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
       },
     });
   } catch (error) {

@@ -17,10 +17,13 @@ import { ButtonLoader } from "@/components/login/ButtonLoader";
 
 type DomainMode = "register" | "ai";
 
+type DomainCheckState = "available" | "taken" | "unknown";
+
 type DomainResult = {
   domain: string;
   extension: string;
   status: string;
+  checkState?: DomainCheckState;
   isAvailable: boolean;
   price: number;
   currency: string;
@@ -198,7 +201,17 @@ function formatMoney(amount: number, currency: string, rate = 5.65) {
   }
 }
 
+function resultCheckState(result: DomainResult): DomainCheckState {
+  if (result.checkState) return result.checkState;
+  if (result.status === "unknown") return "unknown";
+  return result.isAvailable ? "available" : "taken";
+}
+
 function compactDomainMeta(result: DomainResult) {
+  if (resultCheckState(result) === "unknown") {
+    return result.reason || "A consulta deste dominio nao respondeu. Tente novamente.";
+  }
+
   if (result.reason) {
     return result.reason;
   }
@@ -255,16 +268,17 @@ function MiniPoint({ children }: { children: ReactNode }) {
 }
 
 function AvailabilityText({ result }: { result: DomainResult }) {
+  const state = resultCheckState(result);
   return (
-    <ResultPill tone={result.isAvailable ? "success" : "neutral"}>
-      {result.isAvailable ? "Disponivel" : "Registrado"}
+    <ResultPill tone={state === "available" ? "success" : state === "unknown" ? "brand" : "neutral"}>
+      {state === "available" ? "Disponivel" : state === "unknown" ? "Sem resposta" : "Registrado"}
     </ResultPill>
   );
 }
 
 function DomainSkeleton() {
   return (
-    <div className="mx-auto mt-7 w-full max-w-[1280px] space-y-3">
+    <div className="mx-auto mt-7 w-full space-y-3">
       <div className="grid gap-3 lg:grid-cols-2">
         {[1, 2].map((item) => (
           <div
@@ -461,7 +475,65 @@ export function DomainSearchSection({
         });
         setError(errorMessage);
         setIsMaintenanceMode(/manutenc/i.test(errorMessage));
-        setIsLoading(false);
+        return;
+      }
+
+      const applyRegisterChunk = (chunk: {
+        isError?: boolean;
+        message?: string;
+        exchangeRate?: number;
+        isIntermediate?: boolean;
+        exactDomain?: string | null;
+        searchedTlds?: string[];
+        results?: DomainResult[];
+      }) => {
+        if (chunk.isError) {
+          setError(chunk.message || "Falha ao consultar dominios.");
+          return false;
+        }
+
+        if (chunk.exchangeRate) setExchangeRate(chunk.exchangeRate);
+
+        setRegisterData((prev) => {
+          const base = prev || {
+            ok: true as const,
+            query: normalizedQuery,
+            exactDomain: null,
+            searchedTlds: [],
+            results: [],
+            exchangeRate: chunk.exchangeRate || 5.75,
+          };
+          const existingMap = new Map((base.results || []).map((item) => [item.domain, item]));
+          chunk.results?.forEach((item) => existingMap.set(item.domain, item));
+          return {
+            ...base,
+            exactDomain: chunk.exactDomain || base.exactDomain,
+            searchedTlds: Array.from(new Set([...base.searchedTlds, ...(chunk.searchedTlds || [])])),
+            results: Array.from(existingMap.values()),
+          };
+        });
+        return true;
+      };
+
+      const contentType = response.headers.get("content-type") || "";
+      if (contentType.includes("application/json") && !contentType.includes("ndjson")) {
+        const data = (await response.json()) as RegisterSearchResponse | DomainSearchFailure | {
+          isError?: boolean;
+          message?: string;
+          results?: DomainResult[];
+          exactDomain?: string | null;
+          searchedTlds?: string[];
+          exchangeRate?: number;
+        };
+        if ("ok" in data && data.ok === false) {
+          const errorMessage = resolveDomainSearchMessage({
+            backendMessage: data.message || "Falha ao consultar dominios.",
+          });
+          setError(errorMessage);
+          setIsMaintenanceMode(/manutenc/i.test(errorMessage));
+          return;
+        }
+        applyRegisterChunk(data);
         return;
       }
 
@@ -469,9 +541,21 @@ export function DomainSearchSection({
       if (!reader) throw new Error("Falha ao iniciar stream de dados.");
       
       const textDecoder = new TextDecoder();
-
-
       let buffer = "";
+
+      const consumeBuffer = (flush = false) => {
+        const pieces = buffer.split("\n");
+        buffer = flush ? "" : pieces.pop() || "";
+
+        for (const line of pieces) {
+          if (!line.trim()) continue;
+          try {
+            applyRegisterChunk(JSON.parse(line));
+          } catch (error) {
+            console.warn("Chunk parse error:", error);
+          }
+        }
+      };
       
       setRegisterData({
         ok: true,
@@ -484,50 +568,15 @@ export function DomainSearchSection({
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          buffer += textDecoder.decode();
+          consumeBuffer(true);
+          break;
+        }
         if (!value) continue;
 
         buffer += textDecoder.decode(value, { stream: true });
-
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const chunk = JSON.parse(line);
-            
-            if (chunk.isError) {
-              setError(chunk.message);
-              break;
-            }
-
-            if (chunk.exchangeRate) setExchangeRate(chunk.exchangeRate);
-
-            setRegisterData(prev => {
-              if (!prev) return prev;
-              
-              // Only finish loading when isIntermediate is false
-              if (!chunk.isIntermediate) {
-                setIsLoading(false);
-              }
-
-              // Merge results, removing duplicates (prioritize new ones)
-              const existingMap = new Map((prev.results || []).map(r => [r.domain, r]));
-              chunk.results?.forEach((r: DomainResult) => existingMap.set(r.domain, r));
-
-              return {
-                ...prev,
-                exactDomain: chunk.exactDomain || prev.exactDomain,
-                searchedTlds: Array.from(new Set([...prev.searchedTlds, ...(chunk.searchedTlds || [])])),
-                results: Array.from(existingMap.values())
-              };
-            });
-
-          } catch (e) {
-            console.warn("Chunk parse error:", e);
-          }
-        }
+        consumeBuffer(false);
       }
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
@@ -538,10 +587,7 @@ export function DomainSearchSection({
       setError(fallbackError);
       setIsMaintenanceMode(/manutenc/i.test(fallbackError));
     } finally {
-      if (activeRequestRef.current === controller && !isAi) {
-        // isLoading is handled inside the stream loop for non-AI
-        activeRequestRef.current = null;
-      } else if (isAi) {
+      if (activeRequestRef.current === controller) {
         setIsLoading(false);
         activeRequestRef.current = null;
       }
@@ -752,7 +798,7 @@ export function DomainSearchSection({
       {isLoading && <DomainSkeleton />}
 
       {!isLoading && !isMaintenanceMode && activeTab === "ai" && aiData && aiData.suggestions.length > 0 && (
-        <div className="mx-auto mt-7 w-full max-w-[1280px] rounded-[22px] border border-[#141414] bg-[#090909] p-[16px]">
+        <div className="mx-auto mt-7 w-full rounded-[22px] border border-[#141414] bg-[#090909] p-[16px]">
           <div className="flex flex-col items-start gap-[14px] lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0 space-y-[8px] text-left">
               <div className="inline-flex items-center gap-[8px] rounded-[7px] border border-[#16315F] bg-[#0E1728] px-[10px] py-[6px] text-[11px] leading-none font-medium text-[#8DB7FF]">
@@ -811,7 +857,7 @@ export function DomainSearchSection({
       )}
 
       {!isLoading && !isMaintenanceMode && exactMatch && (
-        <div className="mx-auto mt-7 w-full max-w-[1280px] space-y-3">
+        <div className="mx-auto mt-7 w-full space-y-3">
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1.06fr)_minmax(0,0.94fr)]">
             <section className="flex flex-col rounded-[22px] border border-[#141414] bg-[#0A0A0A] p-[16px]">
               <div className="flex flex-wrap items-center gap-[8px]">
@@ -846,10 +892,20 @@ export function DomainSearchSection({
                   <LandingActionButton
                     variant={exactMatch.isAvailable ? "blue" : "dark"}
                     className="h-[42px] min-w-[148px] rounded-[12px] !px-[18px] text-[13px]"
-                    disabled={!exactMatch.isAvailable}
-                    onClick={() => openDashboardCheckout(exactMatch.domain)}
+                    disabled={!exactMatch.isAvailable && resultCheckState(exactMatch) !== "unknown"}
+                    onClick={() => {
+                      if (resultCheckState(exactMatch) === "unknown") {
+                        void handleSearch(searchQuery, activeTab === "ai");
+                        return;
+                      }
+                      openDashboardCheckout(exactMatch.domain);
+                    }}
                   >
-                    {exactMatch.isAvailable ? "Registrar" : "Indisponivel"}
+                    {exactMatch.isAvailable
+                      ? "Registrar"
+                      : resultCheckState(exactMatch) === "unknown"
+                        ? "Tentar de novo"
+                        : "Indisponivel"}
                   </LandingActionButton>
                 </div>
               </div>
@@ -981,10 +1037,20 @@ export function DomainSearchSection({
                                 ? "border border-[#171717] !bg-[#0D0D0D] text-[#D8D8D8] hover:!border-[#232323] hover:!bg-[#111111] hover:text-[#F1F1F1]"
                                 : ""
                             }`}
-                            disabled={!item.isAvailable}
-                            onClick={() => openDashboardCheckout(item.domain)}
+                            disabled={!item.isAvailable && resultCheckState(item) !== "unknown"}
+                            onClick={() => {
+                              if (resultCheckState(item) === "unknown") {
+                                void handleSearch(searchQuery, activeTab === "ai");
+                                return;
+                              }
+                              openDashboardCheckout(item.domain);
+                            }}
                           >
-                            {item.isAvailable ? "Comprar agora" : "Indisponivel"}
+                            {item.isAvailable
+                              ? "Comprar agora"
+                              : resultCheckState(item) === "unknown"
+                                ? "Tentar de novo"
+                                : "Indisponivel"}
                           </LandingActionButton>
                         </div>
                       </div>
