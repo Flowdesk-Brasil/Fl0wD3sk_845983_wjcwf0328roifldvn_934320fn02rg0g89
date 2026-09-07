@@ -746,19 +746,34 @@ export async function buildLauncherSyncPayload(session: LauncherSession, body: R
     /* Jobs are optional. Heartbeat already marked the launcher online. */
   }
 
-  const password = safeDecryptWhitelistPassword(
-    settings.data?.db_password_cipher,
-    session.guildId,
-  );
+  const jobCityDb = jobs
+    .map((job) => {
+      const payload =
+        job.payload && typeof job.payload === "object"
+          ? (job.payload as Record<string, unknown>)
+          : {};
+      return payload.cityDb && typeof payload.cityDb === "object"
+        ? (payload.cityDb as Record<string, unknown>)
+        : null;
+    })
+    .find((item) => item && (item.password || item.user || item.database));
+  const password =
+    safeDecryptWhitelistPassword(settings.data?.db_password_cipher, session.guildId) ||
+    String(jobCityDb?.password || "");
   const login = resolveCityDbLogin({
-    user: String(settings.data?.db_user || ""),
+    user: String(settings.data?.db_user || jobCityDb?.user || ""),
     password,
   });
   const cityDb = {
-    engine: settings.data?.db_engine === "postgres" ? "postgres" : "mysql",
+    engine:
+      settings.data?.db_engine === "postgres"
+        ? "postgres"
+        : String(jobCityDb?.engine || "mysql") === "postgres"
+          ? "postgres"
+          : "mysql",
     host: "127.0.0.1",
-    port: Number(settings.data?.db_port || 3306),
-    database: String(settings.data?.db_name || ""),
+    port: Number(settings.data?.db_port || jobCityDb?.port || 3306),
+    database: String(settings.data?.db_name || jobCityDb?.database || ""),
     user: login.user,
     password: login.password,
     ssl: false,
