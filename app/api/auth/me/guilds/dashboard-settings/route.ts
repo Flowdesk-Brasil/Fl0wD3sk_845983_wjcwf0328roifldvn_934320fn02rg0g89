@@ -889,9 +889,7 @@ function buildWhitelistPayload(input: {
 
   return {
     enabled:
-      typeof input.snapshot?.enabled === "boolean"
-        ? input.snapshot.enabled
-        : input.record?.enabled === true,
+      input.record?.enabled === true || input.snapshot?.enabled === true,
     panelChannelId: pickChannel("panelChannelId", "panel_channel_id"),
     reviewChannelId: pickChannel("reviewChannelId", "review_channel_id"),
     logsChannelId: pickChannel("logsChannelId", "logs_channel_id"),
