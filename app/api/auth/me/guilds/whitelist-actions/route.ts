@@ -11,15 +11,14 @@ import {
 } from "@/lib/security/http";
 import { sanitizeErrorMessage } from "@/lib/security/errors";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
-import {
-  inspectCitySchema,
-  sanitizeDbError,
-  settingsToDbTarget,
-  testCityDatabase,
-  testWhitelistMapping,
-} from "@/lib/servers/whitelistCityDb";
-import { normalizeWhitelistMapping } from "@/lib/servers/whitelistMapping";
+import { sanitizeDbError, settingsToDbTarget } from "@/lib/servers/whitelistCityDb";
+import { runCityWhitelistAction } from "@/lib/servers/cityDatabaseGateway";
+import { createVrpUsersMapping } from "@/lib/servers/whitelistMapping";
 import { resolvePublicCityDbHost } from "@/lib/servers/whitelistHost";
+import {
+  encryptWhitelistSecret,
+  resolveWhitelistDbPassword,
+} from "@/lib/servers/whitelistSecret";
 
 export async function POST(request: Request) {
   const invalid = ensureSameOriginJsonMutationRequest(request);
@@ -33,6 +32,11 @@ export async function POST(request: Request) {
     if (!isGuildId(guildId)) {
       return applyNoStoreHeaders(
         NextResponse.json({ ok: false, message: "Guild ID invalido." }, { status: 400 }),
+      );
+    }
+    if (action !== "test" && action !== "inspect" && action !== "validate") {
+      return applyNoStoreHeaders(
+        NextResponse.json({ ok: false, message: "Acao invalida." }, { status: 400 }),
       );
     }
 
@@ -71,6 +75,11 @@ export async function POST(request: Request) {
       .eq("guild_id", guildId)
       .maybeSingle();
 
+    const resolvedSecret = resolveWhitelistDbPassword({
+      cipher: existing.data?.db_password_cipher,
+      guildId,
+      override: String(body.dbPassword || ""),
+    });
     const target = settingsToDbTarget({
       guildId,
       engine: (String(body.dbEngine || existing.data?.db_engine || "mysql") as
@@ -85,100 +94,76 @@ export async function POST(request: Request) {
       port: Number(body.dbPort || existing.data?.db_port || 3306),
       database: String(body.dbName || existing.data?.db_name || ""),
       user: String(body.dbUser || existing.data?.db_user || ""),
-      ssl: Boolean(body.dbSsl ?? existing.data?.db_ssl),
+      ssl: false,
       passwordCipher: existing.data?.db_password_cipher || null,
-      passwordOverride: String(body.dbPassword || "") || null,
+      passwordOverride: resolvedSecret.password,
     });
 
-    if (action === "test") {
-      const result = await testCityDatabase(target);
-      await supabase
-        .from("guild_whitelist_settings")
-        .update({
-          connection_mode: "direct",
-          db_host: target.host,
-          last_health_at: new Date().toISOString(),
-          last_health_ok: true,
-          last_health_error: null,
-          last_health_latency_ms: result.latencyMs,
-        })
-        .eq("guild_id", guildId);
+    const credentialPatch = {
+      connection_mode: "direct",
+      db_engine: target.engine === "postgres" ? "postgres" : String(body.dbEngine || existing.data?.db_engine || "mysql"),
+      db_host: target.host,
+      db_port: target.port,
+      db_name: target.database,
+      db_user: target.user,
+      db_ssl: false,
+      db_password_cipher: encryptWhitelistSecret(resolvedSecret.password, guildId),
+      mapping: createVrpUsersMapping(),
+    };
+    await supabase.from("guild_whitelist_settings").update(credentialPatch).eq("guild_id", guildId);
+
+    const result = await runCityWhitelistAction({
+      guildId,
+      action,
+      target,
+      mapping: createVrpUsersMapping(),
+      identifierValue: String(body.identifierValue || ""),
+    });
+
+    if (!result.ok) {
+      const failedPatch: Record<string, unknown> = {
+        last_health_at: new Date().toISOString(),
+        last_health_ok: false,
+        last_health_error: result.message,
+      };
+      if (action === "validate") failedPatch.mapping_status = "invalid";
+      await supabase.from("guild_whitelist_settings").update(failedPatch).eq("guild_id", guildId);
       return applyNoStoreHeaders(
         NextResponse.json({
-          ok: true,
-          message: `Conexao remota ok em ${target.host}:${target.port} (${result.latencyMs}ms).`,
-          latencyMs: result.latencyMs,
-          host: target.host,
+          ok: false,
+          message: result.message,
+          via: result.via,
+          host: result.host,
         }),
       );
     }
 
-    if (action === "inspect") {
-      const inspected = await inspectCitySchema(target);
-      await supabase
-        .from("guild_whitelist_settings")
-        .update({
-          connection_mode: "direct",
-          db_host: target.host,
-          schema_fingerprint: inspected.fingerprint,
-          last_health_at: new Date().toISOString(),
-          last_health_ok: true,
-          last_health_error: null,
-        })
-        .eq("guild_id", guildId);
-      return applyNoStoreHeaders(
-        NextResponse.json({
-          ok: true,
-          message: "Schema analisado. Confirme o mapping candidato.",
-          tables: inspected.tables,
-          inferred: inspected.inferred,
-        }),
-      );
-    }
-
-    if (action === "validate") {
-      const mapping = normalizeWhitelistMapping(body.mapping || existing.data?.mapping);
-      await testCityDatabase(target);
-      const identifierValue = String(body.identifierValue || "").trim();
-      if (!identifierValue) {
-        return applyNoStoreHeaders(
-          NextResponse.json({
-            ok: false,
-            message: "Informe um identificador de teste para localizar o registro sem alterar dados.",
-          }),
-        );
-      }
-      const lookup = await testWhitelistMapping(target, mapping, identifierValue);
-      if (!lookup.ok) {
-        await supabase
-          .from("guild_whitelist_settings")
-          .update({ mapping_status: "invalid" })
-          .eq("guild_id", guildId);
-        return applyNoStoreHeaders(NextResponse.json(lookup));
-      }
-      await supabase
-        .from("guild_whitelist_settings")
-        .update({
-          connection_mode: "direct",
-          db_host: target.host,
-          mapping,
-          mapping_status: "validated",
-          last_health_at: new Date().toISOString(),
-          last_health_ok: true,
-          last_health_error: null,
-        })
-        .eq("guild_id", guildId);
-      return applyNoStoreHeaders(
-        NextResponse.json({
-          ok: true,
-          message: "Mapping validado. Registro localizado sem alterar dados.",
-          lookup,
-        }),
-      );
-    }
+    const healthPatch: Record<string, unknown> = {
+      connection_mode: "direct",
+      db_host: target.host,
+      db_name: target.database,
+      db_user: target.user,
+      db_port: target.port,
+      mapping: createVrpUsersMapping(),
+      mapping_status: "validated",
+      last_health_at: new Date().toISOString(),
+      last_health_ok: true,
+      last_health_error: null,
+      last_health_latency_ms: result.latencyMs || null,
+    };
+    await supabase.from("guild_whitelist_settings").update(healthPatch).eq("guild_id", guildId);
 
     return applyNoStoreHeaders(
-      NextResponse.json({ ok: false, message: "Acao invalida." }, { status: 400 }),
+      NextResponse.json({
+        ok: true,
+        message: result.message,
+        via: result.via,
+        host: result.host,
+        latencyMs: result.latencyMs || 0,
+        tables: result.tables || [],
+        inferred: result.inferred || null,
+        lookup: result.lookup || null,
+      }),
     );
   } catch (error) {
     const sanitized = sanitizeDbError(error);

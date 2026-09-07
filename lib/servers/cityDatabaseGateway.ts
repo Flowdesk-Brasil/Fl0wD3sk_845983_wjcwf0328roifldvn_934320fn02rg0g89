@@ -1,0 +1,332 @@
+import "server-only";
+
+import { getLauncherStatusForGuild } from "@/lib/launcher/auth";
+import {
+  applyWhitelistState,
+  inspectCitySchema,
+  isUnreachableDbError,
+  probeCityDbPort,
+  sampleWhitelistMapping,
+  sanitizeDbError,
+  testCityDatabase,
+  testWhitelistMapping,
+  type WhitelistDbTarget,
+} from "@/lib/servers/whitelistCityDb";
+import {
+  inferWhitelistMapping,
+  normalizeWhitelistMapping,
+  type WhitelistMapping,
+} from "@/lib/servers/whitelistMapping";
+import {
+  enqueueWhitelistAgentJob,
+  mappingPayload,
+  waitForWhitelistAgentJob,
+} from "@/lib/servers/whitelistAgentJobs";
+
+export type CityWhitelistAction = "test" | "inspect" | "validate" | "approve" | "remove";
+
+export type CityWhitelistResult = {
+  ok: boolean;
+  via: "direct" | "vps";
+  host: string;
+  port: number;
+  message: string;
+  latencyMs?: number;
+  hasVrpUsers?: boolean;
+  tables?: unknown;
+  inferred?: unknown;
+  lookup?: unknown;
+  playerKey?: string;
+  currentValue?: string | null;
+  previousValue?: string | null;
+  nextValue?: string | null;
+  state?: string;
+  skipped?: boolean;
+  code?: string;
+};
+
+function operationFor(action: CityWhitelistAction, identifierValue: string) {
+  if (action === "inspect") return "INSPECT_SCHEMA" as const;
+  if (action === "validate") return identifierValue ? ("TEST_MAPPING" as const) : ("INSPECT_SCHEMA" as const);
+  if (action === "approve") return "APPROVE_WHITELIST" as const;
+  if (action === "remove") return "REMOVE_WHITELIST" as const;
+  return "TEST_CONNECTION" as const;
+}
+
+function mappingColumnsExist(mapping: WhitelistMapping, columns: Array<{ table: string; column: string }>) {
+  const table = mapping.playerTable.toLowerCase();
+  const idColumn = mapping.playerIdColumn.toLowerCase();
+  const whitelistColumn = mapping.whitelistColumn.toLowerCase();
+  return (
+    columns.some((item) => item.table.toLowerCase() === table && item.column.toLowerCase() === idColumn) &&
+    columns.some((item) => item.table.toLowerCase() === table && item.column.toLowerCase() === whitelistColumn)
+  );
+}
+
+function viaMessage(via: "direct" | "vps", text: string) {
+  return via === "vps" ? `Via VPS: ${text}` : text;
+}
+
+async function runDirect(
+  action: CityWhitelistAction,
+  target: WhitelistDbTarget,
+  mapping: WhitelistMapping,
+  identifierValue: string,
+): Promise<Omit<CityWhitelistResult, "via" | "host" | "port">> {
+  if (action === "test") {
+    const result = await testCityDatabase(target);
+    return {
+      ok: true,
+      message: `MySQL ok (${result.latencyMs}ms).`,
+      latencyMs: result.latencyMs,
+    };
+  }
+  if (action === "inspect") {
+    const inspected = await inspectCitySchema(target);
+    return {
+      ok: true,
+      message: inspected.inferred
+        ? `Schema lido. ${inspected.inferred.notes?.[0] || "Confirme o mapping."}`
+        : "Schema lido.",
+      tables: inspected.tables,
+      inferred: inspected.inferred,
+    };
+  }
+  if (action === "validate") {
+    const lookup = identifierValue
+      ? await testWhitelistMapping(target, mapping, identifierValue)
+      : await sampleWhitelistMapping(target, mapping);
+    return {
+      ok: lookup.ok !== false,
+      message: lookup.message || (lookup.ok === false ? "Mapping invalido." : "Mapping validado."),
+      lookup,
+      playerKey: "playerKey" in lookup ? String(lookup.playerKey || "") : undefined,
+      currentValue: "currentValue" in lookup ? lookup.currentValue : undefined,
+      state: "state" in lookup ? String(lookup.state || "") : undefined,
+      code: lookup.code,
+    };
+  }
+  const applied = await applyWhitelistState({
+    target,
+    mapping,
+    identifierValue,
+    approve: action === "approve",
+  });
+  return {
+    ok: applied.ok !== false,
+    message: applied.message || (applied.ok === false ? "Falha ao aplicar." : "Whitelist atualizada."),
+    lookup: applied,
+    playerKey: "playerKey" in applied ? String(applied.playerKey || "") : undefined,
+    currentValue: "currentValue" in applied ? applied.currentValue : undefined,
+    previousValue: "previousValue" in applied ? applied.previousValue : undefined,
+    nextValue: "nextValue" in applied ? applied.nextValue : undefined,
+    state: "state" in applied ? String(applied.state || "") : undefined,
+    skipped: "skipped" in applied ? Boolean(applied.skipped) : undefined,
+    code: applied.code,
+  };
+}
+
+function normalizeJobColumns(result: Record<string, unknown>) {
+  const raw = Array.isArray(result.columns) ? result.columns : [];
+  return raw
+    .map((item) => {
+      const row = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+      return {
+        table: String(row.table || ""),
+        column: String(row.column || ""),
+        dataType: String(row.dataType || row.data_type || ""),
+        nullable: row.nullable !== false,
+      };
+    })
+    .filter((item) => item.table && item.column);
+}
+
+async function runViaVps(
+  guildId: string,
+  action: CityWhitelistAction,
+  mapping: WhitelistMapping,
+  identifierValue: string,
+  target: WhitelistDbTarget,
+): Promise<CityWhitelistResult> {
+  const host = target.host;
+  const port = target.port;
+  const job = await enqueueWhitelistAgentJob({
+    guildId,
+    operation: operationFor(action, identifierValue),
+    payload: {
+      ...mappingPayload(mapping, identifierValue),
+      cityDb: {
+        engine: target.engine,
+        port: target.port,
+        database: target.database,
+        user: target.user,
+        password: target.password,
+      },
+    },
+  });
+  const finished = await waitForWhitelistAgentJob(job.id, 28000);
+  if (finished.status !== "done") {
+    return {
+      ok: false,
+      via: "vps",
+      host,
+      port,
+      code: "vps_timeout",
+      message:
+        finished.error_message ||
+        "O launcher na VPS nao respondeu a tempo. Deixe o app aberto na maquina da cidade.",
+    };
+  }
+  const result = (finished.result || {}) as Record<string, unknown>;
+  if (result.ok === false) {
+    return {
+      ok: false,
+      via: "vps",
+      host,
+      port,
+      code: String(result.code || "db_error"),
+      message: viaMessage("vps", String(result.message || "Falha no MySQL da VPS.")),
+    };
+  }
+
+  let inferred = result.inferred || null;
+  const columns = normalizeJobColumns(result);
+  if (!inferred && columns.length) {
+    inferred = inferWhitelistMapping(columns);
+  }
+
+  if (action === "test") {
+    const hasVrpUsers = result.hasVrpUsers === true;
+    return {
+      ok: true,
+      via: "vps",
+      host,
+      port,
+      hasVrpUsers,
+      latencyMs: Number(result.latencyMs || 0) || undefined,
+      message: viaMessage(
+        "vps",
+        hasVrpUsers
+          ? `MySQL ok nesta VPS (${Number(result.latencyMs || 0)}ms). Tabela vrp_users encontrada.`
+          : `MySQL ok nesta VPS (${Number(result.latencyMs || 0)}ms). Confira se o nome do banco tem a tabela vrp_users.`,
+      ),
+    };
+  }
+  if (action === "inspect" || (action === "validate" && !identifierValue)) {
+    if (action === "validate" && !columns.length) {
+      return {
+        ok: false,
+        via: "vps",
+        host,
+        port,
+        code: "mapping_invalid",
+        message: viaMessage("vps", "O launcher leu o MySQL, mas o schema veio vazio. Confira o nome do banco skips."),
+      };
+    }
+    if (action === "validate" && mapping.playerTable && !mappingColumnsExist(mapping, columns)) {
+      return {
+        ok: false,
+        via: "vps",
+        host,
+        port,
+        code: "mapping_invalid",
+        message: viaMessage(
+          "vps",
+          `Nao achei ${mapping.playerTable}.${mapping.whitelistColumn} no MySQL da VPS.`,
+        ),
+      };
+    }
+    return {
+      ok: true,
+      via: "vps",
+      host,
+      port,
+      tables: result.tables || [],
+      inferred,
+      lookup:
+        action === "validate"
+          ? {
+              ok: true,
+              message: "Mapping confirmado no schema da VPS.",
+              playerKey: "",
+              currentValue: null,
+              state: "unknown",
+            }
+          : undefined,
+      message: viaMessage(
+        "vps",
+        action === "validate"
+          ? `Mapping ok: ${mapping.playerTable}.${mapping.whitelistColumn} (NULL -> ${mapping.valueOn}).`
+          : inferred && typeof inferred === "object" && "notes" in inferred
+            ? String((inferred as { notes?: string[] }).notes?.[0] || "Schema lido.")
+            : "Schema lido.",
+      ),
+    };
+  }
+  return {
+    ok: true,
+    via: "vps",
+    host,
+    port,
+    lookup: result,
+    playerKey: result.playerKey ? String(result.playerKey) : undefined,
+    currentValue: result.currentValue == null ? null : String(result.currentValue),
+    previousValue: result.previousValue == null ? null : String(result.previousValue),
+    nextValue: result.nextValue == null ? null : String(result.nextValue),
+    state: result.state ? String(result.state) : undefined,
+    skipped: result.skipped === true,
+    message: viaMessage(
+      "vps",
+      action === "validate"
+        ? "Mapping validado no MySQL da VPS."
+        : "Whitelist atualizada no MySQL da VPS.",
+    ),
+  };
+}
+
+export async function runCityWhitelistAction(input: {
+  guildId: string;
+  action: CityWhitelistAction;
+  target: WhitelistDbTarget;
+  mapping?: unknown;
+  identifierValue?: string;
+}): Promise<CityWhitelistResult> {
+  const mapping = normalizeWhitelistMapping(input.mapping);
+  const identifierValue = String(input.identifierValue || "").trim();
+  const launcher = await getLauncherStatusForGuild(input.guildId);
+  const probe = await probeCityDbPort(input.target.host, input.target.port, 2500);
+
+  if (probe.open) {
+    try {
+      const direct = await runDirect(input.action, input.target, mapping, identifierValue);
+      return {
+        ...direct,
+        via: "direct",
+        host: input.target.host,
+        port: input.target.port,
+        message: viaMessage("direct", direct.message),
+      };
+    } catch (error) {
+      if (!launcher.online || !isUnreachableDbError(error)) {
+        const sanitized = sanitizeDbError(error);
+        throw Object.assign(new Error(sanitized.message), { code: sanitized.code });
+      }
+    }
+  }
+
+  if (!launcher.online) {
+    throw new Error(
+      probe.open
+        ? "O MySQL recusou a conexao direta e o launcher nao esta no ar. Abra o Flowdesk Launcher na VPS."
+        : `A porta ${input.target.port} em ${input.target.host} esta fechada da internet. O launcher na VPS precisa estar aberto para a Flowdesk falar com o MySQL la dentro.`,
+    );
+  }
+
+  return runViaVps(
+    input.guildId,
+    input.action,
+    mapping,
+    identifierValue,
+    input.target,
+  );
+}
