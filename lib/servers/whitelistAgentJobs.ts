@@ -56,7 +56,7 @@ export async function enqueueWhitelistAgentJob(input: {
   return inserted.data as { id: number; status: string };
 }
 
-export async function waitForWhitelistAgentJob(jobId: number, timeoutMs = 12000) {
+export async function waitForWhitelistAgentJob(jobId: number, timeoutMs = 28000) {
   const supabase = getSupabaseAdminClientOrThrow();
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {

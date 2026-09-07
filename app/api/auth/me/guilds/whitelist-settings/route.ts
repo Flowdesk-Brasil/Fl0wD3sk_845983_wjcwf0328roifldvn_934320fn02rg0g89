@@ -34,7 +34,7 @@ import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { normalizeWhitelistSettingsDraft } from "@/lib/servers/whitelistSettingsModel";
 import { whitelistPanelHasRequiredParts } from "@/lib/servers/whitelistPanelBuilder";
 import { encryptWhitelistSecret } from "@/lib/servers/whitelistSecret";
-import { normalizeWhitelistMapping } from "@/lib/servers/whitelistMapping";
+import { resolveCityWhitelistMapping } from "@/lib/servers/whitelistMapping";
 import { deriveLegacyTicketPanelFields } from "@/lib/servers/ticketPanelBuilder";
 import { looksLikePublicCityDbHost, resolvePublicCityDbHost } from "@/lib/servers/whitelistHost";
 
@@ -237,7 +237,7 @@ export async function POST(request: Request) {
       ? encryptWhitelistSecret(incomingPassword, guildId)
       : existing.data?.db_password_cipher || null;
 
-    const mapping = normalizeWhitelistMapping(body.mapping);
+    const mapping = resolveCityWhitelistMapping(body.mapping);
     let dbHost: string | null = null;
     try {
       dbHost = resolvePublicCityDbHost({
@@ -278,7 +278,7 @@ export async function POST(request: Request) {
       db_ssl: draft.dbSsl,
       db_password_cipher: nextCipher,
       mapping,
-      mapping_status: draft.mappingStatus,
+      mapping_status: "validated",
       configured_by_user_id: authUserId,
     };
 

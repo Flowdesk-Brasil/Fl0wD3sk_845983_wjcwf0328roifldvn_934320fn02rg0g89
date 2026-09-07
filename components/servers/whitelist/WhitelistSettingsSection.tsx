@@ -15,7 +15,7 @@ import {
 } from "@/components/servers/module-ui/ModuleUi";
 import type { WhitelistSettingsDraft } from "@/lib/servers/whitelistSettingsModel";
 import { looksLikePublicCityDbHost } from "@/lib/servers/whitelistHost";
-import { IDENTIFIER_KINDS } from "@/lib/servers/whitelistMapping";
+import { createVrpUsersMapping, IDENTIFIER_KINDS } from "@/lib/servers/whitelistMapping";
 import { WHITELIST_TOKEN_HINTS } from "@/lib/servers/whitelistPanelBuilder";
 import type { TicketPanelLayout } from "@/lib/servers/ticketPanelBuilder";
 
@@ -99,7 +99,6 @@ export function WhitelistSettingsSection({
   const [busy, setBusy] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [actionTone, setActionTone] = useState<"ok" | "error">("ok");
-  const [probeIdentifier, setProbeIdentifier] = useState("");
   const [liveLauncher, setLiveLauncher] = useState<{
     paired: boolean;
     online: boolean;
@@ -160,61 +159,57 @@ export function WhitelistSettingsSection({
     onChange({ dbHost: detectedPublicIp, connectionMode: "direct" });
   }, [detectedPublicIp, draft.dbHost, onChange]);
 
-  async function runAction(kind: "test" | "inspect" | "validate") {
-    setBusy(kind);
+  useEffect(() => {
+    if (draft.mapping.playerTable || draft.mapping.whitelistColumn) return;
+    onChange({ mapping: createVrpUsersMapping() });
+  }, [draft.mapping.playerTable, draft.mapping.whitelistColumn, onChange]);
+
+  async function connectDatabase() {
+    setBusy("test");
     setActionMessage(null);
     try {
       if (!looksLikePublicCityDbHost(draft.dbHost || detectedPublicIp)) {
         throw new Error(
-          "Informe o IP publico da VPS ou conecte o launcher nela para a Flowdesk detectar.",
+          "Informe o IP publico da VPS ou deixe o launcher aberto la para a Flowdesk detectar.",
         );
       }
       if (!draft.dbName.trim() || !draft.dbUser.trim()) {
-        throw new Error("Informe o nome do banco e o usuario da integracao.");
+        throw new Error("Preencha o nome do banco e o usuario.");
+      }
+      if (!draft.dbPassword.trim() && !draft.hasDbPassword) {
+        throw new Error("Digite a senha do banco para conectar.");
       }
       const response = await fetch("/api/auth/me/guilds/whitelist-actions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           guildId,
-          action: kind,
-          dbEngine: draft.dbEngine,
+          action: "test",
+          dbEngine: draft.dbEngine === "postgres" ? "postgres" : "mysql",
           dbHost: looksLikePublicCityDbHost(draft.dbHost) ? draft.dbHost : detectedPublicIp,
-          dbPort: draft.dbPort,
+          dbPort: draft.dbPort || 3306,
           dbName: draft.dbName,
           dbUser: draft.dbUser,
-          dbSsl: draft.dbSsl,
+          dbSsl: false,
           dbPassword: draft.dbPassword || undefined,
-          mapping: draft.mapping,
-          identifierValue: probeIdentifier,
+          mapping: createVrpUsersMapping(),
         }),
       });
       const payload = await response.json();
       if (!response.ok || !payload.ok) {
-        throw new Error(payload.message || "Falha na acao de whitelist.");
+        throw new Error(payload.message || "Nao foi possivel conectar no MySQL.");
       }
-      if (kind === "inspect" && payload.inferred?.mapping) {
-        onChange({
-          mapping: payload.inferred.mapping,
-          mappingStatus: "draft",
-        });
-        setActionMessage(
-          `Schema lido. Confianca ${payload.inferred.confidence || 0}%. Confirme o mapping e valide.`,
-        );
-      } else if (kind === "validate") {
-        onChange({ mappingStatus: "validated" });
-        const located = payload.lookup
-          ? ` Registro localizado: ${payload.lookup.playerKey || "-"} (estado ${payload.lookup.state || "-"}).`
-          : "";
-        setActionMessage(`${payload.message || "Mapping validado."}${located}`);
-      } else {
-        setActionMessage(payload.message || "Conexao ok.");
-      }
+      onChange({
+        mapping: createVrpUsersMapping(),
+        mappingStatus: "validated",
+        dbHost: looksLikePublicCityDbHost(draft.dbHost) ? draft.dbHost : detectedPublicIp,
+        connectionMode: "direct",
+      });
       setActionTone("ok");
+      setActionMessage(payload.message || "Banco conectado. A whitelist usa vrp_users.whitelisted.");
     } catch (error) {
-      onChange({ mappingStatus: kind === "validate" ? "invalid" : draft.mappingStatus });
       setActionTone("error");
-      setActionMessage(error instanceof Error ? error.message : "Falha na acao.");
+      setActionMessage(error instanceof Error ? error.message : "Falha ao conectar no banco.");
     } finally {
       setBusy(null);
     }
@@ -433,9 +428,9 @@ export function WhitelistSettingsSection({
     return (
       <ModulePage>
         <ModuleCard
-          label="Integracao"
-          title="Banco da cidade"
-          description="O launcher so vincula a VPS e libera as portas. O painel, daqui do seu PC, grava o IP publico e as credenciais e a Flowdesk conecta direto no banco."
+          label="Passo 1"
+          title="Launcher na VPS"
+          description="Instale uma vez na VPS da cidade, entre na Flowdesk e deixe o app aberto. Ele publica o IP e libera as portas do MySQL."
           delay={0.12}
         >
           <div className="overflow-hidden rounded-[22px] border border-[rgba(255,255,255,0.06)] bg-[linear-gradient(180deg,#101010_0%,#0B0B0B_100%)]">
@@ -453,10 +448,10 @@ export function WhitelistSettingsSection({
                   </div>
                   <p className="mt-[4px] text-[13px] leading-[1.55] text-[#8A8A8E]">
                     {launcherOnline
-                      ? `VPS vinculada${liveLauncher?.hostname ? ` (${liveLauncher.hostname})` : ""}${detectedPublicIp ? ` · ${detectedPublicIp}` : ""}. Portas prontas para o painel conectar.`
+                      ? `VPS no ar${liveLauncher?.hostname ? ` · ${liveLauncher.hostname}` : ""}${detectedPublicIp ? ` · ${detectedPublicIp}` : ""}. Pode configurar o banco daqui.`
                       : launcherPaired
-                        ? "Launcher vinculado. Abra o app na VPS para publicar o IP e as portas."
-                        : "Instale na VPS da cidade, entre na Flowdesk e este servidor vincula sozinho."}
+                        ? "Launcher vinculado. Abra o app na VPS. Se a conexao falhar, ele abre o script de portas sozinho."
+                        : "Baixe o Setup, instale na VPS e faca login. Este servidor vincula sozinho."}
                   </p>
                 </div>
               </div>
@@ -464,12 +459,12 @@ export function WhitelistSettingsSection({
                 {launcherOnline ? (
                   <span className="inline-flex h-[32px] items-center gap-[6px] rounded-full bg-[rgba(134,239,172,0.08)] px-[10px] text-[12px] font-semibold text-[#86EFAC]">
                     <Check className="h-[13px] w-[13px]" strokeWidth={2.2} />
-                    Conectado
+                    No ar
                   </span>
                 ) : launcherPaired ? (
                   <span className="inline-flex h-[32px] items-center gap-[6px] rounded-full bg-[rgba(246,212,138,0.08)] px-[10px] text-[12px] font-semibold text-[#F6D48A]">
                     <TriangleAlert className="h-[13px] w-[13px]" strokeWidth={2} />
-                    Aguardando
+                    Abra na VPS
                   </span>
                 ) : (
                   <span className="inline-flex h-[32px] items-center rounded-full bg-[#141414] px-[10px] text-[12px] font-semibold text-[#9A9A9E]">
@@ -493,13 +488,21 @@ export function WhitelistSettingsSection({
               </div>
             ) : null}
           </div>
-          <div className="mt-[16px] grid grid-cols-1 gap-[16px] xl:grid-cols-2">
+        </ModuleCard>
+
+        <ModuleCard
+          label="Passo 2"
+          title="Dados do MySQL"
+          description="So estes quatro campos. A Flowdesk ja usa vrp_users.whitelisted: NULL vira 1. Sem mapping, sem schema, sem SSL."
+          delay={0.16}
+        >
+          <div className="grid grid-cols-1 gap-[16px] xl:grid-cols-2">
             <LabeledField
-              label="IP / host publico"
+              label="IP publico da VPS"
               hint={
                 detectedPublicIp
-                  ? `Detectado pelo launcher: ${detectedPublicIp}. Nao use 127.0.0.1.`
-                  : "IP publico da VPS. O launcher preenche sozinho depois do vinculo."
+                  ? `Detectado pelo launcher: ${detectedPublicIp}`
+                  : "O launcher preenche sozinho. Nao use 127.0.0.1."
               }
             >
               <input
@@ -511,28 +514,43 @@ export function WhitelistSettingsSection({
                 className={fieldClassName}
               />
             </LabeledField>
-            <ConfigStepSelect
-              label="Tipo do banco"
-              placeholder="Engine"
-              options={[
-                { id: "mysql", name: "MySQL" },
-                { id: "mariadb", name: "MariaDB" },
-                { id: "postgres", name: "PostgreSQL" },
-              ]}
-              value={draft.dbEngine}
-              onChange={(value) =>
-                onChange({
-                  dbEngine:
-                    value === "postgres" || value === "mariadb" ? value : "mysql",
-                })
-              }
-              disabled={disabled}
-              controlHeightPx={controlHeightPx}
-            />
+            <LabeledField label="Nome do banco" hint="Exemplo: skips">
+              <input
+                placeholder="skips"
+                value={draft.dbName}
+                autoComplete="off"
+                onChange={(event) => onChange({ dbName: event.currentTarget.value })}
+                disabled={disabled}
+                className={fieldClassName}
+              />
+            </LabeledField>
+            <LabeledField label="Usuario" hint="Usuario do MySQL, nao o Discord.">
+              <input
+                placeholder="usuario"
+                value={draft.dbUser}
+                autoComplete="off"
+                onChange={(event) => onChange({ dbUser: event.currentTarget.value })}
+                disabled={disabled}
+                className={fieldClassName}
+              />
+            </LabeledField>
             <LabeledField
-              label="Porta do banco"
-              hint="O launcher libera 3306 e 5432 no firewall da VPS. MySQL escuta 3306."
+              label="Senha"
+              hint="Digite de novo se o teste pedir. A senha e gravada criptografada."
             >
+              <input
+                type="password"
+                autoComplete="new-password"
+                placeholder={
+                  draft.hasDbPassword ? "Senha salva. Digite para conectar de novo" : "Senha do MySQL"
+                }
+                value={draft.dbPassword}
+                onChange={(event) => onChange({ dbPassword: event.currentTarget.value })}
+                disabled={disabled}
+                className={fieldClassName}
+              />
+            </LabeledField>
+            <LabeledField label="Porta" hint="MySQL padrao: 3306">
               <input
                 type="number"
                 placeholder="3306"
@@ -544,193 +562,52 @@ export function WhitelistSettingsSection({
                 className={fieldClassName}
               />
             </LabeledField>
-            <LabeledField label="Nome do banco" hint="Database da cidade, nao o usuario.">
-              <input
-                placeholder="vrp / creative / essencialmode"
-                value={draft.dbName}
-                autoComplete="off"
-                onChange={(event) => onChange({ dbName: event.currentTarget.value })}
-                disabled={disabled}
-                className={fieldClassName}
-              />
-            </LabeledField>
-            <LabeledField
-              label="Usuario da integracao"
-              hint="Crie um usuario so para a Flowdesk. Evite root."
-            >
-              <input
-                placeholder="flowdesk_whitelist"
-                value={draft.dbUser}
-                autoComplete="off"
-                onChange={(event) => onChange({ dbUser: event.currentTarget.value })}
-                disabled={disabled}
-                className={fieldClassName}
-              />
-            </LabeledField>
-            <LabeledField
-              label="Senha"
-              hint="Fica criptografada no servidor. Nunca aparece de novo no painel."
-            >
-              <input
-                type="password"
-                autoComplete="new-password"
-                placeholder={
-                  draft.hasDbPassword ? "Senha salva. Informe para trocar" : "Senha do usuario"
-                }
-                value={draft.dbPassword}
-                onChange={(event) => onChange({ dbPassword: event.currentTarget.value })}
-                disabled={disabled}
-                className={fieldClassName}
-              />
-            </LabeledField>
-            <label className="flex items-center gap-[10px] self-end pb-[6px] text-[13px] text-[#8A8A8A]">
-              <input
-                type="checkbox"
-                checked={draft.dbSsl}
-                onChange={(event) => onChange({ dbSsl: event.currentTarget.checked })}
-                disabled={disabled}
-              />
-              Exigir SSL
-            </label>
-          </div>
-          <div className="mt-[16px] flex flex-wrap gap-[10px]">
-            <button
-              type="button"
-              disabled={disabled || Boolean(busy)}
-              onClick={() => void runAction("test")}
-              className="h-[42px] rounded-[12px] bg-[#1A1A1A] px-[14px] text-[13px] font-medium text-[#D1D1D1] disabled:opacity-50"
-            >
-              {busy === "test" ? "Testando..." : "Testar conexao"}
-            </button>
-            <button
-              type="button"
-              disabled={disabled || Boolean(busy)}
-              onClick={() => void runAction("inspect")}
-              className="h-[42px] rounded-[12px] bg-[#1A1A1A] px-[14px] text-[13px] font-medium text-[#D1D1D1] disabled:opacity-50"
-            >
-              {busy === "inspect" ? "Analisando..." : "Detectar schema"}
-            </button>
           </div>
         </ModuleCard>
 
         <ModuleCard
-          label="Mapping"
-          title="Tabela e estados"
-          description="Nenhuma alteracao destrutiva e feita na deteccao automatica. Confirme e valide antes de usar."
-          delay={0.18}
+          label="Passo 3"
+          title="Conectar"
+          description={
+            launcherOnline
+              ? "Com o launcher no ar, a Flowdesk tenta o MySQL direto. Se a porta estiver fechada na internet, o SQL roda dentro da VPS."
+              : "Abra o launcher na VPS antes de conectar. Sem ele, a porta 3306 costuma estar fechada daqui."
+          }
+          delay={0.2}
         >
-          <div className="grid grid-cols-1 gap-[16px] xl:grid-cols-2">
-            {[
-              ["playerTable", "Tabela do jogador"],
-              ["playerIdColumn", "Coluna do identificador"],
-              ["whitelistColumn", "Coluna da whitelist"],
-              ["valueOff", "Valor sem whitelist"],
-              ["valueOn", "Valor com whitelist"],
-              ["joinTable", "Tabela de relacionamento (opcional)"],
-              ["joinFromColumn", "Coluna na tabela do jogador"],
-              ["joinToColumn", "Coluna na tabela relacionada"],
-              ["joinIdentifierColumn", "Coluna do identificador relacionado"],
-            ].map(([key, label]) => (
-              <div key={key}>
-                <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">
-                  {label}
-                </label>
-                <input
-                  value={String(draft.mapping[key as keyof typeof draft.mapping] || "")}
-                  onChange={(event) =>
-                    onChange({
-                      mapping: {
-                        ...draft.mapping,
-                        [key]: event.currentTarget.value,
-                      },
-                      mappingStatus: "draft",
-                    })
-                  }
-                  disabled={disabled}
-                  className={fieldClassName}
-                />
-              </div>
-            ))}
-            <ConfigStepSelect
-              label="Tipo do valor"
-              placeholder="Tipo"
-              options={[
-                { id: "integer", name: "Integer" },
-                { id: "boolean", name: "Boolean" },
-                { id: "string", name: "String / enum" },
-                { id: "enum", name: "Enum" },
-              ]}
-              value={draft.mapping.valueType}
-              onChange={(value) =>
-                onChange({
-                  mapping: {
-                    ...draft.mapping,
-                    valueType:
-                      value === "boolean" || value === "string" || value === "enum"
-                        ? value
-                        : "integer",
-                  },
-                  mappingStatus: "draft",
-                })
-              }
-              disabled={disabled}
-              controlHeightPx={controlHeightPx}
-            />
-            <ConfigStepSelect
-              label="NULL significa"
-              placeholder="NULL"
-              options={[
-                { id: "off", name: "Sem whitelist" },
-                { id: "on", name: "Com whitelist" },
-                { id: "unknown", name: "Desconhecido" },
-              ]}
-              value={draft.mapping.nullBehavior}
-              onChange={(value) =>
-                onChange({
-                  mapping: {
-                    ...draft.mapping,
-                    nullBehavior:
-                      value === "on" || value === "unknown" ? value : "off",
-                  },
-                  mappingStatus: "draft",
-                })
-              }
-              disabled={disabled}
-              controlHeightPx={controlHeightPx}
-            />
-          </div>
-          <div className="mt-[16px]">
-            <label className="mb-[8px] block text-[12px] font-medium text-[#5F5F5F]">
-              Identificador de teste (somente leitura)
-            </label>
-            <input
-              value={probeIdentifier}
-              onChange={(event) => setProbeIdentifier(event.currentTarget.value)}
-              disabled={disabled}
-              placeholder="ID, license ou Discord ID para localizar o registro sem alterar dados"
-              className={fieldClassName}
-            />
-          </div>
-          <div className="mt-[16px] flex flex-wrap items-center gap-[10px]">
+          <div className="flex flex-col gap-[14px] sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-[14px] font-semibold text-[#F4F4F5]">
+                {draft.lastHealthOk
+                  ? "Ultima conexao ok"
+                  : draft.lastHealthError
+                    ? "Ultima conexao falhou"
+                    : "Ainda nao testado"}
+              </p>
+              <p className="mt-[4px] text-[13px] leading-[1.55] text-[#8A8A8E]">
+                Script vRP: tabela vrp_users, coluna whitelisted.
+              </p>
+            </div>
             <button
               type="button"
               disabled={disabled || Boolean(busy)}
-              onClick={() => void runAction("validate")}
-              className="h-[42px] rounded-[12px] bg-white px-[14px] text-[13px] font-semibold text-[#282828] disabled:opacity-50"
+              onClick={() => void connectDatabase()}
+              className="inline-flex h-[44px] items-center justify-center rounded-full bg-white px-[20px] text-[14px] font-semibold text-[#111] transition-transform duration-200 hover:-translate-y-px disabled:opacity-50"
             >
-              {busy === "validate" ? "Validando..." : "Validar mapping"}
+              {busy === "test" ? "Conectando..." : "Conectar banco"}
             </button>
-            <span className="text-[12px] text-[#7B7B7B]">
-              Status: {draft.mappingStatus}
-            </span>
           </div>
           {actionMessage ? (
             <p
-              className={`mt-[12px] text-[13px] ${
+              className={`mt-[14px] text-[13px] leading-[1.55] ${
                 actionTone === "ok" ? "text-[#7dca97]" : "text-[#d18d8d]"
               }`}
             >
               {actionMessage}
+            </p>
+          ) : draft.lastHealthError ? (
+            <p className="mt-[14px] text-[13px] leading-[1.55] text-[#d18d8d]">
+              {draft.lastHealthError}
             </p>
           ) : null}
         </ModuleCard>

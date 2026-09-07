@@ -70,8 +70,25 @@ export function createEmptyWhitelistMapping(): WhitelistMapping {
   return {
     playerTable: "",
     playerIdColumn: "",
-    playerIdKind: "discord_id",
+    playerIdKind: "character_id",
     whitelistColumn: "",
+    valueType: "integer",
+    valueOff: "0",
+    valueOn: "1",
+    nullBehavior: "off",
+    joinTable: "",
+    joinFromColumn: "",
+    joinToColumn: "",
+    joinIdentifierColumn: "",
+  };
+}
+
+export function createVrpUsersMapping(): WhitelistMapping {
+  return {
+    playerTable: "vrp_users",
+    playerIdColumn: "id",
+    playerIdKind: "character_id",
+    whitelistColumn: "whitelisted",
     valueType: "integer",
     valueOff: "0",
     valueOn: "1",
@@ -114,6 +131,11 @@ export function mappingUsesJoin(mapping: WhitelistMapping) {
       mapping.joinToColumn &&
       mapping.joinIdentifierColumn,
   );
+}
+
+export function resolveCityWhitelistMapping(value: unknown): WhitelistMapping {
+  const mapping = normalizeWhitelistMapping(value);
+  return isMappingComplete(mapping) ? mapping : createVrpUsersMapping();
 }
 
 export function isMappingComplete(mapping: WhitelistMapping) {
@@ -271,6 +293,28 @@ export function inferWhitelistMapping(columns: SchemaColumn[]): {
         score: scoreName(item.column, WHITELIST_COLUMN_HINTS),
       }))
       .sort((a, b) => b.score - a.score)[0] || null;
+
+  const hasVrpUsers = columns.some(
+    (item) => item.table.toLowerCase() === "vrp_users" && item.column.toLowerCase() === "whitelisted",
+  );
+  if (hasVrpUsers) {
+    const vrp = createVrpUsersMapping();
+    const hasId = columns.some(
+      (item) => item.table.toLowerCase() === "vrp_users" && item.column.toLowerCase() === "id",
+    );
+    if (!hasId) {
+      const fallbackId = columns
+        .filter((item) => item.table.toLowerCase() === "vrp_users")
+        .map((item) => ({
+          column: item.column,
+          score: scoreName(item.column, ID_COLUMN_HINTS),
+        }))
+        .sort((a, b) => b.score - a.score)[0];
+      if (fallbackId?.score) vrp.playerIdColumn = fallbackId.column;
+    }
+    notes.push("Framework vRP detectado: vrp_users.whitelisted (NULL vira 1).");
+    return { mapping: vrp, confidence: 96, notes };
+  }
 
   const mapping = createEmptyWhitelistMapping();
   mapping.playerTable = playerTable;

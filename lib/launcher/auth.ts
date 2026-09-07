@@ -232,7 +232,7 @@ export async function pollLauncherLogin(pollToken: string) {
 
 function safeDecryptWhitelistPassword(cipher: string | null | undefined, guildId: string) {
   try {
-    return cipher ? decryptWhitelistSecret(cipher, guildId) : "";
+    return decryptWhitelistSecret(cipher, guildId);
   } catch {
     return "";
   }

@@ -1,3 +1,4 @@
+import net from "node:net";
 import mysql from "mysql2/promise";
 import pg from "pg";
 import {
@@ -7,10 +8,11 @@ import {
   coerceWhitelistValue,
   inferWhitelistMapping,
   isMappingComplete,
+  quoteSqlIdentifier,
   type WhitelistDbEngine,
   type WhitelistMapping,
 } from "@/lib/servers/whitelistMapping";
-import { decryptWhitelistSecret } from "@/lib/servers/whitelistSecret";
+import { resolveWhitelistDbPassword } from "@/lib/servers/whitelistSecret";
 import { assertCityDbHost } from "@/lib/servers/whitelistHost";
 
 export type WhitelistDbTarget = {
@@ -23,8 +25,8 @@ export type WhitelistDbTarget = {
   ssl: boolean;
 };
 
-const CONNECT_TIMEOUT_MS = 12000;
-const QUERY_TIMEOUT_MS = 12000;
+const CONNECT_TIMEOUT_MS = 8000;
+const QUERY_TIMEOUT_MS = 10000;
 
 function withQueryTimeout<T>(promise: Promise<T>, label: string) {
   return Promise.race([
@@ -38,27 +40,65 @@ function withQueryTimeout<T>(promise: Promise<T>, label: string) {
 export function sanitizeDbError(error: unknown) {
   const message = error instanceof Error ? error.message : "Falha na conexao com o banco da cidade.";
   const lowered = message.toLowerCase();
-  if (lowered.includes("timeout") || lowered.includes("timed out")) {
+  if (lowered.includes("unknown database")) {
+    return { code: "unknown_database", message: "O nome do banco nao existe neste MySQL." };
+  }
+  if (lowered.includes("timeout") || lowered.includes("timed out") || lowered.includes("etimedout")) {
     return { code: "timeout", message: "O banco da cidade nao respondeu a tempo." };
   }
-  if (lowered.includes("access denied") || lowered.includes("password") || lowered.includes("authentication")) {
-    return { code: "invalid_credentials", message: "Credencial do banco invalida." };
+  if (
+    lowered.includes("envelope") ||
+    lowered.includes("senha salva") ||
+    lowered.includes("digite a senha")
+  ) {
+    return {
+      code: "password_envelope",
+      message: "Digite a senha do banco novamente no campo Senha e teste. A senha salva nao pode ser lida.",
+    };
   }
-  if (lowered.includes("enotfound") || lowered.includes("econnrefused") || lowered.includes("connect") || lowered.includes("etimedout")) {
+  if (lowered.includes("access denied") || lowered.includes("password") || lowered.includes("authentication")) {
+    return { code: "invalid_credentials", message: "Usuario ou senha do MySQL invalidos." };
+  }
+  if (
+    lowered.includes("enotfound") ||
+    lowered.includes("econnrefused") ||
+    lowered.includes("ehostunreach") ||
+    lowered.includes("eai_again")
+  ) {
     return {
       code: "offline",
       message:
-        "A Flowdesk nao alcanca o banco neste IP. No launcher, clique em Preparar conexao para abrir a porta. No MySQL/MariaDB, bind-address precisa ser 0.0.0.0 e o usuario deve aceitar conexao remota.",
+        "A porta do MySQL esta fechada da internet. Com o launcher aberto na VPS, a Flowdesk executa o SQL la dentro.",
     };
   }
   if (lowered.includes("not allowed") || lowered.includes("host is not allowed") || lowered.includes("is not allowed to connect")) {
     return {
       code: "ip_not_allowed",
       message:
-        "O banco recusou o IP da FlowDesk. Libere o host da aplicacao no MySQL/MariaDB/PostgreSQL da cidade (GRANT / pg_hba).",
+        "O MySQL recusou o IP remoto. No modo VPS o launcher usa o banco local da maquina e nao precisa liberar host.",
     };
   }
-  return { code: "db_error", message: "Nao foi possivel executar a operacao no banco da cidade." };
+  return { code: "db_error", message: message.slice(0, 180) || "Nao foi possivel executar a operacao no banco da cidade." };
+}
+
+export function isUnreachableDbError(error: unknown) {
+  const code = sanitizeDbError(error).code;
+  return code === "offline" || code === "timeout";
+}
+
+export async function probeCityDbPort(host: string, port: number, timeoutMs = 2500) {
+  const started = Date.now();
+  return new Promise<{ open: boolean; ms: number; error?: string }>((resolve) => {
+    const socket = net.connect({ host, port, timeout: timeoutMs });
+    const finish = (open: boolean, error?: string) => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve({ open, ms: Date.now() - started, error });
+    };
+    socket.once("connect", () => finish(true));
+    socket.once("timeout", () => finish(false, "timeout"));
+    socket.once("error", (error) => finish(false, error.message));
+  });
 }
 
 export async function withCityDatabase<T>(
@@ -99,6 +139,9 @@ export async function withCityDatabase<T>(
     password: target.password,
     ssl: target.ssl ? { rejectUnauthorized: false } : undefined,
     connectTimeout: CONNECT_TIMEOUT_MS,
+    enableKeepAlive: true,
+    insecureAuth: true,
+    charset: "utf8mb4",
   });
   try {
     return await fn(async (sql, params = []) => {
@@ -158,6 +201,42 @@ export async function inspectCitySchema(target: WhitelistDbTarget) {
     columns: normalized.slice(0, 800),
     inferred,
     fingerprint,
+  };
+}
+
+export async function sampleWhitelistMapping(
+  target: WhitelistDbTarget,
+  mapping: WhitelistMapping,
+) {
+  if (!isMappingComplete(mapping)) {
+    throw new Error("Complete tabela, coluna de identificador e coluna de whitelist.");
+  }
+  const playerTable = quoteSqlIdentifier(target.engine, mapping.playerTable);
+  const playerId = quoteSqlIdentifier(target.engine, mapping.playerIdColumn);
+  const whitelist = quoteSqlIdentifier(target.engine, mapping.whitelistColumn);
+  const rows = await withCityDatabase(target, (query) =>
+    query(
+      `SELECT ${playerId} AS player_key, ${whitelist} AS whitelist_value FROM ${playerTable} LIMIT 1`,
+    ),
+  );
+  if (!rows.length) {
+    return {
+      ok: true,
+      code: "empty_table",
+      message: "Tabela e colunas existem. Ainda nao ha jogadores para amostrar.",
+      playerKey: "",
+      currentValue: null,
+      state: "unknown" as const,
+    };
+  }
+  const current = rows[0]?.whitelist_value;
+  return {
+    ok: true,
+    code: "ok",
+    message: "Mapping validado. Registro de amostra lido sem alterar dados.",
+    playerKey: String(rows[0]?.player_key ?? ""),
+    currentValue: current == null ? null : String(current),
+    state: classifyWhitelistState(mapping, current),
   };
 }
 
@@ -255,19 +334,18 @@ export function settingsToDbTarget(input: {
     throw new Error("Informe o IP/host da VPS, o nome do banco e o usuario da integracao.");
   }
   const host = assertCityDbHost(input.host);
-  const password = input.passwordOverride
-    ? input.passwordOverride
-    : decryptWhitelistSecret(input.passwordCipher, input.guildId);
-  if (!password) {
-    throw new Error("Senha do banco nao configurada.");
-  }
+  const resolved = resolveWhitelistDbPassword({
+    cipher: input.passwordCipher,
+    guildId: input.guildId,
+    override: input.passwordOverride,
+  });
   return {
     engine: input.engine,
     host,
     port: input.port,
     database: input.database,
     user: input.user,
-    password,
+    password: resolved.password,
     ssl: input.ssl,
   };
 }

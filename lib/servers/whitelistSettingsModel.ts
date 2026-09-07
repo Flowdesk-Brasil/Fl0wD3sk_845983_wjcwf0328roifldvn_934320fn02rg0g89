@@ -1,8 +1,8 @@
 import type { TicketPanelLayout } from "@/lib/servers/ticketPanelBuilder";
 import {
-  createEmptyWhitelistMapping,
+  createVrpUsersMapping,
   normalizeIdentifierKind,
-  normalizeWhitelistMapping,
+  resolveCityWhitelistMapping,
   type WhitelistConnectionMode,
   type WhitelistDbEngine,
   type WhitelistIdentifierKind,
@@ -106,11 +106,9 @@ export function normalizeWhitelistSettingsDraft(
     dbSsl: input?.dbSsl === true,
     dbPassword: "",
     hasDbPassword: input?.hasDbPassword === true,
-    mapping: input?.mapping
-      ? normalizeWhitelistMapping(input.mapping)
-      : createEmptyWhitelistMapping(),
+    mapping: input?.mapping ? resolveCityWhitelistMapping(input.mapping) : createVrpUsersMapping(),
     mappingStatus:
-      status === "validated" || status === "invalid" ? status : "draft",
+      status === "validated" || status === "invalid" ? status : "validated",
     lastHealthOk: input?.lastHealthOk === true,
     lastHealthAt: typeof input?.lastHealthAt === "string" ? input.lastHealthAt : null,
     lastHealthError:
