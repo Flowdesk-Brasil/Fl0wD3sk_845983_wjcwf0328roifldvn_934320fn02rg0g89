@@ -616,11 +616,6 @@ export function WhitelistSettingsSection({
                       ? ""
                       : "select-none caret-transparent blur-[6px] [-webkit-text-security:disc]"
                   }`}
-                  style={
-                    showHost || !draft.dbHost
-                      ? undefined
-                      : { WebkitTextSecurity: "disc" }
-                  }
                 />
                 <button
                   type="button"

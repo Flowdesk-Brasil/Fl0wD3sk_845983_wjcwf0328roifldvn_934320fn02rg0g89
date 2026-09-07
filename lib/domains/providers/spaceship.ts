@@ -169,7 +169,7 @@ function asyncJob(
   return {
     jobId: `spaceship:${operation}:${id}`,
     providerRef: id,
-    provider: "spaceship",
+    provider: "spaceship" as const,
     status: "processing",
     fqdn,
   };
@@ -203,7 +203,7 @@ export const spaceshipAdapter: DomainProviderAdapter = {
       renewalCost: pricing.renew,
       transferCost: pricing.transfer,
       currency: pricing.currency,
-      provider: "spaceship",
+      provider: "spaceship" as const,
       reason: state.result || null,
     });
   },
@@ -235,7 +235,7 @@ export const spaceshipAdapter: DomainProviderAdapter = {
         renewalCost: pricing.renew,
         transferCost: pricing.transfer,
         currency: pricing.currency,
-        provider: "spaceship",
+        provider: "spaceship" as const,
         reason: state.result || null,
       });
     });

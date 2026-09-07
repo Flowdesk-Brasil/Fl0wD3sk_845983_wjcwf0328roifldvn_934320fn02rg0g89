@@ -7803,6 +7803,7 @@ export function ServerSettingsEditor({
             identifierKind: nextWhitelistDraft.identifierKind,
             identifierLabel: nextWhitelistDraft.identifierLabel,
             identifierPlaceholder: nextWhitelistDraft.identifierPlaceholder,
+            nicknameFormat: nextWhitelistDraft.nicknameFormat,
             approvalMode: nextWhitelistDraft.approvalMode,
             connectionMode: nextWhitelistDraft.connectionMode,
             dbEngine: nextWhitelistDraft.dbEngine,
