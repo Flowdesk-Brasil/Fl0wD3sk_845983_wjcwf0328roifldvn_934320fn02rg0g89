@@ -20,6 +20,11 @@ export type ServerSettingsSection =
   | "captcha_message"
   | "suggestions_overview"
   | "suggestions_message"
+  | "sorteio_overview"
+  | "sorteio_message"
+  | "whitelist_overview"
+  | "whitelist_database"
+  | "whitelist_message"
   | "bate_ponto_overview"
   | "bate_ponto_message"
   | "bate_ponto_ranking"
@@ -51,6 +56,8 @@ type ModuleOverviewSection = Extract<
   | "sales_overview"
   | "entry_exit_overview"
   | "suggestions_overview"
+  | "sorteio_overview"
+  | "whitelist_overview"
   | "bate_ponto_overview"
   | "captcha_overview"
   | "security_antilink"
@@ -91,6 +98,18 @@ const MODULE_OVERVIEW_COPY: Record<
     description:
       "Painel de envio, canal de publicação e logs para organizar sugestões e votos dos membros.",
   },
+  sorteio_overview: {
+    tag: "Sorteios",
+    title: "Sorteios da comunidade",
+    description:
+      "Permissoes, logs e padroes do comando /sorteio para publicar giveaways no Discord.",
+  },
+  whitelist_overview: {
+    tag: "Whitelist",
+    title: "Whitelist FiveM",
+    description:
+      "Painel no Discord, aprovacao automatica ou analise da staff, e o identificador usado para localizar o jogador na cidade.",
+  },
   bate_ponto_overview: {
     tag: "Bate-ponto",
     title: "Expediente e banco de horas",
@@ -114,6 +133,29 @@ const MODULE_OVERVIEW_COPY: Record<
     title: "Cargos automáticos",
     description:
       "Distribua cargos para novos membros e, se precisar, sincronize quem já está no servidor.",
+  },
+};
+
+const MODULE_MESSAGE_COPY: Partial<
+  Record<ServerSettingsSection, { tag: string; title: string; description: string }>
+> = {
+  sorteio_message: {
+    tag: "Sorteios",
+    title: "Templates de mensagem",
+    description:
+      "Personalize os embeds do sorteio ativo e encerrado publicados pelo bot no Discord.",
+  },
+  whitelist_database: {
+    tag: "Whitelist",
+    title: "Banco e mapping",
+    description:
+      "Conecte o banco da cidade, detecte o schema e confirme a regra de aprovacao sem SQL livre.",
+  },
+  whitelist_message: {
+    tag: "Whitelist",
+    title: "Mensagem do painel",
+    description:
+      "Personalize o embed publicado no canal. O botao Solicitar whitelist permanece fixo.",
   },
 };
 
@@ -194,6 +236,9 @@ export function resolveServerEditorSectionCopy(section: ServerSettingsSection) {
   if (isModuleOverviewSection(section)) {
     return MODULE_OVERVIEW_COPY[section];
   }
+  if (section in MODULE_MESSAGE_COPY) {
+    return MODULE_MESSAGE_COPY[section] ?? null;
+  }
   return SALES_SECTION_COPY[section] ?? null;
 }
 
@@ -223,6 +268,8 @@ export type ModuleActivationKey =
   | "welcome"
   | "captcha"
   | "suggestions"
+  | "sorteio"
+  | "whitelist"
   | "bate_ponto"
   | "antilink"
   | "autorole"
@@ -262,6 +309,16 @@ export const MODULE_ACTIVATION_BAR_COPY: Record<
     description: "Ative para publicar o painel de ideias, votos e logs da comunidade.",
     buttonLabel: "Ativar modulo",
   },
+  sorteio: {
+    title: "Modulo de sorteios desativado",
+    description: "Ative para configurar permissoes, logs e templates do comando /sorteio.",
+    buttonLabel: "Ativar e salvar",
+  },
+  whitelist: {
+    title: "Modulo de whitelist desativado",
+    description: "Ative para publicar o painel, analisar pedidos e sincronizar com o banco da cidade.",
+    buttonLabel: "Ativar e salvar",
+  },
   bate_ponto: {
     title: "Bate-ponto desativado",
     description: "Ative para registrar expediente, logs e banco de horas da equipe.",
@@ -292,6 +349,8 @@ export function resolveModuleActivationKey(input: {
   welcomeEnabled: boolean;
   captchaEnabled: boolean;
   suggestionsEnabled: boolean;
+  sorteioEnabled: boolean;
+  whitelistEnabled: boolean;
   batePontoEnabled: boolean;
   antiLinkEnabled: boolean;
   autoRoleEnabled: boolean;
@@ -330,6 +389,20 @@ export function resolveModuleActivationKey(input: {
     !input.suggestionsEnabled
   ) {
     return "suggestions";
+  }
+  if (
+    (input.section === "sorteio_overview" || input.section === "sorteio_message") &&
+    !input.sorteioEnabled
+  ) {
+    return "sorteio";
+  }
+  if (
+    (input.section === "whitelist_overview" ||
+      input.section === "whitelist_database" ||
+      input.section === "whitelist_message") &&
+    !input.whitelistEnabled
+  ) {
+    return "whitelist";
   }
   if (
     (input.section === "bate_ponto_overview" ||

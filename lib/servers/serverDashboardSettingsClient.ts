@@ -97,6 +97,45 @@ type ServerDashboardSettingsPayload = {
     suggestionLayout: TicketPanelLayout;
     updatedAt: string | null;
   } | null;
+  sorteioSettings: {
+    enabled: boolean;
+    logsChannelId: string | null;
+    createRoleIds: string[];
+    rerollRoleIds: string[];
+    defaultWinnerCount: number;
+    defaultDurationMinutes: number;
+    activeLayout: TicketPanelLayout;
+    endedLayout: TicketPanelLayout;
+    updatedAt: string | null;
+  } | null;
+  whitelistSettings: {
+    enabled: boolean;
+    panelChannelId: string | null;
+    reviewChannelId: string | null;
+    logsChannelId: string | null;
+    panelLayout: TicketPanelLayout;
+    approvedRoleIds: string[];
+    deniedRoleIds: string[];
+    reviewRoleIds: string[];
+    identifierKind: string;
+    identifierLabel: string;
+    identifierPlaceholder: string;
+    approvalMode: string;
+    connectionMode: string;
+    dbEngine: string;
+    dbHost: string;
+    dbPort: number;
+    dbName: string;
+    dbUser: string;
+    dbSsl: boolean;
+    hasDbPassword: boolean;
+    mapping: Record<string, unknown>;
+    mappingStatus: string;
+    lastHealthOk: boolean;
+    lastHealthAt: string | null;
+    lastHealthError: string | null;
+    updatedAt: string | null;
+  } | null;
   batePontoSettings: {
     enabled: boolean;
     panelChannelId: string | null;
@@ -321,6 +360,8 @@ export function patchCachedServerDashboardSettings(
       | "welcomeSettings"
       | "captchaSettings"
       | "suggestionsSettings"
+      | "sorteioSettings"
+      | "whitelistSettings"
       | "batePontoSettings"
       | "antiLinkSettings"
       | "autoRoleSettings"

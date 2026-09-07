@@ -127,7 +127,14 @@ export function useWorkspaceOverview(guildId: string) {
               return;
             }
 
-            lastMessage = payload?.message || lastMessage;
+            const errorMessage =
+              payload &&
+              typeof payload === "object" &&
+              "message" in payload &&
+              typeof (payload as { message?: unknown }).message === "string"
+                ? (payload as { message: string }).message
+                : null;
+            lastMessage = errorMessage || lastMessage;
             const shouldRetry =
               !payload || isRetryableStatus(response.status) || attempt < RETRY_DELAYS_MS.length - 1;
 

@@ -14,6 +14,11 @@ export type TeamRolePermission =
   | "server_manage_captcha_message"
   | "server_manage_suggestions_overview"
   | "server_manage_suggestions_message"
+  | "server_manage_sorteio_overview"
+  | "server_manage_sorteio_message"
+  | "server_manage_whitelist_overview"
+  | "server_manage_whitelist_database"
+  | "server_manage_whitelist_message"
   | "server_manage_bate_ponto_overview"
   | "server_manage_bate_ponto_message"
   | "server_manage_bate_ponto_ranking"
@@ -684,6 +689,9 @@ export async function getUserTeamsSnapshotForUser(input: {
                 "server_manage_welcome_overview", "server_manage_welcome_message",
                 "server_manage_captcha_overview", "server_manage_captcha_message",
                 "server_manage_suggestions_overview", "server_manage_suggestions_message",
+                "server_manage_sorteio_overview", "server_manage_sorteio_message",
+                "server_manage_whitelist_overview", "server_manage_whitelist_database",
+                "server_manage_whitelist_message",
                 "server_manage_bate_ponto_overview", "server_manage_bate_ponto_message",
                 "server_manage_bate_ponto_ranking", "server_manage_bate_ponto_history",
                 "server_manage_antilink", "server_manage_autorole",

@@ -25,6 +25,11 @@ type TeamRolePermission =
   | "server_manage_captcha_message"
   | "server_manage_suggestions_overview"
   | "server_manage_suggestions_message"
+  | "server_manage_sorteio_overview"
+  | "server_manage_sorteio_message"
+  | "server_manage_whitelist_overview"
+  | "server_manage_whitelist_database"
+  | "server_manage_whitelist_message"
   | "server_manage_bate_ponto_overview"
   | "server_manage_bate_ponto_message"
   | "server_manage_bate_ponto_ranking"
@@ -113,6 +118,11 @@ const PERMISSION_OPTIONS: { id: TeamRolePermission; label: string; description: 
   { id: "server_manage_captcha_message", label: "Painel: Mensagem do Captcha", description: "Pode editar o embed do painel de captcha" },
   { id: "server_manage_suggestions_overview", label: "Painel: Configurando Sugestoes", description: "Acesso as configuracoes gerais de sugestoes" },
   { id: "server_manage_suggestions_message", label: "Painel: Mensagem de Sugestoes", description: "Pode editar o embed do painel de sugestoes" },
+  { id: "server_manage_sorteio_overview", label: "Painel: Configurando Sorteios", description: "Acesso as configuracoes gerais de sorteios" },
+  { id: "server_manage_sorteio_message", label: "Painel: Mensagem de Sorteios", description: "Pode editar os templates de sorteio ativo e encerrado" },
+  { id: "server_manage_whitelist_overview", label: "Painel: Configurando Whitelist", description: "Acesso as configuracoes gerais de whitelist FiveM" },
+  { id: "server_manage_whitelist_database", label: "Painel: Banco da Whitelist", description: "Pode configurar conexao e mapping do banco da cidade" },
+  { id: "server_manage_whitelist_message", label: "Painel: Mensagem da Whitelist", description: "Pode editar o embed do painel de whitelist" },
   { id: "server_manage_bate_ponto_overview", label: "Painel: Configurando Ponto", description: "Acesso as configuracoes gerais de bate ponto" },
   { id: "server_manage_bate_ponto_message", label: "Painel: Mensagem de Bate Ponto", description: "Pode editar o embed do painel de bate ponto" },
   { id: "server_manage_bate_ponto_ranking", label: "Painel: Ranking de Bate Ponto", description: "Pode visualizar o ranking de horas" },

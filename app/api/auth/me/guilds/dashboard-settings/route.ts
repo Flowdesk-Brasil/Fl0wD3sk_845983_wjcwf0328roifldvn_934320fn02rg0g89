@@ -31,6 +31,12 @@ import {
   normalizeTicketPanelLayout,
 } from "@/lib/servers/ticketPanelBuilder";
 import {
+  normalizeSorteioActiveLayout,
+  normalizeSorteioEndedLayout,
+} from "@/lib/servers/sorteioPanelBuilder";
+import { normalizeWhitelistPanelLayout } from "@/lib/servers/whitelistPanelBuilder";
+import { normalizeWhitelistMapping } from "@/lib/servers/whitelistMapping";
+import {
   createDefaultWelcomeEntryLayout,
   createDefaultWelcomeExitLayout,
   normalizeWelcomeLayout,
@@ -752,6 +758,190 @@ function buildSuggestionsPayload(input: {
   };
 }
 
+function buildSorteioPayload(input: {
+  record: Record<string, unknown> | null;
+  snapshot: Record<string, unknown> | null;
+  textSet: Set<string>;
+  roleSet: Set<string>;
+  updatedAt: string | null;
+}) {
+  const winnerCount = Number(
+    input.snapshot?.defaultWinnerCount ?? input.record?.default_winner_count ?? 1,
+  );
+  const durationMinutes = Number(
+    input.snapshot?.defaultDurationMinutes ??
+      input.record?.default_duration_minutes ??
+      60,
+  );
+
+  return {
+    enabled:
+      typeof input.snapshot?.enabled === "boolean"
+        ? input.snapshot.enabled
+        : input.record?.enabled === true,
+    logsChannelId:
+      typeof input.snapshot?.logsChannelId === "string" &&
+      (input.textSet.size === 0 || input.textSet.has(input.snapshot.logsChannelId))
+        ? input.snapshot.logsChannelId
+        : typeof input.record?.logs_channel_id === "string" &&
+            (input.textSet.size === 0 || input.textSet.has(input.record.logs_channel_id))
+          ? input.record.logs_channel_id
+          : null,
+    createRoleIds: filterKnownIds(
+      input.snapshot?.createRoleIds ?? input.record?.create_role_ids,
+      input.roleSet,
+    ),
+    rerollRoleIds: filterKnownIds(
+      input.snapshot?.rerollRoleIds ?? input.record?.reroll_role_ids,
+      input.roleSet,
+    ),
+    defaultWinnerCount:
+      Number.isFinite(winnerCount) && winnerCount >= 1 && winnerCount <= 25
+        ? Math.floor(winnerCount)
+        : 1,
+    defaultDurationMinutes:
+      Number.isFinite(durationMinutes) &&
+      durationMinutes >= 1 &&
+      durationMinutes <= 43200
+        ? Math.floor(durationMinutes)
+        : 60,
+    activeLayout: normalizeSorteioActiveLayout(
+      input.snapshot?.activeLayout ?? input.record?.active_layout,
+    ),
+    endedLayout: normalizeSorteioEndedLayout(
+      input.snapshot?.endedLayout ?? input.record?.ended_layout,
+    ),
+    updatedAt: input.updatedAt,
+  };
+}
+
+function buildWhitelistPayload(input: {
+  record: Record<string, unknown> | null;
+  snapshot: Record<string, unknown> | null;
+  textSet: Set<string>;
+  roleSet: Set<string>;
+  updatedAt: string | null;
+}) {
+  const source = input.snapshot || input.record;
+  if (!source) {
+    return {
+      enabled: false,
+      panelChannelId: null,
+      reviewChannelId: null,
+      logsChannelId: null,
+      panelLayout: normalizeWhitelistPanelLayout(null),
+      approvedRoleIds: [],
+      deniedRoleIds: [],
+      reviewRoleIds: [],
+      identifierKind: "discord_id",
+      identifierLabel: "ID / License",
+      identifierPlaceholder: "Ex: 1 ou license:xxxx",
+      approvalMode: "manual",
+      connectionMode: "direct",
+      dbEngine: "mysql",
+      dbHost: "",
+      dbPort: 3306,
+      dbName: "",
+      dbUser: "",
+      dbSsl: false,
+      hasDbPassword: false,
+      mapping: normalizeWhitelistMapping(null),
+      mappingStatus: "draft",
+      lastHealthOk: false,
+      lastHealthAt: null,
+      lastHealthError: null,
+      updatedAt: input.updatedAt,
+    };
+  }
+
+  const pickChannel = (snapKey: string, rowKey: string) => {
+    const snap = input.snapshot?.[snapKey];
+    const row = input.record?.[rowKey];
+    if (typeof snap === "string" && (input.textSet.size === 0 || input.textSet.has(snap))) {
+      return snap;
+    }
+    if (typeof row === "string" && (input.textSet.size === 0 || input.textSet.has(row))) {
+      return row;
+    }
+    return null;
+  };
+
+  return {
+    enabled:
+      typeof input.snapshot?.enabled === "boolean"
+        ? input.snapshot.enabled
+        : input.record?.enabled === true,
+    panelChannelId: pickChannel("panelChannelId", "panel_channel_id"),
+    reviewChannelId: pickChannel("reviewChannelId", "review_channel_id"),
+    logsChannelId: pickChannel("logsChannelId", "logs_channel_id"),
+    panelLayout: normalizeWhitelistPanelLayout(
+      input.snapshot?.panelLayout ?? input.record?.panel_layout,
+    ),
+    approvedRoleIds: filterKnownIds(
+      input.snapshot?.approvedRoleIds ?? input.record?.approved_role_ids,
+      input.roleSet,
+    ),
+    deniedRoleIds: filterKnownIds(
+      input.snapshot?.deniedRoleIds ?? input.record?.denied_role_ids,
+      input.roleSet,
+    ),
+    reviewRoleIds: filterKnownIds(
+      input.snapshot?.reviewRoleIds ?? input.record?.review_role_ids,
+      input.roleSet,
+    ),
+    identifierKind: String(
+      input.snapshot?.identifierKind ?? input.record?.identifier_kind ?? "discord_id",
+    ),
+    identifierLabel: String(
+      input.snapshot?.identifierLabel ?? input.record?.identifier_label ?? "ID / License",
+    ),
+    identifierPlaceholder: String(
+      input.snapshot?.identifierPlaceholder ??
+        input.record?.identifier_placeholder ??
+        "Ex: 1 ou license:xxxx",
+    ),
+    approvalMode: String(
+      input.snapshot?.approvalMode ?? input.record?.approval_mode ?? "manual",
+    ) === "automatic"
+      ? "automatic"
+      : "manual",
+    connectionMode: String(
+      input.snapshot?.connectionMode ?? input.record?.connection_mode ?? "direct",
+    ),
+    dbEngine: String(input.snapshot?.dbEngine ?? input.record?.db_engine ?? "mysql"),
+    dbHost: String(input.snapshot?.dbHost ?? input.record?.db_host ?? ""),
+    dbPort: Number(input.snapshot?.dbPort ?? input.record?.db_port ?? 3306) || 3306,
+    dbName: String(input.snapshot?.dbName ?? input.record?.db_name ?? ""),
+    dbUser: String(input.snapshot?.dbUser ?? input.record?.db_user ?? ""),
+    dbSsl: Boolean(input.snapshot?.dbSsl ?? input.record?.db_ssl),
+    hasDbPassword: Boolean(
+      input.snapshot?.hasDbPassword ?? input.record?.db_password_cipher,
+    ),
+    mapping: normalizeWhitelistMapping(
+      input.snapshot?.mapping ?? input.record?.mapping,
+    ),
+    mappingStatus: String(
+      input.snapshot?.mappingStatus ?? input.record?.mapping_status ?? "draft",
+    ),
+    lastHealthOk: Boolean(
+      input.snapshot?.lastHealthOk ?? input.record?.last_health_ok,
+    ),
+    lastHealthAt:
+      typeof input.snapshot?.lastHealthAt === "string"
+        ? input.snapshot.lastHealthAt
+        : typeof input.record?.last_health_at === "string"
+          ? input.record.last_health_at
+          : null,
+    lastHealthError:
+      typeof input.snapshot?.lastHealthError === "string"
+        ? input.snapshot.lastHealthError
+        : typeof input.record?.last_health_error === "string"
+          ? input.record.last_health_error
+          : null,
+    updatedAt: input.updatedAt,
+  };
+}
+
 function buildBatePontoPayload(input: {
   record: Record<string, unknown> | null;
   snapshot: Record<string, unknown> | null;
@@ -1256,6 +1446,8 @@ export async function GET(request: Request) {
       welcomeResult,
       captchaResult,
       suggestionsResult,
+      sorteioResult,
+      whitelistResult,
       batePontoResult,
       antiLinkResult,
       autoRoleResult,
@@ -1296,6 +1488,20 @@ export async function GET(request: Request) {
         .from("guild_suggestions_settings")
         .select(
           "enabled, panel_channel_id, publish_channel_id, logs_channel_id, panel_layout, panel_title, panel_description, panel_button_label, suggestion_layout, published_header, published_footer, thread_name_prefix, updated_at",
+        )
+        .eq("guild_id", guildId)
+        .maybeSingle(),
+      supabase
+        .from("guild_sorteio_settings")
+        .select(
+          "enabled, logs_channel_id, create_role_ids, reroll_role_ids, active_layout, ended_layout, default_winner_count, default_duration_minutes, updated_at",
+        )
+        .eq("guild_id", guildId)
+        .maybeSingle(),
+      supabase
+        .from("guild_whitelist_settings")
+        .select(
+          "enabled, panel_channel_id, review_channel_id, logs_channel_id, panel_layout, approved_role_ids, denied_role_ids, review_role_ids, identifier_kind, identifier_label, identifier_placeholder, approval_mode, connection_mode, db_engine, db_host, db_port, db_name, db_user, db_ssl, db_password_cipher, mapping, mapping_status, last_health_ok, last_health_at, last_health_error, updated_at",
         )
         .eq("guild_id", guildId)
         .maybeSingle(),
@@ -1342,6 +1548,8 @@ export async function GET(request: Request) {
           "welcome_settings",
           "captcha_settings",
           "suggestions_settings",
+          "sorteio_settings",
+          "whitelist_settings",
           "bate_ponto_settings",
           "antilink_settings",
           "autorole_settings",
@@ -1379,6 +1587,32 @@ export async function GET(request: Request) {
           : "";
       if (code !== "42P01" && !message.includes("guild_suggestions_settings")) {
         throw new Error(suggestionsResult.error.message);
+      }
+    }
+    if (sorteioResult.error) {
+      const code =
+        typeof sorteioResult.error.code === "string" ? sorteioResult.error.code : "";
+      const message =
+        typeof sorteioResult.error.message === "string"
+          ? sorteioResult.error.message.toLowerCase()
+          : "";
+      if (code !== "42P01" && !message.includes("guild_sorteio_settings")) {
+        throw new Error(sorteioResult.error.message);
+      }
+    }
+    if (whitelistResult.error) {
+      const code =
+        typeof whitelistResult.error.code === "string" ? whitelistResult.error.code : "";
+      const message =
+        typeof whitelistResult.error.message === "string"
+          ? whitelistResult.error.message.toLowerCase()
+          : "";
+      if (
+        code !== "42P01" &&
+        !(code === "42703" && message.includes("approval_mode")) &&
+        !message.includes("guild_whitelist_settings")
+      ) {
+        throw new Error(whitelistResult.error.message);
       }
     }
     if (batePontoResult.error) {
@@ -1536,6 +1770,28 @@ export async function GET(request: Request) {
             ? suggestionsResult.data.updated_at
             : null),
       }),
+      sorteioSettings: buildSorteioPayload({
+        record: toRecordOrNull(sorteioResult.data),
+        snapshot: toRecordOrNull(secureSnapshots.get("sorteio_settings")?.payload),
+        textSet,
+        roleSet,
+        updatedAt:
+          secureSnapshots.get("sorteio_settings")?.updatedAt ||
+          (typeof sorteioResult.data?.updated_at === "string"
+            ? sorteioResult.data.updated_at
+            : null),
+      }),
+      whitelistSettings: buildWhitelistPayload({
+        record: toRecordOrNull(whitelistResult.data),
+        snapshot: toRecordOrNull(secureSnapshots.get("whitelist_settings")?.payload),
+        textSet,
+        roleSet,
+        updatedAt:
+          secureSnapshots.get("whitelist_settings")?.updatedAt ||
+          (typeof whitelistResult.data?.updated_at === "string"
+            ? whitelistResult.data.updated_at
+            : null),
+      }),
       batePontoSettings: buildBatePontoPayload({
         record: toRecordOrNull(batePontoResult.data),
         snapshot: toRecordOrNull(
@@ -1615,6 +1871,8 @@ export async function GET(request: Request) {
       { moduleKey: "welcome_settings", settings: payload.welcomeSettings },
       { moduleKey: "captcha_settings", settings: payload.captchaSettings },
       { moduleKey: "suggestions_settings", settings: payload.suggestionsSettings },
+      { moduleKey: "sorteio_settings", settings: payload.sorteioSettings },
+      { moduleKey: "whitelist_settings", settings: payload.whitelistSettings },
       { moduleKey: "bate_ponto_settings", settings: payload.batePontoSettings },
       { moduleKey: "antilink_settings", settings: payload.antiLinkSettings },
       { moduleKey: "autorole_settings", settings: payload.autoRoleSettings },

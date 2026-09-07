@@ -35,6 +35,8 @@ import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { useNotificationEffect } from "@/components/notifications/NotificationsProvider";
 import { ServerSettingsEditorSkeleton } from "@/components/servers/ServerSettingsEditorSkeleton";
 import { TicketMessageBuilder } from "@/components/servers/TicketMessageBuilder";
+import { SorteioSettingsSection } from "@/components/servers/sorteio/SorteioSettingsSection";
+import { WhitelistSettingsSection } from "@/components/servers/whitelist/WhitelistSettingsSection";
 import { BatePontoHistoryPanel } from "@/components/servers/BatePontoHistoryPanel";
 import { BatePontoRankingPanel } from "@/components/servers/BatePontoRankingPanel";
 import { PermissionDeniedState } from "@/components/servers/PermissionDeniedState";
@@ -51,6 +53,7 @@ import {
   isModuleOverviewSection,
   MODULE_ACTIVATION_BAR_COPY,
   resolveModuleActivationKey,
+  type ModuleActivationKey,
   type ServerEditorChrome,
 } from "@/lib/servers/serverEditorChrome";
 import {
@@ -110,6 +113,20 @@ import {
   type TicketPanelLayout,
 } from "@/lib/servers/ticketPanelBuilder";
 import {
+  areSorteioSettingsDraftsEqual,
+  createEmptySorteioSettingsDraft,
+  normalizeSorteioSettingsDraft,
+  type SorteioSettingsDraft,
+} from "@/lib/servers/sorteioSettingsModel";
+import { sorteioActiveLayoutHasRequiredParts } from "@/lib/servers/sorteioPanelBuilder";
+import {
+  areWhitelistSettingsDraftsEqual,
+  createEmptyWhitelistSettingsDraft,
+  normalizeWhitelistSettingsDraft,
+  type WhitelistSettingsDraft,
+} from "@/lib/servers/whitelistSettingsModel";
+import { whitelistPanelHasRequiredParts } from "@/lib/servers/whitelistPanelBuilder";
+import {
   createDefaultWelcomeEntryLayout,
   createDefaultWelcomeExitLayout,
   normalizeWelcomeLayout,
@@ -155,6 +172,11 @@ type ServerSettingsSection =
   | "captcha_message"
   | "suggestions_overview"
   | "suggestions_message"
+  | "sorteio_overview"
+  | "sorteio_message"
+  | "whitelist_overview"
+  | "whitelist_database"
+  | "whitelist_message"
   | "bate_ponto_overview"
   | "bate_ponto_message"
   | "bate_ponto_ranking"
@@ -2301,6 +2323,8 @@ export function ServerSettingsEditor({
 
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [pendingModuleActivation, setPendingModuleActivation] =
+    useState<ModuleActivationKey | null>(null);
   const [isSendingEmbed, setIsSendingEmbed] = useState(false);
   const isSendingEmbedRef = useRef(false);
   const hasLoadedDashboardSnapshotRef = useRef(false);
@@ -2384,6 +2408,26 @@ export function ServerSettingsEditor({
   );
   const [suggestionsSuggestionLayout, setSuggestionsSuggestionLayout] =
     useState<TicketPanelLayout>(createDefaultSuggestionPublishedLayout());
+  const emptySorteioDraft = createEmptySorteioSettingsDraft();
+  const [sorteioEnabled, setSorteioEnabled] = useState(false);
+  const [sorteioLogsChannelId, setSorteioLogsChannelId] = useState<string | null>(null);
+  const [sorteioCreateRoleIds, setSorteioCreateRoleIds] = useState<string[]>([]);
+  const [sorteioRerollRoleIds, setSorteioRerollRoleIds] = useState<string[]>([]);
+  const [sorteioDefaultWinnerCount, setSorteioDefaultWinnerCount] = useState(
+    emptySorteioDraft.defaultWinnerCount,
+  );
+  const [sorteioDefaultDurationMinutes, setSorteioDefaultDurationMinutes] = useState(
+    emptySorteioDraft.defaultDurationMinutes,
+  );
+  const [sorteioActiveLayout, setSorteioActiveLayout] = useState<TicketPanelLayout>(
+    emptySorteioDraft.activeLayout,
+  );
+  const [sorteioEndedLayout, setSorteioEndedLayout] = useState<TicketPanelLayout>(
+    emptySorteioDraft.endedLayout,
+  );
+  const emptyWhitelistDraft = createEmptyWhitelistSettingsDraft();
+  const [whitelistDraft, setWhitelistDraft] =
+    useState<WhitelistSettingsDraft>(emptyWhitelistDraft);
   const [batePontoEnabled, setBatePontoEnabled] = useState(false);
   const [batePontoPanelChannelId, setBatePontoPanelChannelId] = useState<string | null>(
     null,
@@ -2529,6 +2573,10 @@ export function ServerSettingsEditor({
         suggestionsPanelChannelId,
         suggestionsPublishChannelId,
         suggestionsLogsChannelId,
+        sorteioLogsChannelId,
+        whitelistDraft.panelChannelId,
+        whitelistDraft.reviewChannelId,
+        whitelistDraft.logsChannelId,
         batePontoPanelChannelId,
         batePontoLogsChannelId,
         antiLinkLogChannelId,
@@ -2548,6 +2596,11 @@ export function ServerSettingsEditor({
         ...refundApproverRoleIds,
         ...captchaVerifiedRoleIds,
         ...captchaBypassRoleIds,
+        ...sorteioCreateRoleIds,
+        ...sorteioRerollRoleIds,
+        ...whitelistDraft.approvedRoleIds,
+        ...whitelistDraft.deniedRoleIds,
+        ...whitelistDraft.reviewRoleIds,
         ...batePontoAllowedRoleIds,
         ...batePontoRequiredVoiceChannelIds,
         ...antiLinkIgnoredRoleIds,
@@ -2583,6 +2636,10 @@ export function ServerSettingsEditor({
     suggestionsLogsChannelId,
     suggestionsPanelChannelId,
     suggestionsPublishChannelId,
+    sorteioCreateRoleIds,
+    sorteioLogsChannelId,
+    sorteioRerollRoleIds,
+    whitelistDraft,
     batePontoAllowedRoleIds,
     batePontoRequiredVoiceChannelIds,
     batePontoLogsChannelId,
@@ -2611,6 +2668,10 @@ export function ServerSettingsEditor({
     useState<CaptchaSettingsDraft | null>(null);
   const [savedSuggestionSettingsDraft, setSavedSuggestionSettingsDraft] =
     useState<SuggestionSettingsDraft | null>(null);
+  const [savedSorteioSettingsDraft, setSavedSorteioSettingsDraft] =
+    useState<SorteioSettingsDraft | null>(null);
+  const [savedWhitelistSettingsDraft, setSavedWhitelistSettingsDraft] =
+    useState<WhitelistSettingsDraft | null>(null);
   const [savedBatePontoSettingsDraft, setSavedBatePontoSettingsDraft] =
     useState<BatePontoSettingsDraft | null>(null);
   const [savedAntiLinkSettingsDraft, setSavedAntiLinkSettingsDraft] =
@@ -2627,6 +2688,10 @@ export function ServerSettingsEditor({
   const savedCaptchaDraftRef = useRef<CaptchaSettingsDraft | null>(null);
   const currentSuggestionDraftRef = useRef<SuggestionSettingsDraft | null>(null);
   const savedSuggestionDraftRef = useRef<SuggestionSettingsDraft | null>(null);
+  const currentSorteioDraftRef = useRef<SorteioSettingsDraft | null>(null);
+  const savedSorteioDraftRef = useRef<SorteioSettingsDraft | null>(null);
+  const currentWhitelistDraftRef = useRef<WhitelistSettingsDraft | null>(null);
+  const savedWhitelistDraftRef = useRef<WhitelistSettingsDraft | null>(null);
   const currentBatePontoDraftRef = useRef<BatePontoSettingsDraft | null>(null);
   const savedBatePontoDraftRef = useRef<BatePontoSettingsDraft | null>(null);
   const currentAntiLinkDraftRef = useRef<AntiLinkSettingsDraft | null>(null);
@@ -2757,6 +2822,11 @@ export function ServerSettingsEditor({
         captcha_message: "server_manage_captcha_message",
         suggestions_overview: "server_manage_suggestions_overview",
         suggestions_message: "server_manage_suggestions_message",
+        sorteio_overview: "server_manage_sorteio_overview",
+        sorteio_message: "server_manage_sorteio_message",
+        whitelist_overview: "server_manage_whitelist_overview",
+        whitelist_database: "server_manage_whitelist_database",
+        whitelist_message: "server_manage_whitelist_message",
         bate_ponto_overview: "server_manage_bate_ponto_overview",
         bate_ponto_message: "server_manage_bate_ponto_message",
         bate_ponto_ranking: "server_manage_bate_ponto_ranking",
@@ -2827,6 +2897,16 @@ export function ServerSettingsEditor({
         currentSuggestionDraftRef.current,
         savedSuggestionDraftRef.current,
         areSuggestionSettingsDraftsEqual,
+      );
+      const shouldPreserveLocalSorteioDraft = isSettingsDraftDirty(
+        currentSorteioDraftRef.current,
+        savedSorteioDraftRef.current,
+        areSorteioSettingsDraftsEqual,
+      );
+      const shouldPreserveLocalWhitelistDraft = isSettingsDraftDirty(
+        currentWhitelistDraftRef.current,
+        savedWhitelistDraftRef.current,
+        areWhitelistSettingsDraftsEqual,
       );
       const shouldPreserveLocalBatePontoDraft = isSettingsDraftDirty(
         currentBatePontoDraftRef.current,
@@ -3067,6 +3147,79 @@ export function ServerSettingsEditor({
             payload.suggestionsSettings?.suggestionLayout,
           )
         : createDefaultSuggestionPublishedLayout();
+
+      const hasSorteioSettings = Boolean(payload.sorteioSettings);
+      const nextSorteioEnabled = Boolean(payload.sorteioSettings?.enabled);
+      const nextSorteioLogsChannelId = hasSorteioSettings
+        ? payload.sorteioSettings?.logsChannelId &&
+          textSet.has(payload.sorteioSettings.logsChannelId)
+          ? payload.sorteioSettings.logsChannelId
+          : null
+        : null;
+      const nextSorteioCreateRoleIds = hasSorteioSettings
+        ? Array.isArray(payload.sorteioSettings?.createRoleIds)
+          ? payload.sorteioSettings.createRoleIds.filter((id) => roleSet.has(id))
+          : []
+        : [];
+      const nextSorteioRerollRoleIds = hasSorteioSettings
+        ? Array.isArray(payload.sorteioSettings?.rerollRoleIds)
+          ? payload.sorteioSettings.rerollRoleIds.filter((id) => roleSet.has(id))
+          : []
+        : [];
+      const nextSorteioDefaultWinnerCount = hasSorteioSettings
+        ? Number(payload.sorteioSettings?.defaultWinnerCount ?? 1)
+        : 1;
+      const nextSorteioDefaultDurationMinutes = hasSorteioSettings
+        ? Number(payload.sorteioSettings?.defaultDurationMinutes ?? 60)
+        : 60;
+      const nextSorteioActiveLayout = hasSorteioSettings
+        ? normalizeSorteioSettingsDraft({
+            activeLayout: payload.sorteioSettings?.activeLayout,
+          }).activeLayout
+        : createEmptySorteioSettingsDraft().activeLayout;
+      const nextSorteioEndedLayout = hasSorteioSettings
+        ? normalizeSorteioSettingsDraft({
+            endedLayout: payload.sorteioSettings?.endedLayout,
+          }).endedLayout
+        : createEmptySorteioSettingsDraft().endedLayout;
+
+      const hasWhitelistSettings = Boolean(payload.whitelistSettings);
+      const nextWhitelistDraft = normalizeWhitelistSettingsDraft({
+        ...(payload.whitelistSettings || {}),
+        panelChannelId: hasWhitelistSettings
+          ? payload.whitelistSettings?.panelChannelId &&
+            textSet.has(payload.whitelistSettings.panelChannelId)
+            ? payload.whitelistSettings.panelChannelId
+            : null
+          : null,
+        reviewChannelId: hasWhitelistSettings
+          ? payload.whitelistSettings?.reviewChannelId &&
+            textSet.has(payload.whitelistSettings.reviewChannelId)
+            ? payload.whitelistSettings.reviewChannelId
+            : null
+          : null,
+        logsChannelId: hasWhitelistSettings
+          ? payload.whitelistSettings?.logsChannelId &&
+            textSet.has(payload.whitelistSettings.logsChannelId)
+            ? payload.whitelistSettings.logsChannelId
+            : null
+          : null,
+        approvedRoleIds: hasWhitelistSettings
+          ? Array.isArray(payload.whitelistSettings?.approvedRoleIds)
+            ? payload.whitelistSettings.approvedRoleIds.filter((id) => roleSet.has(id))
+            : []
+          : [],
+        deniedRoleIds: hasWhitelistSettings
+          ? Array.isArray(payload.whitelistSettings?.deniedRoleIds)
+            ? payload.whitelistSettings.deniedRoleIds.filter((id) => roleSet.has(id))
+            : []
+          : [],
+        reviewRoleIds: hasWhitelistSettings
+          ? Array.isArray(payload.whitelistSettings?.reviewRoleIds)
+            ? payload.whitelistSettings.reviewRoleIds.filter((id) => roleSet.has(id))
+            : []
+          : [],
+      });
 
       const hasBatePontoSettings = Boolean(payload.batePontoSettings);
       const nextBatePontoEnabled = Boolean(payload.batePontoSettings?.enabled);
@@ -3446,6 +3599,19 @@ export function ServerSettingsEditor({
         setSuggestionsPanelLayout(nextSuggestionsPanelLayout);
         setSuggestionsSuggestionLayout(nextSuggestionsSuggestionLayout);
       }
+      if (!shouldPreserveLocalSorteioDraft) {
+        setSorteioEnabled(nextSorteioEnabled);
+        setSorteioLogsChannelId(nextSorteioLogsChannelId);
+        setSorteioCreateRoleIds(nextSorteioCreateRoleIds);
+        setSorteioRerollRoleIds(nextSorteioRerollRoleIds);
+        setSorteioDefaultWinnerCount(nextSorteioDefaultWinnerCount);
+        setSorteioDefaultDurationMinutes(nextSorteioDefaultDurationMinutes);
+        setSorteioActiveLayout(nextSorteioActiveLayout);
+        setSorteioEndedLayout(nextSorteioEndedLayout);
+      }
+      if (!shouldPreserveLocalWhitelistDraft) {
+        setWhitelistDraft(nextWhitelistDraft);
+      }
       if (!shouldPreserveLocalBatePontoDraft) {
         setBatePontoEnabled(nextBatePontoEnabled);
         setBatePontoPanelChannelId(nextBatePontoPanelChannelId);
@@ -3584,6 +3750,23 @@ export function ServerSettingsEditor({
           }),
         );
       }
+      if (!shouldPreserveLocalSorteioDraft) {
+        setSavedSorteioSettingsDraft(
+          normalizeSorteioSettingsDraft({
+            enabled: nextSorteioEnabled,
+            logsChannelId: nextSorteioLogsChannelId,
+            createRoleIds: nextSorteioCreateRoleIds,
+            rerollRoleIds: nextSorteioRerollRoleIds,
+            defaultWinnerCount: nextSorteioDefaultWinnerCount,
+            defaultDurationMinutes: nextSorteioDefaultDurationMinutes,
+            activeLayout: nextSorteioActiveLayout,
+            endedLayout: nextSorteioEndedLayout,
+          }),
+        );
+      }
+      if (!shouldPreserveLocalWhitelistDraft) {
+        setSavedWhitelistSettingsDraft(nextWhitelistDraft);
+      }
       if (!shouldPreserveLocalBatePontoDraft) {
         setSavedBatePontoSettingsDraft(
           normalizeBatePontoSettingsDraft({
@@ -3718,6 +3901,8 @@ export function ServerSettingsEditor({
     setSavedWelcomeSettingsDraft(null);
     setSavedCaptchaSettingsDraft(null);
     setSavedSuggestionSettingsDraft(null);
+    setSavedSorteioSettingsDraft(null);
+    setSavedWhitelistSettingsDraft(null);
     setSavedAntiLinkSettingsDraft(null);
     setSavedAutoRoleSettingsDraft(null);
     setSavedSalesSettingsDraft(null);
@@ -3744,6 +3929,15 @@ export function ServerSettingsEditor({
     setSuggestionsLogsChannelId(null);
     setSuggestionsPanelLayout(createDefaultSuggestionPanelLayout());
     setSuggestionsSuggestionLayout(createDefaultSuggestionPublishedLayout());
+    setSorteioEnabled(false);
+    setSorteioLogsChannelId(null);
+    setSorteioCreateRoleIds([]);
+    setSorteioRerollRoleIds([]);
+    setSorteioDefaultWinnerCount(emptySorteioDraft.defaultWinnerCount);
+    setSorteioDefaultDurationMinutes(emptySorteioDraft.defaultDurationMinutes);
+    setSorteioActiveLayout(createEmptySorteioSettingsDraft().activeLayout);
+    setSorteioEndedLayout(createEmptySorteioSettingsDraft().endedLayout);
+    setWhitelistDraft(createEmptyWhitelistSettingsDraft());
     setWelcomeEnabled(false);
     setEntryPublicChannelId(null);
     setEntryLogChannelId(null);
@@ -4542,6 +4736,13 @@ export function ServerSettingsEditor({
   const isSuggestionsSection =
     settingsSection === "suggestions_overview" ||
     settingsSection === "suggestions_message";
+  const isSorteioSection =
+    settingsSection === "sorteio_overview" ||
+    settingsSection === "sorteio_message";
+  const isWhitelistSection =
+    settingsSection === "whitelist_overview" ||
+    settingsSection === "whitelist_database" ||
+    settingsSection === "whitelist_message";
   const isBatePontoSection =
     settingsSection === "bate_ponto_overview" ||
     settingsSection === "bate_ponto_message";
@@ -4551,6 +4752,7 @@ export function ServerSettingsEditor({
   const isWelcomeMessageSection = settingsSection === "entry_exit_message";
   const isCaptchaMessageSection = settingsSection === "captcha_message";
   const isSuggestionsMessageSection = settingsSection === "suggestions_message";
+  const isSorteioMessageSection = settingsSection === "sorteio_message";
   const isBatePontoMessageSection = settingsSection === "bate_ponto_message";
 
   const entryChannelsProvided = Boolean(
@@ -4750,6 +4952,30 @@ export function ServerSettingsEditor({
           ticketPanelLayoutHasAtMostOneFunctionButton(suggestionsPanelLayout) &&
           suggestionPublishedLayoutHasRequiredSlots(suggestionsSuggestionLayout))),
   );
+  const isSorteioActiveLayoutInvalid =
+    sorteioEnabled && !sorteioActiveLayoutHasRequiredParts(sorteioActiveLayout);
+  const isSorteioEndedLayoutInvalid =
+    sorteioEnabled && !ticketPanelLayoutHasRenderableContent(sorteioEndedLayout);
+  const isSorteioMessageLayoutInvalid =
+    isSorteioActiveLayoutInvalid || isSorteioEndedLayoutInvalid;
+  const canSaveSorteio = Boolean(
+    !settingsReadOnly &&
+      !isLoading &&
+      !isSaving &&
+      (!sorteioEnabled ||
+        (sorteioActiveLayoutHasRequiredParts(sorteioActiveLayout) &&
+          ticketPanelLayoutHasRenderableContent(sorteioEndedLayout))),
+  );
+  const isWhitelistPanelLayoutInvalid =
+    whitelistDraft.enabled &&
+    !whitelistPanelHasRequiredParts(whitelistDraft.panelLayout);
+  const canSaveWhitelist = Boolean(
+    !settingsReadOnly &&
+      !isLoading &&
+      !isSaving &&
+      (!whitelistDraft.enabled ||
+        whitelistPanelHasRequiredParts(whitelistDraft.panelLayout)),
+  );
   const batePontoFunctionButtonCount = countTicketPanelFunctionButtons(
     batePontoPanelLayout,
   );
@@ -4870,6 +5096,16 @@ export function ServerSettingsEditor({
       batePontoPanelLayout.length &&
       ticketPanelLayoutHasRequiredParts(batePontoPanelLayout) &&
       ticketPanelLayoutHasAtMostOneFunctionButton(batePontoPanelLayout),
+  );
+  const canSendWhitelistEmbed = Boolean(
+    !settingsReadOnly &&
+      !isLoading &&
+      !isSaving &&
+      !isSendingEmbed &&
+      whitelistDraft.enabled &&
+      whitelistDraft.panelChannelId &&
+      whitelistDraft.panelLayout.length &&
+      whitelistPanelHasRequiredParts(whitelistDraft.panelLayout),
   );
 
   const currentSettingsDraft = useMemo(
@@ -5008,6 +5244,36 @@ export function ServerSettingsEditor({
       suggestionsSuggestionLayout,
     ],
   );
+  const currentSorteioDraft = useMemo(
+    () =>
+      normalizeSorteioSettingsDraft({
+        enabled: sorteioEnabled,
+        logsChannelId: sorteioLogsChannelId,
+        createRoleIds: sorteioCreateRoleIds,
+        rerollRoleIds: sorteioRerollRoleIds,
+        defaultWinnerCount: sorteioDefaultWinnerCount,
+        defaultDurationMinutes: sorteioDefaultDurationMinutes,
+        activeLayout: sorteioActiveLayout,
+        endedLayout: sorteioEndedLayout,
+      }),
+    [
+      sorteioActiveLayout,
+      sorteioCreateRoleIds,
+      sorteioDefaultDurationMinutes,
+      sorteioDefaultWinnerCount,
+      sorteioEnabled,
+      sorteioEndedLayout,
+      sorteioLogsChannelId,
+      sorteioRerollRoleIds,
+    ],
+  );
+  const currentWhitelistDraft = useMemo(() => {
+    const next = normalizeWhitelistSettingsDraft(whitelistDraft);
+    return {
+      ...next,
+      dbPassword: whitelistDraft.dbPassword,
+    };
+  }, [whitelistDraft]);
   const currentBatePontoDraft = useMemo(
     () =>
       normalizeBatePontoSettingsDraft({
@@ -5111,6 +5377,10 @@ export function ServerSettingsEditor({
   savedCaptchaDraftRef.current = savedCaptchaSettingsDraft;
   currentSuggestionDraftRef.current = currentSuggestionDraft;
   savedSuggestionDraftRef.current = savedSuggestionSettingsDraft;
+  currentSorteioDraftRef.current = currentSorteioDraft;
+  savedSorteioDraftRef.current = savedSorteioSettingsDraft;
+  currentWhitelistDraftRef.current = currentWhitelistDraft;
+  savedWhitelistDraftRef.current = savedWhitelistSettingsDraft;
   currentBatePontoDraftRef.current = currentBatePontoDraft;
   savedBatePontoDraftRef.current = savedBatePontoSettingsDraft;
   currentAntiLinkDraftRef.current = currentAntiLinkDraft;
@@ -5127,6 +5397,9 @@ export function ServerSettingsEditor({
   const hasLoadedCaptchaDraft = !isLoading && savedCaptchaSettingsDraft !== null;
   const hasLoadedSuggestionDraft =
     !isLoading && savedSuggestionSettingsDraft !== null;
+  const hasLoadedSorteioDraft = !isLoading && savedSorteioSettingsDraft !== null;
+  const hasLoadedWhitelistDraft =
+    !isLoading && savedWhitelistSettingsDraft !== null;
   const hasLoadedBatePontoDraft =
     !isLoading && savedBatePontoSettingsDraft !== null;
   const hasLoadedAntiLinkDraft =
@@ -5163,6 +5436,26 @@ export function ServerSettingsEditor({
         savedSuggestionSettingsDraft,
       ),
     [currentSuggestionDraft, hasLoadedSuggestionDraft, savedSuggestionSettingsDraft],
+  );
+  const hasSorteioUnsavedChanges = useMemo(
+    () =>
+      hasLoadedSorteioDraft &&
+      !areSorteioSettingsDraftsEqual(currentSorteioDraft, savedSorteioSettingsDraft),
+    [currentSorteioDraft, hasLoadedSorteioDraft, savedSorteioSettingsDraft],
+  );
+  const hasWhitelistUnsavedChanges = useMemo(
+    () =>
+      hasLoadedWhitelistDraft &&
+      (!areWhitelistSettingsDraftsEqual(
+        currentWhitelistDraft,
+        savedWhitelistSettingsDraft,
+      ) ||
+        Boolean(currentWhitelistDraft.dbPassword)),
+    [
+      currentWhitelistDraft,
+      hasLoadedWhitelistDraft,
+      savedWhitelistSettingsDraft,
+    ],
   );
   const hasBatePontoUnsavedChanges = useMemo(
     () =>
@@ -5226,6 +5519,10 @@ export function ServerSettingsEditor({
       ? hasLoadedCaptchaDraft
     : isSuggestionsSection
       ? hasLoadedSuggestionDraft
+    : isSorteioSection
+      ? hasLoadedSorteioDraft
+    : isWhitelistSection
+      ? hasLoadedWhitelistDraft
     : isBatePontoSection
       ? hasLoadedBatePontoDraft
     : isBatePontoRankingSection || isBatePontoHistorySection
@@ -5247,6 +5544,10 @@ export function ServerSettingsEditor({
       ? hasCaptchaUnsavedChanges
     : isSuggestionsSection
       ? hasSuggestionUnsavedChanges
+    : isSorteioSection
+      ? hasSorteioUnsavedChanges
+    : isWhitelistSection
+      ? hasWhitelistUnsavedChanges
     : isBatePontoSection
       ? hasBatePontoUnsavedChanges
     : isBatePontoRankingSection || isBatePontoHistorySection
@@ -5298,6 +5599,20 @@ export function ServerSettingsEditor({
           hasLoadedSuggestionDraft,
           areSuggestionSettingsDraftsEqual,
         )
+    : isSorteioSection
+      ? hasDraftChangesBeyondEnabledToggle(
+          currentSorteioDraft,
+          savedSorteioSettingsDraft,
+          hasLoadedSorteioDraft,
+          areSorteioSettingsDraftsEqual,
+        )
+    : isWhitelistSection
+      ? hasDraftChangesBeyondEnabledToggle(
+          currentWhitelistDraft,
+          savedWhitelistSettingsDraft,
+          hasLoadedWhitelistDraft,
+          areWhitelistSettingsDraftsEqual,
+        ) || Boolean(currentWhitelistDraft.dbPassword)
     : isBatePontoSection
       ? hasDraftChangesBeyondEnabledToggle(
           currentBatePontoDraft,
@@ -5339,6 +5654,10 @@ export function ServerSettingsEditor({
           ? savedCaptchaSettingsDraft
         : isSuggestionsSection
           ? savedSuggestionSettingsDraft
+        : isSorteioSection
+          ? savedSorteioSettingsDraft
+        : isWhitelistSection
+          ? savedWhitelistSettingsDraft
         : isBatePontoSection
           ? savedBatePontoSettingsDraft
         : isWelcomeSection
@@ -5366,6 +5685,10 @@ export function ServerSettingsEditor({
         ? canSaveCaptcha
       : isSuggestionsSection
         ? canSaveSuggestions
+      : isSorteioSection
+        ? canSaveSorteio
+      : isWhitelistSection
+        ? canSaveWhitelist
       : isBatePontoSection
         ? canSaveBatePonto
       : isWelcomeSection
@@ -5382,6 +5705,8 @@ export function ServerSettingsEditor({
     welcomeEnabled,
     captchaEnabled,
     suggestionsEnabled,
+    sorteioEnabled,
+    whitelistEnabled: whitelistDraft.enabled,
     batePontoEnabled,
     antiLinkEnabled,
     autoRoleEnabled,
@@ -5392,6 +5717,10 @@ export function ServerSettingsEditor({
     : null;
   const activateCurrentModule = useCallback(() => {
     if (isSaving || settingsReadOnly || !moduleActivationKey) return;
+
+    if (moduleActivationKey !== "flowai") {
+      setPendingModuleActivation(moduleActivationKey);
+    }
 
     switch (moduleActivationKey) {
       case "sales":
@@ -5411,6 +5740,12 @@ export function ServerSettingsEditor({
         return;
       case "suggestions":
         setSuggestionsEnabled(true);
+        return;
+      case "sorteio":
+        setSorteioEnabled(true);
+        return;
+      case "whitelist":
+        setWhitelistDraft((current) => ({ ...current, enabled: true }));
         return;
       case "bate_ponto":
         setBatePontoEnabled(true);
@@ -5451,7 +5786,7 @@ export function ServerSettingsEditor({
     activeTab === "settings" &&
     !settingsReadOnly &&
     hasLoadedSettingsDraft &&
-    (hasFloatingSaveBarChanges || isSaving || showSaveSuccessBar) &&
+    (hasFloatingSaveBarChanges || hasUnsavedChanges || isSaving || showSaveSuccessBar) &&
     !showFloatingActivateBar;
   const floatingBarMode: "save" | "activate" | null = showFloatingActivateBar
     ? "activate"
@@ -5459,7 +5794,8 @@ export function ServerSettingsEditor({
       ? "save"
       : null;
   const showFloatingBar = floatingBarMode !== null;
-  const showSaveBarActions = !showSaveSuccessBar || hasFloatingSaveBarChanges || isSaving;
+  const showSaveBarActions =
+    !showSaveSuccessBar || hasFloatingSaveBarChanges || hasUnsavedChanges || isSaving;
   const showInlineMessages = Boolean(
     isViewerOnly || isUnauthorizedForSection || locked || errorMessage,
   );
@@ -5475,6 +5811,9 @@ export function ServerSettingsEditor({
   const captchaControlsDisabled = isSaving || settingsReadOnly || !captchaEnabled;
   const suggestionsControlsDisabled =
     isSaving || settingsReadOnly || !suggestionsEnabled;
+  const sorteioControlsDisabled = isSaving || settingsReadOnly || !sorteioEnabled;
+  const whitelistControlsDisabled =
+    isSaving || settingsReadOnly || !whitelistDraft.enabled;
   const batePontoControlsDisabled =
     isSaving || settingsReadOnly || !batePontoEnabled;
   const antiLinkControlsDisabled =
@@ -5523,6 +5862,21 @@ export function ServerSettingsEditor({
     !showSaveSuccessBar &&
     ((settingsSection === "suggestions_message" && isSuggestionsMessageLayoutInvalid) ||
       (settingsSection === "suggestions_overview" && isSuggestionsPublishLayoutInvalid));
+  const showInvalidSorteioSaveState =
+    isSorteioSection &&
+    sorteioEnabled &&
+    hasFloatingSaveBarChanges &&
+    !isSaving &&
+    !showSaveSuccessBar &&
+    ((settingsSection === "sorteio_message" && isSorteioMessageLayoutInvalid) ||
+      (settingsSection === "sorteio_overview" && isSorteioActiveLayoutInvalid));
+  const showInvalidWhitelistSaveState =
+    isWhitelistSection &&
+    whitelistDraft.enabled &&
+    hasFloatingSaveBarChanges &&
+    !isSaving &&
+    !showSaveSuccessBar &&
+    isWhitelistPanelLayoutInvalid;
   const showInvalidBatePontoSaveState =
     isBatePontoSection &&
     batePontoEnabled &&
@@ -5546,6 +5900,8 @@ export function ServerSettingsEditor({
     showInvalidWelcomeSaveState ||
     showInvalidCaptchaSaveState ||
     showInvalidSuggestionsSaveState ||
+    showInvalidSorteioSaveState ||
+    showInvalidWhitelistSaveState ||
     showInvalidBatePontoSaveState ||
     showBlockedNavigationSaveState;
   const saveActionVisualEnabled = canPersistSettings || isSaving;
@@ -5569,6 +5925,12 @@ export function ServerSettingsEditor({
           : hasSuggestionsTooManyFunctionButtons
           ? "Existe mais de um botao funcional no embed"
           : "Nao da para salvar uma mensagem vazia"
+      : showInvalidSorteioSaveState
+        ? settingsSection === "sorteio_message" && isSorteioEndedLayoutInvalid
+          ? "O template encerrado precisa manter pelo menos um conteudo valido"
+          : "A mensagem ativa precisa de conteudo e dos botoes fixos Entrar e Engrenagem"
+      : showInvalidWhitelistSaveState
+        ? "A mensagem da whitelist precisa de conteudo e do botao Solicitar whitelist"
       : showInvalidBatePontoSaveState
         ? settingsSection === "bate_ponto_overview"
           ? "O template de log precisa manter pelo menos um conteudo valido"
@@ -5588,6 +5950,10 @@ export function ServerSettingsEditor({
                 ? "Complete canal principal e cargos verificados para continuar"
               : isSuggestionsSection
                 ? "Complete canais do painel e publicacao para continuar"
+              : isSorteioSection
+                ? "Complete a mensagem ativa com conteudo e botoes fixos para continuar"
+              : isWhitelistSection
+                ? "Complete a mensagem do painel com conteudo e o botao Solicitar whitelist"
               : isBatePontoSection
                 ? "Complete canal do painel e mensagens validas para continuar"
               : isWelcomeSection
@@ -5617,6 +5983,12 @@ export function ServerSettingsEditor({
               ? "Complete canal principal e cargos verificados para continuar."
             : isSuggestionsSection
               ? "Complete canais do painel e publicacao para continuar."
+            : isSorteioSection
+              ? settingsSection === "sorteio_message"
+                ? "Mantenha conteudo valido nos templates ativo e encerrado, com os botoes fixos do sorteio ativo."
+                : "Mantenha a mensagem ativa valida antes de salvar as configuracoes do modulo."
+            : isWhitelistSection
+              ? "Mantenha conteudo valido e o botao fixo Solicitar whitelist antes de salvar."
             : isBatePontoSection
               ? settingsSection === "bate_ponto_message"
                 ? "Complete a mensagem do painel com conteudo e um botao funcional."
@@ -6463,6 +6835,31 @@ export function ServerSettingsEditor({
     recurringMethodDraftId,
   ]);
 
+  const handleSorteioDraftChange = useCallback((patch: Partial<SorteioSettingsDraft>) => {
+    if ("logsChannelId" in patch) {
+      setSorteioLogsChannelId(patch.logsChannelId ?? null);
+    }
+    if ("createRoleIds" in patch) {
+      setSorteioCreateRoleIds(patch.createRoleIds ?? []);
+    }
+    if ("rerollRoleIds" in patch) {
+      setSorteioRerollRoleIds(patch.rerollRoleIds ?? []);
+    }
+    if ("defaultWinnerCount" in patch && patch.defaultWinnerCount !== undefined) {
+      setSorteioDefaultWinnerCount(patch.defaultWinnerCount);
+    }
+    if ("defaultDurationMinutes" in patch && patch.defaultDurationMinutes !== undefined) {
+      setSorteioDefaultDurationMinutes(patch.defaultDurationMinutes);
+    }
+  }, []);
+
+  const handleWhitelistDraftChange = useCallback(
+    (patch: Partial<WhitelistSettingsDraft>) => {
+      setWhitelistDraft((current) => ({ ...current, ...patch }));
+    },
+    [],
+  );
+
   const handleResetSettings = useCallback(() => {
     if (!canResetSettings) return;
 
@@ -6538,6 +6935,20 @@ export function ServerSettingsEditor({
           ? savedSuggestionSettingsDraft.suggestionLayout
           : createDefaultSuggestionPublishedLayout(),
       );
+    } else if (isSorteioSection && savedSorteioSettingsDraft) {
+      setSorteioEnabled(savedSorteioSettingsDraft.enabled);
+      setSorteioLogsChannelId(savedSorteioSettingsDraft.logsChannelId);
+      setSorteioCreateRoleIds(savedSorteioSettingsDraft.createRoleIds);
+      setSorteioRerollRoleIds(savedSorteioSettingsDraft.rerollRoleIds);
+      setSorteioDefaultWinnerCount(savedSorteioSettingsDraft.defaultWinnerCount);
+      setSorteioDefaultDurationMinutes(savedSorteioSettingsDraft.defaultDurationMinutes);
+      setSorteioActiveLayout(savedSorteioSettingsDraft.activeLayout);
+      setSorteioEndedLayout(savedSorteioSettingsDraft.endedLayout);
+    } else if (isWhitelistSection && savedWhitelistSettingsDraft) {
+      setWhitelistDraft({
+        ...savedWhitelistSettingsDraft,
+        dbPassword: "",
+      });
     } else if (isBatePontoSection && savedBatePontoSettingsDraft) {
       setBatePontoEnabled(savedBatePontoSettingsDraft.enabled);
       setBatePontoPanelChannelId(savedBatePontoSettingsDraft.panelChannelId);
@@ -6594,6 +7005,8 @@ export function ServerSettingsEditor({
     isAutoRoleSection,
     isCaptchaSection,
     isSuggestionsSection,
+    isSorteioSection,
+    isWhitelistSection,
     isBatePontoSection,
     isSalesSettingsSection,
     isSecurityLogsSection,
@@ -6602,6 +7015,8 @@ export function ServerSettingsEditor({
     savedAutoRoleSettingsDraft,
     savedCaptchaSettingsDraft,
     savedSuggestionSettingsDraft,
+    savedSorteioSettingsDraft,
+    savedWhitelistSettingsDraft,
     savedBatePontoSettingsDraft,
     savedSalesSettingsDraft,
     savedSecurityLogsDraft,
@@ -6627,6 +7042,10 @@ export function ServerSettingsEditor({
                 ? welcomeEnabled
                 : settingsSection === "suggestions_overview"
                   ? suggestionsEnabled
+                  : settingsSection === "sorteio_overview"
+                    ? sorteioEnabled
+                  : settingsSection === "whitelist_overview"
+                    ? whitelistDraft.enabled
                   : settingsSection === "bate_ponto_overview"
                     ? batePontoEnabled
                     : settingsSection === "captcha_overview"
@@ -6679,6 +7098,15 @@ export function ServerSettingsEditor({
               return;
             case "suggestions_overview":
               setSuggestionsEnabled((current) => !current);
+              return;
+            case "sorteio_overview":
+              setSorteioEnabled((current) => !current);
+              return;
+            case "whitelist_overview":
+              setWhitelistDraft((current) => ({
+                ...current,
+                enabled: !current.enabled,
+              }));
               return;
             case "bate_ponto_overview":
               setBatePontoEnabled((current) => !current);
@@ -6734,6 +7162,8 @@ export function ServerSettingsEditor({
     salesEnabled,
     settingsReadOnly,
     settingsSection,
+    sorteioEnabled,
+    whitelistDraft.enabled,
     suggestionsEnabled,
     ticketEnabled,
     welcomeEnabled,
@@ -6757,6 +7187,8 @@ export function ServerSettingsEditor({
       sales: savedSalesSettingsDraft,
       captcha: savedCaptchaSettingsDraft,
       suggestions: savedSuggestionSettingsDraft,
+      sorteio: savedSorteioSettingsDraft,
+      whitelist: savedWhitelistSettingsDraft,
       batePonto: savedBatePontoSettingsDraft,
       welcome: savedWelcomeSettingsDraft,
       settings: savedSettingsDraft,
@@ -6765,6 +7197,7 @@ export function ServerSettingsEditor({
     let dashboardCachePatch: Parameters<typeof patchCachedServerDashboardSettings>[1] | null =
       null;
     let savedSuccessMessage: string | null = null;
+    let postSaveWarning: string | null = null;
     try {
       if (isAutoRoleSection) {
         const response = await fetch("/api/auth/me/guilds/autorole-settings", {
@@ -7206,6 +7639,195 @@ export function ServerSettingsEditor({
                 : new Date().toISOString(),
           },
         };
+      } else if (isSorteioSection) {
+        const response = await fetch("/api/auth/me/guilds/sorteio-settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            guildId,
+            enabled: sorteioEnabled,
+            logsChannelId: sorteioLogsChannelId,
+            createRoleIds: sorteioCreateRoleIds,
+            rerollRoleIds: sorteioRerollRoleIds,
+            defaultWinnerCount: sorteioDefaultWinnerCount,
+            defaultDurationMinutes: sorteioDefaultDurationMinutes,
+            activeLayout: sorteioActiveLayout,
+            endedLayout: sorteioEndedLayout,
+          }),
+        });
+
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) {
+          throw new Error(
+            payload.message || "Falha ao salvar configuracoes de sorteios.",
+          );
+        }
+
+        const nextSorteioDraft = normalizeSorteioSettingsDraft({
+          enabled: payload.settings?.enabled === true,
+          logsChannelId:
+            typeof payload.settings?.logsChannelId === "string"
+              ? payload.settings.logsChannelId
+              : null,
+          createRoleIds: Array.isArray(payload.settings?.createRoleIds)
+            ? payload.settings.createRoleIds.filter(
+                (id: unknown): id is string => typeof id === "string",
+              )
+            : [],
+          rerollRoleIds: Array.isArray(payload.settings?.rerollRoleIds)
+            ? payload.settings.rerollRoleIds.filter(
+                (id: unknown): id is string => typeof id === "string",
+              )
+            : [],
+          defaultWinnerCount: Number(
+            payload.settings?.defaultWinnerCount ?? sorteioDefaultWinnerCount,
+          ),
+          defaultDurationMinutes: Number(
+            payload.settings?.defaultDurationMinutes ?? sorteioDefaultDurationMinutes,
+          ),
+          activeLayout: payload.settings?.activeLayout,
+          endedLayout: payload.settings?.endedLayout,
+        });
+
+        setSorteioEnabled(nextSorteioDraft.enabled);
+        setSorteioLogsChannelId(nextSorteioDraft.logsChannelId);
+        setSorteioCreateRoleIds(nextSorteioDraft.createRoleIds);
+        setSorteioRerollRoleIds(nextSorteioDraft.rerollRoleIds);
+        setSorteioDefaultWinnerCount(nextSorteioDraft.defaultWinnerCount);
+        setSorteioDefaultDurationMinutes(nextSorteioDraft.defaultDurationMinutes);
+        setSorteioActiveLayout(nextSorteioDraft.activeLayout);
+        setSorteioEndedLayout(nextSorteioDraft.endedLayout);
+        setSavedSorteioSettingsDraft(nextSorteioDraft);
+        dashboardCachePatch = {
+          sorteioSettings: {
+            enabled: nextSorteioDraft.enabled,
+            logsChannelId: nextSorteioDraft.logsChannelId,
+            createRoleIds: nextSorteioDraft.createRoleIds,
+            rerollRoleIds: nextSorteioDraft.rerollRoleIds,
+            defaultWinnerCount: nextSorteioDraft.defaultWinnerCount,
+            defaultDurationMinutes: nextSorteioDraft.defaultDurationMinutes,
+            activeLayout: nextSorteioDraft.activeLayout,
+            endedLayout: nextSorteioDraft.endedLayout,
+            updatedAt:
+              typeof payload.settings?.updatedAt === "string"
+                ? payload.settings.updatedAt
+                : new Date().toISOString(),
+          },
+        };
+      } else if (isWhitelistSection) {
+        const response = await fetch("/api/auth/me/guilds/whitelist-settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            guildId,
+            enabled: currentWhitelistDraft.enabled,
+            panelChannelId: currentWhitelistDraft.panelChannelId,
+            reviewChannelId: currentWhitelistDraft.reviewChannelId,
+            logsChannelId: currentWhitelistDraft.logsChannelId,
+            approvedRoleIds: currentWhitelistDraft.approvedRoleIds,
+            deniedRoleIds: currentWhitelistDraft.deniedRoleIds,
+            reviewRoleIds: currentWhitelistDraft.reviewRoleIds,
+            identifierKind: currentWhitelistDraft.identifierKind,
+            identifierLabel: currentWhitelistDraft.identifierLabel,
+            identifierPlaceholder: currentWhitelistDraft.identifierPlaceholder,
+            approvalMode: currentWhitelistDraft.approvalMode,
+            connectionMode: currentWhitelistDraft.connectionMode,
+            dbEngine: currentWhitelistDraft.dbEngine,
+            dbHost: currentWhitelistDraft.dbHost,
+            dbPort: currentWhitelistDraft.dbPort,
+            dbName: currentWhitelistDraft.dbName,
+            dbUser: currentWhitelistDraft.dbUser,
+            dbSsl: currentWhitelistDraft.dbSsl,
+            dbPassword: currentWhitelistDraft.dbPassword || "",
+            mapping: currentWhitelistDraft.mapping,
+            mappingStatus: currentWhitelistDraft.mappingStatus,
+            panelLayout: currentWhitelistDraft.panelLayout,
+          }),
+        });
+
+        const raw = await response.text();
+        let payload: { ok?: boolean; message?: string; settings?: unknown } = {};
+        try {
+          payload = raw ? (JSON.parse(raw) as typeof payload) : {};
+        } catch {
+          throw new Error(
+            "Falha ao salvar a whitelist. Confirme se o SQL 152 e 153 foram executados no Supabase.",
+          );
+        }
+        if (!response.ok || !payload.ok) {
+          throw new Error(
+            payload.message || "Falha ao salvar configuracoes de whitelist.",
+          );
+        }
+
+        const nextWhitelistDraft = {
+          ...normalizeWhitelistSettingsDraft(payload.settings || currentWhitelistDraft),
+          dbPassword: "",
+        };
+        setWhitelistDraft(nextWhitelistDraft);
+        setSavedWhitelistSettingsDraft(nextWhitelistDraft);
+        dashboardCachePatch = {
+          whitelistSettings: {
+            enabled: nextWhitelistDraft.enabled,
+            panelChannelId: nextWhitelistDraft.panelChannelId,
+            reviewChannelId: nextWhitelistDraft.reviewChannelId,
+            logsChannelId: nextWhitelistDraft.logsChannelId,
+            panelLayout: nextWhitelistDraft.panelLayout,
+            approvedRoleIds: nextWhitelistDraft.approvedRoleIds,
+            deniedRoleIds: nextWhitelistDraft.deniedRoleIds,
+            reviewRoleIds: nextWhitelistDraft.reviewRoleIds,
+            identifierKind: nextWhitelistDraft.identifierKind,
+            identifierLabel: nextWhitelistDraft.identifierLabel,
+            identifierPlaceholder: nextWhitelistDraft.identifierPlaceholder,
+            approvalMode: nextWhitelistDraft.approvalMode,
+            connectionMode: nextWhitelistDraft.connectionMode,
+            dbEngine: nextWhitelistDraft.dbEngine,
+            dbHost: nextWhitelistDraft.dbHost,
+            dbPort: nextWhitelistDraft.dbPort,
+            dbName: nextWhitelistDraft.dbName,
+            dbUser: nextWhitelistDraft.dbUser,
+            dbSsl: nextWhitelistDraft.dbSsl,
+            hasDbPassword: nextWhitelistDraft.hasDbPassword,
+            mapping: nextWhitelistDraft.mapping,
+            mappingStatus: nextWhitelistDraft.mappingStatus,
+            lastHealthOk: nextWhitelistDraft.lastHealthOk,
+            lastHealthAt: nextWhitelistDraft.lastHealthAt,
+            lastHealthError: nextWhitelistDraft.lastHealthError,
+            updatedAt:
+              typeof payload.settings?.updatedAt === "string"
+                ? payload.settings.updatedAt
+                : new Date().toISOString(),
+          },
+        };
+
+        if (
+          nextWhitelistDraft.enabled &&
+          nextWhitelistDraft.panelChannelId &&
+          whitelistPanelHasRequiredParts(nextWhitelistDraft.panelLayout)
+        ) {
+          const embedResponse = await fetch("/api/auth/me/guilds/whitelist-panel-message", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              guildId,
+              panelChannelId: nextWhitelistDraft.panelChannelId,
+              panelLayout: nextWhitelistDraft.panelLayout,
+              identifierLabel: nextWhitelistDraft.identifierLabel,
+            }),
+          });
+          const embedRaw = await embedResponse.text();
+          let embedPayload: { ok?: boolean; message?: string } = {};
+          try {
+            embedPayload = embedRaw ? (JSON.parse(embedRaw) as typeof embedPayload) : {};
+          } catch {
+            embedPayload = {};
+          }
+          if (!embedResponse.ok || !embedPayload.ok) {
+            postSaveWarning =
+              embedPayload.message ||
+              "Configuracao salva, mas o embed da whitelist nao foi publicado no canal.";
+          }
+        }
       } else if (isBatePontoSection) {
         const legacyFields = deriveLegacyTicketPanelFields(batePontoPanelLayout);
         const response = await fetch("/api/auth/me/guilds/bate-ponto-settings", {
@@ -7557,6 +8179,9 @@ export function ServerSettingsEditor({
       await waitUntilMinServerSettingsSaveUi(saveStartedAtMs);
       setSuccessMessage(savedSuccessMessage || "Configuracoes salvas com sucesso.");
       setShowSaveSuccessBar(true);
+      if (postSaveWarning) {
+        setErrorMessage(postSaveWarning);
+      }
     } catch (error) {
       await waitUntilMinServerSettingsSaveUi(saveStartedAtMs);
       if (isAutoRoleSection) {
@@ -7571,6 +8196,26 @@ export function ServerSettingsEditor({
         setSavedCaptchaSettingsDraft(previousSaved.captcha);
       } else if (isSuggestionsSection) {
         setSavedSuggestionSettingsDraft(previousSaved.suggestions);
+      } else if (isSorteioSection) {
+        setSavedSorteioSettingsDraft(previousSaved.sorteio);
+        if (previousSaved.sorteio) {
+          setSorteioEnabled(previousSaved.sorteio.enabled);
+          setSorteioLogsChannelId(previousSaved.sorteio.logsChannelId);
+          setSorteioCreateRoleIds(previousSaved.sorteio.createRoleIds);
+          setSorteioRerollRoleIds(previousSaved.sorteio.rerollRoleIds);
+          setSorteioDefaultWinnerCount(previousSaved.sorteio.defaultWinnerCount);
+          setSorteioDefaultDurationMinutes(previousSaved.sorteio.defaultDurationMinutes);
+          setSorteioActiveLayout(previousSaved.sorteio.activeLayout);
+          setSorteioEndedLayout(previousSaved.sorteio.endedLayout);
+        }
+      } else if (isWhitelistSection) {
+        setSavedWhitelistSettingsDraft(previousSaved.whitelist);
+        if (previousSaved.whitelist) {
+          setWhitelistDraft({
+            ...previousSaved.whitelist,
+            dbPassword: currentWhitelistDraft.dbPassword,
+          });
+        }
       } else if (isBatePontoSection) {
         setSavedBatePontoSettingsDraft(previousSaved.batePonto);
       } else if (isWelcomeSection) {
@@ -7640,6 +8285,8 @@ export function ServerSettingsEditor({
     currentSalesDraft,
     currentSettingsDraft,
     currentSuggestionDraft,
+    currentSorteioDraft,
+    currentWhitelistDraft,
     currentBatePontoDraft,
     currentWelcomeDraft,
     savedAntiLinkSettingsDraft,
@@ -7649,6 +8296,8 @@ export function ServerSettingsEditor({
     savedSecurityLogsDraft,
     savedSettingsDraft,
     savedSuggestionSettingsDraft,
+    savedSorteioSettingsDraft,
+    savedWhitelistSettingsDraft,
     savedBatePontoSettingsDraft,
     savedWelcomeSettingsDraft,
     entryPublicLayout,
@@ -7668,6 +8317,8 @@ export function ServerSettingsEditor({
     isAutoRoleSection,
     isCaptchaSection,
     isSuggestionsSection,
+    isSorteioSection,
+    isWhitelistSection,
     isBatePontoSection,
     isSalesSettingsSection,
     isSecurityLogsSection,
@@ -7700,6 +8351,8 @@ export function ServerSettingsEditor({
     setSavedAutoRoleSettingsDraft,
     setSavedCaptchaSettingsDraft,
     setSavedSuggestionSettingsDraft,
+    setSavedSorteioSettingsDraft,
+    setSavedWhitelistSettingsDraft,
     setSavedBatePontoSettingsDraft,
     setSavedSalesSettingsDraft,
     setSavedSecurityLogsDraft,
@@ -7711,10 +8364,71 @@ export function ServerSettingsEditor({
     suggestionsPanelLayout,
     suggestionsPublishChannelId,
     suggestionsSuggestionLayout,
+    sorteioEnabled,
+    sorteioLogsChannelId,
+    sorteioCreateRoleIds,
+    sorteioRerollRoleIds,
+    sorteioDefaultWinnerCount,
+    sorteioDefaultDurationMinutes,
+    sorteioActiveLayout,
+    sorteioEndedLayout,
     ticketEnabled,
     ticketsCategoryId,
     welcomeEnabled,
     currentSecurityLogsDraft,
+  ]);
+
+  useEffect(() => {
+    if (!pendingModuleActivation || isSaving || settingsReadOnly || !hasLoadedSettingsDraft) {
+      return;
+    }
+
+    const isModuleEnabled =
+      pendingModuleActivation === "sorteio"
+        ? sorteioEnabled
+        : pendingModuleActivation === "whitelist"
+          ? whitelistDraft.enabled
+        : pendingModuleActivation === "captcha"
+          ? captchaEnabled
+          : pendingModuleActivation === "suggestions"
+            ? suggestionsEnabled
+            : pendingModuleActivation === "bate_ponto"
+              ? batePontoEnabled
+              : pendingModuleActivation === "welcome"
+                ? welcomeEnabled
+                : pendingModuleActivation === "sales"
+                  ? salesEnabled
+                  : pendingModuleActivation === "ticket"
+                    ? ticketEnabled
+                    : pendingModuleActivation === "antilink"
+                      ? antiLinkEnabled
+                      : pendingModuleActivation === "autorole"
+                        ? autoRoleEnabled
+                        : pendingModuleActivation === "security_logs"
+                          ? securityLogsDraft.enabled
+                          : false;
+
+    if (!isModuleEnabled) return;
+
+    setPendingModuleActivation(null);
+    void handleSave();
+  }, [
+    pendingModuleActivation,
+    sorteioEnabled,
+    whitelistDraft.enabled,
+    captchaEnabled,
+    suggestionsEnabled,
+    batePontoEnabled,
+    welcomeEnabled,
+    salesEnabled,
+    ticketEnabled,
+    antiLinkEnabled,
+    autoRoleEnabled,
+    securityLogsDraft.enabled,
+    isSaving,
+    settingsReadOnly,
+    hasLoadedSettingsDraft,
+    handleSave,
   ]);
 
   const handleSendEmbed = useCallback(async () => {
@@ -7825,6 +8539,53 @@ export function ServerSettingsEditor({
     guildId,
     suggestionsPanelChannelId,
     suggestionsPanelLayout,
+  ]);
+
+  const handleSendWhitelistEmbed = useCallback(async () => {
+    if (!canSendWhitelistEmbed || !whitelistDraft.panelChannelId) return;
+    if (isSendingEmbedRef.current) return;
+    isSendingEmbedRef.current = true;
+
+    setIsSendingEmbed(true);
+    setErrorMessage(null);
+
+    try {
+      const response = await fetch("/api/auth/me/guilds/whitelist-panel-message", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          guildId,
+          panelChannelId: whitelistDraft.panelChannelId,
+          panelLayout: whitelistDraft.panelLayout,
+          identifierLabel: whitelistDraft.identifierLabel,
+        }),
+      });
+      const raw = await response.text();
+      let payload: { ok?: boolean; message?: string } = {};
+      try {
+        payload = raw ? (JSON.parse(raw) as typeof payload) : {};
+      } catch {
+        throw new Error("Falha ao enviar o embed de whitelist.");
+      }
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.message || "Falha ao enviar o embed de whitelist.");
+      }
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Erro ao enviar o embed de whitelist.",
+      );
+    } finally {
+      isSendingEmbedRef.current = false;
+      setIsSendingEmbed(false);
+    }
+  }, [
+    canSendWhitelistEmbed,
+    guildId,
+    whitelistDraft.identifierLabel,
+    whitelistDraft.panelChannelId,
+    whitelistDraft.panelLayout,
   ]);
 
   const handleSendBatePontoEmbed = useCallback(async () => {
@@ -8824,6 +9585,50 @@ export function ServerSettingsEditor({
                       headline="Mensagem do painel"
                       description="Monte o embed publicado no canal do painel e envie a mensagem quando estiver pronta."
                       sendButtonLabel="Enviar embed de sugestoes"
+                    />
+                  ) : settingsSection === "sorteio_overview" ||
+                    settingsSection === "sorteio_message" ? (
+                    <SorteioSettingsSection
+                      mode={
+                        settingsSection === "sorteio_overview" ? "overview" : "message"
+                      }
+                      guildId={guildId}
+                      disabled={isSaving || settingsReadOnly || sorteioControlsDisabled}
+                      draft={currentSorteioDraft}
+                      textChannelOptions={textChannelOptions}
+                      roleOptions={roleOptions}
+                      controlHeightPx={serverSettingsControlHeight}
+                      onChange={handleSorteioDraftChange}
+                      onActiveLayoutChange={setSorteioActiveLayout}
+                      onEndedLayoutChange={setSorteioEndedLayout}
+                    />
+                  ) : settingsSection === "whitelist_overview" ||
+                    settingsSection === "whitelist_database" ||
+                    settingsSection === "whitelist_message" ? (
+                    <WhitelistSettingsSection
+                      mode={
+                        settingsSection === "whitelist_overview"
+                          ? "overview"
+                          : settingsSection === "whitelist_database"
+                            ? "database"
+                            : "message"
+                      }
+                      guildId={guildId}
+                      disabled={isSaving || settingsReadOnly || whitelistControlsDisabled}
+                      draft={currentWhitelistDraft}
+                      textChannelOptions={textChannelOptions}
+                      roleOptions={roleOptions}
+                      controlHeightPx={serverSettingsControlHeight}
+                      onChange={handleWhitelistDraftChange}
+                      onPanelLayoutChange={(layout) =>
+                        setWhitelistDraft((current) => ({
+                          ...current,
+                          panelLayout: layout,
+                        }))
+                      }
+                      canSendEmbed={canSendWhitelistEmbed}
+                      isSendingEmbed={isSendingEmbed}
+                      onSendEmbed={handleSendWhitelistEmbed}
                     />
                   ) : settingsSection === "bate_ponto_overview" ? (
                     <div className="space-y-[14px]">
