@@ -13,7 +13,11 @@ import {
   createDefaultWhitelistPanelLayout,
   normalizeWhitelistPanelLayout,
 } from "@/lib/servers/whitelistPanelBuilder";
-import { normalizeCityDbHost } from "@/lib/servers/whitelistHost";
+import {
+  isLoopbackCityDbHost,
+  looksLikePublicCityDbHost,
+  normalizeCityDbHost,
+} from "@/lib/servers/whitelistHost";
 
 export type WhitelistSettingsDraft = {
   enabled: boolean;
@@ -54,8 +58,14 @@ export function normalizeWhitelistSettingsDraft(
 ): WhitelistSettingsDraft {
   const port = Number(input?.dbPort ?? 3306);
   const engine = String(input?.dbEngine || "mysql");
-  const mode = String(input?.connectionMode || "direct");
   const status = String(input?.mappingStatus || "draft");
+  const publicIp = looksLikePublicCityDbHost(String(input?.agentPublicIp || ""))
+    ? normalizeCityDbHost(String(input?.agentPublicIp || ""))
+    : "";
+  const requestedHost = normalizeCityDbHost(String(input?.dbHost || ""));
+  const dbHost = looksLikePublicCityDbHost(requestedHost)
+    ? requestedHost
+    : publicIp;
   return {
     enabled: input?.enabled === true,
     panelChannelId:
@@ -86,10 +96,10 @@ export function normalizeWhitelistSettingsDraft(
       input?.identifierPlaceholder || "Ex: 1 ou license:xxxx",
     ).slice(0, 80),
     approvalMode: String(input?.approvalMode || "manual") === "automatic" ? "automatic" : "manual",
-    connectionMode: mode === "direct" ? "direct" : "agent",
+    connectionMode: "direct",
     dbEngine:
       engine === "postgres" || engine === "mariadb" ? engine : "mysql",
-    dbHost: normalizeCityDbHost(String(input?.dbHost || "")),
+    dbHost: isLoopbackCityDbHost(dbHost) ? "" : dbHost,
     dbPort: Number.isFinite(port) && port >= 1 && port <= 65535 ? Math.floor(port) : 3306,
     dbName: String(input?.dbName || "").trim(),
     dbUser: String(input?.dbUser || "").trim(),
@@ -112,7 +122,7 @@ export function normalizeWhitelistSettingsDraft(
     agentPaired: input?.agentPaired === true,
     agentOnline: input?.agentOnline === true,
     agentLastSeenAt: typeof input?.agentLastSeenAt === "string" ? input.agentLastSeenAt : null,
-    agentPublicIp: typeof input?.agentPublicIp === "string" ? input.agentPublicIp : null,
+    agentPublicIp: publicIp || null,
   };
 }
 

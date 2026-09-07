@@ -65,7 +65,9 @@ export async function POST(request: Request) {
     }
 
     if (action === "bind") {
-      await bindLauncherGuild(auth.session, String(body.guildId || ""));
+      await bindLauncherGuild(auth.session, String(body.guildId || ""), {
+        observedIp: typeof body.observedIp === "string" ? body.observedIp : null,
+      });
       return applyNoStoreHeaders(NextResponse.json({ ok: true, message: "Servidor conectado." }));
     }
 
