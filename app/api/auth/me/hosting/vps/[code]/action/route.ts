@@ -5,6 +5,7 @@ import {
   decryptEnvValue,
   getHostingProjectForUser,
   normalizeVpsCode,
+  isVpsAgentUnreachableError,
   requestVpsAgent,
   resolveHostingAccessState,
   resolveRuntimeStatus,
@@ -51,6 +52,20 @@ function nextRuntimeStatusForAction(action: VpsAction) {
   if (action === "deploy" || action === "rollback") return "deploying" as const;
   if (action === "kill" || action === "reset-world") return "offline" as const;
   return "unknown" as const;
+}
+
+function runtimeStatusAfterFailedAction(
+  action: VpsAction,
+  previousStatus: string | null | undefined,
+  unreachable: boolean,
+) {
+  if (action === "stop" || action === "kill" || action === "reset-world") return "offline" as const;
+  if (unreachable) {
+    return previousStatus === "starting" || previousStatus === "restarting" || previousStatus === "deploying"
+      ? "offline"
+      : previousStatus || "offline";
+  }
+  return "crashed" as const;
 }
 
 /** Busca todas as env vars do projeto no Supabase, descriptografa e monta o .env */
@@ -174,11 +189,11 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
   }
 
   if (action === "sync") {
+    const regionLabel =
+      resolveHostingRegion(project.hosting_region_id)?.name ||
+      "Boston, United States";
     try {
       const startedAt = Date.now();
-      const regionLabel =
-        resolveHostingRegion(project.hosting_region_id)?.name ||
-        "Boston, United States";
       const payload = await requestVpsAgent<Record<string, unknown>>({
         project,
         method: "GET",
@@ -227,6 +242,7 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
       );
     } catch (error) {
       const message = extractAuditErrorMessage(error, "Falha ao verificar status.");
+      const unreachable = isVpsAgentUnreachableError(error);
       await appendVpsEvent({
         projectId: project.id,
         userId: session.user.id,
@@ -234,9 +250,30 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
         status: "failed",
         message,
       });
+      await supabase
+        .from("hosting_projects")
+        .update({
+          runtime_status_payload: {
+            ...(project.runtime_status_payload && typeof project.runtime_status_payload === "object"
+              ? project.runtime_status_payload as Record<string, unknown>
+              : {}),
+            agentHealth: {
+              connected: false,
+              latencyMs: null,
+              checkedAt: new Date().toISOString(),
+              regionLabel,
+              host: null,
+              publicIp: null,
+            },
+            lastSyncError: message,
+          },
+        })
+        .eq("id", project.id);
       return buildPublicApiErrorResponse(requestContext, {
         error,
-        fallbackMessage: "Nao foi possivel verificar o status da VPS agora.",
+        fallbackMessage: unreachable
+          ? "Nao foi possivel conectar ao agente da VPS. A maquina pode estar desligada ou indisponivel."
+          : "Nao foi possivel verificar o status da VPS agora.",
         status: 503,
       });
     }
@@ -290,6 +327,7 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
       return applyNoStoreHeaders(NextResponse.json({ ok: true, status: runtimeStatus, payload }));
     } catch (error) {
       const message = extractAuditErrorMessage(error, "Falha ao executar acao Minecraft.");
+      const unreachable = isVpsAgentUnreachableError(error);
       await appendVpsEvent({
         projectId: project.id,
         userId: session.user.id,
@@ -297,9 +335,29 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
         status: "failed",
         message,
       });
+      await supabase
+        .from("hosting_projects")
+        .update({
+          runtime_status: runtimeStatusAfterFailedAction(action, project.runtime_status, unreachable),
+          runtime_status_payload: {
+            ...(project.runtime_status_payload && typeof project.runtime_status_payload === "object"
+              ? project.runtime_status_payload as Record<string, unknown>
+              : {}),
+            lastAction: action,
+            lastError: message,
+            agentHealth: {
+              connected: false,
+              checkedAt: new Date().toISOString(),
+            },
+          },
+          runtime_last_seen_at: new Date().toISOString(),
+        })
+        .eq("id", project.id);
       return buildPublicApiErrorResponse(requestContext, {
         error,
-        fallbackMessage: "Nao foi possivel executar a acao Minecraft agora.",
+        fallbackMessage: unreachable
+          ? "Nao foi possivel conectar ao agente da VPS. A maquina pode estar desligada ou indisponivel."
+          : "Nao foi possivel executar a acao Minecraft agora.",
         status: 503,
       });
     }
@@ -389,6 +447,7 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
 
   } catch (error) {
     const message = extractAuditErrorMessage(error, "Falha ao executar acao.");
+    const unreachable = isVpsAgentUnreachableError(error);
     await appendVpsEvent({
       projectId: project.id,
       userId: session.user.id,
@@ -405,21 +464,30 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
         level: "error",
         source: "control-plane",
         message,
-        metadata: { action },
+        metadata: { action, unreachable },
       });
 
     await supabase
       .from("hosting_projects")
       .update({
-        runtime_status: action === "stop" ? "offline" : "crashed",
-        runtime_status_payload: { error: message, action },
+        runtime_status: runtimeStatusAfterFailedAction(action, project.runtime_status, unreachable),
+        runtime_status_payload: {
+          error: message,
+          action,
+          agentHealth: {
+            connected: false,
+            checkedAt: new Date().toISOString(),
+          },
+        },
         runtime_last_seen_at: new Date().toISOString(),
       })
       .eq("id", project.id);
 
     return buildPublicApiErrorResponse(requestContext, {
       error,
-      fallbackMessage: "Nao foi possivel executar a acao da VPS agora.",
+      fallbackMessage: unreachable
+        ? "Nao foi possivel conectar ao agente da VPS. A maquina pode estar desligada ou indisponivel."
+        : "Nao foi possivel executar a acao da VPS agora.",
       status: 503,
     });
   }

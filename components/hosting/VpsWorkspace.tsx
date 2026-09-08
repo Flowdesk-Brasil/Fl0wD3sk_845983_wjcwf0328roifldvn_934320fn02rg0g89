@@ -1,7 +1,15 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import dynamic from "next/dynamic";
+import {
+  HostingProvisioningSkeleton,
+  HostingSkeletonBar,
+  HostingVpsTabSkeleton,
+  type HostingVpsTabId,
+} from "@/components/hosting/HostingSkeletons";
+import { PanelShell } from "@/components/panel-shell/PanelShell";
+import type { PanelQuickLink, PanelSavedAccount } from "@/components/panel-shell/PanelCommandPalette";
+import { fdNavItemClass } from "@/components/panel-shell/panelClasses";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Activity,
@@ -62,6 +70,7 @@ import {
   ZoomOut,
   Rocket,
 } from "lucide-react";
+import dynamic from "next/dynamic";
 import { useNotifications } from "@/components/notifications/NotificationsProvider";
 import { SensitiveActionModal } from "@/components/account/SensitiveActionModal";
 import { useLiveAccountProfile } from "@/hooks/useLiveAccountProfile";
@@ -335,6 +344,8 @@ export type VpsWorkspaceSnapshot = {
     paymentAmount: string;
     paidAtLabel: string;
     githubConnected?: boolean;
+    repositorySelectionRequired?: boolean;
+    repositoryConflictVpsCode?: string | null;
     minecraft?: {
       serverName: string;
       version: string;
@@ -1304,13 +1315,13 @@ function parseDotEnv(content: string) {
 }
 
 function logFingerprint(log: VpsLog, fallbackIndex = 0) {
-  // Ignoramos log.id porque a API do daemon gera pseudo-ids (índices), e a lista desliza.
+  // Ignoramos log.id porque a API do daemon gera pseudo-ids (Ã­ndices), e a lista desliza.
   const coreStr = `${log.level || ""}:${log.source || ""}:${log.message || ""}`;
   let hash = 0;
   for (let i = 0; i < coreStr.length; i++) hash = Math.imul(31, hash) + coreStr.charCodeAt(i) | 0;
 
-  // Para evitar que a exata mesma mensagem repetida de verdade e válida seja comida se já passou de 1 ocorrência
-  // Nós adicionamos o emit_at ou fallbackIndex apenas se a mensagem for curtinha
+  // Para evitar que a exata mesma mensagem repetida de verdade e vÃ¡lida seja comida se jÃ¡ passou de 1 ocorrÃªncia
+  // NÃ³s adicionamos o emit_at ou fallbackIndex apenas se a mensagem for curtinha
   if (coreStr.length < 5) {
     return `log:${hash}:${log.emitted_at || fallbackIndex}`;
   }
@@ -1456,124 +1467,6 @@ function buildConsoleEntry(log: VpsLog, index: number, fallbackHost: string) {
     source: log.source || "runtime",
     time: log.emitted_at,
   };
-}
-
-function SkeletonBar({ className = "" }: { className?: string }) {
-  return <div className={`flowdesk-shimmer rounded-[12px] bg-[#151515] ${className}`} />;
-}
-
-function TabMainSkeleton({ tab }: { tab: TabId }) {
-  if (tab === "metrics") {
-    return (
-      <section className="grid gap-[14px] lg:grid-cols-2">
-        {Array.from({ length: 6 }, (_, index) => (
-          <article key={index} className="rounded-[22px] border border-[#171717] bg-[#080808] p-[16px]">
-            <div className="flex items-center justify-between">
-              <div className="space-y-[10px]">
-                <SkeletonBar className="h-[11px] w-[72px] rounded-full bg-[#111111]" />
-                <SkeletonBar className="h-[28px] w-[104px]" />
-              </div>
-              <SkeletonBar className="h-[38px] w-[38px] rounded-[14px]" />
-            </div>
-            <SkeletonBar className="mt-[18px] h-[42px] w-full" />
-            <SkeletonBar className="mt-[10px] h-[10px] w-[126px] rounded-full bg-[#111111]" />
-          </article>
-        ))}
-      </section>
-    );
-  }
-
-  if (tab === "files") {
-    return (
-      <section className="grid h-[calc(100vh-64px)] min-h-0 grid-cols-[300px_minmax(0,1fr)] bg-[#050505] max-md:grid-cols-1">
-        <aside className="min-h-0 border-r border-[#171717] bg-[#080808] p-[10px]">
-          <SkeletonBar className="h-[38px] w-full rounded-[10px]" />
-          <div className="mt-[14px] space-y-[8px]">
-            {Array.from({ length: 12 }, (_, index) => (
-              <SkeletonBar key={index} className={`h-[26px] rounded-[9px] ${index % 3 === 0 ? "ml-0 w-[82%]" : "ml-[18px] w-[70%]"}`} />
-            ))}
-          </div>
-        </aside>
-        <div className="flex min-h-0 min-w-0 flex-col bg-[#050505]">
-          <div className="h-[48px] border-b border-[#171717] bg-[#080808] p-[12px]">
-            <SkeletonBar className="h-[22px] w-[min(360px,60%)] rounded-full" />
-          </div>
-          <div className="grid min-h-0 flex-1 grid-cols-[48px_minmax(0,1fr)]">
-            <div className="border-r border-[#111111] bg-[#070707] p-[12px]">
-              <SkeletonBar className="h-full w-full rounded-[8px] bg-[#101010]" />
-            </div>
-            <div className="space-y-[10px] p-[12px]">
-              {Array.from({ length: 16 }, (_, index) => (
-                <SkeletonBar key={index} className={`h-[14px] rounded-full ${index % 4 === 0 ? "w-[42%]" : index % 2 === 0 ? "w-[76%]" : "w-[58%]"}`} />
-              ))}
-            </div>
-          </div>
-        </div>
-      </section>
-    );
-  }
-
-  if (tab === "deploys") {
-    return (
-      <section className="rounded-[24px] border border-[#171717] bg-[#080808] p-[16px]">
-        <SkeletonBar className="h-[26px] w-[170px]" />
-        <SkeletonBar className="mt-[10px] h-[12px] w-[min(420px,80%)] rounded-full bg-[#111111]" />
-        <div className="mt-[18px] space-y-[10px]">
-          {Array.from({ length: 5 }, (_, index) => (
-            <div key={index} className="rounded-[18px] border border-[#151515] bg-[#0B0B0B] p-[14px]">
-              <div className="flex items-center justify-between gap-[14px]">
-                <div className="min-w-0 flex-1 space-y-[10px]">
-                  <SkeletonBar className="h-[24px] w-[184px] rounded-full" />
-                  <SkeletonBar className="h-[14px] w-[70%] rounded-full" />
-                  <SkeletonBar className="h-[11px] w-[48%] rounded-full bg-[#111111]" />
-                </div>
-                <SkeletonBar className="h-[34px] w-[96px] rounded-full" />
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-    );
-  }
-
-  if (tab === "env") {
-    return (
-      <section className="rounded-[24px] border border-[#171717] bg-[#080808] p-[16px]">
-        <div className="flex items-center justify-between gap-[14px]">
-          <div className="space-y-[10px]">
-            <SkeletonBar className="h-[26px] w-[230px]" />
-            <SkeletonBar className="h-[12px] w-[min(460px,70vw)] rounded-full bg-[#111111]" />
-          </div>
-          <SkeletonBar className="h-[42px] w-[150px] rounded-[12px]" />
-        </div>
-        <div className="mt-[16px] grid gap-[8px] xl:grid-cols-[minmax(220px,1fr)_250px_250px_230px]">
-          {Array.from({ length: 4 }, (_, index) => (
-            <SkeletonBar key={index} className="h-[42px] rounded-[14px]" />
-          ))}
-        </div>
-        <div className="mt-[18px] space-y-[8px]">
-          {Array.from({ length: 4 }, (_, index) => (
-            <SkeletonBar key={index} className="h-[86px] rounded-[16px]" />
-          ))}
-        </div>
-      </section>
-    );
-  }
-
-  return (
-    <section className="grid gap-[14px]">
-      <div className="grid gap-[14px] md:grid-cols-2 xl:grid-cols-4">
-        {Array.from({ length: 4 }, (_, index) => (
-          <SkeletonBar key={index} className="h-[118px] rounded-[20px]" />
-        ))}
-      </div>
-      <div className="grid gap-[14px] lg:grid-cols-3">
-        {Array.from({ length: 6 }, (_, index) => (
-          <SkeletonBar key={index} className="h-[82px] rounded-[18px]" />
-        ))}
-      </div>
-    </section>
-  );
 }
 
 function CustomSelect({
@@ -1864,6 +1757,14 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [githubReconnectOpen, setGithubReconnectOpen] = useState(!initialSnapshot.project.githubConnected);
+  const [repositorySelectionOpen, setRepositorySelectionOpen] = useState(
+    Boolean(initialSnapshot.project.repositorySelectionRequired),
+  );
+  const [repositorySelectionMessage, setRepositorySelectionMessage] = useState<string | null>(
+    initialSnapshot.project.repositorySelectionRequired
+      ? `O repositorio ${initialSnapshot.project.repository.fullName} ja esta em uso${initialSnapshot.project.repositoryConflictVpsCode ? ` na VPS ${initialSnapshot.project.repositoryConflictVpsCode}` : ""}. Escolha outro repositorio para liberar deploy, arquivos e sincronizacao.`
+      : null,
+  );
   const [githubReconnectBusy, setGithubReconnectBusy] = useState(false);
   const [githubReconnectSsoUrl, setGithubReconnectSsoUrl] = useState<string | null>(null);
   const [githubReconnectInstallUrl, setGithubReconnectInstallUrl] = useState<string | null>(null);
@@ -1874,6 +1775,8 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
   );
   const [envEnvironment, setEnvEnvironment] = useState<EnvName>("production");
   const [envRows, setEnvRows] = useState<EnvDraftRow[]>([createDraftRow()]);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [savedAccounts, setSavedAccounts] = useState<SavedPanelAccount[]>([]);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -1893,7 +1796,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
   const logsClearedAtRef = useRef<number | null>(null);
   const currentAccount = useLiveAccountProfile(snapshot.account);
   const latestMetric = snapshot.metrics[snapshot.metrics.length - 1] || null;
-  const shouldShowTabSkeleton = Boolean(pendingTab && pendingTab === tab);
+  const shouldShowTabSkeleton = Boolean(pendingTab);
   const isMinecraftProject = snapshot.project.kind === "minecraft";
   const minecraftServerType = snapshot.project.minecraft?.serverType?.toLowerCase() || "vanilla";
   const minecraftAddonKind = ["paper", "purpur", "spigot", "bukkit", "folia"].includes(minecraftServerType)
@@ -1903,7 +1806,9 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
       : "vanilla";
   const supportsMinecraftAddons = isMinecraftProject && minecraftAddonKind !== "vanilla";
   const minecraftMaxPlayers = Number(snapshot.project.minecraft?.limits?.maxPlayers || 20);
-  const centeredMainTabs = tab === "overview" || tab === "metrics" || tab === "library" || tab === "installed" || tab === "minecraft" || tab === "domains" || tab === "env" || tab === "settings";
+  const centeredMainTabs = tab === "overview" || tab === "metrics" || tab === "library" || tab === "installed" || tab === "minecraft" || tab === "env" || tab === "settings";
+  const isFullBleedTab = tab === "console" || tab === "files" || tab === "domains" || tab === "deploys";
+  const isImmersiveTab = tab === "console" || tab === "files" || tab === "deploys";
   const flowQuotaPercent = Math.min(100, Math.max(0, (flowChatQuota.used / Math.max(1, flowChatQuota.limit)) * 100));
   const flowQuotaResetLabel = flowChatQuota.blockedUntil || flowChatQuota.resetAt
     ? formatDate(flowChatQuota.blockedUntil || flowChatQuota.resetAt)
@@ -2020,25 +1925,43 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     window.location.assign(buildDiscordAuthStartHref("/dashboard/hosting"));
   }, [currentAccount]);
 
+  const syncVpsTabUrl = useCallback((nextTab: TabId, mode: "push" | "replace" = "push") => {
+    const path = buildVpsTabPath(snapshot.project.vpsCode, nextTab);
+    if (mode === "replace") {
+      window.history.replaceState(null, "", path);
+      return;
+    }
+    window.history.pushState(null, "", path);
+  }, [snapshot.project.vpsCode]);
+
   const navigateToTab = useCallback((nextTab: TabId) => {
     if (nextTab === tab) return;
     setTab(nextTab);
     setPendingTab(nextTab);
-    router.push(buildVpsTabPath(snapshot.project.vpsCode, nextTab), {
-      scroll: false,
-    });
-  }, [router, snapshot.project.vpsCode, tab]);
+    syncVpsTabUrl(nextTab, "push");
+    window.setTimeout(() => setPendingTab(null), 180);
+  }, [syncVpsTabUrl, tab]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const nextTab = resolveTabFromPathname(window.location.pathname);
+      setTab(nextTab);
+      setPendingTab(null);
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
   useEffect(() => {
     if (!isMinecraftProject) return;
     if (tab !== "env" && tab !== "deploys" && tab !== "minecraft" && (supportsMinecraftAddons || (tab !== "library" && tab !== "installed"))) return;
     const nextTab = tab === "library" || tab === "installed" ? "overview" : "files";
-    setTab(nextTab);
     setPendingTab(nextTab);
-    router.replace(buildVpsTabPath(snapshot.project.vpsCode, nextTab), {
-      scroll: false,
+    window.requestAnimationFrame(() => {
+      setTab(nextTab);
+      syncVpsTabUrl(nextTab, "replace");
     });
-  }, [isMinecraftProject, router, snapshot.project.vpsCode, supportsMinecraftAddons, tab]);
+  }, [isMinecraftProject, snapshot.project.vpsCode, supportsMinecraftAddons, syncVpsTabUrl, tab]);
 
   useEffect(() => {
     setSettingsHostName(snapshot.settings.hostName);
@@ -2086,13 +2009,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
 
   useEffect(() => {
     setTab((current) => (current === routeTab ? current : routeTab));
-    const timeoutId = window.setTimeout(() => {
-      setPendingTab(null);
-    }, 180);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
+    setPendingTab(null);
   }, [routeTab]);
 
   useEffect(() => {
@@ -2373,6 +2290,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
   async function runAction(action: "start" | "stop" | "restart" | "sync" | "deploy" | "kill" | "reset-world" | "command", extraBody: Record<string, unknown> = {}) {
     if (busyAction) return;
     setBusyAction(action);
+    const previousStatus = snapshot.project.runtimeStatus;
     const optimisticStatus =
       action === "start" ? "starting"
         : action === "restart" ? "restarting"
@@ -2421,6 +2339,13 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
         });
       }
     } catch (error) {
+      setSnapshot((current) => ({
+        ...current,
+        project: {
+          ...current.project,
+          runtimeStatus: previousStatus,
+        },
+      }));
       notify("error", error instanceof Error ? error.message : "Falha operacional.");
     } finally {
       setBusyAction(null);
@@ -2513,7 +2438,9 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
         settings?: VpsProjectSettings;
         project?: {
           repository?: Partial<VpsWorkspaceSnapshot["project"]["repository"]>;
+          repositorySelectionRequired?: boolean;
         };
+        repositorySelectionResolved?: boolean;
       };
       if (!response.ok || !payload.ok || !payload.settings) {
         throw new Error(payload.message || "Nao foi possivel salvar settings.");
@@ -2532,6 +2459,12 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
               ...current.project.repository,
               ...(payload.project?.repository || {}),
             },
+            repositorySelectionRequired: payload.repositorySelectionResolved
+              ? false
+              : payload.project?.repositorySelectionRequired ?? current.project.repositorySelectionRequired,
+            repositoryConflictVpsCode: payload.repositorySelectionResolved
+              ? null
+              : current.project.repositoryConflictVpsCode,
             minecraft: current.project.minecraft
               ? {
                   ...current.project.minecraft,
@@ -2542,6 +2475,10 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
           },
         };
       });
+      if (action === "repository_update" && payload.repositorySelectionResolved) {
+        setRepositorySelectionOpen(false);
+        setRepositorySelectionMessage(null);
+      }
       notify("success", payload.message || "Settings salvas.", "Settings");
       return payload.settings;
     } catch (error) {
@@ -3042,10 +2979,14 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
   }, [tab]); // Cannot add refreshConsoleLogs here or it might loop if not careful, wait, it's defined inside component and changes. Actually let's just use empty dependency or ignore.
 
   useEffect(() => {
-    if (tab !== "settings" || settingsRepos.length || settingsReposLoading) return;
+    if (settingsRepos.length || settingsReposLoading) return;
+    if (repositorySelectionOpen) {
+      void loadAvailableRepositories();
+      return;
+    }
+    if (tab !== "settings" || settingsSection !== "repository") return;
     void loadAvailableRepositories();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once when the settings tab opens.
-  }, [tab]);
+  }, [repositorySelectionOpen, settingsSection, settingsRepos.length, settingsReposLoading, tab]);
 
   useEffect(() => {
     if (initializedExplorerRef.current || !snapshot.fileTree.length) return;
@@ -3662,118 +3603,128 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
   }, [fileQuery, snapshot.fileTree]);
 
   if (snapshot.project.status === "provisioning" || snapshot.project.status === "pending_provision" || snapshot.project.status === "pending_payment") {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-[#050505] p-6 font-sans">
-        <div className="w-full max-w-[500px] rounded-[24px] border border-[#171717] bg-[#0A0A0A] p-[38px] text-center shadow-[0_24px_80px_rgba(0,0,0,0.28)]">
-          <span className="mx-auto flex h-[64px] w-[64px] items-center justify-center rounded-[20px] border border-[#202020] bg-[#111111] text-white">
-            <Rocket className="h-[28px] w-[28px]" />
-          </span>
-          <h2 className="mt-[24px] text-[24px] font-semibold tracking-[-0.04em] text-white">
-            Preparando sua VPS...
-          </h2>
-          <p className="mt-[12px] text-[14px] leading-[1.6] text-[#8E8E8E]">
-            Estamos alocando os recursos na regiao escolhida, configurando seu ambiente isolado e integrando o GitHub.
-            <br /><br />
-            Volte aqui em cerca de <strong className="text-white">3 minutos</strong>. Voce tambem sera avisado por e-mail assim que a maquina estiver online e pronta para uso.
-          </p>
-          <div className="mt-[36px] flex flex-col items-center justify-center gap-[14px]">
-            <Loader2 className="h-[24px] w-[24px] animate-spin text-[#0F62FE]" />
-            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#555555]">
-              Provisionando infraestrutura
-            </span>
-          </div>
-        </div>
-      </div>
-    );
+    return <HostingProvisioningSkeleton />;
   }
 
+  const activeTabLabel = tabs.find((item) => item.id === tab)?.label || "Overview";
+  const paletteLinks: PanelQuickLink[] = tabs.map((item) => ({
+    id: item.id,
+    label: item.label,
+    group: "VPS",
+    onSelect: () => {
+      setIsCommandPaletteOpen(false);
+      setIsMobileNavOpen(false);
+      navigateToTab(item.id);
+    },
+  }));
+
   return (
-    <main className="flowdesk-vps-ui min-h-screen bg-[#050505] text-[#F1F1F1]">
-      <div className="flex h-screen min-h-screen overflow-hidden">
-        <aside className="hidden h-screen w-[318px] shrink-0 lg:block">
-          <div className={`${vpsSidebarShellClass} h-full rounded-none border-y-0 border-l-0 border-r-[#151515]`}>
-            <div className="flex h-full flex-col px-[14px] py-[14px]">
-              <div className="flex w-full items-center justify-between gap-[12px] rounded-[18px] border border-[#111111] bg-[#080808] px-[10px] py-[10px] text-left">
-                <div className="flex min-w-0 items-center gap-[10px]">
-                  <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full bg-[radial-gradient(circle_at_32%_28%,#4B8DFF_0%,#0F62FE_58%,#06204E_100%)] shadow-[0_0_30px_rgba(15,98,254,0.20)]">
-                    <Server className="h-[17px] w-[17px] text-white" strokeWidth={2.1} />
-                  </span>
-                  <div className="min-w-0">
-                    <p className="truncate text-[15px] font-medium leading-none tracking-[-0.03em] text-[#E5E5E5]" title={`${snapshot.project.planName} - ${snapshot.project.repository.name}`}>
-                      {snapshot.project.repository.name}
-                    </p>
-                    <p className="mt-[5px] truncate text-[12px] leading-none text-[#6D6D6D]" title={snapshot.project.planName}>
-                      {snapshot.project.planName} - {snapshot.project.kindLabel}
-                    </p>
-                  </div>
-                </div>
-                <span className={`inline-flex h-[28px] min-w-[28px] items-center justify-center rounded-[10px] border px-[8px] text-[10px] font-bold uppercase tracking-[0.1em] ${statusClasses(snapshot.project.runtimeStatus)}`} title={statusLabel(snapshot.project.runtimeStatus)}>
-                  <span className="h-[7px] w-[7px] rounded-full bg-current" />
+    <>
+    <PanelShell
+      className={`flowdesk-vps-ui${isFullBleedTab ? " is-full-bleed" : ""}`}
+      crumb={snapshot.settings.hostName}
+      title={activeTabLabel}
+      account={{
+        displayName: currentAccount.displayName,
+        username: currentAccount.username,
+        avatarUrl: currentAccount.avatarUrl,
+        discordUserId: currentAccount.discordUserId,
+      }}
+      savedAccounts={savedAccounts.map((account) => ({
+        authUserId: account.authUserId,
+        discordUserId: account.discordUserId,
+        displayName: account.displayName,
+        username: account.username,
+        avatarUrl: account.avatarUrl,
+      }))}
+      links={paletteLinks}
+      actions={{
+        onAddAccount: () => window.location.assign(buildDiscordAuthStartHref("/dashboard/hosting")),
+        onSwitchAccount: (account) => handleSwitchSavedAccount({
+          authUserId: account.authUserId ?? currentAccount.authUserId,
+          discordUserId: account.discordUserId,
+          displayName: account.displayName,
+          username: account.username,
+          avatarUrl: account.avatarUrl,
+          lastSeenAt: Date.now(),
+        }),
+        onOpenMyAccount: () => router.push("/account"),
+        onOpenSettings: () => router.push("/account/status"),
+        onOpenHelp: () => window.open(OFFICIAL_DISCORD_INVITE_URL, "_blank", "noopener,noreferrer"),
+        onLogout: () => { void handleLogout(); },
+        isLoggingOut,
+      }}
+      isPaletteOpen={isCommandPaletteOpen}
+      onPaletteOpenChange={setIsCommandPaletteOpen}
+      isMobileNavOpen={isMobileNavOpen}
+      onMobileNavOpenChange={setIsMobileNavOpen}
+      sidebar={(
+        <div className="fd-sidebar-inner">
+            <div className="fd-team-trigger cursor-default">
+              <div className="flex min-w-0 items-center gap-[10px]">
+                <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full bg-[radial-gradient(circle_at_32%_28%,#4B8DFF_0%,#0F62FE_58%,#06204E_100%)] shadow-[0_0_30px_rgba(15,98,254,0.20)]">
+                  <Server className="h-[17px] w-[17px] text-white" strokeWidth={2.1} />
                 </span>
-              </div>
-
-              <div className="mt-[10px] rounded-[16px] border border-[#111111] bg-[#070707] px-[12px] py-[10px]">
-                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#555555]">Codigo da VPS</p>
-                <p className="mt-[6px] truncate font-mono text-[11px] font-semibold text-[#DADADA]" title={snapshot.project.vpsCode}>{snapshot.project.vpsCode}</p>
-              </div>
-
-              <div className="mt-[14px] flex items-center gap-[10px] rounded-[16px] border border-[#141414] bg-[#080808] px-[14px] py-[12px]">
-                <Search className="h-[18px] w-[18px] shrink-0 text-[#6F6F6F]" strokeWidth={1.85} aria-hidden="true" />
-                <input
-                  type="text"
-                  value={sidebarSearchText}
-                  onChange={(event) => setSidebarSearchText(event.currentTarget.value)}
-                  placeholder="Buscar..."
-                  autoComplete="off"
-                  className="min-w-0 flex-1 bg-transparent text-[15px] text-[#D5D5D5] outline-none placeholder:text-[#5A5A5A]"
-                />
-                <SidebarSearchShortcutIcon />
-              </div>
-
-              <div className="mt-[14px] min-h-0 flex-1 overflow-y-auto pr-[2px] thin-scrollbar">
-                <div className="space-y-[4px]">
-                  {(!normalizedSidebarSearch || normalizeSearchText("Dashboard voltar hospedagem").includes(normalizedSidebarSearch)) ? (
-                    <button
-                      type="button"
-                      onClick={() => router.push("/dashboard/hosting")}
-                      className="group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#B5B5B5] transition-all duration-200 hover:bg-[#111111] hover:text-[#E3E3E3]"
-                    >
-                      <span className="inline-flex h-[22px] w-[22px] items-center justify-center text-[#8A8A8A] group-hover:text-[#DADADA]">
-                        <ArrowLeft className="h-[18px] w-[18px] shrink-0" strokeWidth={1.9} />
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-[15px] font-medium leading-none tracking-[-0.03em]">
-                        Dashboard
-                      </span>
-                    </button>
-                  ) : null}
-
-                  {filteredSidebarTabs.map((item) => {
-                    const isActive = tab === item.id;
-                    return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => navigateToTab(item.id)}
-                        className={`group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-all duration-200 ${isActive
-                            ? "bg-[#1E1E1E] text-[#F0F0F0]"
-                            : "text-[#B5B5B5] hover:bg-[#111111] hover:text-[#E3E3E3]"
-                          }`}
-                      >
-                        <span className={`inline-flex h-[22px] w-[22px] items-center justify-center ${isActive ? "text-[#F0F0F0]" : "text-[#8A8A8A] group-hover:text-[#DADADA]"}`}>
-                          {item.icon}
-                        </span>
-                        <span className="min-w-0 flex-1 truncate text-[15px] font-medium leading-none tracking-[-0.03em]">
-                          {item.label}
-                        </span>
-                      </button>
-                    );
-                  })}
+                <div className="min-w-0">
+                  <p className="truncate text-[14px] font-medium leading-none text-[var(--fd-text)]" title={`${snapshot.project.planName} - ${snapshot.settings.hostName}`}>
+                    {snapshot.settings.hostName}
+                  </p>
+                  <p className="mt-[5px] truncate text-[12px] leading-none text-[var(--fd-muted)]" title={snapshot.project.planName}>
+                    {snapshot.project.planName} · {snapshot.project.kindLabel}
+                  </p>
                 </div>
+              </div>
+            </div>
+
+            <div className="mt-[10px] rounded-[12px] border border-[var(--fd-line)] bg-[var(--fd-elevated)] px-[12px] py-[10px]">
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--fd-muted)]">Codigo da VPS</p>
+              <p className="mt-[6px] truncate font-mono text-[11px] font-semibold text-[var(--fd-soft)]" title={snapshot.project.vpsCode}>{snapshot.project.vpsCode}</p>
+            </div>
+
+            <label className="fd-sidebar-search">
+              <Search className="h-[16px] w-[16px] shrink-0 text-[var(--fd-muted)]" strokeWidth={1.85} aria-hidden="true" />
+              <input
+                type="text"
+                value={sidebarSearchText}
+                onChange={(event) => setSidebarSearchText(event.currentTarget.value)}
+                placeholder="Filtrar abas..."
+                autoComplete="off"
+              />
+            </label>
+
+            <div className="mt-[10px] min-h-0 flex-1 overflow-y-auto pr-[2px]">
+              <div className="space-y-[2px]">
+                {(!normalizedSidebarSearch || normalizeSearchText("Dashboard voltar hospedagem").includes(normalizedSidebarSearch)) ? (
+                  <button
+                    type="button"
+                    onClick={() => router.push("/dashboard/hosting")}
+                    className={fdNavItemClass()}
+                  >
+                    <span className="inline-flex h-[20px] w-[20px] items-center justify-center text-[var(--fd-muted)] group-hover:text-[var(--fd-text)]">
+                      <ArrowLeft className="h-[16px] w-[16px] shrink-0" strokeWidth={1.9} />
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium">Dashboard</span>
+                  </button>
+                ) : null}
+
+                {filteredSidebarTabs.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => navigateToTab(item.id)}
+                    className={fdNavItemClass({ active: tab === item.id })}
+                  >
+                    <span className="inline-flex h-[20px] w-[20px] items-center justify-center text-[var(--fd-muted)] group-[.is-active]:text-[var(--fd-text)]">
+                      {item.icon}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{item.label}</span>
+                  </button>
+                ))}
 
                 {filteredActionItems.length ? (
-                  <div className="mt-[12px] border-t border-[#121212] pt-[12px]">
-                    <p className="mb-[6px] px-[12px] text-[10px] font-bold uppercase tracking-[0.16em] text-[#555555]">Acoes</p>
-                    <div className="space-y-[4px]">
+                  <div className="pt-[12px]">
+                    <p className="fd-nav-label px-[10px]">Acoes</p>
+                    <div className="mt-[6px] space-y-[2px]">
                       {filteredActionItems.map((item) => {
                         const Icon = item.icon;
                         return (
@@ -3782,14 +3733,12 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                             type="button"
                             disabled={Boolean(busyAction)}
                             onClick={() => void runAction(item.id)}
-                            className="group flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#B5B5B5] transition-all duration-200 hover:bg-[#111111] hover:text-[#E3E3E3] disabled:cursor-not-allowed disabled:opacity-55"
+                            className={fdNavItemClass({ disabled: Boolean(busyAction) })}
                           >
-                            <span className="inline-flex h-[22px] w-[22px] items-center justify-center text-[#8A8A8A] group-hover:text-[#DADADA]">
-                              {busyAction === item.id ? <Loader2 className="h-[18px] w-[18px] animate-spin" /> : <Icon className="h-[18px] w-[18px] shrink-0" strokeWidth={1.9} />}
+                            <span className="inline-flex h-[20px] w-[20px] items-center justify-center text-[var(--fd-muted)]">
+                              {busyAction === item.id ? <HostingSkeletonBar className="h-[16px] w-[16px] rounded-full bg-[#151515]" /> : <Icon className="h-[16px] w-[16px] shrink-0" strokeWidth={1.9} />}
                             </span>
-                            <span className="min-w-0 flex-1 truncate text-[15px] font-medium leading-none tracking-[-0.03em]">
-                              {item.label}
-                            </span>
+                            <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{item.label}</span>
                           </button>
                         );
                       })}
@@ -3798,153 +3747,28 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                 ) : null}
 
                 {showSidebarEmptyState ? (
-                  <div className="mt-[14px] rounded-[16px] border border-[#141414] bg-[#080808] px-[14px] py-[14px]">
-                    <p className="text-[13px] leading-[1.55] text-[#6F6F6F]">
-                      Nenhum item encontrado para essa pesquisa.
-                    </p>
+                  <div className="rounded-[12px] border border-[var(--fd-line)] bg-[var(--fd-elevated)] px-[12px] py-[14px] text-[12px] text-[var(--fd-muted)]">
+                    Nenhuma aba encontrada para &quot;{sidebarSearchText.trim()}&quot;.
                   </div>
                 ) : null}
               </div>
-
-              <div className="mt-auto shrink-0 pt-[14px]">
-                <div className="px-[2px]">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#555555]">Repositorio</p>
-                  <p className="mt-[6px] truncate font-mono text-[12px] font-semibold text-[#DADADA]" title={snapshot.project.repository.fullName}>{snapshot.project.repository.fullName}</p>
-                  <p className="mt-[4px] truncate text-[12px] text-[#777777]" title={runtimeHealth?.regionLabel || snapshot.project.regionLabel}>
-                    {runtimeHealth?.regionLabel || snapshot.project.regionLabel}{runtimeHealth?.latencyMs ? ` - ${runtimeHealth.latencyMs}ms` : ""}
-                  </p>
-                </div>
-                <div className="mt-[14px] border-t border-[#151515] pt-[14px]">
-                  <div ref={profileMenuRef} className="relative">
-                    {isProfileMenuOpen ? (
-                      <div className="absolute inset-x-0 bottom-[calc(100%+10px)] z-[140] overflow-hidden rounded-[22px] border border-[#151515] bg-[#070707] p-[12px] shadow-[0_26px_80px_rgba(0,0,0,0.54)]">
-                        <div className="space-y-[8px]">
-                          <button
-                            type="button"
-                            onClick={() => window.location.assign(buildDiscordAuthStartHref("/dashboard/hosting"))}
-                            className="flex w-full items-center gap-[12px] rounded-[16px] border border-[#171717] bg-[#0D0D0D] px-[12px] py-[12px] text-left text-[#D8D8D8] transition-colors hover:border-[#222222] hover:bg-[#111111]"
-                          >
-                            <span className="inline-flex h-[32px] w-[32px] items-center justify-center rounded-[11px] border border-[#1A1A1A] bg-[#101010] text-[#CFCFCF]">
-                              <Plus className="h-[18px] w-[18px]" />
-                            </span>
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-[14px] font-medium leading-none tracking-[-0.03em]">Adicionar outra conta</span>
-                              <span className="mt-[6px] block truncate text-[11px] leading-none text-[#686868]">Ate 3 contas salvas neste navegador</span>
-                            </span>
-                          </button>
-
-                          <div className="border-t border-[#121212] pt-[12px]">
-                            <p className="px-[4px] text-[11px] uppercase tracking-[0.16em] text-[#5F5F5F]">Contas salvas</p>
-                            <div className="mt-[10px] space-y-[6px]">
-                              {savedAccounts.map((account) => {
-                                const isCurrent = resolveSavedAccountKey(account) === resolveSavedAccountKey(currentAccount);
-                                return (
-                                  <button
-                                    key={resolveSavedAccountKey(account)}
-                                    type="button"
-                                    onClick={() => handleSwitchSavedAccount(account)}
-                                    className={`flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left transition-colors ${isCurrent ? "bg-[#141414] text-[#ECECEC]" : "text-[#A7A7A7] hover:bg-[#111111] hover:text-[#E6E6E6]"
-                                      }`}
-                                  >
-                                    <AccountAvatar avatarUrl={account.avatarUrl} displayName={account.displayName} username={account.username} className="h-[36px] w-[36px] shrink-0" />
-                                    <span className="min-w-0 flex-1">
-                                      <span className="block truncate text-[14px] font-medium leading-none tracking-[-0.03em]">{account.displayName}</span>
-                                      <span className="mt-[6px] block truncate text-[11px] leading-none text-[#666666]">@{account.username}</span>
-                                    </span>
-                                    {isCurrent ? (
-                                      <span className="inline-flex rounded-full border border-[rgba(0,98,255,0.28)] bg-[rgba(0,98,255,0.1)] px-[8px] py-[5px] text-[10px] font-medium leading-none text-[#8AB6FF]">ativa</span>
-                                    ) : null}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-
-                          <div className="border-t border-[#121212] pt-[12px]">
-                            <div className="space-y-[4px]">
-                              <button type="button" onClick={() => router.push("/account")} className="flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#B7B7B7] transition-colors hover:bg-[#111111] hover:text-[#ECECEC]">
-                                <UserRound className="h-[18px] w-[18px]" />
-                                <span className="text-[14px] font-medium leading-none">Minha conta</span>
-                              </button>
-                              <button type="button" onClick={() => router.push("/account/status")} className="flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#B7B7B7] transition-colors hover:bg-[#111111] hover:text-[#ECECEC]">
-                                <Cog className="h-[18px] w-[18px]" />
-                                <span className="text-[14px] font-medium leading-none">Configuracoes</span>
-                              </button>
-                              <button type="button" onClick={() => window.open(OFFICIAL_DISCORD_INVITE_URL, "_blank", "noopener,noreferrer")} className="flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#B7B7B7] transition-colors hover:bg-[#111111] hover:text-[#ECECEC]">
-                                <CircleHelp className="h-[18px] w-[18px]" />
-                                <span className="text-[14px] font-medium leading-none">Ajuda</span>
-                              </button>
-                              <button type="button" onClick={() => void handleLogout()} disabled={isLoggingOut} className="flex w-full items-center gap-[12px] rounded-[14px] px-[12px] py-[11px] text-left text-[#DB9E9E] transition-colors hover:bg-[#111111] hover:text-[#F1C0C0] disabled:cursor-not-allowed disabled:opacity-70">
-                                {isLoggingOut ? <Loader2 className="h-[18px] w-[18px] animate-spin" /> : <LogOut className="h-[18px] w-[18px]" />}
-                                <span className="text-[14px] font-medium leading-none">Sair</span>
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() => setIsProfileMenuOpen((current) => !current)}
-                      className="flex w-full items-center justify-between gap-[12px] rounded-[18px] border border-[#111111] bg-[#080808] px-[10px] py-[10px] text-left transition-colors hover:border-[#1A1A1A] hover:bg-[#0B0B0B]"
-                      aria-expanded={isProfileMenuOpen}
-                      aria-haspopup="menu"
-                    >
-                      <div className="flex min-w-0 items-center gap-[10px]">
-                        <AccountAvatar avatarUrl={currentAccount.avatarUrl} displayName={currentAccount.displayName} username={currentAccount.username} className="h-[38px] w-[38px] shrink-0" />
-                        <div className="min-w-0">
-                          <p className="truncate text-[15px] font-medium leading-none tracking-[-0.03em] text-[#E5E5E5]">{currentAccount.displayName}</p>
-                          <p className="mt-[5px] truncate text-[12px] leading-none text-[#686868]">@{currentAccount.username}</p>
-                        </div>
-                      </div>
-                      <span className="inline-flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded-[10px] text-[#7E7E7E] transition-colors hover:bg-[#101010] hover:text-[#D8D8D8]">
-                        <ChevronDown className={`h-[14px] w-[14px] shrink-0 transition-transform ${isProfileMenuOpen ? "rotate-180" : ""}`} strokeWidth={1.9} />
-                      </span>
-                    </button>
-                  </div>
-                </div>
-              </div>
             </div>
-          </div>
-        </aside>
 
-        <section className="flex h-screen min-w-0 flex-1 flex-col overflow-hidden">
-          <div className="flex min-h-[64px] items-center justify-between gap-[12px] border-b border-[#171717] bg-[#080808] px-[14px] lg:px-[22px]">
-            <div className="min-w-0">
-              <div className="flex items-center gap-[8px] lg:hidden">
-                <Server className="h-[17px] w-[17px] text-[#0F62FE]" />
-                <span className="truncate text-[13px] font-semibold text-white">{snapshot.project.repository.name}</span>
-              </div>
-              <p className="hidden truncate text-[14px] font-semibold text-white lg:block">
-                {tabs.find((item) => item.id === tab)?.label || "VPS"} / {snapshot.project.repository.name}
+            <div className="mt-auto shrink-0 border-t border-[var(--fd-line)] pt-[12px]">
+              <p className="px-[10px] text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--fd-muted)]">Repositorio</p>
+              <p className="mt-[6px] truncate px-[10px] font-mono text-[12px] font-semibold text-[var(--fd-soft)]" title={snapshot.project.repository.fullName}>{snapshot.project.repository.fullName}</p>
+              <p className="mt-[4px] truncate px-[10px] text-[12px] text-[var(--fd-muted)]" title={runtimeHealth?.regionLabel || snapshot.project.regionLabel}>
+                {runtimeHealth?.regionLabel || snapshot.project.regionLabel}{runtimeHealth?.latencyMs ? ` · ${runtimeHealth.latencyMs}ms` : ""}
               </p>
-              <p className="mt-[3px] hidden truncate font-mono text-[11px] text-[#777777] lg:block">{snapshot.project.vpsCode}</p>
             </div>
-            <div className="flex items-center gap-[8px]">
-              <span className={`hidden items-center gap-[7px] rounded-full border px-[9px] py-[5px] text-[11px] font-bold uppercase tracking-[0.12em] sm:inline-flex ${statusClasses(snapshot.project.runtimeStatus)}`}>
-                <span className="h-[6px] w-[6px] rounded-full bg-current" />
-                {statusLabel(snapshot.project.runtimeStatus)}
-              </span>
-              <div className="flex gap-[6px] lg:hidden">
-                {tabs.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => navigateToTab(item.id)}
-                    className={`flex h-[34px] w-[34px] items-center justify-center rounded-[10px] ${tab === item.id ? "bg-[#0F62FE] text-white" : "bg-[#101010] text-[#9B9B9B]"
-                      }`}
-                    aria-label={item.label}
-                  >
-                    {item.icon}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-          <div className={tab === "files" ? "min-h-0 flex-1 overflow-hidden" : "min-h-0 flex-1 overflow-auto p-[18px] lg:p-[24px]"}>
+        </div>
+      )}
+    >
+      <div className={isFullBleedTab ? "min-h-full min-w-0" : "min-w-0"}>
+          <div className={isImmersiveTab ? "min-h-full overflow-hidden" : "min-h-0 overflow-auto"}>
             {shouldShowTabSkeleton ? (
               <div className={centeredMainTabs ? "mx-auto w-full max-w-[1180px]" : ""}>
-                <TabMainSkeleton tab={tab} />
+                <HostingVpsTabSkeleton tab={tab as HostingVpsTabId} />
               </div>
             ) : (
               <div className={centeredMainTabs ? "mx-auto w-full max-w-[1180px]" : ""}>
@@ -4039,7 +3863,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                             <p className="text-[12px] font-bold uppercase tracking-[0.14em] text-[#8A8A8A]">Console <span className="ml-[6px] rounded-full bg-[#451111] px-[7px] py-[2px] text-[10px] text-[#FFB3B3]">{errorConsoleCount} errors</span></p>
                             <div className="flex gap-[8px]">
                               <button onClick={() => void clearConsoleLogs()} className="h-[30px] rounded-[9px] border border-[#242424] bg-[#0B0B0B] px-[10px] text-[12px] font-semibold text-[#DADADA] hover:bg-[#111111]">Limpar</button>
-                              <button onClick={refreshConsoleLogs} className="h-[30px] rounded-[9px] border border-[#242424] bg-[#0B0B0B] px-[10px] text-[12px] font-semibold text-[#DADADA] hover:bg-[#111111]">Auto ↓</button>
+                              <button onClick={refreshConsoleLogs} className="h-[30px] rounded-[9px] border border-[#242424] bg-[#0B0B0B] px-[10px] text-[12px] font-semibold text-[#DADADA] hover:bg-[#111111]">Auto â†“</button>
                             </div>
                           </div>
                           <div ref={consoleRef} className="mt-[12px] h-[490px] overflow-auto rounded-[14px] border border-[#171717] bg-black p-[14px] font-mono text-[12px] leading-[1.7] text-white [scrollbar-color:#2A2A2A_#050505] [scrollbar-width:thin]">
@@ -4079,23 +3903,24 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
 
                 {tab === "overview" && !isMinecraftProject ? (
                   <section className="grid gap-[14px]">
-                    <div className="overflow-hidden rounded-[24px] border border-[#171717] bg-[#070707]">
+                    <div className="overflow-hidden rounded-[24px] border border-[var(--fd-line)] bg-[var(--fd-elevated)]">
                       <div className="grid xl:grid-cols-[minmax(0,1fr)_380px]">
                         <div className="p-[18px] lg:p-[22px]">
                           <div className="flex flex-wrap items-start justify-between gap-[14px]">
                             <div className="min-w-0">
-                              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#606060]">VPS control plane</p>
-                              <h2 className="mt-[8px] truncate text-[30px] font-semibold tracking-[-0.055em] text-white" title={snapshot.settings.hostName}>
+                              <p className="text-[12px] font-medium tracking-[0.02em] text-[var(--fd-muted)]">VPS control plane</p>
+                              <h2 className="mt-[8px] truncate text-[32px] font-semibold leading-[1.05] tracking-[-0.045em] text-[var(--fd-text)] md:text-[36px]" title={snapshot.settings.hostName}>
                                 {snapshot.settings.hostName}
                               </h2>
-                              <div className="mt-[9px] flex flex-wrap items-center gap-[8px] text-[12px] text-[#8A8A8A]">
-                                <span className={`inline-flex items-center gap-[7px] rounded-full border px-[9px] py-[5px] text-[11px] font-bold uppercase tracking-[0.12em] ${statusClasses(snapshot.project.runtimeStatus)}`}>
+                              <div className="mt-[10px] flex flex-wrap items-center gap-[8px] text-[13px] text-[var(--fd-muted)]">
+                                <span className="font-mono text-[var(--fd-soft)]">{primaryDomain?.hostname || snapshot.project.vpsCode}</span>
+                                <span className="text-[var(--fd-line)]">·</span>
+                                <span>{snapshot.project.planName}</span>
+                                <span className="text-[var(--fd-line)]">·</span>
+                                <span className={`inline-flex items-center gap-[6px] rounded-full border px-[9px] py-[4px] text-[11px] font-semibold ${statusClasses(snapshot.project.runtimeStatus)}`}>
                                   <span className="h-[6px] w-[6px] rounded-full bg-current" />
                                   {statusLabel(snapshot.project.runtimeStatus)}
                                 </span>
-                                <span className="font-mono">{primaryDomain?.hostname || snapshot.project.vpsCode}</span>
-                                <span className="text-[#3A3A3A]">/</span>
-                                <span>{snapshot.project.planName}</span>
                               </div>
                             </div>
                             <button
@@ -4287,7 +4112,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                 ) : null}
 
                 {tab === "console" ? (
-                  <section className={`grid h-[calc(100vh-136px)] min-h-[620px] w-full overflow-hidden bg-[#050505] ${selectedConsoleEntry ? "xl:grid-cols-[minmax(0,1fr)_352px]" : "xl:grid-cols-1"
+                  <section className={`grid h-[calc(100dvh-var(--fd-header-h)-var(--fd-alert-h))] min-h-[620px] w-full overflow-hidden bg-[#050505] ${selectedConsoleEntry ? "xl:grid-cols-[minmax(0,1fr)_352px]" : "xl:grid-cols-1"
                     }`}>
                     <div className="flex min-h-0 min-w-0 flex-col">
                       <div className="flex flex-col gap-[10px] border-b border-[#171717] bg-[#070707] p-[10px] lg:flex-row lg:items-center">
@@ -4493,7 +4318,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
 
                 {tab === "files" ? (
                   <section
-                    className="grid h-[calc(100vh-64px)] min-h-0 grid-cols-1 bg-[#050505] md:grid-cols-[var(--flowdesk-vps-explorer)_minmax(0,1fr)]"
+                    className="flowdesk-vps-files-root grid h-[calc(100dvh-var(--fd-header-h)-var(--fd-alert-h))] min-h-0 grid-cols-1 bg-[#050505] md:grid-cols-[var(--flowdesk-vps-explorer)_minmax(0,1fr)]"
                     style={{ "--flowdesk-vps-explorer": `${explorerWidth}px` } as CSSProperties}
                   >
                     <aside className="relative min-h-0 border-r border-[#171717] bg-[#080808]">
@@ -4950,9 +4775,11 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                               </div>
                             ))}
                             {flowChatBusy ? (
-                              <div className="flex items-center gap-[8px] text-[12px] text-[#777777]">
-                                <Loader2 className="h-[14px] w-[14px] animate-spin" />
-                                Flow analisando contexto...
+                              <div className="flex justify-start" aria-hidden="true">
+                                <div className="max-w-[92%] rounded-[18px] border border-[#1C1C1C] bg-[#101010] px-[13px] py-[11px]">
+                                  <HostingSkeletonBar className="h-[12px] w-[148px] rounded-full bg-[#151515]" />
+                                  <HostingSkeletonBar className="mt-[8px] h-[12px] w-[112px] rounded-full bg-[#111111]" />
+                                </div>
                               </div>
                             ) : null}
                           </div>
@@ -4982,7 +4809,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                                       void sendFlowChatMessage();
                                     }
                                   }}
-                                  placeholder="Pergunte, pe├ºa review ou uma altera├º├úo no arquivo..."
+                                  placeholder="Pergunte, peâ”œÂºa review ou uma alteraâ”œÂºâ”œÃºo no arquivo..."
                                   disabled={flowChatQuota.blocked}
                                   className="max-h-[160px] min-h-[76px] w-full resize-none bg-transparent text-[13px] leading-[1.5] text-white outline-none placeholder:text-[#5F5F5F] disabled:cursor-not-allowed disabled:opacity-55"
                                 />
@@ -5157,7 +4984,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                               disabled={minecraftLibraryBusy}
                               className="inline-flex h-[42px] items-center justify-center gap-[8px] rounded-[12px] bg-[#F2F2F2] px-[14px] text-[13px] font-semibold text-[#050505] hover:bg-white disabled:opacity-60"
                             >
-                              {minecraftLibraryBusy ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <Search className="h-[14px] w-[14px]" />}
+                              {minecraftLibraryBusy ? <HostingSkeletonBar className="h-[14px] w-[14px] rounded-full bg-[#151515]" /> : <Search className="h-[14px] w-[14px]" />}
                               Buscar
                             </button>
                           </div>
@@ -5190,9 +5017,23 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                             </button>
                           ))}
                           {!minecraftLibraryHits.length ? (
-                            <div className="rounded-[16px] border border-[#171717] bg-[#080808] p-[18px] text-[13px] text-[#777777]">
-                              {minecraftLibraryBusy ? "Carregando biblioteca..." : "Nenhum resultado carregado ainda."}
-                            </div>
+                            minecraftLibraryBusy ? (
+                              <div className="grid gap-[10px] lg:grid-cols-2" aria-hidden="true">
+                                {Array.from({ length: 4 }, (_, index) => (
+                                  <HostingSkeletonBar
+                                    key={index}
+                                    className="min-h-[154px] rounded-[16px]"
+                                    style={{
+                                      opacity: [1, 0.76, 0.58, 0.58][Math.min(index, 3)],
+                                    }}
+                                  />
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="rounded-[16px] border border-[#171717] bg-[#080808] p-[18px] text-[13px] text-[#777777]">
+                                Nenhum resultado carregado ainda.
+                              </div>
+                            )
                           ) : null}
                         </div>
                       </>
@@ -5474,7 +5315,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                 ) : null}
 
                 {tab === "domains" ? (
-                  <section className="min-h-[calc(100vh-150px)] overflow-hidden rounded-[22px] border border-[#171717] bg-[#050505]">
+                  <section className="min-h-[calc(100dvh-var(--fd-header-h)-var(--fd-alert-h))] overflow-hidden border-b border-[#171717] bg-[#050505]">
                     <div className="flex h-[54px] items-center justify-between border-b border-[#171717] px-[14px]">
                       <div className="min-w-0">
                         <p className="truncate text-[13px] font-semibold text-white">{snapshot.project.vpsCode}</p>
@@ -5724,7 +5565,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                 ) : null}
 
                 {tab === "deploys" ? (
-                  <section className="flex h-[calc(100vh-136px)] min-h-[620px] w-full flex-col overflow-hidden bg-[#050505]">
+                  <section className="flex h-[calc(100dvh-var(--fd-header-h)-var(--fd-alert-h))] min-h-[620px] w-full flex-col overflow-hidden bg-[#050505]">
                     <div className="shrink-0 border-b border-[#151515] bg-[#080808] p-[12px]">
                       <div className="flex flex-col gap-[12px] xl:flex-row xl:items-center xl:justify-between">
                         <div className="min-w-0">
@@ -5978,49 +5819,56 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                 ) : null}
 
                 {tab === "settings" ? (
-                  <section className="grid gap-[18px] pb-[48px] lg:grid-cols-[230px_minmax(0,1fr)]">
-                    <aside className="lg:sticky lg:top-[18px] lg:self-start">
-                      <div className="flex gap-[6px] overflow-auto rounded-[18px] border border-[#171717] bg-[#080808] p-[6px] lg:flex-col">
+                  <section className="grid gap-[22px] pb-[48px]">
+                    <div>
+                      <p className="text-[12px] font-medium tracking-[0.02em] text-[var(--fd-muted)]">VPS</p>
+                      <h1 className="mt-[8px] text-[32px] font-semibold leading-[1.05] tracking-[-0.045em] text-[var(--fd-text)] md:text-[36px]">Configurações</h1>
+                      <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[var(--fd-muted)]">
+                        Identidade, repositório, acesso e segurança desta instância. Alterações entram em vigor imediatamente.
+                      </p>
+                    </div>
+
+                    <div className="grid gap-[18px] lg:grid-cols-[220px_minmax(0,1fr)]">
+                    <aside className="lg:sticky lg:top-[8px] lg:self-start">
+                      <div className="flex gap-[4px] overflow-auto rounded-[16px] border border-[var(--fd-line)] bg-[var(--fd-elevated)] p-[6px] lg:flex-col">
                         {([
-                          ["general", "General", Cog],
-                          ["domains", "Domains", Globe2],
-                          ["git", "Git", GitBranch],
-                          ["members", "Members", Users],
-                          ["security", "Security", Lock],
-                          ["danger", "Danger", AlertTriangle],
+                          ["general", "Geral", Cog],
+                          ["domains", "Domínios", Globe2],
+                          ["git", "Repositório", GitBranch],
+                          ["members", "Membros", Users],
+                          ["security", "Segurança", Lock],
+                          ["danger", "Zona de risco", AlertTriangle],
                         ] as Array<[string, string, typeof Cog]>).map(([id, label, Icon]) => (
                           <button
                             key={String(id)}
                             type="button"
                             onClick={() => setSettingsSection(String(id))}
-                            className={`flex h-[38px] shrink-0 items-center gap-[9px] rounded-[12px] px-[10px] text-left text-[13px] font-semibold ${settingsSection === id
-                                ? id === "danger"
-                                  ? "bg-[rgba(255,82,82,0.1)] text-[#FF9B9B]"
-                                  : "bg-[#151515] text-white"
-                                : id === "danger"
-                                  ? "text-[#C77A7A] hover:bg-[#111111]"
-                                  : "text-[#9B9B9B] hover:bg-[#111111] hover:text-white"
-                              }`}
+                            className={fdNavItemClass({ active: settingsSection === id, danger: id === "danger" })}
                           >
-                            <Icon className="h-[15px] w-[15px]" />
-                            {String(label)}
+                            <span className="inline-flex h-[20px] w-[20px] items-center justify-center text-[var(--fd-muted)] group-[.is-active]:text-[var(--fd-text)]">
+                              <Icon className="h-[15px] w-[15px]" strokeWidth={1.9} />
+                            </span>
+                            <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{label}</span>
                           </button>
                         ))}
                       </div>
                     </aside>
 
-                    <div className="grid gap-[14px]">
-                      {(settingsSection === "general" || settingsSection === "domains") ? (
-                        <section className="overflow-hidden rounded-[22px] border border-[#171717] bg-[#080808]">
-                          <div className="border-b border-[#171717] p-[18px]">
-                            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#606060]">Project</p>
-                            <h2 className="mt-[8px] text-[22px] font-semibold tracking-[-0.04em] text-white">Host name</h2>
+                    <div className="grid min-w-0 gap-[14px]">
+                      {settingsSection === "general" ? (
+                        <section className="overflow-hidden rounded-[22px] border border-[var(--fd-line)] bg-[var(--fd-elevated)]">
+                          <div className="border-b border-[var(--fd-line)] p-[20px]">
+                            <p className="text-[12px] font-medium text-[var(--fd-muted)]">Projeto</p>
+                            <h2 className="mt-[6px] text-[22px] font-semibold tracking-[-0.04em] text-[var(--fd-text)]">Nome do host</h2>
+                            <p className="mt-[8px] max-w-[640px] text-[13px] leading-[1.55] text-[var(--fd-muted)]">
+                              Esse nome aparece no painel, no header e nas confirmações sensíveis da VPS.
+                            </p>
                             <div className="mt-[16px] flex flex-col gap-[10px] sm:flex-row">
                               <input
                                 value={settingsHostName}
                                 onChange={(event) => setSettingsHostName(event.target.value)}
                                 maxLength={64}
-                                className="h-[42px] min-w-0 flex-1 rounded-[12px] border border-[#242424] bg-[#050505] px-[13px] text-[13px] font-semibold text-white outline-none focus:border-[#3A3A3A]"
+                                className="h-[42px] min-w-0 flex-1 rounded-[12px] border border-[var(--fd-line)] bg-[#0B0B0B] px-[13px] text-[13px] font-semibold text-[var(--fd-text)] outline-none focus:border-[#3A3A3A]"
                               />
                               <button
                                 type="button"
@@ -6029,19 +5877,19 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                                 className="inline-flex h-[42px] items-center justify-center gap-[8px] rounded-[12px] bg-[#F2F2F2] px-[14px] text-[13px] font-semibold text-[#050505] hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
                               >
                                 {settingsSaving === "hostname" ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <Save className="h-[14px] w-[14px]" />}
-                                Save
+                                Salvar
                               </button>
                             </div>
                           </div>
                           <div className="grid gap-[10px] p-[18px] md:grid-cols-3">
                             {[
-                              ["Primary domain", primaryDomain?.hostname || "n/d"],
+                              ["Domínio principal", primaryDomain?.hostname || "n/d"],
                               ["Runtime", snapshot.project.runtime],
-                              ["Billing", snapshot.project.paymentAmount],
+                              ["Cobrança", snapshot.project.paymentAmount],
                             ].map(([label, value]) => (
-                              <div key={label} className="rounded-[14px] border border-[#151515] bg-[#0B0B0B] p-[12px]">
-                                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#555555]">{label}</p>
-                                <p className="mt-[7px] truncate text-[13px] font-semibold text-[#E7E7E7]" title={value}>{value}</p>
+                              <div key={label} className="rounded-[14px] border border-[var(--fd-line)] bg-[#0B0B0B] p-[12px]">
+                                <p className="text-[11px] font-medium text-[var(--fd-muted)]">{label}</p>
+                                <p className="mt-[7px] truncate text-[13px] font-semibold text-[var(--fd-soft)]" title={value}>{value}</p>
                               </div>
                             ))}
                           </div>
@@ -6049,18 +5897,21 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                       ) : null}
 
                       {settingsSection === "domains" ? (
-                        <section className="overflow-hidden rounded-[22px] border border-[#171717] bg-[#080808]">
-                          <div className="flex flex-col gap-[12px] border-b border-[#171717] p-[18px] lg:flex-row lg:items-end lg:justify-between">
+                        <section className="overflow-hidden rounded-[22px] border border-[var(--fd-line)] bg-[var(--fd-elevated)]">
+                          <div className="flex flex-col gap-[12px] border-b border-[var(--fd-line)] p-[20px] lg:flex-row lg:items-end lg:justify-between">
                             <div>
-                              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#606060]">Domains</p>
-                              <h2 className="mt-[8px] text-[22px] font-semibold tracking-[-0.04em] text-white">Production domains</h2>
+                              <p className="text-[12px] font-medium text-[var(--fd-muted)]">Produção</p>
+                              <h2 className="mt-[6px] text-[22px] font-semibold tracking-[-0.04em] text-[var(--fd-text)]">Domínios</h2>
+                              <p className="mt-[8px] max-w-[560px] text-[13px] leading-[1.55] text-[var(--fd-muted)]">
+                                Vincule um subdomínio Flowdesk ou um domínio próprio a esta VPS.
+                              </p>
                             </div>
                             <div className="flex min-w-0 flex-col gap-[8px] sm:flex-row">
                               <input
                                 value={settingsDomainInput}
                                 onChange={(event) => setSettingsDomainInput(event.target.value.toLowerCase())}
                                 placeholder="meusite.flwdesk.com"
-                                className="h-[42px] min-w-0 rounded-[12px] border border-[#242424] bg-[#050505] px-[13px] font-mono text-[13px] text-white outline-none focus:border-[#3A3A3A] sm:w-[280px]"
+                                className="h-[42px] min-w-0 rounded-[12px] border border-[var(--fd-line)] bg-[#0B0B0B] px-[13px] font-mono text-[13px] text-[var(--fd-text)] outline-none focus:border-[#3A3A3A] sm:w-[280px]"
                               />
                               <button
                                 type="button"
@@ -6069,30 +5920,30 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                                 className="inline-flex h-[42px] items-center justify-center gap-[8px] rounded-[12px] bg-[#F2F2F2] px-[14px] text-[13px] font-semibold text-[#050505] hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
                               >
                                 {settingsSaving === "add_domain" ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <Plus className="h-[14px] w-[14px]" />}
-                                Add
+                                Adicionar
                               </button>
                             </div>
                           </div>
-                          <div className="divide-y divide-[#121212]">
+                          <div className="divide-y divide-[var(--fd-line)]">
                             {snapshot.settings.domains.map((domain) => (
                               <div key={domain.id} className="grid gap-[12px] px-[18px] py-[14px] md:grid-cols-[minmax(0,1fr)_130px_170px] md:items-center">
                                 <div className="min-w-0">
                                   <div className="flex min-w-0 items-center gap-[9px]">
                                     <Globe2 className="h-[16px] w-[16px] shrink-0 text-[#9BC2FF]" />
-                                    <p className="truncate font-mono text-[14px] font-semibold text-white">{domain.hostname}</p>
-                                    {domain.primary ? <span className="rounded-full border border-[#263926] bg-[#07140B] px-[7px] py-[3px] text-[10px] font-bold uppercase tracking-[0.12em] text-[#9BE7AC]">Primary</span> : null}
+                                    <p className="truncate font-mono text-[14px] font-semibold text-[var(--fd-text)]">{domain.hostname}</p>
+                                    {domain.primary ? <span className="rounded-full border border-[#263926] bg-[#07140B] px-[7px] py-[3px] text-[10px] font-bold uppercase tracking-[0.12em] text-[#9BE7AC]">Principal</span> : null}
                                   </div>
-                                  <p className="mt-[5px] text-[12px] text-[#777777]">{domain.source === "flowdesk_subdomain" ? "Flowdesk subdomain" : "Custom domain"} / {domain.status}</p>
+                                  <p className="mt-[5px] text-[12px] text-[var(--fd-muted)]">{domain.source === "flowdesk_subdomain" ? "Subdomínio Flowdesk" : "Domínio personalizado"} · {domain.status}</p>
                                 </div>
                                 <span className={`w-fit rounded-full border px-[9px] py-[5px] text-[11px] font-semibold ${domain.status === "active" ? "border-[#1E3425] bg-[#07140B] text-[#9BE7AC]" : "border-[#3B2E16] bg-[#120D04] text-[#FFD28A]"
                                   }`}>
-                                  {domain.status === "active" ? "Valid" : "Pending DNS"}
+                                  {domain.status === "active" ? "Válido" : "DNS pendente"}
                                 </span>
                                 <div className="flex justify-start gap-[8px] md:justify-end">
                                   {!domain.primary ? (
-                                    <button type="button" onClick={() => void saveProjectSettings("primary_domain", { hostname: domain.hostname })} className="h-[34px] rounded-[10px] border border-[#242424] bg-[#0B0B0B] px-[10px] text-[12px] font-semibold text-[#DADADA] hover:bg-[#111111]">Primary</button>
+                                    <button type="button" onClick={() => void saveProjectSettings("primary_domain", { hostname: domain.hostname })} className="h-[34px] rounded-[10px] border border-[var(--fd-line)] bg-[#0B0B0B] px-[10px] text-[12px] font-semibold text-[var(--fd-soft)] hover:bg-[#111111]">Principal</button>
                                   ) : null}
-                                  <button type="button" onClick={() => void saveProjectSettings("remove_domain", { hostname: domain.hostname })} disabled={!isMinecraftProject && snapshot.settings.domains.length <= 1} className="flex h-[34px] w-[34px] items-center justify-center rounded-[10px] border border-[#242424] bg-[#0B0B0B] text-[#DADADA] hover:bg-[#111111] hover:text-[#FF9B9B] disabled:cursor-not-allowed disabled:opacity-45">
+                                  <button type="button" onClick={() => void saveProjectSettings("remove_domain", { hostname: domain.hostname })} disabled={!isMinecraftProject && snapshot.settings.domains.length <= 1} className="flex h-[34px] w-[34px] items-center justify-center rounded-[10px] border border-[var(--fd-line)] bg-[#0B0B0B] text-[var(--fd-soft)] hover:bg-[#111111] hover:text-[#FF9B9B] disabled:cursor-not-allowed disabled:opacity-45">
                                     <Trash2 className="h-[14px] w-[14px]" />
                                   </button>
                                 </div>
@@ -6103,43 +5954,53 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                       ) : null}
 
                       {settingsSection === "git" ? (
-                        <section className="overflow-hidden rounded-[22px] border border-[#171717] bg-[#080808]">
-                          <div className="border-b border-[#171717] p-[18px]">
-                            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#606060]">Connected Git Repository</p>
-                            <div className="mt-[12px] flex flex-col gap-[12px] lg:flex-row lg:items-center lg:justify-between">
+                        <section className="overflow-hidden rounded-[22px] border border-[var(--fd-line)] bg-[var(--fd-elevated)]">
+                          <div className="border-b border-[var(--fd-line)] p-[20px]">
+                            <p className="text-[12px] font-medium text-[var(--fd-muted)]">GitHub</p>
+                            <div className="mt-[8px] flex flex-col gap-[12px] lg:flex-row lg:items-center lg:justify-between">
                               <div className="min-w-0">
-                                <h2 className="truncate text-[20px] font-semibold tracking-[-0.035em] text-white">
-                                  {snapshot.settings.repository.connected ? snapshot.settings.repository.fullName : "No repository connected"}
+                                <h2 className="truncate text-[22px] font-semibold tracking-[-0.04em] text-[var(--fd-text)]">
+                                  {snapshot.settings.repository.connected ? snapshot.settings.repository.fullName : "Nenhum repositório conectado"}
                                 </h2>
-                                <p className="mt-[5px] truncate text-[12px] text-[#777777]">Branch {snapshot.settings.repository.branch || "main"}</p>
+                                <p className="mt-[6px] truncate text-[13px] text-[var(--fd-muted)]">Branch {snapshot.settings.repository.branch || "main"}</p>
                               </div>
                               <div className="flex gap-[8px]">
                                 {snapshot.settings.repository.htmlUrl && snapshot.settings.repository.connected ? (
-                                  <button type="button" onClick={() => window.open(snapshot.settings.repository.htmlUrl || "", "_blank", "noopener,noreferrer")} className="inline-flex h-[38px] items-center gap-[8px] rounded-[11px] border border-[#242424] bg-[#0B0B0B] px-[12px] text-[12px] font-semibold text-[#DADADA] hover:bg-[#111111]">
+                                  <button type="button" onClick={() => window.open(snapshot.settings.repository.htmlUrl || "", "_blank", "noopener,noreferrer")} className="inline-flex h-[38px] items-center gap-[8px] rounded-[11px] border border-[var(--fd-line)] bg-[#0B0B0B] px-[12px] text-[12px] font-semibold text-[var(--fd-soft)] hover:bg-[#111111]">
                                     <Link2 className="h-[14px] w-[14px]" />
-                                    Open
+                                    Abrir
                                   </button>
                                 ) : null}
                                 <button type="button" onClick={() => void saveProjectSettings("repository_remove")} disabled={!snapshot.settings.repository.connected || settingsSaving === "repository_remove"} className="inline-flex h-[38px] items-center gap-[8px] rounded-[11px] border border-[#3A1F1F] bg-[#120707] px-[12px] text-[12px] font-semibold text-[#FF9B9B] hover:bg-[#180909] disabled:cursor-not-allowed disabled:opacity-45">
                                   {settingsSaving === "repository_remove" ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <X className="h-[14px] w-[14px]" />}
-                                  Disconnect
+                                  Desconectar
                                 </button>
                               </div>
                             </div>
                           </div>
                           <div className="p-[18px]">
                             <div className="flex flex-col gap-[8px] sm:flex-row">
-                              <div className="flex min-w-0 flex-1 items-center gap-[10px] rounded-[12px] border border-[#242424] bg-[#050505] px-[12px]">
-                                <Search className="h-[15px] w-[15px] text-[#777777]" />
-                                <input value={settingsRepoQuery} onChange={(event) => setSettingsRepoQuery(event.target.value)} placeholder="Search repositories" className="h-[42px] min-w-0 flex-1 bg-transparent text-[13px] text-white outline-none" />
+                              <div className="flex min-w-0 flex-1 items-center gap-[10px] rounded-[12px] border border-[var(--fd-line)] bg-[#0B0B0B] px-[12px]">
+                                <Search className="h-[15px] w-[15px] text-[var(--fd-muted)]" />
+                                <input value={settingsRepoQuery} onChange={(event) => setSettingsRepoQuery(event.target.value)} placeholder="Buscar repositórios" className="h-[42px] min-w-0 flex-1 bg-transparent text-[13px] text-[var(--fd-text)] outline-none" />
                               </div>
-                              <button type="button" onClick={() => void loadAvailableRepositories()} disabled={settingsReposLoading} className="inline-flex h-[42px] items-center justify-center gap-[8px] rounded-[12px] border border-[#242424] bg-[#0B0B0B] px-[13px] text-[13px] font-semibold text-[#DADADA] hover:bg-[#111111] disabled:cursor-not-allowed disabled:opacity-60">
-                                {settingsReposLoading ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <RefreshCw className="h-[14px] w-[14px]" />}
-                                Refresh
+                              <button type="button" onClick={() => void loadAvailableRepositories()} disabled={settingsReposLoading} className="inline-flex h-[42px] items-center justify-center gap-[8px] rounded-[12px] border border-[var(--fd-line)] bg-[#0B0B0B] px-[13px] text-[13px] font-semibold text-[var(--fd-soft)] hover:bg-[#111111] disabled:cursor-not-allowed disabled:opacity-60">
+                                {settingsReposLoading ? <HostingSkeletonBar className="h-[14px] w-[14px] rounded-full bg-[#151515]" /> : <RefreshCw className="h-[14px] w-[14px]" />}
+                                Atualizar
                               </button>
                             </div>
                             <div className="mt-[12px] grid gap-[8px]">
-                              {settingsRepos.slice(0, 8).map((repo) => {
+                              {settingsReposLoading && !settingsRepos.length ? (
+                                Array.from({ length: 4 }, (_, index) => (
+                                  <HostingSkeletonBar
+                                    key={index}
+                                    className="h-[68px] rounded-[14px]"
+                                    style={{
+                                      opacity: [1, 0.76, 0.58, 0.58][Math.min(index, 3)],
+                                    }}
+                                  />
+                                ))
+                              ) : settingsRepos.slice(0, 8).map((repo) => {
                                 const fullName = repo.fullName || `${repo.owner}/${repo.name}`;
                                 return (
                                   <button
@@ -6147,22 +6008,22 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                                     type="button"
                                     disabled={settingsSaving === "repository_update"}
                                     onClick={() => void saveProjectSettings("repository_update", { repository: { ...repo, fullName, htmlUrl: repo.htmlUrl || `https://github.com/${fullName}` } })}
-                                    className="grid gap-[10px] rounded-[14px] border border-[#171717] bg-[#0B0B0B] p-[12px] text-left hover:border-[#2A2A2A] disabled:cursor-not-allowed disabled:opacity-60 sm:grid-cols-[minmax(0,1fr)_120px]"
+                                    className="grid gap-[10px] rounded-[14px] border border-[var(--fd-line)] bg-[#0B0B0B] p-[12px] text-left hover:border-[#2A2A2A] disabled:cursor-not-allowed disabled:opacity-60 sm:grid-cols-[minmax(0,1fr)_120px]"
                                   >
                                     <span className="min-w-0">
-                                      <span className="block truncate text-[13px] font-semibold text-white">{fullName}</span>
-                                      <span className="mt-[4px] block truncate text-[12px] text-[#777777]">{repo.description || repo.language || "GitHub repository"}</span>
+                                      <span className="block truncate text-[13px] font-semibold text-[var(--fd-text)]">{fullName}</span>
+                                      <span className="mt-[4px] block truncate text-[12px] text-[var(--fd-muted)]">{repo.description || repo.language || "Repositório GitHub"}</span>
                                     </span>
-                                    <span className="flex items-center justify-start gap-[7px] font-mono text-[12px] font-semibold text-[#DADADA] sm:justify-end">
-                                      <GitBranch className="h-[13px] w-[13px] text-[#777777]" />
+                                    <span className="flex items-center justify-start gap-[7px] font-mono text-[12px] font-semibold text-[var(--fd-soft)] sm:justify-end">
+                                      <GitBranch className="h-[13px] w-[13px] text-[var(--fd-muted)]" />
                                       {repo.branch || "main"}
                                     </span>
                                   </button>
                                 );
                               })}
-                              {!settingsRepos.length ? (
-                                <div className="rounded-[14px] border border-[#171717] bg-[#0B0B0B] p-[14px] text-[13px] text-[#777777]">
-                                  Nenhum repositorio disponivel para troca agora.
+                              {!settingsReposLoading && !settingsRepos.length ? (
+                                <div className="rounded-[14px] border border-[var(--fd-line)] bg-[#0B0B0B] p-[14px] text-[13px] text-[var(--fd-muted)]">
+                                  Nenhum repositório disponível para troca agora.
                                 </div>
                               ) : null}
                             </div>
@@ -6171,28 +6032,32 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                       ) : null}
 
                       {settingsSection === "members" ? (
-                        <section className="overflow-hidden rounded-[22px] border border-[#171717] bg-[#080808]">
-                          <div className="border-b border-[#171717] p-[18px]">
-                            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#606060]">Project Members</p>
+                        <section className="overflow-hidden rounded-[22px] border border-[var(--fd-line)] bg-[var(--fd-elevated)]">
+                          <div className="border-b border-[var(--fd-line)] p-[20px]">
+                            <p className="text-[12px] font-medium text-[var(--fd-muted)]">Acesso</p>
+                            <h2 className="mt-[6px] text-[22px] font-semibold tracking-[-0.04em] text-[var(--fd-text)]">Membros do projeto</h2>
+                            <p className="mt-[8px] max-w-[640px] text-[13px] leading-[1.55] text-[var(--fd-muted)]">
+                              Convide pessoas com papel de visualização, desenvolvimento ou administração.
+                            </p>
                             <div className="mt-[14px] grid gap-[8px] lg:grid-cols-[minmax(0,1fr)_180px_110px]">
-                              <input value={settingsMemberEmail} onChange={(event) => setSettingsMemberEmail(event.target.value)} placeholder="email@empresa.com" className="h-[42px] min-w-0 rounded-[12px] border border-[#242424] bg-[#050505] px-[13px] text-[13px] text-white outline-none focus:border-[#3A3A3A]" />
+                              <input value={settingsMemberEmail} onChange={(event) => setSettingsMemberEmail(event.target.value)} placeholder="email@empresa.com" className="h-[42px] min-w-0 rounded-[12px] border border-[var(--fd-line)] bg-[#0B0B0B] px-[13px] text-[13px] text-[var(--fd-text)] outline-none focus:border-[#3A3A3A]" />
                               <CustomSelect value={settingsMemberRole} onChange={(value) => setSettingsMemberRole(value as VpsMemberRole)} options={[{ value: "viewer", label: "Viewer" }, { value: "developer", label: "Developer" }, { value: "admin", label: "Admin" }]} />
                               <button type="button" disabled={!settingsMemberEmail.trim() || settingsSaving === "add_member"} onClick={() => void saveProjectSettings("add_member", { email: settingsMemberEmail, role: settingsMemberRole }).then((saved) => { if (saved) setSettingsMemberEmail(""); })} className="inline-flex h-[42px] items-center justify-center gap-[8px] rounded-[12px] bg-[#F2F2F2] px-[13px] text-[13px] font-semibold text-[#050505] hover:bg-white disabled:cursor-not-allowed disabled:opacity-50">
                                 {settingsSaving === "add_member" ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <Plus className="h-[14px] w-[14px]" />}
-                                Add
+                                Convidar
                               </button>
                             </div>
                           </div>
-                          <div className="divide-y divide-[#121212]">
+                          <div className="divide-y divide-[var(--fd-line)]">
                             {snapshot.settings.members.map((member) => (
                               <div key={member.id} className="grid gap-[10px] px-[18px] py-[14px] md:grid-cols-[minmax(0,1fr)_160px_120px_42px] md:items-center">
                                 <div className="min-w-0">
-                                  <p className="truncate text-[14px] font-semibold text-white">{member.email}</p>
-                                  <p className="mt-[4px] text-[12px] text-[#777777]">{member.status}</p>
+                                  <p className="truncate text-[14px] font-semibold text-[var(--fd-text)]">{member.email}</p>
+                                  <p className="mt-[4px] text-[12px] text-[var(--fd-muted)]">{member.status}</p>
                                 </div>
                                 <CustomSelect value={member.role} onChange={(role) => void saveProjectSettings("member_role", { id: member.id, role })} options={[{ value: "owner", label: "Owner" }, { value: "admin", label: "Admin" }, { value: "developer", label: "Developer" }, { value: "viewer", label: "Viewer" }]} />
-                                <span className="font-mono text-[12px] text-[#777777]">{formatRelative(member.addedAt)}</span>
-                                <button type="button" disabled={member.role === "owner"} onClick={() => void saveProjectSettings("remove_member", { id: member.id })} className="flex h-[36px] w-[36px] items-center justify-center rounded-[10px] border border-[#242424] bg-[#0B0B0B] text-[#DADADA] hover:bg-[#111111] hover:text-[#FF9B9B] disabled:cursor-not-allowed disabled:opacity-45">
+                                <span className="font-mono text-[12px] text-[var(--fd-muted)]">{formatRelative(member.addedAt)}</span>
+                                <button type="button" disabled={member.role === "owner"} onClick={() => void saveProjectSettings("remove_member", { id: member.id })} className="flex h-[36px] w-[36px] items-center justify-center rounded-[10px] border border-[var(--fd-line)] bg-[#0B0B0B] text-[var(--fd-soft)] hover:bg-[#111111] hover:text-[#FF9B9B] disabled:cursor-not-allowed disabled:opacity-45">
                                   <Trash2 className="h-[14px] w-[14px]" />
                                 </button>
                               </div>
@@ -6203,46 +6068,49 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
 
                       {settingsSection === "security" ? (
                         <section className="grid gap-[14px]">
-                          <div className="overflow-hidden rounded-[22px] border border-[#171717] bg-[#080808]">
-                            <div className="border-b border-[#171717] p-[18px]">
-                              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#606060]">Network & Security</p>
-                              <h2 className="mt-[8px] text-[22px] font-semibold tracking-[-0.04em] text-white">Firewall rules</h2>
+                          <div className="overflow-hidden rounded-[22px] border border-[var(--fd-line)] bg-[var(--fd-elevated)]">
+                            <div className="border-b border-[var(--fd-line)] p-[20px]">
+                              <p className="text-[12px] font-medium text-[var(--fd-muted)]">Rede</p>
+                              <h2 className="mt-[6px] text-[22px] font-semibold tracking-[-0.04em] text-[var(--fd-text)]">Regras de firewall</h2>
+                              <p className="mt-[8px] max-w-[640px] text-[13px] leading-[1.55] text-[var(--fd-muted)]">
+                                Libere ou bloqueie IPs e CIDRs. O agente interno assinado continua restrito ao backend Flowdesk.
+                              </p>
                               <div className="mt-[14px] grid gap-[8px] lg:grid-cols-[minmax(0,1fr)_150px_110px]">
-                                <input value={settingsIpInput} onChange={(event) => setSettingsIpInput(event.target.value)} placeholder="203.0.113.10 ou 10.0.0.0/24" className="h-[42px] min-w-0 rounded-[12px] border border-[#242424] bg-[#050505] px-[13px] font-mono text-[13px] text-white outline-none focus:border-[#3A3A3A]" />
-                                <CustomSelect value={settingsIpMode} onChange={(value) => setSettingsIpMode(value as VpsFirewallMode)} options={[{ value: "allow", label: "Allowlist" }, { value: "block", label: "Blocklist" }]} />
+                                <input value={settingsIpInput} onChange={(event) => setSettingsIpInput(event.target.value)} placeholder="203.0.113.10 ou 10.0.0.0/24" className="h-[42px] min-w-0 rounded-[12px] border border-[var(--fd-line)] bg-[#0B0B0B] px-[13px] font-mono text-[13px] text-[var(--fd-text)] outline-none focus:border-[#3A3A3A]" />
+                                <CustomSelect value={settingsIpMode} onChange={(value) => setSettingsIpMode(value as VpsFirewallMode)} options={[{ value: "allow", label: "Permitir" }, { value: "block", label: "Bloquear" }]} />
                                 <button type="button" disabled={!settingsIpInput.trim() || settingsSaving === "add_firewall"} onClick={() => void saveProjectSettings("add_firewall", { value: settingsIpInput, mode: settingsIpMode }).then((saved) => { if (saved) setSettingsIpInput(""); })} className="inline-flex h-[42px] items-center justify-center gap-[8px] rounded-[12px] bg-[#F2F2F2] px-[13px] text-[13px] font-semibold text-[#050505] hover:bg-white disabled:cursor-not-allowed disabled:opacity-50">
                                   {settingsSaving === "add_firewall" ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <Plus className="h-[14px] w-[14px]" />}
-                                  Add
+                                  Adicionar
                                 </button>
                               </div>
                             </div>
-                            <div className="divide-y divide-[#121212]">
+                            <div className="divide-y divide-[var(--fd-line)]">
                               {snapshot.settings.firewall.length ? snapshot.settings.firewall.map((rule) => (
                                 <div key={rule.id} className="grid gap-[10px] px-[18px] py-[14px] md:grid-cols-[minmax(0,1fr)_130px_42px] md:items-center">
-                                  <p className="truncate font-mono text-[13px] font-semibold text-white">{rule.value}</p>
-                                  <span className={`w-fit rounded-full border px-[9px] py-[5px] text-[11px] font-semibold ${rule.mode === "allow" ? "border-[#1E3425] bg-[#07140B] text-[#9BE7AC]" : "border-[#3A1F1F] bg-[#120707] text-[#FF9B9B]"}`}>{rule.mode}</span>
-                                  <button type="button" onClick={() => void saveProjectSettings("remove_firewall", { id: rule.id })} className="flex h-[36px] w-[36px] items-center justify-center rounded-[10px] border border-[#242424] bg-[#0B0B0B] text-[#DADADA] hover:bg-[#111111] hover:text-[#FF9B9B]">
+                                  <p className="truncate font-mono text-[13px] font-semibold text-[var(--fd-text)]">{rule.value}</p>
+                                  <span className={`w-fit rounded-full border px-[9px] py-[5px] text-[11px] font-semibold ${rule.mode === "allow" ? "border-[#1E3425] bg-[#07140B] text-[#9BE7AC]" : "border-[#3A1F1F] bg-[#120707] text-[#FF9B9B]"}`}>{rule.mode === "allow" ? "Permitir" : "Bloquear"}</span>
+                                  <button type="button" onClick={() => void saveProjectSettings("remove_firewall", { id: rule.id })} className="flex h-[36px] w-[36px] items-center justify-center rounded-[10px] border border-[var(--fd-line)] bg-[#0B0B0B] text-[var(--fd-soft)] hover:bg-[#111111] hover:text-[#FF9B9B]">
                                     <Trash2 className="h-[14px] w-[14px]" />
                                   </button>
                                 </div>
                               )) : (
-                                <div className="p-[18px] text-[13px] text-[#777777]">Nenhuma regra manual. O agente interno assinado continua restrito ao backend Flowdesk.</div>
+                                <div className="p-[18px] text-[13px] text-[var(--fd-muted)]">Nenhuma regra manual cadastrada.</div>
                               )}
                             </div>
                           </div>
                           <div className="grid gap-[10px] md:grid-cols-2">
                             {[
-                              ["Env secrets", snapshot.settings.security.envSecretsLocked],
-                              ["Signed agent requests", snapshot.settings.security.signedAgentRequests],
-                              ["Internal agent only", snapshot.settings.security.internalAgentOnly],
-                              ["2FA for danger zone", snapshot.settings.security.twoFactorRequiredForDanger],
-                            ].map(([label, enabled]) => (
-                              <div key={String(label)} className="flex items-center justify-between gap-[14px] rounded-[16px] border border-[#171717] bg-[#080808] p-[14px]">
+                              ["Segredos de ambiente", "Valores sensíveis ficam criptografados no backend.", snapshot.settings.security.envSecretsLocked],
+                              ["Agente assinado", "Toda ação operacional exige assinatura HMAC.", snapshot.settings.security.signedAgentRequests],
+                              ["Agente interno", "Somente o control plane Flowdesk fala com a VPS.", snapshot.settings.security.internalAgentOnly],
+                              ["2FA na zona de risco", "Exclusão e ações críticas pedem verificação extra.", snapshot.settings.security.twoFactorRequiredForDanger],
+                            ].map(([label, description, enabled]) => (
+                              <div key={String(label)} className="flex items-start justify-between gap-[14px] rounded-[16px] border border-[var(--fd-line)] bg-[var(--fd-elevated)] p-[14px]">
                                 <div className="min-w-0">
-                                  <p className="truncate text-[13px] font-semibold text-white">{String(label)}</p>
-                                  <p className="mt-[4px] text-[12px] text-[#777777]">{enabled ? "Enabled" : "Disabled"}</p>
+                                  <p className="truncate text-[13px] font-semibold text-[var(--fd-text)]">{String(label)}</p>
+                                  <p className="mt-[4px] text-[12px] leading-[1.5] text-[var(--fd-muted)]">{String(description)}</p>
                                 </div>
-                                <span className={`h-[10px] w-[10px] rounded-full ${enabled ? "bg-[#34A853]" : "bg-[#555555]"}`} />
+                                <span className={`mt-[4px] h-[10px] w-[10px] shrink-0 rounded-full ${enabled ? "bg-[#34A853]" : "bg-[#555555]"}`} />
                               </div>
                             ))}
                           </div>
@@ -6250,20 +6118,20 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                       ) : null}
 
                       {settingsSection === "danger" ? (
-                        <section className="overflow-hidden rounded-[22px] border border-[rgba(255,82,82,0.32)] bg-[#080505]">
-                          <div className="p-[18px]">
-                            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#C77A7A]">Danger Zone</p>
-                            <h2 className="mt-[8px] text-[22px] font-semibold tracking-[-0.04em] text-[#FFB3B3]">Delete Project and VPS</h2>
+                        <section className="overflow-hidden rounded-[22px] border border-[rgba(255,82,82,0.32)] bg-[#0E0707]">
+                          <div className="p-[20px]">
+                            <p className="text-[12px] font-medium text-[#C77A7A]">Zona de risco</p>
+                            <h2 className="mt-[6px] text-[22px] font-semibold tracking-[-0.04em] text-[#FFB3B3]">Excluir projeto e VPS</h2>
                             <p className="mt-[8px] max-w-[760px] text-[13px] leading-[1.6] text-[#A77A7A]">
-                              Remove runtime, env vars, deploys, logs e arquivos da VPS. O pedido pago fica livre para criar outra VPS enquanto o periodo de acesso ainda estiver ativo.
+                              Remove runtime, variáveis, deploys, logs e arquivos. O pedido pago fica livre para criar outra VPS enquanto o período de acesso ainda estiver ativo.
                             </p>
                             <div className="mt-[16px] max-w-[520px]">
                               <label className="text-[12px] font-semibold text-[#D8A0A0]">Digite {snapshot.settings.hostName}</label>
                               <input value={deleteConfirmText} onChange={(event) => setDeleteConfirmText(event.target.value)} className="mt-[8px] h-[42px] w-full rounded-[12px] border border-[#3A1F1F] bg-[#090303] px-[13px] text-[13px] text-white outline-none focus:border-[#6A2A2A]" />
                             </div>
                           </div>
-                          <div className="flex flex-col gap-[10px] border-t border-[rgba(255,82,82,0.25)] bg-[#110606] px-[18px] py-[14px] sm:flex-row sm:items-center sm:justify-between">
-                            <p className="text-[12px] text-[#A77A7A]">Aciona confirmacao sensivel se a conta tiver 2FA/passkey ativo.</p>
+                          <div className="flex flex-col gap-[10px] border-t border-[rgba(255,82,82,0.25)] bg-[#140808] px-[20px] py-[14px] sm:flex-row sm:items-center sm:justify-between">
+                            <p className="text-[12px] text-[#A77A7A]">Aciona confirmação sensível se a conta tiver 2FA ou passkey ativo.</p>
                             <button
                               type="button"
                               disabled={deleteConfirmText !== snapshot.settings.hostName || settingsSaving === "delete_project"}
@@ -6271,19 +6139,99 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                               className="inline-flex h-[42px] items-center justify-center gap-[8px] rounded-[12px] bg-[#E5484D] px-[14px] text-[13px] font-semibold text-white hover:bg-[#F2555A] disabled:cursor-not-allowed disabled:opacity-45"
                             >
                               {settingsSaving === "delete_project" ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <Trash2 className="h-[14px] w-[14px]" />}
-                              Delete Project
+                              Excluir projeto
                             </button>
                           </div>
                         </section>
                       ) : null}
+                    </div>
                     </div>
                   </section>
                 ) : null}
               </div>
             )}
           </div>
-        </section>
       </div>
+    </PanelShell>
+
+      {repositorySelectionOpen ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/78 px-[18px] backdrop-blur-[8px]">
+          <div className="w-full max-w-[640px] overflow-hidden rounded-[24px] border border-[#242424] bg-[#080808] shadow-[0_26px_90px_rgba(0,0,0,0.54)]">
+            <div className="border-b border-[#171717] px-[20px] py-[18px]">
+              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#777777]">Onboarding da VPS</p>
+              <h2 className="mt-[8px] text-[24px] font-semibold tracking-[-0.04em] text-white">Escolha outro repositorio</h2>
+              <p className="mt-[10px] text-[13px] leading-[1.6] text-[#9B9B9B]">
+                Sua VPS ja foi liberada. Para iniciar deploy e sincronizacao, selecione um repositorio que ainda nao esteja vinculado a outra hospedagem.
+              </p>
+            </div>
+            <div className="px-[20px] py-[18px]">
+              {repositorySelectionMessage ? (
+                <p className="rounded-[14px] border border-[rgba(255,184,77,0.24)] bg-[rgba(255,184,77,0.08)] px-[12px] py-[10px] text-[12px] leading-[1.55] text-[#E8C27A]">
+                  {repositorySelectionMessage}
+                </p>
+              ) : null}
+              <div className="mt-[14px] flex flex-col gap-[8px] sm:flex-row">
+                <div className="flex min-w-0 flex-1 items-center gap-[10px] rounded-[12px] border border-[#242424] bg-[#050505] px-[12px]">
+                  <Search className="h-[15px] w-[15px] text-[#777777]" />
+                  <input
+                    value={settingsRepoQuery}
+                    onChange={(event) => setSettingsRepoQuery(event.target.value)}
+                    placeholder="Procurar repositorio..."
+                    className="h-[42px] min-w-0 flex-1 bg-transparent text-[13px] text-white outline-none"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void loadAvailableRepositories()}
+                  disabled={settingsReposLoading}
+                  className="inline-flex h-[42px] items-center justify-center gap-[8px] rounded-[12px] border border-[#242424] bg-[#0B0B0B] px-[13px] text-[13px] font-semibold text-[#DADADA] hover:bg-[#111111] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {settingsReposLoading ? <HostingSkeletonBar className="h-[14px] w-[14px] rounded-full bg-[#151515]" /> : <RefreshCw className="h-[14px] w-[14px]" />}
+                  Atualizar
+                </button>
+              </div>
+              <div className="mt-[12px] max-h-[min(52vh,420px)] space-y-[8px] overflow-auto pr-[2px]">
+                {settingsReposLoading && !settingsRepos.length ? (
+                  Array.from({ length: 4 }, (_, index) => (
+                    <HostingSkeletonBar key={index} className="h-[68px] rounded-[14px]" />
+                  ))
+                ) : settingsRepos.slice(0, 12).map((repo) => {
+                  const fullName = repo.fullName || `${repo.owner}/${repo.name}`;
+                  return (
+                    <button
+                      key={repo.id || fullName}
+                      type="button"
+                      disabled={settingsSaving === "repository_update"}
+                      onClick={() => void saveProjectSettings("repository_update", {
+                        repository: {
+                          ...repo,
+                          fullName,
+                          htmlUrl: repo.htmlUrl || `https://github.com/${fullName}`,
+                        },
+                      })}
+                      className="grid w-full gap-[10px] rounded-[14px] border border-[#171717] bg-[#0B0B0B] p-[12px] text-left hover:border-[#2A2A2A] disabled:cursor-not-allowed disabled:opacity-60 sm:grid-cols-[minmax(0,1fr)_120px]"
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-[13px] font-semibold text-white">{fullName}</span>
+                        <span className="mt-[4px] block truncate text-[12px] text-[#777777]">{repo.description || repo.language || "GitHub repository"}</span>
+                      </span>
+                      <span className="flex items-center justify-start gap-[7px] font-mono text-[12px] font-semibold text-[#DADADA] sm:justify-end">
+                        <GitBranch className="h-[13px] w-[13px] text-[#777777]" />
+                        {repo.branch || "main"}
+                      </span>
+                    </button>
+                  );
+                })}
+                {!settingsReposLoading && !settingsRepos.length ? (
+                  <div className="rounded-[14px] border border-[#171717] bg-[#0B0B0B] p-[14px] text-[13px] text-[#777777]">
+                    Nenhum repositorio disponivel agora. Reconecte o GitHub ou crie outro repositorio.
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {githubReconnectOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/72 px-[18px] backdrop-blur-[6px]">
@@ -6627,7 +6575,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
           }
         }
       `}</style>
-    </main>
+    </>
   );
 }
 

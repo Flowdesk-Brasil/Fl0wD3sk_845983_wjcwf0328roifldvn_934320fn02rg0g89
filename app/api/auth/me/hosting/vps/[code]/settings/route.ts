@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSensitiveActionProof } from "@/lib/auth/sensitiveAction";
 import { getCurrentAuthSessionFromCookie } from "@/lib/auth/session";
+import { triggerHostingInitialRepositoryDeploy } from "@/lib/hosting/initialDeploy";
+import {
+  findUserHostingRepositoryConflict,
+  readHostingRepositoryPending,
+  withHostingRepositoryPendingFlags,
+} from "@/lib/hosting/repositoryConflict";
 import {
   appendVpsEvent,
   getHostingProjectForUser,
@@ -556,6 +562,7 @@ export async function PATCH(request: NextRequest, { params }: RouteProps) {
     const minecraftProject = isMinecraftProjectKind(loaded);
     let extraUpdate: Record<string, unknown> = {};
     let message = "Settings atualizadas.";
+    let resumeRepositoryDeploy = false;
 
     if (action === "hostname") {
       const hostName = readText(body.hostName, 64);
@@ -870,21 +877,19 @@ export async function PATCH(request: NextRequest, { params }: RouteProps) {
       const repository = normalizeRepositoryInput(body.repository);
       if (!repository) throw new Error("Repositorio invalido.");
       const supabase = getSupabaseAdminClientOrThrow();
-      const duplicate = await supabase
-        .from("hosting_projects")
-        .select("vps_code")
-        .eq("user_id", loaded.session.user.id)
-        .neq("id", loaded.project.id)
-        .not("status", "in", "(cancelled)")
-        .or([
-          repository.id ? `github_repo_id.eq.${repository.id}` : "",
-          `and(github_owner.eq.${repository.owner},github_repo.eq.${repository.name})`,
-        ].filter(Boolean).join(","))
-        .maybeSingle<{ vps_code: string }>();
-      if (duplicate.error) throw new Error(duplicate.error.message);
-      if (duplicate.data?.vps_code) {
-        throw new Error(`Este repositorio ja esta vinculado a VPS ${duplicate.data.vps_code}.`);
+      const duplicate = await findUserHostingRepositoryConflict(
+        supabase,
+        loaded.session.user.id,
+        repository,
+        loaded.project.id,
+      );
+      if (duplicate?.vpsCode) {
+        throw new Error(`Este repositorio ja esta vinculado a VPS ${duplicate.vpsCode}.`);
       }
+      const payloadRoot = loaded.project.provisioning_payload && typeof loaded.project.provisioning_payload === "object"
+        ? loaded.project.provisioning_payload as Record<string, unknown>
+        : {};
+      const hadRepositoryPending = readHostingRepositoryPending(payloadRoot);
       settings = {
         ...settings,
         repository: {
@@ -902,19 +907,38 @@ export async function PATCH(request: NextRequest, { params }: RouteProps) {
         github_repo_id: repository.id,
         github_branch: repository.branch,
       };
-      const payloadRoot = loaded.project.provisioning_payload && typeof loaded.project.provisioning_payload === "object"
-        ? loaded.project.provisioning_payload as Record<string, unknown>
-        : {};
-      loaded.project.provisioning_payload = {
-        ...payloadRoot,
-        repository,
-      };
-      message = "Repositorio conectado ao projeto.";
+      loaded.project.provisioning_payload = withHostingRepositoryPendingFlags(
+        {
+          ...payloadRoot,
+          repository,
+        },
+        { pending: false, conflict: null },
+      );
+      message = hadRepositoryPending
+        ? "Repositorio conectado. Iniciando deploy inicial..."
+        : "Repositorio conectado ao projeto.";
+      resumeRepositoryDeploy = hadRepositoryPending;
     } else {
       throw new Error("Acao de settings invalida.");
     }
 
     const updated = await persistSettings(loaded, settings, extraUpdate);
+    if (action === "repository_update" && resumeRepositoryDeploy) {
+      const supabase = getSupabaseAdminClientOrThrow();
+      const deployResult = await triggerHostingInitialRepositoryDeploy({
+        supabase,
+        project: {
+          ...loaded.project,
+          github_owner: String(updated.github_owner || loaded.project.github_owner),
+          github_repo: String(updated.github_repo || loaded.project.github_repo),
+          github_branch: String(updated.github_branch || loaded.project.github_branch || "main"),
+        },
+        userId: loaded.session.user.id,
+      });
+      if (!deployResult.ok && "message" in deployResult && deployResult.message) {
+        message = deployResult.message;
+      }
+    }
     if (
       minecraftProject &&
       ["add_domain", "update_domain", "remove_domain", "refresh_domain", "primary_domain"].includes(action)
@@ -945,7 +969,9 @@ export async function PATCH(request: NextRequest, { params }: RouteProps) {
             htmlUrl: nextSettings.repository.htmlUrl,
             connected: nextSettings.repository.connected,
           },
+          repositorySelectionRequired: false,
         },
+        repositorySelectionResolved: action === "repository_update" && resumeRepositoryDeploy,
         message,
       }),
     );

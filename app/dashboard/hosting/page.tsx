@@ -1,11 +1,6 @@
 ﻿import { HostingWorkspace } from "@/components/dashboard/HostingWorkspace";
 import { getCurrentUserFromSessionCookieSafe } from "@/lib/auth/session";
-import {
-  fetchHostingGitHubProfile,
-  isPermanentHostingGitHubAuthError,
-  markHostingGitHubTokenInvalid,
-  readHostingGitHubToken,
-} from "@/lib/hosting/github";
+import { resolveHostingGitHubConnectedForUser } from "@/lib/hosting/github";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import type { HostingProjectCard } from "@/components/dashboard/HostingWorkspace";
 
@@ -18,21 +13,7 @@ export default async function DashboardHostingPage() {
   let githubConnected = false;
 
   if (session.user?.id) {
-    const token = await readHostingGitHubToken(session.user.id);
-    if (token) {
-      githubConnected = true;
-      try {
-        await fetchHostingGitHubProfile(token);
-      } catch (error) {
-        if (isPermanentHostingGitHubAuthError(error)) {
-          await markHostingGitHubTokenInvalid(
-            session.user.id,
-            error instanceof Error ? error.message : "GitHub invalido.",
-          ).catch(() => null);
-          githubConnected = false;
-        }
-      }
-    }
+    githubConnected = await resolveHostingGitHubConnectedForUser(session.user.id);
     const supabase = getSupabaseAdminClientOrThrow();
     const { data } = await supabase
       .from("hosting_projects")

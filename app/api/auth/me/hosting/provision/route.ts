@@ -12,7 +12,19 @@ import {
   updateCloudflareDnsRecord,
 } from "@/lib/domains/cloudflare";
 import { readHostingGitHubToken } from "@/lib/hosting/github";
+import {
+  findUserHostingRepositoryConflict,
+  isPaymentOrderHostingProjectUniqueViolation,
+  readHostingRepositoryPending,
+  withHostingRepositoryPendingFlags,
+} from "@/lib/hosting/repositoryConflict";
+import {
+  hostingPurchaseMatchesProvisionRequest,
+  resolveHostingPurchaseContextForProvision,
+  type HostingPurchaseContext,
+} from "@/lib/hosting/purchaseContext";
 import { appendVpsEvent, requestVpsAgent } from "@/lib/hosting/vpsRuntime";
+import { isTrustedApprovedPaymentRecord } from "@/lib/payments/checkoutConsistency";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import {
   applyNoStoreHeaders,
@@ -99,7 +111,7 @@ function normalizeMinecraftConfig(value: unknown) {
   };
 }
 
-function normalizeMinecraftConfigFromPurchaseContext(context: Record<string, unknown> | null) {
+function normalizeMinecraftConfigFromPurchaseContext(context: HostingPurchaseContext | null) {
   if (!context) return null;
   return normalizeMinecraftConfig({
     serverName: context.minecraftServerName,
@@ -357,11 +369,30 @@ async function persistMinecraftControlPlaneRecord(input: {
   }
 }
 
-function readPurchaseContext(payload: unknown) {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
-  const context = (payload as Record<string, unknown>).purchase_context;
-  if (!context || typeof context !== "object" || Array.isArray(context)) return null;
-  return context as Record<string, unknown>;
+function isApprovedHostingPaymentOrder(
+  order: {
+    status: string | null;
+    amount: unknown;
+    provider_payment_id?: string | null;
+    provider_status_detail?: string | null;
+    paid_at?: string | null;
+    payment_method?: string | null;
+    provider_payload?: unknown;
+  },
+) {
+  if (order.status === "approved") {
+    return true;
+  }
+
+  return isTrustedApprovedPaymentRecord({
+    status: order.status,
+    amount: order.amount as string | number | null | undefined,
+    provider_payment_id: order.provider_payment_id,
+    provider_status_detail: order.provider_status_detail,
+    paid_at: order.paid_at,
+    payment_method: order.payment_method,
+    provider_payload: order.provider_payload,
+  });
 }
 
 function addDaysIso(base: string | null | undefined, days: number) {
@@ -427,7 +458,7 @@ export async function POST(request: NextRequest) {
   const supabase = getSupabaseAdminClientOrThrow();
   const { data: order, error: orderError } = await supabase
     .from("payment_orders")
-    .select("id, order_number, user_id, status, amount, plan_code, plan_name, provider_payload, paid_at, expires_at")
+    .select("id, order_number, user_id, status, amount, plan_code, plan_name, payment_method, provider_payment_id, provider_status_detail, provider_payload, paid_at, expires_at")
     .eq("order_number", orderNumber)
     .eq("user_id", session.user.id)
     .maybeSingle();
@@ -438,7 +469,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  if (!order || order.status !== "approved") {
+  if (!order || !isApprovedHostingPaymentOrder(order)) {
     return applyNoStoreHeaders(
       NextResponse.json({
         ok: false,
@@ -447,12 +478,26 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const purchaseContext = readPurchaseContext(order.provider_payload);
+  const purchaseContext = resolveHostingPurchaseContextForProvision({
+    providerPayload: order.provider_payload,
+    planName: order.plan_name,
+    amount: order.amount,
+    providerStatusDetail: order.provider_status_detail,
+    request: {
+      kind,
+      planId: plan.id,
+      regionId: region.id,
+      planName: plan.name,
+    },
+  });
+
   if (
-    purchaseContext?.type !== "hosting" ||
-    purchaseContext.hostingKind !== kind ||
-    purchaseContext.hostingPlanId !== plan.id ||
-    purchaseContext.hostingRegionId !== region.id
+    !purchaseContext ||
+    !hostingPurchaseMatchesProvisionRequest(purchaseContext, {
+      kind,
+      planId: plan.id,
+      regionId: region.id,
+    })
   ) {
     return applyNoStoreHeaders(
       NextResponse.json({
@@ -490,49 +535,38 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  if (existingProject?.vps_code) {
+  if (existingProject) {
     return applyNoStoreHeaders(
       NextResponse.json({
         ok: true,
         reused: true,
         vpsCode: existingProject.vps_code,
         status: existingProject.status,
+        repositoryPending: readHostingRepositoryPending(existingProject.provisioning_payload),
         redirectUrl: `https://fdesk.flwdesk.com/vps/${existingProject.vps_code}`,
       }),
     );
   }
 
+  let repositoryConflict: Awaited<ReturnType<typeof findUserHostingRepositoryConflict>> = null;
   if (kind !== "minecraft" && repository) {
-    const { data: duplicateRepositoryProject, error: duplicateRepositoryError } = await supabase
-      .from("hosting_projects")
-      .select("vps_code, github_owner, github_repo, status")
-      .eq("user_id", session.user.id)
-      .not("status", "in", "(deleted,cancelled)")
-      .or(
-        [
-          `github_repo_id.eq.${repository.id}`,
-          `and(github_owner.eq.${repository.owner},github_repo.eq.${repository.name})`,
-        ].join(","),
-      )
-      .maybeSingle();
-
-    if (duplicateRepositoryError) {
-      return applyNoStoreHeaders(
-        NextResponse.json({ ok: false, message: duplicateRepositoryError.message }, { status: 500 }),
+    try {
+      repositoryConflict = await findUserHostingRepositoryConflict(
+        supabase,
+        session.user.id,
+        repository,
       );
-    }
-
-    if (duplicateRepositoryProject?.vps_code) {
+    } catch (error) {
       return applyNoStoreHeaders(
         NextResponse.json({
           ok: false,
-          duplicateRepository: true,
-          vpsCode: duplicateRepositoryProject.vps_code,
-          message: `Este repositorio ja esta vinculado a VPS ${duplicateRepositoryProject.vps_code}. Escolha outro repositorio para criar uma nova hospedagem.`,
-        }, { status: 409 }),
+          message: error instanceof Error ? error.message : "Nao foi possivel validar o repositorio.",
+        }, { status: 500 }),
       );
     }
   }
+
+  const repositoryPending = Boolean(repositoryConflict?.vpsCode);
 
   const minecraftLimits = kind === "minecraft" ? resolveMinecraftPlanLimits(plan) : null;
   const minecraftPorts = kind === "minecraft" ? await allocateMinecraftPorts(supabase) : null;
@@ -549,6 +583,23 @@ export async function POST(request: NextRequest) {
     private: null,
   };
 
+  const baseProvisioningPayload = {
+    source: "dashboard_hosting",
+    windowsRuntime: "windows-vps",
+    controlPlane: kind === "minecraft" ? "minecraft" : "git",
+    access: {
+      startsAt: order.paid_at || new Date().toISOString(),
+      expiresAt: accessExpiresAt,
+      sourceOrderNumber: order.order_number,
+    },
+    repository,
+    minecraft: effectiveMinecraft,
+    limits: minecraftLimits,
+    ports: minecraftPorts,
+    plan,
+    region,
+  };
+
   const { data: project, error: insertError } = await supabase
     .from("hosting_projects")
     .insert({
@@ -561,32 +612,78 @@ export async function POST(request: NextRequest) {
       github_repo: repositoryForProject.name,
       github_repo_id: repositoryForProject.id,
       github_branch: repositoryForProject.branch,
-      status: "pending_provision",
+      status: repositoryPending ? "active" : "pending_provision",
       billing_status: "active",
       access_expires_at: accessExpiresAt,
-      provisioning_payload: {
-        source: "dashboard_hosting",
-        windowsRuntime: "windows-vps",
-        controlPlane: kind === "minecraft" ? "minecraft" : "git",
-        access: {
-          startsAt: order.paid_at || new Date().toISOString(),
-          expiresAt: accessExpiresAt,
-          sourceOrderNumber: order.order_number,
-        },
-        repository,
-        minecraft: effectiveMinecraft,
-        limits: minecraftLimits,
-        ports: minecraftPorts,
-        plan,
-        region,
-      },
+      runtime_status: repositoryPending ? "offline" : null,
+      runtime_status_payload: repositoryPending
+        ? {
+            repositoryPending: true,
+            repositoryConflictVpsCode: repositoryConflict?.vpsCode || null,
+          }
+        : {},
+      provisioning_payload: withHostingRepositoryPendingFlags(baseProvisioningPayload, {
+        pending: repositoryPending,
+        conflict: repositoryConflict,
+      }),
     })
     .select("id, vps_code, user_id, payment_order_id, hosting_kind, hosting_plan_id, hosting_region_id, github_owner, github_repo, github_repo_id, github_branch, status, runtime_status, runtime_status_payload, runtime_last_seen_at, billing_status, access_expires_at, refund_access_until, refunded_at, suspended_at, suspension_reason, windows_runtime, provisioning_payload, created_at, updated_at")
     .single();
 
   if (insertError) {
+    if (isPaymentOrderHostingProjectUniqueViolation(insertError.message)) {
+      const { data: racedProject, error: racedError } = await supabase
+        .from("hosting_projects")
+        .select("vps_code, status, provisioning_payload")
+        .eq("payment_order_id", order.id)
+        .not("status", "in", "(cancelled)")
+        .maybeSingle();
+
+      if (!racedError && racedProject?.vps_code) {
+        return applyNoStoreHeaders(
+          NextResponse.json({
+            ok: true,
+            reused: true,
+            vpsCode: racedProject.vps_code,
+            status: racedProject.status,
+            repositoryPending: readHostingRepositoryPending(racedProject.provisioning_payload),
+            redirectUrl: `https://fdesk.flwdesk.com/vps/${racedProject.vps_code}`,
+          }),
+        );
+      }
+    }
+
     return applyNoStoreHeaders(
       NextResponse.json({ ok: false, message: insertError.message }, { status: 500 }),
+    );
+  }
+
+  if (repositoryPending) {
+    await appendVpsEvent({
+      projectId: project.id,
+      userId: session.user.id,
+      action: "sync",
+      status: "succeeded",
+      message: `VPS liberada. O repositorio ${repository?.owner}/${repository?.name} ja esta em uso na VPS ${repositoryConflict?.vpsCode}. Escolha outro repositorio no painel para iniciar o deploy.`,
+      responsePayload: {
+        repositoryConflictVpsCode: repositoryConflict?.vpsCode || null,
+      },
+    }).catch(() => null);
+
+    return applyNoStoreHeaders(
+      NextResponse.json({
+        ok: true,
+        reused: false,
+        repositoryPending: true,
+        repositoryConflictVpsCode: repositoryConflict?.vpsCode || null,
+        vpsCode: project.vps_code,
+        status: project.status,
+        autoDeploy: {
+          ok: false,
+          message: "Escolha outro repositorio no painel da VPS para iniciar o deploy.",
+        },
+        redirectUrl: `https://fdesk.flwdesk.com/vps/${project.vps_code}`,
+      }),
     );
   }
 

@@ -211,7 +211,64 @@ export async function updateProjectRuntimeStatus(input: {
     .eq("id", input.projectId);
 }
 
-export async function requestVpsAgent<T = unknown>(input: AgentRequestInput): Promise<T> {
+function collectAgentErrorText(error: unknown) {
+  const parts: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current; depth += 1) {
+    if (current instanceof Error) {
+      parts.push(current.name, current.message);
+      current = current.cause;
+      continue;
+    }
+    if (typeof current === "string") {
+      parts.push(current);
+      break;
+    }
+    break;
+  }
+  return parts.join(" ").toLowerCase();
+}
+
+export function isVpsAgentUnreachableError(error: unknown) {
+  if (error instanceof Error && error.name === "VpsAgentUnreachableError") {
+    return true;
+  }
+  const text = collectAgentErrorText(error);
+  return (
+    text.includes("fetch failed") ||
+    text.includes("aborterror") ||
+    text.includes("aborted") ||
+    text.includes("econnrefused") ||
+    text.includes("enotfound") ||
+    text.includes("etimedout") ||
+    text.includes("econnreset") ||
+    text.includes("und_err") ||
+    text.includes("socket") ||
+    text.includes("network") ||
+    text.includes("other side closed") ||
+    text.includes("nao foi possivel conectar ao agente") ||
+    text.includes("nao respondeu a tempo")
+  );
+}
+
+export function describeVpsAgentError(error: unknown) {
+  if (error instanceof Error && error.name === "VpsAgentUnreachableError") {
+    return error.message;
+  }
+  if (error instanceof Error) {
+    const message = error.message.trim();
+    if (message && message !== "fetch failed" && !isVpsAgentUnreachableError(error)) {
+      return message;
+    }
+  }
+  const text = collectAgentErrorText(error);
+  if (text.includes("abort")) {
+    return "O agente da VPS nao respondeu a tempo.";
+  }
+  return "Nao foi possivel conectar ao agente da VPS. A maquina pode estar desligada ou indisponivel.";
+}
+
+async function requestVpsAgentOnce<T>(input: AgentRequestInput): Promise<T> {
   const baseUrl = resolveAgentBaseUrl();
   const token = resolveAgentToken();
   if (!baseUrl || !token) {
@@ -247,6 +304,28 @@ export async function requestVpsAgent<T = unknown>(input: AgentRequestInput): Pr
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+export async function requestVpsAgent<T = unknown>(input: AgentRequestInput): Promise<T> {
+  const maxAttempts = 2;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await requestVpsAgentOnce<T>(input);
+    } catch (error) {
+      lastError = error;
+      if (!isVpsAgentUnreachableError(error) || attempt === maxAttempts) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 280 * attempt));
+    }
+  }
+
+  const message = describeVpsAgentError(lastError);
+  const wrapped = new Error(message);
+  wrapped.name = isVpsAgentUnreachableError(lastError) ? "VpsAgentUnreachableError" : "VpsAgentRequestError";
+  throw wrapped;
 }
 
 export function maskSecretPreview(value: string) {

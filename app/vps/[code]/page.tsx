@@ -10,6 +10,10 @@ import {
   type HostingKind,
 } from "@/lib/hosting/catalog";
 import { readHostingGitHubToken } from "@/lib/hosting/github";
+import {
+  readHostingRepositoryConflict,
+  readHostingRepositoryPending,
+} from "@/lib/hosting/repositoryConflict";
 import { resolveHostingAccessState, resolveRuntimeStatus } from "@/lib/hosting/vpsRuntime";
 import {
   resolveRuntimeHealth,
@@ -353,6 +357,9 @@ export default async function VpsPanelPage({ params }: VpsPanelPageProps) {
     minecraftSnapshot.primaryDomain = primarySettingsDomain.hostname;
   }
 
+  const repositorySelectionRequired =
+    project.hosting_kind !== "minecraft" && readHostingRepositoryPending(project.provisioning_payload);
+  const repositoryConflict = readHostingRepositoryConflict(project.provisioning_payload);
   const snapshot: VpsWorkspaceSnapshot = {
     account: {
       authUserId: user.id,
@@ -390,6 +397,8 @@ export default async function VpsPanelPage({ params }: VpsPanelPageProps) {
         ? `Pago em ${formatDateTime(paymentOrder.paid_at)}`
         : `Criado em ${formatDateTime(paymentOrder?.created_at)}`,
       githubConnected,
+      repositorySelectionRequired,
+      repositoryConflictVpsCode: repositoryConflict?.vpsCode || null,
       minecraft: minecraftSnapshot,
     },
     metrics: [],

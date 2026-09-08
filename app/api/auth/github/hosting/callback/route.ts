@@ -12,6 +12,7 @@ import {
   storeHostingGitHubTokenForUser,
   validateHostingGitHubState,
 } from "@/lib/hosting/github";
+import { getRequestOrigin } from "@/lib/routing/subdomains";
 import { getCurrentAuthSessionFromCookie } from "@/lib/auth/session";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 
@@ -28,6 +29,7 @@ function popupHtml(input: {
   handoffToken?: string | null;
   user?: PopupGitHubAccount | null;
   accounts?: PopupGitHubAccount[];
+  returnOrigin?: string | null;
 }) {
   const payload = {
     source: "flowdesk-hosting-github",
@@ -38,14 +40,26 @@ function popupHtml(input: {
     `<!doctype html><html><body><script>
       const payload = ${JSON.stringify(payload)};
       const storagePayload = JSON.stringify({ ...payload, storedAt: Date.now() });
+      const targets = [${JSON.stringify(input.returnOrigin || null)}, window.location.origin].filter(Boolean);
       try {
         window.opener?.postMessage(payload, "*");
       } catch {}
+      for (const target of targets) {
+        try {
+          window.opener?.postMessage(payload, target);
+        } catch {}
+      }
       try {
         window.opener?.localStorage?.setItem(${JSON.stringify(HANDOFF_STORAGE_KEY)}, storagePayload);
       } catch {}
       try {
+        window.opener?.sessionStorage?.setItem(${JSON.stringify(HANDOFF_STORAGE_KEY)}, storagePayload);
+      } catch {}
+      try {
         window.localStorage?.setItem(${JSON.stringify(HANDOFF_STORAGE_KEY)}, storagePayload);
+      } catch {}
+      try {
+        window.sessionStorage?.setItem(${JSON.stringify(HANDOFF_STORAGE_KEY)}, storagePayload);
       } catch {}
       window.setTimeout(() => window.close(), 250);
     </script>${input.message}</body></html>`,
@@ -67,7 +81,9 @@ function popupRelayHtml(
     accounts?: PopupGitHubAccount[];
   },
 ) {
-  if (!returnOrigin) return popupHtml(input);
+  if (!returnOrigin) {
+    return popupHtml({ ...input, returnOrigin: null });
+  }
 
   const relayUrl = new URL("/api/auth/github/hosting/relay", returnOrigin);
   const payload = {
@@ -89,6 +105,24 @@ function popupRelayHtml(
       },
     },
   );
+}
+
+function buildHostingGitHubPopupResponse(
+  request: NextRequest,
+  relayOrigin: string | null,
+  input: {
+    ok: boolean;
+    message: string;
+    handoffToken?: string | null;
+    user?: PopupGitHubAccount | null;
+    accounts?: PopupGitHubAccount[];
+  },
+) {
+  const requestOrigin = getRequestOrigin(request);
+  if (relayOrigin && relayOrigin === requestOrigin) {
+    return popupHtml({ ...input, returnOrigin: relayOrigin });
+  }
+  return popupRelayHtml(relayOrigin, input);
 }
 
 export async function GET(request: NextRequest) {
@@ -152,7 +186,7 @@ export async function GET(request: NextRequest) {
       ).catch(() => null);
     }
     const handoffToken = createHostingGitHubHandoffTokenBundle(tokenBundle);
-    const response = popupRelayHtml(relayOrigin, {
+    const response = buildHostingGitHubPopupResponse(request, relayOrigin, {
       ok: true,
       message: "GitHub conectado com sucesso.",
       handoffToken,
@@ -164,7 +198,7 @@ export async function GET(request: NextRequest) {
     return applyNoStoreHeaders(response);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Falha ao conectar GitHub.";
-    const response = popupRelayHtml(relayOrigin, { ok: false, message });
+    const response = buildHostingGitHubPopupResponse(request, relayOrigin, { ok: false, message });
     clearHostingGitHubStateCookie(request, response);
     return applyNoStoreHeaders(response);
   }
