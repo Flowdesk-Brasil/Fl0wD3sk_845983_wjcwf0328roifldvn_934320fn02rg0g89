@@ -36,6 +36,7 @@ import {
   type AffiliateTab,
 } from "@/components/affiliates/affiliateConfig";
 import { AffiliateTabContent } from "@/components/affiliates/AffiliateTabs";
+import { AffiliateEnrollmentGate } from "@/components/affiliates/AffiliateEnrollmentGate";
 import { TabSkeleton } from "@/components/affiliates/affiliateUi";
 import { useAffiliateData } from "@/components/affiliates/useAffiliateData";
 
@@ -140,6 +141,10 @@ export function AffiliatesWorkspace({
   const currentAccount = useLiveAccountProfile(initialAccountProfile);
 
   const {
+    enrolled,
+    status,
+    statusMessage,
+    rules,
     profile,
     stats,
     insight,
@@ -515,12 +520,20 @@ export function AffiliatesWorkspace({
                 </motion.div>
               ) : (
                 <motion.div
-                  key={displayedTab}
+                  key={enrolled && status === "active" ? displayedTab : `gate-${status}`}
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -6 }}
                   transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
                 >
+                  {status !== "active" ? (
+                    <AffiliateEnrollmentGate
+                      status={status}
+                      statusMessage={statusMessage}
+                      rules={rules}
+                      onEnrolled={() => reload()}
+                    />
+                  ) : (
                   <AffiliateTabContent
                     tab={displayedTab}
                     profile={profile}
@@ -531,8 +544,10 @@ export function AffiliatesWorkspace({
                     withdrawals={withdrawals}
                     ranking={ranking}
                     settings={settings}
+                    rules={rules}
                     reload={reload}
                   />
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>

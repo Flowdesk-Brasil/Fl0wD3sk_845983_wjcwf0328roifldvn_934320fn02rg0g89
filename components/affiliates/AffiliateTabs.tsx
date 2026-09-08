@@ -6,7 +6,6 @@ import { motion } from "motion/react";
 import {
   ArrowRight,
   BarChart3,
-  Bell,
   BookOpen,
   Check,
   DollarSign,
@@ -22,14 +21,16 @@ import {
   Zap,
 } from "lucide-react";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
-import { formatCurrency, getLevelConfig } from "@/lib/affiliates/affiliateLevels";
+import { RANK_BONUS, formatCurrency, getLevelConfig } from "@/lib/affiliates/affiliateLevels";
 import type {
   AffiliateAIInsightCard,
   AffiliateCommission,
   AffiliateLink,
   AffiliatePeriod,
+  AffiliatePixKeyType,
   AffiliatePlan,
   AffiliateProfile,
+  AffiliateProgramRules,
   AffiliateRankEntry,
   AffiliateStats,
   AffiliateWithdrawal,
@@ -117,7 +118,7 @@ export function OverviewTab({
             </p>
             {stats?.rankThisMonth ? (
               <p className="mt-[4px] text-[13px]" style={{ color: config.color }}>
-                + {stats.rankThisMonth === 1 ? "5" : stats.rankThisMonth === 2 ? "3" : "2"}% bônus de ranking
+                + {RANK_BONUS[stats.rankThisMonth].bonusPct}% bônus de ranking
               </p>
             ) : null}
           </div>
@@ -240,10 +241,13 @@ export function LinksTab({ links, reload }: { links: AffiliateLink[]; reload: ()
   const PLAN_LABELS: Record<AffiliatePlan, string> = {
     basic: "Basic",
     pro: "Pro",
-    enterprise: "Enterprise",
+    ultra: "Ultra",
+    master: "Master",
   };
   const PERIOD_LABELS: Record<AffiliatePeriod, string> = {
     monthly: "Mensal",
+    quarterly: "Trimestral",
+    semiannual: "Semestral",
     annual: "Anual",
   };
 
@@ -284,9 +288,11 @@ export function LinksTab({ links, reload }: { links: AffiliateLink[]; reload: ()
                   onChange={(e) => setPlan(e.target.value)}
                   className="fd-field h-[40px] w-full rounded-[10px] px-[12px] text-[13px]"
                 >
-                  <option value="basic">Basic</option>
-                  <option value="pro">Pro</option>
-                  <option value="enterprise">Enterprise</option>
+                  {(Object.keys(PLAN_LABELS) as AffiliatePlan[]).map((code) => (
+                    <option key={code} value={code}>
+                      {PLAN_LABELS[code]}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div className="space-y-[6px]">
@@ -296,8 +302,11 @@ export function LinksTab({ links, reload }: { links: AffiliateLink[]; reload: ()
                   onChange={(e) => setPeriod(e.target.value)}
                   className="fd-field h-[40px] w-full rounded-[10px] px-[12px] text-[13px]"
                 >
-                  <option value="monthly">Mensal</option>
-                  <option value="annual">Anual</option>
+                  {(Object.keys(PERIOD_LABELS) as AffiliatePeriod[]).map((code) => (
+                    <option key={code} value={code}>
+                      {PERIOD_LABELS[code]}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -385,24 +394,30 @@ export function ComponentsTab({ profile }: { profile: AffiliateProfile | null })
   const demoAffId = profile?.affiliateId || "---";
   const [activeSnippet, setActiveSnippet] = useState<"html" | "react">("html");
 
-  const htmlSnippet = `<!-- Botão Flowdesk — CDN: cdn.flwdesk.com/affiliate/v1.css -->
-<link rel="stylesheet" href="https://cdn.flwdesk.com/affiliate/v1.css" />
+  const linkBase =
+    typeof window !== "undefined" ? window.location.origin : "https://www.flwdesk.com";
 
+  const htmlSnippet = `<!-- Botao de afiliado Flowdesk. Estilo embutido: nada externo para carregar. -->
 <a
-  href="https://flwdesk.com/r/${demoAffId}"
-  class="flwdesk-btn flwdesk-btn-primary"
-  data-affiliate-id="${demoAffId}"
+  href="${linkBase}/r/${demoAffId}/pro-monthly"
+  style="display:inline-block;padding:12px 22px;border-radius:12px;
+         background:#2D7FF9;color:#fff;font:600 15px/1 system-ui,sans-serif;
+         text-decoration:none"
 >
-  Assinar Flowdesk
+  Assinar Flowdesk Pro
 </a>`;
 
-  const reactSnippet = `import { FlowdeskButton } from '@flowdesk/affiliate-sdk';
+  const reactSnippet = `// Sem dependencia: o link ja rastreia o clique e registra a indicacao.
+const AFFILIATE_LINK = "${linkBase}/r/${demoAffId}/pro-monthly";
 
-export function MyPage() {
+export function FlowdeskAffiliateButton() {
   return (
-    <FlowdeskButton affiliateId="${demoAffId}" plan="pro" period="monthly">
+    <a
+      href={AFFILIATE_LINK}
+      className="inline-flex items-center rounded-xl bg-[#2D7FF9] px-5 py-3 font-semibold text-white"
+    >
       Assinar Flowdesk Pro
-    </FlowdeskButton>
+    </a>
   );
 }`;
 
@@ -602,49 +617,247 @@ export function CommissionsTab({ commissions }: { commissions: AffiliateCommissi
   );
 }
 
-export function WithdrawalsTab({ withdrawals }: { withdrawals: AffiliateWithdrawal[] }) {
-  if (withdrawals.length === 0) {
-    return (
-      <TabSection>
-        <AffEmptyState
-          icon={History}
-          title="Nenhum saque solicitado"
-          description="Você poderá ver seu histórico completo de saques aqui."
-        />
-      </TabSection>
-    );
-  }
+const PIX_KEY_LABELS: Record<AffiliatePixKeyType, string> = {
+  cpf: "CPF",
+  cnpj: "CNPJ",
+  email: "E-mail",
+  phone: "Telefone",
+  random: "Chave aleatória",
+};
+
+const WITHDRAWAL_STATUS_LABELS: Record<AffiliateWithdrawal["status"], string> = {
+  pending: "Em análise",
+  processing: "Processando",
+  paid: "Pago",
+  rejected: "Recusado",
+};
+
+/**
+ * Solicitação e histórico de saque.
+ *
+ * A versão anterior desta aba só renderizava a tabela: o afiliado via o saldo e
+ * não tinha como pedir o dinheiro. O formulário abaixo fecha o último elo.
+ */
+export function WithdrawalsTab({
+  withdrawals,
+  availableBalance,
+  rules,
+  reload,
+}: {
+  withdrawals: AffiliateWithdrawal[];
+  availableBalance: number;
+  rules: AffiliateProgramRules | null;
+  reload: () => void;
+}) {
+  const [amount, setAmount] = useState("");
+  const [pixKey, setPixKey] = useState("");
+  const [pixKeyType, setPixKeyType] = useState<AffiliatePixKeyType>("cpf");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [feedback, setFeedback] = useState<{ tone: "error" | "success"; message: string } | null>(
+    null,
+  );
+
+  const minimum = rules?.withdrawalMinimum ?? 50;
+  const fee = rules?.withdrawalFee ?? 0;
+  const hasOpenRequest = withdrawals.some(
+    (item) => item.status === "pending" || item.status === "processing",
+  );
+  const canRequest = availableBalance >= minimum && !hasOpenRequest;
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setIsSubmitting(true);
+    setFeedback(null);
+
+    try {
+      const response = await fetch("/api/affiliates/withdrawals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          amount: Number(amount.replace(",", ".")),
+          pixKey,
+          pixKeyType,
+        }),
+      });
+
+      const json = await response.json();
+
+      if (json.ok) {
+        setFeedback({
+          tone: "success",
+          message: json.message || "Saque solicitado. Você recebe o PIX após a conferência.",
+        });
+        setAmount("");
+        setPixKey("");
+        reload();
+      } else {
+        setFeedback({
+          tone: "error",
+          message: json.message || "Não foi possível solicitar o saque.",
+        });
+      }
+    } catch {
+      setFeedback({
+        tone: "error",
+        message: "Falha de conexão. Verifique sua internet e tente de novo.",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <TabSection>
-      <div className={AFF_TABLE_WRAP}>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-[13px]">
-            <thead>
-              <tr className={AFF_TABLE_HEAD}>
-                <th className="px-[20px] py-[14px] font-medium">Data</th>
-                <th className="px-[20px] py-[14px] font-medium">Valor</th>
-                <th className="px-[20px] py-[14px] font-medium">Chave PIX</th>
-                <th className="px-[20px] py-[14px] font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#1C1C1C]">
-              {withdrawals.map((w) => (
-                <tr key={w.withdrawalId} className={AFF_TABLE_ROW}>
-                  <td className="px-[20px] py-[16px] text-[#8B8B90]">
-                    {new Date(w.requestedAt).toLocaleDateString("pt-BR")}
-                  </td>
-                  <td className="px-[20px] py-[16px] font-medium text-[#F2F2F3]">{formatCurrency(w.amount)}</td>
-                  <td className="px-[20px] py-[16px] font-mono text-[#8B8B90]">{w.pixKey}</td>
-                  <td className="px-[20px] py-[16px]">
-                    <StatusBadge tone={w.status === "paid" ? "success" : "pending"} label={w.status === "paid" ? "Pago" : "Pendente"} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      <div className={`${AFF_CARD} p-[22px]`}>
+        <div className="flex flex-wrap items-baseline justify-between gap-[10px]">
+          <div>
+            <p className="text-[12px] uppercase tracking-[0.14em] text-[#737373]">
+              Disponível para saque
+            </p>
+            <p className="mt-[4px] text-[26px] font-semibold tracking-[-0.03em] text-[#F2F2F3]">
+              {formatCurrency(availableBalance)}
+            </p>
+          </div>
+          <p className="text-[12px] text-[#737373]">
+            Mínimo {formatCurrency(minimum)}
+            {fee > 0 ? ` · taxa de ${formatCurrency(fee)} por saque` : " · sem taxa"}
+          </p>
         </div>
+
+        {hasOpenRequest ? (
+          <p className="mt-[18px] rounded-[12px] border border-[#1C1C1C] bg-[#141414] px-[16px] py-[12px] text-[13px] text-[#8B8B90]">
+            Você já tem um saque em andamento. Assim que ele for concluído, poderá solicitar outro.
+          </p>
+        ) : availableBalance < minimum ? (
+          <p className="mt-[18px] rounded-[12px] border border-[#1C1C1C] bg-[#141414] px-[16px] py-[12px] text-[13px] text-[#8B8B90]">
+            Faltam {formatCurrency(Math.max(minimum - availableBalance, 0))} para atingir o saque
+            mínimo. Comissões entram aqui após {rules?.holdingPeriodDays ?? 7} dias de carência.
+          </p>
+        ) : (
+          <form onSubmit={handleSubmit} className="mt-[20px] space-y-[14px]">
+            <div className="grid gap-[12px] sm:grid-cols-3">
+              <div className="space-y-[6px]">
+                <label htmlFor="withdrawal-amount" className="block text-[12px] text-[#737373]">
+                  Valor
+                </label>
+                <input
+                  id="withdrawal-amount"
+                  inputMode="decimal"
+                  required
+                  value={amount}
+                  onChange={(event) => setAmount(event.target.value)}
+                  placeholder={String(minimum).replace(".", ",")}
+                  className="fd-field h-[40px] w-full rounded-[10px] px-[12px] text-[13px]"
+                />
+              </div>
+
+              <div className="space-y-[6px]">
+                <label htmlFor="withdrawal-key-type" className="block text-[12px] text-[#737373]">
+                  Tipo de chave
+                </label>
+                <select
+                  id="withdrawal-key-type"
+                  value={pixKeyType}
+                  onChange={(event) => setPixKeyType(event.target.value as AffiliatePixKeyType)}
+                  className="fd-field h-[40px] w-full rounded-[10px] px-[12px] text-[13px]"
+                >
+                  {(Object.keys(PIX_KEY_LABELS) as AffiliatePixKeyType[]).map((key) => (
+                    <option key={key} value={key}>
+                      {PIX_KEY_LABELS[key]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-[6px]">
+                <label htmlFor="withdrawal-key" className="block text-[12px] text-[#737373]">
+                  Chave PIX
+                </label>
+                <input
+                  id="withdrawal-key"
+                  required
+                  value={pixKey}
+                  onChange={(event) => setPixKey(event.target.value)}
+                  className="fd-field h-[40px] w-full rounded-[10px] px-[12px] text-[13px]"
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={isSubmitting || !canRequest}
+              className="inline-flex h-[40px] items-center justify-center rounded-[10px] border border-[#2A2A2A] bg-[#1A1A1A] px-[20px] text-[13px] font-medium text-[#ECECEE] transition-colors duration-150 hover:border-[#3A3A3A] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isSubmitting ? "Solicitando..." : "Solicitar saque"}
+            </button>
+
+            {feedback ? (
+              <p
+                role="status"
+                className={`text-[13px] ${
+                  feedback.tone === "success" ? "text-[#4BBE86]" : "text-[#EB6A5C]"
+                }`}
+              >
+                {feedback.message}
+              </p>
+            ) : null}
+          </form>
+        )}
       </div>
+
+      {withdrawals.length === 0 ? (
+        <AffEmptyState
+          icon={History}
+          title="Nenhum saque solicitado"
+          description="Seu histórico de saques aparece aqui depois da primeira solicitação."
+        />
+      ) : (
+        <div className={AFF_TABLE_WRAP}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-[13px]">
+              <thead>
+                <tr className={AFF_TABLE_HEAD}>
+                  <th className="px-[20px] py-[14px] font-medium">Data</th>
+                  <th className="px-[20px] py-[14px] font-medium">Valor</th>
+                  <th className="px-[20px] py-[14px] font-medium">Chave PIX</th>
+                  <th className="px-[20px] py-[14px] font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#1C1C1C]">
+                {withdrawals.map((w) => (
+                  <tr key={w.withdrawalId} className={AFF_TABLE_ROW}>
+                    <td className="px-[20px] py-[16px] text-[#8B8B90]">
+                      {new Date(w.requestedAt).toLocaleDateString("pt-BR")}
+                    </td>
+                    <td className="px-[20px] py-[16px] font-medium text-[#F2F2F3]">
+                      {formatCurrency(w.amount)}
+                    </td>
+                    <td className="px-[20px] py-[16px] font-mono text-[#8B8B90]">{w.pixKey}</td>
+                    <td className="px-[20px] py-[16px]">
+                      <div className="flex flex-col gap-[4px]">
+                        <StatusBadge
+                          tone={
+                            w.status === "paid"
+                              ? "success"
+                              : w.status === "rejected"
+                                ? "danger"
+                                : "pending"
+                          }
+                          label={WITHDRAWAL_STATUS_LABELS[w.status] ?? w.status}
+                        />
+                        {w.notes ? (
+                          <span className="text-[11px] text-[#737373]">{w.notes}</span>
+                        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </TabSection>
   );
 }
@@ -763,13 +976,27 @@ export function NotificationsTab({
 }
 
 export function TrainingTab() {
-  const modules = [
-    { title: "Como divulgar no Instagram", duration: "12 min", icon: Globe, available: true },
-    { title: "Estratégias no YouTube", duration: "19 min", icon: Zap, available: true },
-    { title: "Email marketing para afiliados", duration: "24 min", icon: Bell, available: true },
-    { title: "Criando conteúdo que converte", duration: "31 min", icon: Sparkles, available: false },
-    { title: "Vendas com grupos de WhatsApp", duration: "15 min", icon: Users, available: true },
-  ];
+  // Os modulos ainda nao existem. Antes esta aba listava cinco aulas com
+  // duracao inventada e nenhum destino: clicar nao fazia nada. Ate haver
+  // conteudo, a aba diz a verdade em vez de simular uma biblioteca.
+  const modules: Array<{
+    title: string;
+    duration: string;
+    icon: typeof Globe;
+    available: boolean;
+  }> = [];
+
+  if (modules.length === 0) {
+    return (
+      <TabSection>
+        <AffEmptyState
+          icon={BookOpen}
+          title="Treinamentos em preparação"
+          description="Os materiais de divulgação ainda estão sendo produzidos. Enquanto isso, seus links e o cupom já funcionam normalmente."
+        />
+      </TabSection>
+    );
+  }
 
   return (
     <TabSection>
@@ -811,8 +1038,10 @@ export function TemplatesTab({ profile }: { profile: AffiliateProfile | null }) 
 
   const handleUseTemplate = (plan: string) => {
     if (!profile) return;
-    const url = `https://flwdesk.com/register?aff=${profile.affiliateId}&template=${plan}`;
-    window.open(url, "_blank");
+    // Antes apontava para /register, rota que nunca existiu: todo template
+    // abria um 404. Agora usa o redirecionador, que conta o clique e atribui.
+    const url = `${window.location.origin}/r/${profile.affiliateId}/${plan}`;
+    window.open(url, "_blank", "noopener,noreferrer");
   };
 
   return (
@@ -863,6 +1092,7 @@ export function AffiliateTabContent({
   withdrawals,
   ranking,
   settings,
+  rules,
   reload,
 }: {
   tab: import("@/components/affiliates/affiliateConfig").AffiliateTab;
@@ -874,6 +1104,7 @@ export function AffiliateTabContent({
   withdrawals: AffiliateWithdrawal[];
   ranking: AffiliateRankEntry[];
   settings: AffiliateWorkspaceSettings | null;
+  rules: AffiliateProgramRules | null;
   reload: () => void;
 }) {
   switch (tab) {
@@ -884,7 +1115,14 @@ export function AffiliateTabContent({
     case "commissions":
       return <CommissionsTab commissions={conversions} />;
     case "withdrawals":
-      return <WithdrawalsTab withdrawals={withdrawals} />;
+      return (
+        <WithdrawalsTab
+          withdrawals={withdrawals}
+          availableBalance={stats?.availableBalance ?? 0}
+          rules={rules}
+          reload={reload}
+        />
+      );
     case "ranking":
       return <RankingTab ranking={ranking} />;
     case "notifications":

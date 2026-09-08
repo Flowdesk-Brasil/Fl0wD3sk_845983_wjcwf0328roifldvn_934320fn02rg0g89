@@ -482,6 +482,36 @@ export const ADMIN_PERMISSION_DEFINITIONS = [
     riskLevel: "critical",
     module: "settings",
   },
+  {
+    code: "affiliates.read",
+    description: "Permite visualizar afiliados, conversões, saldos e saques.",
+    riskLevel: "medium",
+    module: "affiliates",
+  },
+  {
+    code: "affiliates.update",
+    description: "Permite ajustar nível, cupom e dados cadastrais de afiliados.",
+    riskLevel: "high",
+    module: "affiliates",
+  },
+  {
+    code: "affiliates.suspend",
+    description: "Permite suspender ou reativar a participação de um afiliado.",
+    riskLevel: "high",
+    module: "affiliates",
+  },
+  {
+    code: "affiliates.payout",
+    description: "Permite aprovar, pagar ou rejeitar saques de afiliados.",
+    riskLevel: "critical",
+    module: "affiliates",
+  },
+  {
+    code: "affiliates.adjust_balance",
+    description: "Permite lançar ajustes manuais de saldo na razão do afiliado.",
+    riskLevel: "critical",
+    module: "affiliates",
+  },
 ] as const satisfies readonly AdminPermissionDefinition[];
 
 export type AdminPermissionCode =

@@ -2,9 +2,12 @@
 
 export type AffiliateLevel = "bronze" | "silver" | "gold" | "diamond";
 
-export type AffiliatePlan = "basic" | "pro" | "enterprise";
+// Espelham os planos e periodos reais do produto (lib/plans/catalog.ts).
+// A v1 declarava "enterprise", que nunca existiu, e ignorava ultra, master,
+// trimestral e semestral: nao dava para gerar link nem comissionar esses casos.
+export type AffiliatePlan = "basic" | "pro" | "ultra" | "master";
 
-export type AffiliatePeriod = "monthly" | "annual";
+export type AffiliatePeriod = "monthly" | "quarterly" | "semiannual" | "annual";
 
 export type AffiliateNotificationChannel = "email" | "push" | "webhook" | "sms";
 
@@ -88,15 +91,64 @@ export type AffiliateCommission = {
 
 // ─── Withdrawal ───────────────────────────────────────────────────────────────
 
+export type AffiliatePixKeyType = "cpf" | "cnpj" | "email" | "phone" | "random";
+
 export type AffiliateWithdrawal = {
   withdrawalId: string;
   affiliateId: string;
   amount: number;
+  fee?: number;
+  net?: number;
   pixKey: string;
+  pixKeyType?: AffiliatePixKeyType | null;
   status: "pending" | "processing" | "paid" | "rejected";
   requestedAt: string;
   paidAt: string | null;
+  receiptUrl?: string | null;
   notes: string | null;
+};
+
+/** Regras vigentes do programa, servidas pela API para a UI nao repetir numeros. */
+export type AffiliateProgramRules = {
+  attributionWindowDays: number;
+  attributionModel: "last" | "first";
+  recurrenceMode: "first" | "all" | "limited";
+  recurrenceMaxCharges: number;
+  holdingPeriodDays: number;
+  withdrawalMinimum: number;
+  withdrawalFee: number;
+  withdrawalExecution: "manual";
+  levelCanRegress: boolean;
+  blockSelfReferral: boolean;
+  couponEnabled: boolean;
+  couponDiscountPct: number;
+  termsVersion: string;
+  termsUrl: string;
+};
+
+/** Situacao do afiliado perante o programa. */
+export type AffiliateEnrollmentStatus =
+  | "not_enrolled"
+  | "active"
+  | "suspended"
+  | "inactive"
+  | "terms_outdated";
+
+/** Lancamento do extrato. */
+export type AffiliateLedgerEntry = {
+  entryId: string;
+  type:
+    | "commission_accrued"
+    | "commission_matured"
+    | "commission_reversed"
+    | "withdrawal_requested"
+    | "withdrawal_paid"
+    | "withdrawal_refunded"
+    | "adjustment";
+  pendingDelta: number;
+  availableDelta: number;
+  description: string | null;
+  createdAt: string;
 };
 
 // ─── Notification Config ──────────────────────────────────────────────────────
