@@ -663,7 +663,7 @@ export async function buildLauncherSyncPayload(session: LauncherSession, body: R
       }
     }
 
-    const staleCutoff = new Date(Date.now() - 120_000).toISOString();
+    const staleCutoff = new Date(Date.now() - 45_000).toISOString();
     await supabase
       .from("guild_whitelist_agent_jobs")
       .update({ status: "queued", claimed_at: null })
