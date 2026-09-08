@@ -28,6 +28,13 @@ export type WhitelistDbTarget = {
 const CONNECT_TIMEOUT_MS = 8000;
 const QUERY_TIMEOUT_MS = 10000;
 
+function settleMaybePromise<T>(value: Promise<T> | T | undefined | null) {
+  if (value == null || typeof (value as Promise<T>).then !== "function") {
+    return Promise.resolve();
+  }
+  return (value as Promise<T>).catch(() => null);
+}
+
 function withQueryTimeout<T>(promise: Promise<T>, label: string) {
   return Promise.race([
     promise,
@@ -84,7 +91,7 @@ export function sanitizeDbError(error: unknown) {
     return {
       code: "offline",
       message:
-        "A porta do MySQL esta fechada da internet. Com o launcher aberto na VPS, a Flowdesk executa o SQL la dentro.",
+        "A porta do MySQL esta fechada da internet. Na primeira configuracao, abra o launcher na VPS para liberar o acesso. Depois a whitelist usa o banco direto.",
     };
   }
   if (lowered.includes("not allowed") || lowered.includes("host is not allowed") || lowered.includes("is not allowed to connect")) {
@@ -92,6 +99,16 @@ export function sanitizeDbError(error: unknown) {
       code: "ip_not_allowed",
       message:
         "O MySQL recusou o IP remoto. No modo VPS o launcher usa o banco local da maquina e nao precisa liberar host.",
+    };
+  }
+  if (
+    lowered.includes("reading 'catch'") ||
+    lowered.includes('reading "catch"') ||
+    lowered.includes("reading catch")
+  ) {
+    return {
+      code: "db_error",
+      message: "Falha ao finalizar a conexao com o banco. Tente conectar novamente.",
     };
   }
   return { code: "db_error", message: message.slice(0, 180) || "Nao foi possivel executar a operacao no banco da cidade." };
@@ -143,7 +160,7 @@ export async function withCityDatabase<T>(
         return (result.rows || []) as Record<string, unknown>[];
       });
     } finally {
-      await client.end().catch(() => null);
+      await settleMaybePromise(client.end());
     }
   }
 
@@ -157,7 +174,7 @@ export async function withCityDatabase<T>(
       return (Array.isArray(rows) ? rows : []) as Record<string, unknown>[];
     });
   } finally {
-    await connection.end().catch(() => null);
+    await settleMaybePromise(connection.end());
   }
 }
 
@@ -175,6 +192,7 @@ async function connectRemoteMysql(target: WhitelistDbTarget) {
           password: target.password || "",
           connectTimeout: CONNECT_TIMEOUT_MS,
           enableKeepAlive: true,
+          keepAliveInitialDelay: 0,
           insecureAuth: true,
           charset: "utf8mb4",
         });
@@ -182,7 +200,7 @@ async function connectRemoteMysql(target: WhitelistDbTarget) {
           try {
             await connection.query(`USE \`${database}\``);
           } catch (error) {
-            await connection.end().catch(() => null);
+            await settleMaybePromise(connection.end());
             throw error;
           }
         }
@@ -190,6 +208,9 @@ async function connectRemoteMysql(target: WhitelistDbTarget) {
       } catch (error) {
         lastError = error;
       }
+    }
+    if (attempt < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 150 * 2 ** attempt));
     }
   }
   throw lastError instanceof Error ? lastError : new Error("Nao foi possivel abrir o MySQL da cidade.");

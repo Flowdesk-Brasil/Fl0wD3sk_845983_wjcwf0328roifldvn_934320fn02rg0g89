@@ -217,7 +217,7 @@ export function WhitelistSettingsSection({
     try {
       if (!looksLikePublicCityDbHost(draft.dbHost || detectedPublicIp)) {
         throw new Error(
-          "Informe o IP publico da VPS ou deixe o launcher aberto la para a Flowdesk detectar.",
+          "Informe o IP publico da VPS. O launcher pode detectar o IP na primeira configuracao, mas nao precisa ficar aberto depois.",
         );
       }
       const login = resolveCityDbLogin({
@@ -255,7 +255,10 @@ export function WhitelistSettingsSection({
           mapping: draft.mapping,
         }),
       });
-      const payload = await response.json();
+      const payload = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        message?: string;
+      };
       if (!response.ok || !payload.ok) {
         throw new Error(payload.message || "Nao foi possivel conectar no MySQL.");
       }
@@ -315,7 +318,7 @@ export function WhitelistSettingsSection({
       link.remove();
       setActionTone("ok");
       setActionMessage(
-        "Download iniciado. Instale o launcher na VPS da cidade, entre com sua conta Flowdesk e mantenha o aplicativo aberto.",
+        "Download iniciado. Instale o launcher na VPS da cidade, entre com sua conta Flowdesk e use-o na primeira configuracao. Depois disso ele pode ficar fechado.",
       );
     } catch (error) {
       setActionTone("error");
@@ -799,7 +802,7 @@ export function WhitelistSettingsSection({
             <li>Abra o HeidiSQL com um usuario administrador e selecione o banco informado no campo Nome do banco.</li>
             <li>Abra a aba Consulta e cole o SQL de exemplo. Ele usa o usuario e a senha dos campos acima.</li>
             <li>Execute o comando. O usuario precisa existir em localhost e 127.0.0.1.</li>
-            <li>Volte ao painel e clique em Conectar banco com o launcher aberto na VPS.</li>
+            <li>Volte ao painel e clique em Conectar banco. O launcher so e necessario nesta primeira configuracao.</li>
           </ol>
           <pre className="overflow-x-auto rounded-[14px] border border-[#1C1C1C] bg-[#141414] px-[14px] py-[12px] text-[12px] leading-[1.6] text-[#D1D1D1]">
             {cityDbProvisionSql(
@@ -812,7 +815,13 @@ export function WhitelistSettingsSection({
             <button
               type="button"
               onClick={() => {
-                void navigator.clipboard
+                const clipboard = navigator.clipboard;
+                if (!clipboard?.writeText) {
+                  setActionTone("error");
+                  setActionMessage("Nao consegui copiar o SQL. Copie o bloco manualmente.");
+                  return;
+                }
+                void clipboard
                   .writeText(
                     cityDbProvisionSql(
                       draft.dbUser || "flowdesk",
@@ -823,6 +832,10 @@ export function WhitelistSettingsSection({
                   .then(() => {
                     setSqlCopied(true);
                     window.setTimeout(() => setSqlCopied(false), 2000);
+                  })
+                  .catch(() => {
+                    setActionTone("error");
+                    setActionMessage("Nao consegui copiar o SQL. Copie o bloco manualmente.");
                   });
               }}
               className="inline-flex h-[36px] items-center rounded-full bg-white px-[14px] text-[13px] font-semibold text-[#111]"
@@ -840,8 +853,8 @@ export function WhitelistSettingsSection({
           title="Conectar"
           description={
             launcherOnline
-              ? "O launcher na VPS testa o usuario e o banco informados acima."
-              : "Abra o launcher na VPS antes de testar a conexao."
+              ? "O launcher testa o banco nesta VPS so na primeira configuracao. Depois a whitelist usa a conexao salva no backend."
+              : "Depois da primeira conexao, o launcher pode ficar fechado. A whitelist continua no banco persistido."
           }
           delay={0.2}
         >
