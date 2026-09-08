@@ -4,6 +4,7 @@ import { invalidateGuildLicenseCaches } from "@/lib/payments/licenseStatus";
 import { invalidatePaymentOrderQueryCaches } from "@/lib/payments/orderQueryCache";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { normalizeUtcTimestampIso, parseUtcTimestampMs } from "@/lib/time/utcTimestamp";
+import { reverseAffiliateConversionForOrderSafe } from "@/lib/affiliates/commissions";
 
 export type PaymentFinancialStatus =
   | "pending"
@@ -1312,6 +1313,16 @@ export async function finalizePaymentRefundOutcome<TOrder = unknown>(input: {
     orderId: input.order.id,
     orderNumber: input.order.order_number || undefined,
   });
+
+  // Reembolso ou chargeback derruba a comissao do afiliado que trouxe a venda.
+  // Fire-and-forget: o programa de afiliados nunca bloqueia o reembolso do
+  // cliente, que e a operacao critica aqui.
+  void reverseAffiliateConversionForOrderSafe(
+    input.order.id,
+    input.outcome.decision.status === "charged_back"
+      ? "chargeback"
+      : input.outcome.decision.reason || "refund",
+  );
 
   return {
     order: result.data as unknown as TOrder,
