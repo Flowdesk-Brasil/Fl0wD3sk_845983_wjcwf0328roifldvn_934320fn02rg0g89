@@ -49,7 +49,7 @@ export type HostingProjectAccess = {
 export type AgentRequestInput = {
   project: HostingProjectAccess;
   path: string;
-  method?: "GET" | "POST" | "PUT" | "DELETE";
+  method?: "GET" | "HEAD" | "POST" | "PUT" | "DELETE";
   body?: unknown;
   timeoutMs?: number;
 };
@@ -295,6 +295,10 @@ function serializeAgentBody(body: unknown) {
   return JSON.stringify(body);
 }
 
+function agentMethodOmitsBody(method: string) {
+  return method === "GET" || method === "HEAD";
+}
+
 function signVpsAgentRequest(token: string, vpsCode: string, method: string, path: string, serializedBody: string) {
   return createHmac("sha256", token)
     .update(`${vpsCode}:${method}:${canonicalizeAgentPath(path)}:${serializedBody}`)
@@ -311,7 +315,8 @@ async function requestVpsAgentOnce<T>(input: AgentRequestInput): Promise<T> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), input.timeoutMs || 20_000);
   const method = input.method || "GET";
-  const serializedBody = serializeAgentBody(input.body);
+  const omitBody = agentMethodOmitsBody(method);
+  const serializedBody = serializeAgentBody(omitBody ? {} : input.body);
   const signature = signVpsAgentRequest(token, input.project.vps_code, method, input.path, serializedBody);
 
   try {
@@ -324,7 +329,7 @@ async function requestVpsAgentOnce<T>(input: AgentRequestInput): Promise<T> {
         "X-Flowdesk-Signature": signature,
         Authorization: `Bearer ${token}`,
       },
-      body: method === "GET" || method === "HEAD" ? undefined : serializedBody,
+      body: omitBody ? undefined : serializedBody,
       cache: "no-store",
       keepalive: true,
       signal: controller.signal,

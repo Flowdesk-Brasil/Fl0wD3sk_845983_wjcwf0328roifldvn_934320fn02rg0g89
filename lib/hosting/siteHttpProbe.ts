@@ -8,20 +8,51 @@ export type SiteHttpProbe = {
   error: string | null;
 };
 
+function emptyProbe(hostname: string, url: string, error: string, started?: number): SiteHttpProbe {
+  return {
+    hostname,
+    url,
+    status: null,
+    ok: false,
+    latencyMs: started ? Date.now() - started : null,
+    checkedAt: new Date().toISOString(),
+    error,
+  };
+}
+
+async function discardBody(response: Response) {
+  try {
+    await response.body?.cancel();
+  } catch {
+    /* ignore */
+  }
+}
+
+async function fetchSite(url: string, method: "GET" | "HEAD", signal: AbortSignal) {
+  return fetch(url, {
+    method,
+    cache: "no-store",
+    redirect: "follow",
+    signal,
+    headers: { Accept: "text/html,application/json;q=0.9,*/*;q=0.8" },
+  });
+}
+
 export async function probeSiteHttp(hostname: string, timeoutMs = 2500): Promise<SiteHttpProbe> {
   const host = hostname.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
-  const url = `https://${host}/`;
+  const url = host ? `https://${host}/` : "";
+  if (!host) return emptyProbe("", "", "invalid-host");
+
   const started = Date.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, {
-      method: "GET",
-      cache: "no-store",
-      redirect: "follow",
-      signal: controller.signal,
-      headers: { Accept: "text/html,application/json;q=0.9,*/*;q=0.8" },
-    });
+    let response = await fetchSite(url, "HEAD", controller.signal);
+    if (response.status === 405 || response.status === 501) {
+      await discardBody(response);
+      response = await fetchSite(url, "GET", controller.signal);
+    }
+    await discardBody(response);
     return {
       hostname: host,
       url,
@@ -32,15 +63,12 @@ export async function probeSiteHttp(hostname: string, timeoutMs = 2500): Promise
       error: null,
     };
   } catch (error) {
-    return {
-      hostname: host,
+    return emptyProbe(
+      host,
       url,
-      status: null,
-      ok: false,
-      latencyMs: Date.now() - started,
-      checkedAt: new Date().toISOString(),
-      error: error instanceof Error ? error.name === "AbortError" ? "timeout" : error.message : "offline",
-    };
+      error instanceof Error ? (error.name === "AbortError" ? "timeout" : error.message) : "offline",
+      started,
+    );
   } finally {
     clearTimeout(timer);
   }

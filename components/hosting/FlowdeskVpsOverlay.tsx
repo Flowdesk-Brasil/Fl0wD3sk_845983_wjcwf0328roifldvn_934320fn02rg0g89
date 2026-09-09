@@ -97,17 +97,20 @@ export function FlowdeskVpsOverlay({
   onOpenTab,
 }: FlowdeskVpsOverlayProps) {
   const [prefs, setPrefs] = useState<OverlayPrefs>(DEFAULT_PREFS);
+  const [prefsReady, setPrefsReady] = useState(false);
   const [open, setOpen] = useState(false);
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [recording, setRecording] = useState(false);
 
   useEffect(() => {
     setPrefs(loadPrefs());
+    setPrefsReady(true);
   }, []);
 
   useEffect(() => {
+    if (!prefsReady) return;
     localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
-  }, [prefs]);
+  }, [prefs, prefsReady]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
