@@ -16,14 +16,19 @@ import {
   Globe2,
   HardDrive,
   Image as ImageIcon,
-  Loader2,
   MapPin,
   Rocket,
   Search,
   ShieldCheck,
   Zap,
 } from "lucide-react";
-import { ButtonLoader } from "@/components/login/ButtonLoader";
+import {
+  HostingGithubStepSkeleton,
+  HostingOnboardingShellSkeleton,
+  HostingPaymentStepSkeleton,
+  HostingRepositoryStepSkeleton,
+  HostingSkeletonBar,
+} from "@/components/hosting/HostingSkeletons";
 import { buildHostingPaymentHref } from "@/lib/payments/unifiedCheckout";
 import {
   DEFAULT_HOSTING_REGION_ID,
@@ -55,6 +60,8 @@ type HostingDraft = {
   selectedRegionId: string;
   selectedPlanId: string | null;
   vpsCode: string | null;
+  repositoryPending?: boolean;
+  repositoryConflictVpsCode?: string | null;
   step: HostingStep;
 };
 
@@ -104,6 +111,8 @@ type GitHubStatusResponse = {
   diagnostics?: {
     configured?: boolean;
     tokenPresent?: boolean;
+    storedTokenPresent?: boolean;
+    sessionPresent?: boolean;
     accountsCount?: number;
   };
 };
@@ -123,6 +132,8 @@ type HostingProvisionResponse = {
   message?: string;
   vpsCode?: string;
   redirectUrl?: string;
+  repositoryPending?: boolean;
+  repositoryConflictVpsCode?: string | null;
 };
 
 type MinecraftVersionOption = {
@@ -354,7 +365,10 @@ function HostingProjectsOverview({
       handoffToken?: string | null;
     };
     if (data?.source !== "flowdesk-hosting-github") return false;
-    window.localStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
+    try {
+      window.localStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
+      window.sessionStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
+    } catch {}
     setReconnectMessage(data.message || null);
     if (!data.ok) return true;
     if (await completeReconnect(data.handoffToken)) return true;
@@ -363,11 +377,16 @@ function HostingProjectsOverview({
 
   async function processStoredReconnectHandoff() {
     try {
-      const raw = window.localStorage.getItem(GITHUB_HANDOFF_STORAGE_KEY);
+      const raw =
+        window.localStorage.getItem(GITHUB_HANDOFF_STORAGE_KEY) ||
+        window.sessionStorage.getItem(GITHUB_HANDOFF_STORAGE_KEY);
       if (!raw) return false;
       return await processReconnectPayload(JSON.parse(raw) as unknown);
     } catch {
-      window.localStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
+      try {
+        window.localStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
+        window.sessionStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
+      } catch {}
       return false;
     }
   }
@@ -470,7 +489,7 @@ function HostingProjectsOverview({
               disabled={reconnecting}
               className="mt-[18px] inline-flex h-[44px] items-center justify-center gap-[9px] rounded-[12px] bg-[#F2F2F2] px-[16px] text-[13px] font-semibold text-[#050505] transition-colors hover:bg-white"
             >
-              {reconnecting ? <Loader2 className="h-[16px] w-[16px] animate-spin" /> : <GitBranch className="h-[16px] w-[16px]" />}
+              {reconnecting ? <HostingSkeletonBar className="h-[16px] w-[16px] rounded-full bg-[#111111]" /> : <GitBranch className="h-[16px] w-[16px]" />}
               {reconnecting ? "Conectando..." : "Conectar GitHub"}
             </button>
             {reconnectMessage ? (
@@ -683,7 +702,7 @@ function ActionButton({
       onClick={onClick}
       className="inline-flex h-[44px] items-center justify-center gap-[9px] rounded-[12px] bg-[#0F62FE] px-[16px] text-[13px] font-semibold text-white transition-colors hover:bg-[#2A73FF] disabled:cursor-not-allowed disabled:bg-[#141414] disabled:text-[#555555]"
     >
-      {loading ? <ButtonLoader size={16} colorClassName="text-white" /> : icon}
+      {loading ? <HostingSkeletonBar className="h-[16px] w-[16px] rounded-full bg-[#2A73FF]" /> : icon}
       {children}
     </button>
   );
@@ -796,10 +815,13 @@ function GithubStep({
     };
 
     if (data?.source !== "flowdesk-hosting-github") return false;
-    window.localStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
-    setMessage(data.message || null);
+    try {
+      window.localStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
+      window.sessionStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
+    } catch {}
 
     if (!data.ok) {
+      setMessage(data.message || "Nao foi possivel conectar o GitHub.");
       return true;
     }
 
@@ -808,13 +830,15 @@ function GithubStep({
       return true;
     }
 
-    return await refreshStatus(true);
+    return await refreshStatus({ advanceWhenConnected: true });
   }
 
   async function processStoredGitHubHandoff() {
     let raw: string | null = null;
     try {
-      raw = window.localStorage.getItem(GITHUB_HANDOFF_STORAGE_KEY);
+      raw =
+        window.localStorage.getItem(GITHUB_HANDOFF_STORAGE_KEY) ||
+        window.sessionStorage.getItem(GITHUB_HANDOFF_STORAGE_KEY);
     } catch {
       return false;
     }
@@ -823,9 +847,18 @@ function GithubStep({
 
     try {
       const parsed = JSON.parse(raw) as unknown;
-      return await processGitHubPopupPayload(parsed);
+      const processed = await processGitHubPopupPayload(parsed);
+      if (processed) {
+        try {
+          window.sessionStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
+        } catch {}
+      }
+      return processed;
     } catch {
-      window.localStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
+      try {
+        window.localStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
+        window.sessionStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
+      } catch {}
       return false;
     }
   }
@@ -866,14 +899,19 @@ function GithubStep({
     return false;
   }
 
-  async function refreshStatus(advanceWhenConnected = false) {
-    setLoadingStatus(true);
+  async function refreshStatus(options: {
+    advanceWhenConnected?: boolean;
+    silent?: boolean;
+  } = {}) {
+    const { advanceWhenConnected = false, silent = false } = options;
+    if (!silent) {
+      setLoadingStatus(true);
+    }
     try {
       const response = await fetch("/api/auth/me/hosting/github/status", {
         cache: "no-store",
       });
       const payload = await response.json() as GitHubStatusResponse;
-      setMessage(payload.message || null);
       setAccounts(payload.accounts || []);
 
       if (payload.connected) {
@@ -884,20 +922,45 @@ function GithubStep({
             draft.selectedGithubAccountLogin || firstAccount?.login || null,
           ...(advanceWhenConnected && firstAccount ? { step: "repository" as const } : {}),
         });
-        if (advanceWhenConnected && !firstAccount && !payload.message) {
-          setMessage("GitHub conectado, mas a lista de contas ainda nao carregou. Tente continuar novamente em alguns segundos.");
+        if (!silent) {
+          if (payload.degraded || (advanceWhenConnected && !firstAccount)) {
+            setMessage(
+              payload.message ||
+                (advanceWhenConnected && !firstAccount
+                  ? "GitHub conectado, mas a lista de contas ainda nao carregou. Tente continuar novamente em alguns segundos."
+                  : null),
+            );
+          } else {
+            setMessage(null);
+          }
         }
         return true;
-      } else {
+      }
+
+      if (!silent) {
         onPatch({ githubConnected: false });
-        if (advanceWhenConnected && !payload.message) {
-          setMessage("GitHub ainda nao retornou uma conta valida para este dominio.");
+      }
+      if (!silent) {
+        if (payload.message) {
+          setMessage(payload.message);
+        } else if (advanceWhenConnected) {
+          setMessage("GitHub ainda nao retornou uma conta valida. Tente conectar novamente.");
+        } else {
+          setMessage(null);
         }
       }
     } catch {
-      setMessage("Nao consegui consultar o GitHub agora.");
+      if (!silent) {
+        setMessage(
+          advanceWhenConnected
+            ? "Nao consegui consultar o GitHub agora."
+            : null,
+        );
+      }
     } finally {
-      setLoadingStatus(false);
+      if (!silent) {
+        setLoadingStatus(false);
+      }
     }
 
     return false;
@@ -906,7 +969,7 @@ function GithubStep({
   useEffect(() => {
     processStoredGitHubHandoff().then((processed) => {
       if (!processed) {
-        refreshStatus(false);
+        refreshStatus();
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -914,9 +977,10 @@ function GithubStep({
 
   function connect() {
     setConnecting(true);
-    setMessage(null);
+    setMessage("Aguardando autorizacao do GitHub...");
     try {
       window.localStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
+      window.sessionStorage.removeItem(GITHUB_HANDOFF_STORAGE_KEY);
     } catch {}
 
     const width = 540;
@@ -955,7 +1019,11 @@ function GithubStep({
         return;
       }
 
-      const connected = await refreshStatus(true);
+      const popupStillOpen = !popup.closed;
+      const connected = await refreshStatus({
+        advanceWhenConnected: true,
+        silent: popupStillOpen && !popupClosedAt,
+      });
       if (connected) {
         finishConnectionAttempt();
         return;
@@ -964,17 +1032,18 @@ function GithubStep({
       if (popup.closed && !finished) {
         if (!popupClosedAt) {
           popupClosedAt = Date.now();
-          setMessage("GitHub autorizado. Validando a conexao neste dominio...");
+          setMessage("GitHub autorizado. Validando a conexao...");
           return;
         }
 
-        setMessage("GitHub autorizado. Conferindo permissao da conta...");
-        await refreshStatus(true);
-
-        if (Date.now() - popupClosedAt >= GITHUB_POPUP_CLOSE_GRACE_MS) {
-          finishConnectionAttempt();
-          setMessage("GitHub autorizou, mas a confirmacao nao chegou neste dominio. Tente conectar novamente ou recarregue o painel.");
+        if (Date.now() - popupClosedAt < GITHUB_POPUP_CLOSE_GRACE_MS) {
+          setMessage("GitHub autorizado. Conferindo permissao da conta...");
+          await refreshStatus({ advanceWhenConnected: true, silent: true });
+          return;
         }
+
+        finishConnectionAttempt();
+        await refreshStatus({ advanceWhenConnected: true });
       }
     };
 
@@ -993,6 +1062,10 @@ function GithubStep({
     pollIntervalId = window.setInterval(pollConnectionStatus, 1_250);
 
     window.addEventListener("message", handleMessage);
+  }
+
+  if (loadingStatus && !connecting && !draft.githubConnected) {
+    return <HostingGithubStepSkeleton />;
   }
 
   return (
@@ -1020,7 +1093,9 @@ function GithubStep({
                   OAuth real com permissao para repositorios, organizacoes e clone seguro.
                 </p>
                 {message ? (
-                  <p className="mt-[7px] text-[12px] font-medium text-[#9AAFFF]">{message}</p>
+                  <p className={`mt-[7px] text-[12px] font-medium ${connecting ? "text-[#8E8E8E]" : "text-[#9AAFFF]"}`}>
+                    {message}
+                  </p>
                 ) : null}
               </div>
             </div>
@@ -1133,7 +1208,11 @@ function MinecraftSetupStep({
                 className="flex h-[48px] w-full items-center justify-between gap-[12px] rounded-[14px] border border-[#1B1B1B] bg-[#0B0B0B] px-[13px] text-left text-[14px] font-semibold text-[#EDEDED] outline-none transition-colors hover:border-[#2B2B2B] focus:border-[#0F62FE]"
               >
                 <span className="min-w-0 truncate">
-                  {versionsLoading ? "Carregando versoes..." : selectedVersion?.label || draft.minecraftVersion || MINECRAFT_DEFAULT_VERSION}
+                  {versionsLoading ? (
+                    <HostingSkeletonBar className="inline-block h-[14px] w-[140px] rounded-full bg-[#151515]" />
+                  ) : (
+                    selectedVersion?.label || draft.minecraftVersion || MINECRAFT_DEFAULT_VERSION
+                  )}
                 </span>
                 <span className="flex items-center gap-[8px]">
                   {selectedVersion?.recommended ? (
@@ -1363,6 +1442,10 @@ function RepositoryStep({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, selectedAccount]);
 
+  if (loading && repositories.length === 0) {
+    return <HostingRepositoryStepSkeleton />;
+  }
+
   return (
     <div className="space-y-[18px]">
       <SectionHeader
@@ -1406,9 +1489,16 @@ function RepositoryStep({
       <div className="overflow-hidden rounded-[20px] border border-[#171717] bg-[#080808]">
         <div className={repositories.length > 5 ? "max-h-[438px] overflow-y-auto" : ""}>
         {loading ? (
-          <div className="flex min-h-[140px] items-center justify-center gap-[10px] text-[13px] font-semibold text-[#777777]">
-            <Loader2 className="h-[17px] w-[17px] animate-spin" />
-            Carregando repositorios...
+          <div className="space-y-0" aria-hidden="true">
+            {Array.from({ length: 3 }, (_, index) => (
+              <div key={index} className="flex items-center gap-[14px] border-b border-[#151515] px-[18px] py-[16px] last:border-b-0">
+                <HostingSkeletonBar className="h-[42px] w-[42px] shrink-0 rounded-[13px]" />
+                <div className="min-w-0 flex-1 space-y-[8px]">
+                  <HostingSkeletonBar className="h-[14px] w-[min(260px,56vw)] max-w-full rounded-full" />
+                  <HostingSkeletonBar className="h-[11px] w-[min(180px,42vw)] max-w-full rounded-full bg-[#111111]" />
+                </div>
+              </div>
+            ))}
           </div>
         ) : null}
         {!loading && message ? (
@@ -1439,13 +1529,36 @@ function RepositoryStep({
             <button
               key={repo.id}
               type="button"
-            onClick={() =>
+            onClick={() => {
                 onPatch({
                   selectedRepositoryId: repo.id,
                   selectedRepository: repo,
-                  step: "region",
-                })
-              }
+                });
+                const params = new URLSearchParams({
+                  owner: repo.owner,
+                  repo: repo.name,
+                  branch: repo.branch || "main",
+                });
+                void fetch(`/api/auth/me/hosting/github/inspect?${params.toString()}`, { cache: "no-store" })
+                  .then(async (response) => {
+                    const payload = await response.json() as { ok?: boolean; framework?: { id: string; label: string } };
+                    onPatch({
+                      selectedRepositoryId: repo.id,
+                      selectedRepository: {
+                        ...repo,
+                        language: payload.framework?.label || repo.language,
+                      },
+                      step: "region",
+                    });
+                  })
+                  .catch(() => {
+                    onPatch({
+                      selectedRepositoryId: repo.id,
+                      selectedRepository: repo,
+                      step: "region",
+                    });
+                  });
+              }}
               className={`flex w-full items-center justify-between gap-[16px] border-b border-[#151515] px-[18px] py-[16px] text-left transition-colors last:border-b-0 ${
                 selected ? "bg-[rgba(15,98,254,0.10)]" : "hover:bg-[#0D0D0D]"
               }`}
@@ -1837,6 +1950,7 @@ function PaymentStep({
   const [provisioning, setProvisioning] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [autoCheckoutStarted, setAutoCheckoutStarted] = useState(false);
+  const provisionAttemptRef = useRef<string | null>(null);
   const checkoutHref = useMemo(() => {
     if (!plan || !draft.kind) return "#";
     const minecraft = draft.kind === "minecraft" ? buildMinecraftConfig(draft) : null;
@@ -1867,6 +1981,10 @@ function PaymentStep({
     if (!approved || !orderNumber || !draft.kind || !plan) return;
     if (draft.kind !== "minecraft" && !repository) return;
 
+    const provisionKey = `${orderNumber}:${plan.id}:${region.id}`;
+    if (provisionAttemptRef.current === provisionKey) return;
+    provisionAttemptRef.current = provisionKey;
+
     setProvisioning(true);
     setMessage(
       draft.kind === "minecraft"
@@ -1894,10 +2012,13 @@ function PaymentStep({
         }
         onPatch({
           vpsCode: payload.vpsCode,
+          repositoryPending: Boolean(payload.repositoryPending),
+          repositoryConflictVpsCode: payload.repositoryConflictVpsCode || null,
           step: "ready",
         });
       })
       .catch((error) => {
+        provisionAttemptRef.current = null;
         setMessage(error instanceof Error ? error.message : "Nao foi possivel provisionar a VPS.");
       })
       .finally(() => {
@@ -1925,6 +2046,10 @@ function PaymentStep({
     window.location.assign(checkoutHref);
   }, [autoCheckoutStarted, checkoutHref]);
 
+  if (provisioning) {
+    return <HostingPaymentStepSkeleton />;
+  }
+
   return (
     <div className="grid gap-[18px] xl:grid-cols-[minmax(0,1fr)_390px]">
       <div className="rounded-[22px] border border-[#171717] bg-[#080808] p-[22px]">
@@ -1938,20 +2063,31 @@ function PaymentStep({
           }
         />
         <div className="mt-[22px] grid gap-[12px] md:grid-cols-[minmax(0,360px)]">
-          <div className="inline-flex min-h-[52px] w-full items-center justify-center rounded-[14px] bg-white px-[18px] text-[14px] font-bold text-[#111111]">
-            <div className="flex items-center gap-[10px] text-[#111111]">
-              <Loader2 className="h-[16px] w-[16px] animate-spin" />
-              Redirecionando para checkout seguro...
-            </div>
+          <div className="inline-flex min-h-[52px] w-full items-center justify-center rounded-[14px] border border-[#202020] bg-[#101010] px-[18px]">
+            <HostingSkeletonBar className="h-[14px] w-[min(240px,70%)] rounded-full bg-[#202020]" />
           </div>
         </div>
-        {provisioning ? (
-          <p className="mt-[12px] flex items-center gap-[8px] text-[12px] font-semibold text-[#9AAFFF]">
-            <Loader2 className="h-[14px] w-[14px] animate-spin" />
-            {message}
-          </p>
-        ) : message ? (
-          <p className="mt-[12px] text-[12px] leading-[1.55] text-[#F3DD7A]">{message}</p>
+        {message ? (
+          <div className="mt-[12px] space-y-[10px]">
+            <p className="text-[12px] leading-[1.55] text-[#F3DD7A]">{message}</p>
+            {message.toLowerCase().includes("nao foi possivel") || message.toLowerCase().includes("falha ao criar") ? (
+              <button
+                type="button"
+                onClick={() => {
+                  provisionAttemptRef.current = null;
+                  setMessage(null);
+                  const params = new URLSearchParams(window.location.search);
+                  const orderNumber = params.get("orderNumber") || params.get("order");
+                  if (orderNumber) {
+                    window.location.replace(`${window.location.pathname}?paymentApproved=1&orderNumber=${encodeURIComponent(orderNumber)}`);
+                  }
+                }}
+                className="h-[38px] rounded-[11px] border border-[#2A2A2A] bg-[#111111] px-[14px] text-[12px] font-semibold text-[#E8E8E8] hover:bg-[#171717]"
+              >
+                Tentar provisionar de novo
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </div>
       <SummaryCard draft={draft} repository={repository} region={region} plan={plan} />
@@ -2047,20 +2183,27 @@ function ReadyStep({
   const url = resolveVpsDisplayUrl(vpsCode);
   const panelPath = resolveVpsInternalPath(vpsCode);
   const isMinecraft = draft.kind === "minecraft";
+  const repositoryPending = Boolean(draft.repositoryPending);
 
   return (
     <div className="grid gap-[18px] xl:grid-cols-[minmax(0,1fr)_390px]">
-      <div className="rounded-[22px] border border-[rgba(52,168,83,0.20)] bg-[rgba(52,168,83,0.06)] p-[22px]">
-        <div className="flex h-[54px] w-[54px] items-center justify-center rounded-[17px] bg-[rgba(52,168,83,0.14)] text-[#9BE7AC]">
+      <div className={`rounded-[22px] border p-[22px] ${repositoryPending ? "border-[rgba(255,184,77,0.24)] bg-[rgba(255,184,77,0.06)]" : "border-[rgba(52,168,83,0.20)] bg-[rgba(52,168,83,0.06)]"}`}>
+        <div className={`flex h-[54px] w-[54px] items-center justify-center rounded-[17px] ${repositoryPending ? "bg-[rgba(255,184,77,0.14)] text-[#FFC46B]" : "bg-[rgba(52,168,83,0.14)] text-[#9BE7AC]"}`}>
           <Rocket className="h-[25px] w-[25px]" />
         </div>
         <h2 className="mt-[18px] text-[28px] font-semibold tracking-[-0.04em] text-[#F1F1F1]">
-          {isMinecraft ? "Servidor Minecraft pronto" : "VPS pronta para gerenciamento"}
+          {repositoryPending
+            ? "VPS liberada — escolha outro repositorio"
+            : isMinecraft
+              ? "Servidor Minecraft pronto"
+              : "VPS pronta para gerenciamento"}
         </h2>
-        <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[#91B99B]">
-          {isMinecraft
-            ? "O servidor foi criado pelo control-plane da Flowdesk com arquivos isolados, limites do plano e dominio de acesso preparados."
-            : "O identificador foi gerado no formato UUID e o painel de gerenciamento ja esta disponivel para deploys, arquivos, variaveis, console e acompanhamento do runtime."}
+        <p className={`mt-[10px] max-w-[720px] text-[14px] leading-[1.6] ${repositoryPending ? "text-[#C9A56B]" : "text-[#91B99B]"}`}>
+          {repositoryPending
+            ? `O pagamento foi aprovado e a VPS ${vpsCode} ja esta liberada. O repositorio escolhido no onboarding ja esta em uso${draft.repositoryConflictVpsCode ? ` na VPS ${draft.repositoryConflictVpsCode}` : ""}. Abra o painel e selecione outro repositorio para iniciar o deploy.`
+            : isMinecraft
+              ? "O servidor foi criado pelo control-plane da Flowdesk com arquivos isolados, limites do plano e dominio de acesso preparados."
+              : "O identificador foi gerado no formato UUID e o painel de gerenciamento ja esta disponivel para deploys, arquivos, variaveis, console e acompanhamento do runtime."}
         </p>
         <div className="mt-[18px] rounded-[16px] border border-[#1D1D1D] bg-[#050505] p-[14px]">
           <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#555555]">URL da VPS</p>
@@ -2071,7 +2214,7 @@ function ReadyStep({
             href={panelPath}
             className="inline-flex h-[44px] items-center justify-center gap-[9px] rounded-[12px] bg-[#0F62FE] px-[16px] text-[13px] font-semibold text-white transition-colors hover:bg-[#2A73FF]"
           >
-            {isMinecraft ? "Abrir servidor" : "Abrir painel da VPS"}
+            {repositoryPending ? "Escolher repositorio no painel" : isMinecraft ? "Abrir servidor" : "Abrir painel da VPS"}
             <ExternalLink className="h-[16px] w-[16px]" />
           </a>
           <button
@@ -2113,19 +2256,21 @@ export function HostingWorkspace({
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
-      const storedDraft = {
-        ...readDraft(),
+      const storedDraft = readDraft();
+      const mergedDraft = {
+        ...storedDraft,
         step: initialStep,
+        githubConnected: githubConnected || storedDraft.githubConnected,
       };
-      draftRef.current = storedDraft;
-      setDraft(storedDraft);
+      draftRef.current = mergedDraft;
+      setDraft(mergedDraft);
       setHydrated(true);
     }, 0);
 
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [initialStep]);
+  }, [initialStep, githubConnected]);
 
   useEffect(() => {
     draftRef.current = draft;
@@ -2234,6 +2379,10 @@ export function HostingWorkspace({
         onReset={reset}
       />
     );
+  }
+
+  if (!hydrated) {
+    return <HostingOnboardingShellSkeleton step={initialStep} />;
   }
 
   if (!forceOnboarding && initialStep === "kind" && initialProjects.length > 0) {

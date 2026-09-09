@@ -49,7 +49,7 @@ export type HostingProjectAccess = {
 export type AgentRequestInput = {
   project: HostingProjectAccess;
   path: string;
-  method?: "GET" | "POST" | "PUT" | "DELETE";
+  method?: "GET" | "HEAD" | "POST" | "PUT" | "DELETE";
   body?: unknown;
   timeoutMs?: number;
 };
@@ -87,6 +87,19 @@ export function resolveRuntimeStatus(value: unknown): VpsRuntimeStatus {
     value === "unknown"
     ? value
     : "unknown";
+}
+
+export function toPersistableRuntimeStatus(
+  value: unknown,
+  fallback: VpsRuntimeStatus = "offline",
+): VpsRuntimeStatus {
+  if (value === null || value === undefined || value === "") return fallback;
+  const resolved = resolveRuntimeStatus(value);
+  return resolved === "unknown" && fallback !== "unknown" && typeof value !== "string"
+    ? fallback
+    : resolved === "unknown" && typeof value === "string" && value !== "unknown"
+      ? fallback
+      : resolved;
 }
 
 function resolveAgentBaseUrl() {
@@ -198,7 +211,7 @@ export async function updateProjectRuntimeStatus(input: {
   await supabase
     .from("hosting_projects")
     .update({
-      runtime_status: input.status,
+      runtime_status: toPersistableRuntimeStatus(input.status),
       runtime_status_payload: input.payload || {},
       runtime_last_seen_at: new Date().toISOString(),
       status:
@@ -211,7 +224,88 @@ export async function updateProjectRuntimeStatus(input: {
     .eq("id", input.projectId);
 }
 
-export async function requestVpsAgent<T = unknown>(input: AgentRequestInput): Promise<T> {
+function collectAgentErrorText(error: unknown) {
+  const parts: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current; depth += 1) {
+    if (current instanceof Error) {
+      parts.push(current.name, current.message);
+      current = current.cause;
+      continue;
+    }
+    if (typeof current === "string") {
+      parts.push(current);
+      break;
+    }
+    break;
+  }
+  return parts.join(" ").toLowerCase();
+}
+
+export function isVpsAgentUnreachableError(error: unknown) {
+  if (error instanceof Error && error.name === "VpsAgentUnreachableError") {
+    return true;
+  }
+  const text = collectAgentErrorText(error);
+  return (
+    text.includes("fetch failed") ||
+    text.includes("aborterror") ||
+    text.includes("aborted") ||
+    text.includes("econnrefused") ||
+    text.includes("enotfound") ||
+    text.includes("etimedout") ||
+    text.includes("econnreset") ||
+    text.includes("und_err") ||
+    text.includes("socket") ||
+    text.includes("network") ||
+    text.includes("other side closed") ||
+    text.includes("nao foi possivel conectar ao agente") ||
+    text.includes("nao respondeu a tempo")
+  );
+}
+
+export function describeVpsAgentError(error: unknown) {
+  if (error instanceof Error && error.name === "VpsAgentUnreachableError") {
+    return error.message;
+  }
+  if (error instanceof Error) {
+    const message = error.message.trim();
+    if (message && message !== "fetch failed" && !isVpsAgentUnreachableError(error)) {
+      return message;
+    }
+  }
+  const text = collectAgentErrorText(error);
+  if (text.includes("abort")) {
+    return "O agente da VPS nao respondeu a tempo.";
+  }
+  return "Nao foi possivel conectar ao agente da VPS. A maquina pode estar desligada ou indisponivel.";
+}
+
+function canonicalizeAgentPath(path: string) {
+  const raw = String(path || "/").split("?")[0];
+  return raw.length > 1 && raw.endsWith("/") ? raw.slice(0, -1) : raw || "/";
+}
+
+function serializeAgentBody(body: unknown) {
+  if (body === undefined || body === null) return "{}";
+  if (typeof body === "string") {
+    const trimmed = body.trim();
+    return trimmed || "{}";
+  }
+  return JSON.stringify(body);
+}
+
+function agentMethodOmitsBody(method: string) {
+  return method === "GET" || method === "HEAD";
+}
+
+function signVpsAgentRequest(token: string, vpsCode: string, method: string, path: string, serializedBody: string) {
+  return createHmac("sha256", token)
+    .update(`${vpsCode}:${method}:${canonicalizeAgentPath(path)}:${serializedBody}`)
+    .digest("hex");
+}
+
+async function requestVpsAgentOnce<T>(input: AgentRequestInput): Promise<T> {
   const baseUrl = resolveAgentBaseUrl();
   const token = resolveAgentToken();
   if (!baseUrl || !token) {
@@ -219,23 +313,25 @@ export async function requestVpsAgent<T = unknown>(input: AgentRequestInput): Pr
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), input.timeoutMs || 12_000);
-  const body = input.body === undefined ? undefined : JSON.stringify(input.body);
-  const signature = createHmac("sha256", token)
-    .update(`${input.project.vps_code}:${input.method || "GET"}:${input.path}:${body || ""}`)
-    .digest("hex");
+  const timeoutId = setTimeout(() => controller.abort(), input.timeoutMs || 20_000);
+  const method = input.method || "GET";
+  const omitBody = agentMethodOmitsBody(method);
+  const serializedBody = serializeAgentBody(omitBody ? {} : input.body);
+  const signature = signVpsAgentRequest(token, input.project.vps_code, method, input.path, serializedBody);
 
   try {
     const response = await fetch(`${baseUrl}${input.path}`, {
-      method: input.method || "GET",
+      method,
       headers: {
         "Content-Type": "application/json",
+        Connection: "keep-alive",
         "X-Flowdesk-VPS": input.project.vps_code,
         "X-Flowdesk-Signature": signature,
         Authorization: `Bearer ${token}`,
       },
-      body,
+      body: omitBody ? undefined : serializedBody,
       cache: "no-store",
+      keepalive: true,
       signal: controller.signal,
     });
     const payload = (await response.json().catch(() => ({}))) as unknown;
@@ -247,6 +343,29 @@ export async function requestVpsAgent<T = unknown>(input: AgentRequestInput): Pr
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+export async function requestVpsAgent<T = unknown>(input: AgentRequestInput): Promise<T> {
+  const maxAttempts = 4;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await requestVpsAgentOnce<T>(input);
+    } catch (error) {
+      lastError = error;
+      if (!isVpsAgentUnreachableError(error) || attempt === maxAttempts) {
+        break;
+      }
+      const delayMs = Math.min(2500, 200 * 2 ** (attempt - 1) + Math.floor(Math.random() * 120));
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  const message = describeVpsAgentError(lastError);
+  const wrapped = new Error(message);
+  wrapped.name = isVpsAgentUnreachableError(lastError) ? "VpsAgentUnreachableError" : "VpsAgentRequestError";
+  throw wrapped;
 }
 
 export function maskSecretPreview(value: string) {

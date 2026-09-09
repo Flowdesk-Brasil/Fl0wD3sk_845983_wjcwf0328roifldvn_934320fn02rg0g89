@@ -175,7 +175,7 @@ async function runViaVps(
       code: "vps_timeout",
       message:
         finished.error_message ||
-        "O launcher na VPS nao respondeu a tempo. Deixe o app aberto na maquina da cidade.",
+        "O launcher na VPS nao respondeu a tempo. Na primeira configuracao, deixe o app aberto. Depois a whitelist funciona sem ele.",
     };
   }
   const result = (finished.result || {}) as Record<string, unknown>;
@@ -324,8 +324,8 @@ export async function runCityWhitelistAction(input: {
   if (!launcher.online) {
     throw new Error(
       probe.open
-        ? "O MySQL recusou a conexao direta e o launcher nao esta no ar. Abra o Flowdesk Launcher na VPS."
-        : `A porta ${input.target.port} em ${input.target.host} esta fechada da internet. O launcher na VPS precisa estar aberto para a Flowdesk falar com o MySQL la dentro.`,
+        ? "O MySQL recusou a conexao direta. Confira usuario, senha e o nome do banco. O launcher e opcional depois da primeira conexao."
+        : `A porta ${input.target.port} em ${input.target.host} esta fechada da internet. Na primeira configuracao, abra o launcher na VPS uma vez para liberar o MySQL. Depois disso ele pode ficar fechado.`,
     );
   }
 

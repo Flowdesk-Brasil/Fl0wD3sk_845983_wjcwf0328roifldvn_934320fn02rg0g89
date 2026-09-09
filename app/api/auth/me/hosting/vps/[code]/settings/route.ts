@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSensitiveActionProof } from "@/lib/auth/sensitiveAction";
 import { getCurrentAuthSessionFromCookie } from "@/lib/auth/session";
+import { triggerHostingInitialRepositoryDeploy } from "@/lib/hosting/initialDeploy";
+import {
+  findUserHostingRepositoryConflict,
+  readHostingRepositoryPending,
+  withHostingRepositoryPendingFlags,
+} from "@/lib/hosting/repositoryConflict";
 import {
   appendVpsEvent,
   getHostingProjectForUser,
@@ -29,6 +35,15 @@ import {
   updateCloudflareDnsRecord,
 } from "@/lib/domains/cloudflare";
 import {
+  allocateAvailableFlowdeskHostname,
+  ensureFlowdeskSiteRecord,
+  isFlowdeskHostnameTaken,
+  resolveVpsPublicDnsTarget,
+  toManagedDomainRecord,
+} from "@/lib/hosting/flowdeskDns";
+import { readHostingFramework } from "@/lib/hosting/frameworkDetect";
+import { resolveProjectFramework } from "@/lib/hosting/vpsDeploy";
+import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
 } from "@/lib/security/http";
@@ -52,6 +67,7 @@ const SETTINGS_ACTIONS = [
   "remove_firewall",
   "repository_remove",
   "repository_update",
+  "check_domain",
 ] as const;
 
 type RepositoryInput = {
@@ -104,14 +120,7 @@ function normalizeDnsTarget(value: unknown) {
 }
 
 function resolveDefaultVpsDnsTarget() {
-  return normalizeDnsTarget(
-    process.env.VPS_DOMAIN_CNAME_TARGET ||
-      process.env.VPS_DNS_TARGET ||
-      process.env.HOSTING_PUBLIC_DNS_TARGET ||
-      process.env.MINECRAFT_DNS_TARGET ||
-      process.env.APP_PUBLIC_HOST ||
-      process.env.NEXT_PUBLIC_APP_URL,
-  );
+  return normalizeDnsTarget(resolveVpsPublicDnsTarget() || "46.202.146.240");
 }
 
 function resolveManagedDnsRecordInput(hostname: string, target: string) {
@@ -342,6 +351,9 @@ function isValidIpRule(value: string) {
 }
 
 async function assertDomainAvailable(hostname: string, currentProjectId: number) {
+  if (isFlowdeskManagedDomain(hostname) && await isFlowdeskHostnameTaken(hostname, currentProjectId)) {
+    throw new Error("Este subdominio ja esta em uso. Escolha outro nome.");
+  }
   const supabase = getSupabaseAdminClientOrThrow();
   const { data: minecraftMatch, error: minecraftError } = await supabase
     .from("hosting_minecraft_servers")
@@ -516,7 +528,49 @@ export async function GET(_request: NextRequest, { params }: RouteProps) {
       NextResponse.json({ ok: false, message: "VPS nao encontrada." }, { status: 404 }),
     );
   }
-  const settings = resolveVpsProjectSettings(loaded.project.provisioning_payload, projectFallback(loaded));
+  let settings = resolveVpsProjectSettings(loaded.project.provisioning_payload, projectFallback(loaded));
+  if (loaded.project.hosting_kind !== "minecraft") {
+    const primary = settings.domains.find((domain) => domain.primary) || settings.domains[0];
+    if (primary && isFlowdeskManagedDomain(primary.hostname) && !primary.cloudflareRecordId) {
+      try {
+        const record = await ensureFlowdeskSiteRecord(primary.hostname, resolveDefaultVpsDnsTarget());
+        if (record?.recordId) {
+          settings = {
+            ...settings,
+            domains: settings.domains.map((domain) =>
+              domain.hostname === primary.hostname
+                ? {
+                    ...domain,
+                    status: "active",
+                    verifiedAt: domain.verifiedAt || new Date().toISOString(),
+                    cloudflareRecordId: record.recordId,
+                    dnsTarget: record.target,
+                  }
+                : domain,
+            ),
+          };
+          await persistSettings(loaded, settings);
+        }
+      } catch {
+        /* keep serving settings even if Cloudflare is temporarily down */
+      }
+    }
+    if (!readHostingFramework(loaded.project.provisioning_payload)) {
+      const framework = await resolveProjectFramework({
+        userId: loaded.session.user.id,
+        project: loaded.project,
+      }).catch(() => null);
+      if (framework) {
+        const currentPayload = loaded.project.provisioning_payload && typeof loaded.project.provisioning_payload === "object"
+          ? loaded.project.provisioning_payload as Record<string, unknown>
+          : {};
+        await getSupabaseAdminClientOrThrow()
+          .from("hosting_projects")
+          .update({ provisioning_payload: { ...currentPayload, framework } })
+          .eq("id", loaded.project.id);
+      }
+    }
+  }
   return applyNoStoreHeaders(NextResponse.json({ ok: true, settings }));
 }
 
@@ -556,6 +610,26 @@ export async function PATCH(request: NextRequest, { params }: RouteProps) {
     const minecraftProject = isMinecraftProjectKind(loaded);
     let extraUpdate: Record<string, unknown> = {};
     let message = "Settings atualizadas.";
+    let resumeRepositoryDeploy = false;
+
+    if (action === "check_domain") {
+      const requested = normalizeRequestedDomainHost(body.hostname, minecraftProject);
+      if (!requested) throw new Error("Dominio invalido.");
+      const taken = await isFlowdeskHostnameTaken(requested, loaded.project.id);
+      const suggestion = taken
+        ? await allocateAvailableFlowdeskHostname({
+            preferredLabel: requested.split(".")[0] || settings.hostName,
+            fallbackLabel: loaded.project.vps_code.replace(/-/g, "").slice(0, 8),
+            excludeProjectId: loaded.project.id,
+          })
+        : requested;
+      return applyNoStoreHeaders(NextResponse.json({
+        ok: true,
+        available: !taken,
+        hostname: requested,
+        suggestion,
+      }));
+    }
 
     if (action === "hostname") {
       const hostName = readText(body.hostName, 64);
@@ -870,21 +944,19 @@ export async function PATCH(request: NextRequest, { params }: RouteProps) {
       const repository = normalizeRepositoryInput(body.repository);
       if (!repository) throw new Error("Repositorio invalido.");
       const supabase = getSupabaseAdminClientOrThrow();
-      const duplicate = await supabase
-        .from("hosting_projects")
-        .select("vps_code")
-        .eq("user_id", loaded.session.user.id)
-        .neq("id", loaded.project.id)
-        .not("status", "in", "(cancelled)")
-        .or([
-          repository.id ? `github_repo_id.eq.${repository.id}` : "",
-          `and(github_owner.eq.${repository.owner},github_repo.eq.${repository.name})`,
-        ].filter(Boolean).join(","))
-        .maybeSingle<{ vps_code: string }>();
-      if (duplicate.error) throw new Error(duplicate.error.message);
-      if (duplicate.data?.vps_code) {
-        throw new Error(`Este repositorio ja esta vinculado a VPS ${duplicate.data.vps_code}.`);
+      const duplicate = await findUserHostingRepositoryConflict(
+        supabase,
+        loaded.session.user.id,
+        repository,
+        loaded.project.id,
+      );
+      if (duplicate?.vpsCode) {
+        throw new Error(`Este repositorio ja esta vinculado a VPS ${duplicate.vpsCode}.`);
       }
+      const payloadRoot = loaded.project.provisioning_payload && typeof loaded.project.provisioning_payload === "object"
+        ? loaded.project.provisioning_payload as Record<string, unknown>
+        : {};
+      const hadRepositoryPending = readHostingRepositoryPending(payloadRoot);
       settings = {
         ...settings,
         repository: {
@@ -902,19 +974,38 @@ export async function PATCH(request: NextRequest, { params }: RouteProps) {
         github_repo_id: repository.id,
         github_branch: repository.branch,
       };
-      const payloadRoot = loaded.project.provisioning_payload && typeof loaded.project.provisioning_payload === "object"
-        ? loaded.project.provisioning_payload as Record<string, unknown>
-        : {};
-      loaded.project.provisioning_payload = {
-        ...payloadRoot,
-        repository,
-      };
-      message = "Repositorio conectado ao projeto.";
+      loaded.project.provisioning_payload = withHostingRepositoryPendingFlags(
+        {
+          ...payloadRoot,
+          repository,
+        },
+        { pending: false, conflict: null },
+      );
+      message = hadRepositoryPending
+        ? "Repositorio conectado. Iniciando deploy inicial..."
+        : "Repositorio conectado ao projeto.";
+      resumeRepositoryDeploy = hadRepositoryPending;
     } else {
       throw new Error("Acao de settings invalida.");
     }
 
     const updated = await persistSettings(loaded, settings, extraUpdate);
+    if (action === "repository_update" && resumeRepositoryDeploy) {
+      const supabase = getSupabaseAdminClientOrThrow();
+      const deployResult = await triggerHostingInitialRepositoryDeploy({
+        supabase,
+        project: {
+          ...loaded.project,
+          github_owner: String(updated.github_owner || loaded.project.github_owner),
+          github_repo: String(updated.github_repo || loaded.project.github_repo),
+          github_branch: String(updated.github_branch || loaded.project.github_branch || "main"),
+        },
+        userId: loaded.session.user.id,
+      });
+      if (!deployResult.ok && "message" in deployResult && deployResult.message) {
+        message = deployResult.message;
+      }
+    }
     if (
       minecraftProject &&
       ["add_domain", "update_domain", "remove_domain", "refresh_domain", "primary_domain"].includes(action)
@@ -945,7 +1036,9 @@ export async function PATCH(request: NextRequest, { params }: RouteProps) {
             htmlUrl: nextSettings.repository.htmlUrl,
             connected: nextSettings.repository.connected,
           },
+          repositorySelectionRequired: false,
         },
+        repositorySelectionResolved: action === "repository_update" && resumeRepositoryDeploy,
         message,
       }),
     );

@@ -34,7 +34,12 @@ import { LandingReveal } from "@/components/landing/LandingReveal";
 import { ButtonLoader } from "@/components/login/ButtonLoader";
 import { useNotificationEffect } from "@/components/notifications/NotificationsProvider";
 import { ServerDiscordLinkModal } from "@/components/servers/ServerUi";
+import {
+  HostingDashboardContentSkeleton,
+  HostingOnboardingShellSkeleton,
+} from "@/components/hosting/HostingSkeletons";
 import { DashboardContentSkeleton } from "@/components/workspace/WorkspaceRouteLoading";
+import { HOSTING_STEP_BY_PATH_SEGMENT } from "@/lib/hosting/catalog";
 import { setWorkspaceShellReadyState } from "@/components/workspace/WorkspaceRouteAdaptiveLoading";
 import { getDashboardViewById, resolveDashboardViewFromPathname, type DashboardViewId } from "@/lib/dashboard/navigation";
 import {
@@ -907,11 +912,19 @@ export function DashboardWorkspace({
     workspaceAlertMessage ?? resolveDashboardWorkspaceAlertMessage(servers);
   const hasWorkspaceAlert = Boolean(resolvedWorkspaceAlertMessage);
   const hasResolvedContent = children !== null && children !== undefined;
-  const isHostingOnboardingRoute =
-    hasResolvedContent &&
-    (pathname === "/dashboard/hosting" || pathname.startsWith("/dashboard/hosting/step-"));
+  const isHostingPath =
+    pathname === "/dashboard/hosting" ||
+    pathname.startsWith("/dashboard/hosting/step-");
+  const hostingStepSegment = pathname.startsWith("/dashboard/hosting/step-")
+    ? pathname.split("/").pop() || ""
+    : "";
+  const hostingLoadingStep = HOSTING_STEP_BY_PATH_SEGMENT[hostingStepSegment];
+  const isHostingOnboardingRoute = hasResolvedContent && isHostingPath;
+  const shouldShowHostingLoading =
+    isHostingPath &&
+    (Boolean(latchedPendingViewId) || !hasResolvedContent);
   const shouldShowDashboardLoading =
-    !isHostingOnboardingRoute &&
+    !isHostingPath &&
     (Boolean(latchedPendingViewId) || (!hasResolvedContent && !displayView.isEmptyHome));
 
   useEffect(() => {
@@ -2739,6 +2752,16 @@ export function DashboardWorkspace({
                     onPrefetch={prefetchRoute}
                   />
                 </div>
+              </LandingReveal>
+            ) : null}
+
+            {shouldShowHostingLoading ? (
+              <LandingReveal delay={52} duration={240}>
+                {pathname.startsWith("/dashboard/hosting/step-") ? (
+                  <HostingOnboardingShellSkeleton step={hostingLoadingStep} />
+                ) : (
+                  <HostingDashboardContentSkeleton />
+                )}
               </LandingReveal>
             ) : null}
 

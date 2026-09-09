@@ -494,6 +494,27 @@ async function refreshHostingGitHubStoredToken(input: {
   return bundle.accessToken;
 }
 
+export async function hasHostingGitHubStoredToken(userId: number) {
+  try {
+    const { data } = await getSupabaseAdminClientOrThrow()
+      .from("hosting_github_connections")
+      .select("encrypted_token, token_status")
+      .eq("user_id", userId)
+      .maybeSingle<{
+        encrypted_token: string | null;
+        token_status: string | null;
+      }>();
+
+    return Boolean(
+      data?.encrypted_token &&
+        data.token_status !== "revoked" &&
+        data.token_status !== "invalid",
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function readHostingGitHubStoredToken(userId: number) {
   try {
     const { data } = await getSupabaseAdminClientOrThrow()
@@ -570,22 +591,45 @@ export async function revokeHostingGitHubConnectionForUser(userId: number) {
 }
 
 export async function readHostingGitHubToken(userId?: number | null) {
-  const encrypted = (await cookies()).get(GITHUB_TOKEN_COOKIE)?.value || null;
-  let cookieToken: string | null = null;
-  if (encrypted) {
-    try {
-      cookieToken = decryptFlowSecureValue(encrypted, {
-          purpose: "auth_session_oauth",
-          subcontext: "hosting_github",
-          allowPlaintextFallback: false,
-        });
-    } catch {
-      cookieToken = null;
-    }
+  if (userId) {
+    const storedToken = await readHostingGitHubStoredToken(userId);
+    if (storedToken) return storedToken;
   }
-  if (cookieToken) return cookieToken;
-  if (!userId) return null;
-  return readHostingGitHubStoredToken(userId);
+
+  const encrypted = (await cookies()).get(GITHUB_TOKEN_COOKIE)?.value || null;
+  if (!encrypted) return null;
+
+  try {
+    return decryptFlowSecureValue(encrypted, {
+      purpose: "auth_session_oauth",
+      subcontext: "hosting_github",
+      allowPlaintextFallback: false,
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function resolveHostingGitHubConnectedForUser(userId: number) {
+  const token = await readHostingGitHubToken(userId);
+  if (!token) return false;
+
+  try {
+    await fetchHostingGitHubProfile(token);
+    return true;
+  } catch (error) {
+    if (error instanceof HostingGitHubNetworkError) {
+      return true;
+    }
+    if (isPermanentHostingGitHubAuthError(error)) {
+      await markHostingGitHubTokenInvalid(
+        userId,
+        error instanceof Error ? error.message : "GitHub invalido.",
+      ).catch(() => null);
+      return false;
+    }
+    return true;
+  }
 }
 
 export async function hasHostingGitHubTokenCookie() {

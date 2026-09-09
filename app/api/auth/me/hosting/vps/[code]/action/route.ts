@@ -5,6 +5,7 @@ import {
   decryptEnvValue,
   getHostingProjectForUser,
   normalizeVpsCode,
+  isVpsAgentUnreachableError,
   requestVpsAgent,
   resolveHostingAccessState,
   resolveRuntimeStatus,
@@ -18,6 +19,8 @@ import { flowSecureDto, parseFlowSecureDto } from "@/lib/security/flowSecure";
 import { buildPublicApiErrorResponse } from "@/lib/security/apiResponses";
 import { extractAuditErrorMessage } from "@/lib/security/errors";
 import { createSecurityRequestContext } from "@/lib/security/requestSecurity";
+import { readHostingFramework } from "@/lib/hosting/frameworkDetect";
+import { buildVpsDeployBody, resolveProjectFramework } from "@/lib/hosting/vpsDeploy";
 
 type RouteProps = {
   params: Promise<{ code: string }>;
@@ -51,6 +54,51 @@ function nextRuntimeStatusForAction(action: VpsAction) {
   if (action === "deploy" || action === "rollback") return "deploying" as const;
   if (action === "kill" || action === "reset-world") return "offline" as const;
   return "unknown" as const;
+}
+
+function isMissingDeployError(error: unknown) {
+  const message = extractAuditErrorMessage(error, "").toLowerCase();
+  return (
+    message.includes("needs_deploy") ||
+    message.includes("ainda nao foi deployado") ||
+    message.includes("ainda não foi deployado") ||
+    message.includes("clique em deploy") ||
+    message.includes("giturl obrigat") ||
+    message.includes("nenhum arquivo de entrada")
+  );
+}
+
+function buildVpsGitBody(
+  project: {
+    github_owner?: string | null;
+    github_repo?: string | null;
+    github_branch?: string | null;
+  },
+  githubToken: string | null,
+  extra: Record<string, unknown> = {},
+) {
+  const tokenPart = githubToken ? `${githubToken}@` : "";
+  return {
+    ...extra,
+    gitUrl: project.github_owner && project.github_repo
+      ? `https://${tokenPart}github.com/${project.github_owner}/${project.github_repo}.git`
+      : undefined,
+    branch: project.github_branch || "main",
+  };
+}
+
+function runtimeStatusAfterFailedAction(
+  action: VpsAction,
+  previousStatus: string | null | undefined,
+  unreachable: boolean,
+) {
+  if (action === "stop" || action === "kill" || action === "reset-world") return "offline" as const;
+  if (unreachable) {
+    return previousStatus === "starting" || previousStatus === "restarting" || previousStatus === "deploying"
+      ? "offline"
+      : previousStatus || "offline";
+  }
+  return "crashed" as const;
 }
 
 /** Busca todas as env vars do projeto no Supabase, descriptografa e monta o .env */
@@ -174,11 +222,11 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
   }
 
   if (action === "sync") {
+    const regionLabel =
+      resolveHostingRegion(project.hosting_region_id)?.name ||
+      "Boston, United States";
     try {
       const startedAt = Date.now();
-      const regionLabel =
-        resolveHostingRegion(project.hosting_region_id)?.name ||
-        "Boston, United States";
       const payload = await requestVpsAgent<Record<string, unknown>>({
         project,
         method: "GET",
@@ -227,6 +275,7 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
       );
     } catch (error) {
       const message = extractAuditErrorMessage(error, "Falha ao verificar status.");
+      const unreachable = isVpsAgentUnreachableError(error);
       await appendVpsEvent({
         projectId: project.id,
         userId: session.user.id,
@@ -234,9 +283,30 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
         status: "failed",
         message,
       });
+      await supabase
+        .from("hosting_projects")
+        .update({
+          runtime_status_payload: {
+            ...(project.runtime_status_payload && typeof project.runtime_status_payload === "object"
+              ? project.runtime_status_payload as Record<string, unknown>
+              : {}),
+            agentHealth: {
+              connected: false,
+              latencyMs: null,
+              checkedAt: new Date().toISOString(),
+              regionLabel,
+              host: null,
+              publicIp: null,
+            },
+            lastSyncError: message,
+          },
+        })
+        .eq("id", project.id);
       return buildPublicApiErrorResponse(requestContext, {
         error,
-        fallbackMessage: "Nao foi possivel verificar o status da VPS agora.",
+        fallbackMessage: unreachable
+          ? "Nao foi possivel conectar ao agente da VPS. A maquina pode estar desligada ou indisponivel."
+          : "Nao foi possivel verificar o status da VPS agora.",
         status: 503,
       });
     }
@@ -290,6 +360,7 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
       return applyNoStoreHeaders(NextResponse.json({ ok: true, status: runtimeStatus, payload }));
     } catch (error) {
       const message = extractAuditErrorMessage(error, "Falha ao executar acao Minecraft.");
+      const unreachable = isVpsAgentUnreachableError(error);
       await appendVpsEvent({
         projectId: project.id,
         userId: session.user.id,
@@ -297,9 +368,29 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
         status: "failed",
         message,
       });
+      await supabase
+        .from("hosting_projects")
+        .update({
+          runtime_status: runtimeStatusAfterFailedAction(action, project.runtime_status, unreachable),
+          runtime_status_payload: {
+            ...(project.runtime_status_payload && typeof project.runtime_status_payload === "object"
+              ? project.runtime_status_payload as Record<string, unknown>
+              : {}),
+            lastAction: action,
+            lastError: message,
+            agentHealth: {
+              connected: false,
+              checkedAt: new Date().toISOString(),
+            },
+          },
+          runtime_last_seen_at: new Date().toISOString(),
+        })
+        .eq("id", project.id);
       return buildPublicApiErrorResponse(requestContext, {
         error,
-        fallbackMessage: "Nao foi possivel executar a acao Minecraft agora.",
+        fallbackMessage: unreachable
+          ? "Nao foi possivel conectar ao agente da VPS. A maquina pode estar desligada ou indisponivel."
+          : "Nao foi possivel executar a acao Minecraft agora.",
         status: 503,
       });
     }
@@ -317,7 +408,14 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
   await supabase
     .from("hosting_projects")
     .update({
-      runtime_status: nextRuntimeStatusForAction(action),
+      runtime_status:
+        (action === "start" || action === "restart") &&
+        (project.runtime_status === "offline" ||
+          project.runtime_status === "unknown" ||
+          project.runtime_status === "crashed" ||
+          !project.runtime_last_seen_at)
+          ? "deploying"
+          : nextRuntimeStatusForAction(action),
       runtime_status_payload: { lastAction: action, startedAt: new Date().toISOString() },
       runtime_last_seen_at: new Date().toISOString(),
     })
@@ -340,29 +438,78 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
 
     // ── Step 2: Build the final action body ───────────────────────────────────
     let finalBody: Record<string, unknown> = { ...(body as Record<string, unknown>) };
-
-    if (action === "deploy") {
+    const shouldAttachGit = action === "deploy" || action === "start" || action === "restart";
+    if (shouldAttachGit) {
       const githubToken = await readHostingGitHubToken(session.user.id).catch(() => null);
-      // Use token in URL only for private repos - avoids JSON escaping issues
-      const tokenPart = githubToken ? `${githubToken}@` : "";
-      finalBody = {
-        ...finalBody,
-        // Build clean URL - token goes in basic auth position
-        gitUrl: project.github_owner
-          ? `https://${tokenPart}github.com/${project.github_owner}/${project.github_repo}.git`
-          : undefined,
-        branch: project.github_branch || "main",
-      };
+      const gitBody = buildVpsGitBody(project, githubToken, finalBody);
+      const framework = await resolveProjectFramework({
+        userId: session.user.id,
+        project,
+      });
+      if (framework && !readHostingFramework(project.provisioning_payload)) {
+        const currentPayload = project.provisioning_payload && typeof project.provisioning_payload === "object"
+          ? project.provisioning_payload as Record<string, unknown>
+          : {};
+        await supabase
+          .from("hosting_projects")
+          .update({ provisioning_payload: { ...currentPayload, framework } })
+          .eq("id", project.id);
+        project.provisioning_payload = { ...currentPayload, framework };
+      }
+      finalBody = buildVpsDeployBody({
+        project,
+        gitUrl: typeof gitBody.gitUrl === "string" ? gitBody.gitUrl : undefined,
+        branch: typeof gitBody.branch === "string" ? gitBody.branch : undefined,
+        framework,
+        extra: gitBody,
+      });
     }
 
     // ── Step 3: Send action to daemon ─────────────────────────────────────────
-    const payload = await requestVpsAgent<Record<string, unknown>>({
-      project,
-      method: "POST",
-      path: `/v1/vps/${project.vps_code}/actions/${action}`,
-      body: finalBody,
-      timeoutMs: action === "deploy" ? 120_000 : 20_000,
-    });
+    const actionTimeoutMs = action === "deploy" || action === "start" || action === "restart"
+      ? 180_000
+      : 20_000;
+    let payload: Record<string, unknown>;
+    try {
+      payload = await requestVpsAgent<Record<string, unknown>>({
+        project,
+        method: "POST",
+        path: `/v1/vps/${project.vps_code}/actions/${action}`,
+        body: finalBody,
+        timeoutMs: actionTimeoutMs,
+      });
+    } catch (error) {
+      if (
+        (action === "start" || action === "restart") &&
+        isMissingDeployError(error) &&
+        typeof finalBody.gitUrl === "string"
+      ) {
+        await appendVpsEvent({
+          projectId: project.id,
+          userId: session.user.id,
+          action: "deploy",
+          status: "running",
+          message: "Projeto sem arquivos na VPS. Iniciando deploy automatico.",
+        });
+        await supabase
+          .from("hosting_projects")
+          .update({
+            runtime_status: "deploying",
+            runtime_status_payload: { lastAction: "deploy", autoDeploy: true, startedAt: new Date().toISOString() },
+            runtime_last_seen_at: new Date().toISOString(),
+          })
+          .eq("id", project.id);
+        payload = await requestVpsAgent<Record<string, unknown>>({
+          project,
+          method: "POST",
+          path: `/v1/vps/${project.vps_code}/actions/deploy`,
+          body: finalBody,
+          timeoutMs: 180_000,
+        });
+      } else {
+        throw error;
+      }
+    }
 
     const runtimeStatus = resolveRuntimeStatus(payload.status);
 
@@ -380,15 +527,25 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
       userId: session.user.id,
       action,
       status: "succeeded",
-      message: `Acao ${action} concluida.`,
+      message:
+        payload.autoDeployed === true
+          ? `Deploy automatico concluido e acao ${action} aplicada.`
+          : `Acao ${action} concluida.`,
       requestPayload: { ...finalBody, gitUrl: finalBody.gitUrl ? "[REDACTED]" : undefined },
       responsePayload: payload,
     });
 
-    return applyNoStoreHeaders(NextResponse.json({ ok: true, status: runtimeStatus, payload }));
+    return applyNoStoreHeaders(NextResponse.json({
+      ok: true,
+      status: runtimeStatus,
+      payload,
+      autoDeployed: payload.autoDeployed === true,
+      message: typeof payload.message === "string" ? payload.message : undefined,
+    }));
 
   } catch (error) {
     const message = extractAuditErrorMessage(error, "Falha ao executar acao.");
+    const unreachable = isVpsAgentUnreachableError(error);
     await appendVpsEvent({
       projectId: project.id,
       userId: session.user.id,
@@ -405,22 +562,36 @@ export async function POST(request: NextRequest, { params }: RouteProps) {
         level: "error",
         source: "control-plane",
         message,
-        metadata: { action },
+        metadata: { action, unreachable },
       });
 
     await supabase
       .from("hosting_projects")
       .update({
-        runtime_status: action === "stop" ? "offline" : "crashed",
-        runtime_status_payload: { error: message, action },
+        runtime_status: runtimeStatusAfterFailedAction(action, project.runtime_status, unreachable),
+        runtime_status_payload: {
+          error: message,
+          action,
+          agentHealth: {
+            connected: false,
+            checkedAt: new Date().toISOString(),
+          },
+        },
         runtime_last_seen_at: new Date().toISOString(),
       })
       .eq("id", project.id);
 
     return buildPublicApiErrorResponse(requestContext, {
       error,
-      fallbackMessage: "Nao foi possivel executar a acao da VPS agora.",
+      fallbackMessage: unreachable
+        ? "Nao foi possivel conectar ao agente da VPS. A maquina pode estar desligada ou indisponivel."
+        : isMissingDeployError(error)
+          ? project.github_owner && project.github_repo
+            ? "O projeto ainda nao estava na VPS. Tente Iniciar de novo para o deploy automatico concluir."
+            : "Vincule um repositorio GitHub e clique em Iniciar. O deploy acontece automaticamente."
+          : message || "Nao foi possivel executar a acao da VPS agora.",
       status: 503,
+      exposeSafeErrorMessage: !unreachable,
     });
   }
 }

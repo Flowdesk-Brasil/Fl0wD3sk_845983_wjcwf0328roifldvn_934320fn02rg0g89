@@ -388,8 +388,12 @@ export function resolvePurchaseContext(value: unknown): ResolvedPurchaseContext 
   if (record.type !== "hosting") return null;
 
   const hostingKind = isHostingKind(record.hostingKind) ? record.hostingKind : null;
-  const hostingPlanId = normalizePurchaseText(record.hostingPlan, 80);
-  const hostingRegionId = normalizePurchaseText(record.hostingRegion, 80);
+  const hostingPlanId =
+    normalizePurchaseText(record.hostingPlanId, 80) ||
+    normalizePurchaseText(record.hostingPlan, 80);
+  const hostingRegionId =
+    normalizePurchaseText(record.hostingRegionId, 80) ||
+    normalizePurchaseText(record.hostingRegion, 80);
   if (!hostingKind || !hostingPlanId || !hostingRegionId) return null;
 
   const plan = HOSTING_PLANS[hostingKind].find((item) => item.id === hostingPlanId);
@@ -1585,6 +1589,19 @@ async function finalizeCreditCoveredCheckoutOrder(input: {
   const supabase = getSupabaseAdminClientOrThrow();
   const paidAt = new Date().toISOString();
   const expiresAt = await resolveApprovedOrderExpiresAt(input.order, paidAt);
+  const existingPayload =
+    input.order.provider_payload &&
+    typeof input.order.provider_payload === "object" &&
+    !Array.isArray(input.order.provider_payload)
+      ? (input.order.provider_payload as Record<string, unknown>)
+      : {};
+  const purchaseContextType =
+    existingPayload.purchase_context &&
+    typeof existingPayload.purchase_context === "object" &&
+    !Array.isArray(existingPayload.purchase_context) &&
+    typeof (existingPayload.purchase_context as Record<string, unknown>).type === "string"
+      ? String((existingPayload.purchase_context as Record<string, unknown>).type)
+      : "plan";
   const updatedOrderResult = await supabase
     .from("payment_orders")
     .update({
@@ -1593,6 +1610,7 @@ async function finalizeCreditCoveredCheckoutOrder(input: {
       provider_status: "approved",
       provider_status_detail: "covered_by_internal_credits",
       provider_payload: {
+        ...existingPayload,
         source: "flowdesk_checkout",
         step: 4,
         coveredByCredits: true,
@@ -1645,7 +1663,9 @@ async function finalizeCreditCoveredCheckoutOrder(input: {
     },
   );
 
-  await syncUserPlanStateFromOrder(updatedOrderResult.data);
+  if (purchaseContextType === "plan") {
+    await syncUserPlanStateFromOrder(updatedOrderResult.data);
+  }
   void sendPaymentApprovedEmailForOrderSafe(updatedOrderResult.data);
   clearPlanStateCacheForUser(input.order.user_id);
   invalidatePaymentReadCachesForOrder(updatedOrderResult.data);

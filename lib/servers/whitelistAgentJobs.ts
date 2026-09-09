@@ -76,7 +76,7 @@ export async function waitForWhitelistAgentJob(jobId: number, timeoutMs = 28000)
     status: "queued",
     result: null,
     error_message:
-      "O Agent nao respondeu a tempo. Instale o launcher na VPS, deixe-o aberto e tente de novo.",
+      "O Agent nao respondeu a tempo. Se esta for a primeira configuracao, abra o launcher na VPS uma vez. Depois a whitelist usa o banco direto.",
   } satisfies JobRow;
 }
 

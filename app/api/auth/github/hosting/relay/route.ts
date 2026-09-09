@@ -35,7 +35,19 @@ export async function GET() {
           window.localStorage?.setItem(storageKey, storagePayload);
         } catch {}
         try {
+          window.sessionStorage?.setItem(storageKey, storagePayload);
+        } catch {}
+        try {
+          window.opener?.localStorage?.setItem(storageKey, storagePayload);
+        } catch {}
+        try {
+          window.opener?.sessionStorage?.setItem(storageKey, storagePayload);
+        } catch {}
+        try {
           window.opener?.postMessage(payload, window.location.origin);
+        } catch {}
+        try {
+          window.opener?.postMessage(payload, "*");
         } catch {}
 
         window.setTimeout(() => window.close(), 250);

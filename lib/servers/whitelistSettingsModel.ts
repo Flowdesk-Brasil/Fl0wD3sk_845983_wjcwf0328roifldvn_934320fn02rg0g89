@@ -124,7 +124,7 @@ export function normalizeWhitelistSettingsDraft(
     identifierKind: normalizeIdentifierKind(input?.identifierKind),
     identifierLabel: String(input?.identifierLabel || "ID / License").slice(0, 45),
     identifierPlaceholder: String(
-      input?.identifierPlaceholder || "Informe seu ID, license ou token",
+      input?.identifierPlaceholder || "Coloque seu ID do jogo",
     ).slice(0, 80),
     nicknameFormat: normalizeNicknameFormat(
       input?.nicknameFormat ||

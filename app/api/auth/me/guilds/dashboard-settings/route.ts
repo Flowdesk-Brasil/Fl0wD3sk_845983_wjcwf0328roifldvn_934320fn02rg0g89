@@ -843,7 +843,7 @@ function buildWhitelistPayload(input: {
       reviewRoleIds: [],
       identifierKind: "discord_id",
       identifierLabel: "ID / License",
-      identifierPlaceholder: "Informe seu ID, license ou token",
+      identifierPlaceholder: "Coloque seu ID do jogo",
       nicknameFormat: "{nome} | {ID}",
       approvalMode: "manual",
       connectionMode: "direct",
@@ -929,7 +929,7 @@ function buildWhitelistPayload(input: {
     identifierPlaceholder: String(
       input.snapshot?.identifierPlaceholder ??
         input.record?.identifier_placeholder ??
-        "Informe seu ID, license ou token",
+        "Coloque seu ID do jogo",
     ),
     nicknameFormat: String(
       input.snapshot?.nicknameFormat ??
