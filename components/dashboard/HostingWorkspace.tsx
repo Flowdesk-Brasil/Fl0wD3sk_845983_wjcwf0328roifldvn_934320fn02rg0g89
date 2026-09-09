@@ -1529,13 +1529,36 @@ function RepositoryStep({
             <button
               key={repo.id}
               type="button"
-            onClick={() =>
+            onClick={() => {
                 onPatch({
                   selectedRepositoryId: repo.id,
                   selectedRepository: repo,
-                  step: "region",
-                })
-              }
+                });
+                const params = new URLSearchParams({
+                  owner: repo.owner,
+                  repo: repo.name,
+                  branch: repo.branch || "main",
+                });
+                void fetch(`/api/auth/me/hosting/github/inspect?${params.toString()}`, { cache: "no-store" })
+                  .then(async (response) => {
+                    const payload = await response.json() as { ok?: boolean; framework?: { id: string; label: string } };
+                    onPatch({
+                      selectedRepositoryId: repo.id,
+                      selectedRepository: {
+                        ...repo,
+                        language: payload.framework?.label || repo.language,
+                      },
+                      step: "region",
+                    });
+                  })
+                  .catch(() => {
+                    onPatch({
+                      selectedRepositoryId: repo.id,
+                      selectedRepository: repo,
+                      step: "region",
+                    });
+                  });
+              }}
               className={`flex w-full items-center justify-between gap-[16px] border-b border-[#151515] px-[18px] py-[16px] text-left transition-colors last:border-b-0 ${
                 selected ? "bg-[rgba(15,98,254,0.10)]" : "hover:bg-[#0D0D0D]"
               }`}
@@ -1995,6 +2018,7 @@ function PaymentStep({
         });
       })
       .catch((error) => {
+        provisionAttemptRef.current = null;
         setMessage(error instanceof Error ? error.message : "Nao foi possivel provisionar a VPS.");
       })
       .finally(() => {
@@ -2044,7 +2068,26 @@ function PaymentStep({
           </div>
         </div>
         {message ? (
-          <p className="mt-[12px] text-[12px] leading-[1.55] text-[#F3DD7A]">{message}</p>
+          <div className="mt-[12px] space-y-[10px]">
+            <p className="text-[12px] leading-[1.55] text-[#F3DD7A]">{message}</p>
+            {message.toLowerCase().includes("nao foi possivel") || message.toLowerCase().includes("falha ao criar") ? (
+              <button
+                type="button"
+                onClick={() => {
+                  provisionAttemptRef.current = null;
+                  setMessage(null);
+                  const params = new URLSearchParams(window.location.search);
+                  const orderNumber = params.get("orderNumber") || params.get("order");
+                  if (orderNumber) {
+                    window.location.replace(`${window.location.pathname}?paymentApproved=1&orderNumber=${encodeURIComponent(orderNumber)}`);
+                  }
+                }}
+                className="h-[38px] rounded-[11px] border border-[#2A2A2A] bg-[#111111] px-[14px] text-[12px] font-semibold text-[#E8E8E8] hover:bg-[#171717]"
+              >
+                Tentar provisionar de novo
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </div>
       <SummaryCard draft={draft} repository={repository} region={region} plan={plan} />

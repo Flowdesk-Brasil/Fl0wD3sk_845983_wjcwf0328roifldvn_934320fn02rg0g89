@@ -5,8 +5,10 @@ import {
   getHostingProjectForUser,
   normalizeVpsCode,
   resolveRuntimeStatus,
+  toPersistableRuntimeStatus,
 } from "@/lib/hosting/vpsRuntime";
-import { resolveRuntimeHealth } from "@/lib/hosting/vpsSettings";
+import { probeSiteHttp } from "@/lib/hosting/siteHttpProbe";
+import { resolveRuntimeHealth, resolveVpsProjectSettings } from "@/lib/hosting/vpsSettings";
 import { resolveHostingRegion } from "@/lib/hosting/catalog";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { sendVpsProvisionedEmailSafe } from "@/lib/mail/transactional";
@@ -245,6 +247,18 @@ export async function GET(_request: NextRequest, { params }: RouteProps) {
     async start(controller) {
       const encoder = new TextEncoder();
       let lastLogId = 0;
+      let lastSiteHttp: Awaited<ReturnType<typeof probeSiteHttp>> | null = null;
+      let lastSiteHttpAt = 0;
+      const liveHostname = (() => {
+        const settings = resolveVpsProjectSettings(project.provisioning_payload, {
+          vpsCode: project.vps_code,
+          repositoryName: project.github_repo || `vps-${project.vps_code.slice(0, 8)}`,
+          repositoryFullName: `${project.github_owner}/${project.github_repo}`,
+          repositoryBranch: project.github_branch || "main",
+          repositoryHtmlUrl: null,
+        });
+        return settings.domains.find((domain) => domain.primary)?.hostname || settings.domains[0]?.hostname || null;
+      })();
       const send = (event: string, data: unknown) => {
         if (closed) return;
         try {
@@ -415,7 +429,7 @@ export async function GET(_request: NextRequest, { params }: RouteProps) {
           ) {
              const { data: updatedRows } = await supabase
                .from("hosting_projects")
-               .update({ status: "active", runtime_status: daemonPayload.status })
+               .update({ status: "active", runtime_status: toPersistableRuntimeStatus(daemonPayload.status, "online") })
                .eq("id", project.id)
                .in("status", ["provisioning", "pending_provision"])
                .select("id");
@@ -463,12 +477,18 @@ export async function GET(_request: NextRequest, { params }: RouteProps) {
           .sort((a, b) => Date.parse(a.sampled_at || "") - Date.parse(b.sampled_at || ""))
           .slice(-720);
 
+        if (liveHostname && Date.now() - lastSiteHttpAt > 2500) {
+          lastSiteHttpAt = Date.now();
+          lastSiteHttp = await probeSiteHttp(liveHostname).catch(() => lastSiteHttp);
+        }
+
         if (closed) return;
         send("snapshot", {
           project: {
             ...projectResult.data,
             runtimeHealth: agentHealth,
           },
+          siteHttp: lastSiteHttp,
           metric: currentMetric,
           metricsHistory,
           logs: project.hosting_kind === "minecraft" ? daemonLogs : [...logs, ...daemonLogs],

@@ -89,6 +89,19 @@ export function resolveRuntimeStatus(value: unknown): VpsRuntimeStatus {
     : "unknown";
 }
 
+export function toPersistableRuntimeStatus(
+  value: unknown,
+  fallback: VpsRuntimeStatus = "offline",
+): VpsRuntimeStatus {
+  if (value === null || value === undefined || value === "") return fallback;
+  const resolved = resolveRuntimeStatus(value);
+  return resolved === "unknown" && fallback !== "unknown" && typeof value !== "string"
+    ? fallback
+    : resolved === "unknown" && typeof value === "string" && value !== "unknown"
+      ? fallback
+      : resolved;
+}
+
 function resolveAgentBaseUrl() {
   return (
     process.env.HOSTING_AGENT_BASE_URL ||
@@ -198,7 +211,7 @@ export async function updateProjectRuntimeStatus(input: {
   await supabase
     .from("hosting_projects")
     .update({
-      runtime_status: input.status,
+      runtime_status: toPersistableRuntimeStatus(input.status),
       runtime_status_payload: input.payload || {},
       runtime_last_seen_at: new Date().toISOString(),
       status:
@@ -268,6 +281,26 @@ export function describeVpsAgentError(error: unknown) {
   return "Nao foi possivel conectar ao agente da VPS. A maquina pode estar desligada ou indisponivel.";
 }
 
+function canonicalizeAgentPath(path: string) {
+  const raw = String(path || "/").split("?")[0];
+  return raw.length > 1 && raw.endsWith("/") ? raw.slice(0, -1) : raw || "/";
+}
+
+function serializeAgentBody(body: unknown) {
+  if (body === undefined || body === null) return "{}";
+  if (typeof body === "string") {
+    const trimmed = body.trim();
+    return trimmed || "{}";
+  }
+  return JSON.stringify(body);
+}
+
+function signVpsAgentRequest(token: string, vpsCode: string, method: string, path: string, serializedBody: string) {
+  return createHmac("sha256", token)
+    .update(`${vpsCode}:${method}:${canonicalizeAgentPath(path)}:${serializedBody}`)
+    .digest("hex");
+}
+
 async function requestVpsAgentOnce<T>(input: AgentRequestInput): Promise<T> {
   const baseUrl = resolveAgentBaseUrl();
   const token = resolveAgentToken();
@@ -276,23 +309,24 @@ async function requestVpsAgentOnce<T>(input: AgentRequestInput): Promise<T> {
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), input.timeoutMs || 12_000);
-  const body = input.body === undefined ? undefined : JSON.stringify(input.body);
-  const signature = createHmac("sha256", token)
-    .update(`${input.project.vps_code}:${input.method || "GET"}:${input.path}:${body || ""}`)
-    .digest("hex");
+  const timeoutId = setTimeout(() => controller.abort(), input.timeoutMs || 20_000);
+  const method = input.method || "GET";
+  const serializedBody = serializeAgentBody(input.body);
+  const signature = signVpsAgentRequest(token, input.project.vps_code, method, input.path, serializedBody);
 
   try {
     const response = await fetch(`${baseUrl}${input.path}`, {
-      method: input.method || "GET",
+      method,
       headers: {
         "Content-Type": "application/json",
+        Connection: "keep-alive",
         "X-Flowdesk-VPS": input.project.vps_code,
         "X-Flowdesk-Signature": signature,
         Authorization: `Bearer ${token}`,
       },
-      body,
+      body: method === "GET" || method === "HEAD" ? undefined : serializedBody,
       cache: "no-store",
+      keepalive: true,
       signal: controller.signal,
     });
     const payload = (await response.json().catch(() => ({}))) as unknown;
@@ -307,7 +341,7 @@ async function requestVpsAgentOnce<T>(input: AgentRequestInput): Promise<T> {
 }
 
 export async function requestVpsAgent<T = unknown>(input: AgentRequestInput): Promise<T> {
-  const maxAttempts = 2;
+  const maxAttempts = 4;
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -318,7 +352,8 @@ export async function requestVpsAgent<T = unknown>(input: AgentRequestInput): Pr
       if (!isVpsAgentUnreachableError(error) || attempt === maxAttempts) {
         break;
       }
-      await new Promise((resolve) => setTimeout(resolve, 280 * attempt));
+      const delayMs = Math.min(2500, 200 * 2 ** (attempt - 1) + Math.floor(Math.random() * 120));
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
 

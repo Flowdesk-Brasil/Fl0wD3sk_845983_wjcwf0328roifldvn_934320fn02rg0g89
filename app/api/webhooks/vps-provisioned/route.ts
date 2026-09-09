@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { toPersistableRuntimeStatus } from "@/lib/hosting/vpsRuntime";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { sendVpsProvisionedEmailSafe } from "@/lib/mail/transactional";
 
@@ -30,7 +31,7 @@ export async function POST(request: NextRequest) {
 
   const { data: updatedRows } = await supabase
     .from("hosting_projects")
-    .update({ status: "active", runtime_status: status || "online" })
+    .update({ status: "active", runtime_status: toPersistableRuntimeStatus(status, "online") })
     .eq("id", project.id)
     .in("status", ["provisioning", "pending_provision"])
     .select("id");

@@ -23,7 +23,15 @@ import {
   resolveHostingPurchaseContextForProvision,
   type HostingPurchaseContext,
 } from "@/lib/hosting/purchaseContext";
-import { appendVpsEvent, requestVpsAgent } from "@/lib/hosting/vpsRuntime";
+import {
+  allocateAvailableFlowdeskHostname,
+  ensureFlowdeskSiteRecord,
+  resolveVpsPublicDnsTarget,
+  toManagedDomainRecord,
+} from "@/lib/hosting/flowdeskDns";
+import { inspectHostingRepository } from "@/lib/hosting/inspectRepository";
+import { buildVpsDeployBody } from "@/lib/hosting/vpsDeploy";
+import { appendVpsEvent, requestVpsAgent, toPersistableRuntimeStatus } from "@/lib/hosting/vpsRuntime";
 import { isTrustedApprovedPaymentRecord } from "@/lib/payments/checkoutConsistency";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import {
@@ -31,6 +39,20 @@ import {
   ensureSameOriginJsonMutationRequest,
 } from "@/lib/security/http";
 import { flowSecureDto, parseFlowSecureDto } from "@/lib/security/flowSecure";
+
+function mapHostingProjectWriteError(error: { message?: string } | null | undefined, fallback: string) {
+  const message = String(error?.message || "").toLowerCase();
+  if (message.includes("runtime_status") && message.includes("not-null")) {
+    return "Falha ao criar a VPS: status inicial invalido. Tente de novo.";
+  }
+  if (message.includes("violates not-null constraint")) {
+    return "Falha ao criar a VPS: dados obrigatorios ausentes. Tente de novo.";
+  }
+  if (message.includes("duplicate key") || message.includes("unique")) {
+    return "Essa compra ja gerou uma VPS. Abrindo o painel existente.";
+  }
+  return error?.message || fallback;
+}
 
 function isHostingKind(value: unknown): value is HostingKind {
   return value === "site" || value === "bot" || value === "minecraft";
@@ -531,7 +553,10 @@ export async function POST(request: NextRequest) {
 
   if (existingError) {
     return applyNoStoreHeaders(
-      NextResponse.json({ ok: false, message: existingError.message }, { status: 500 }),
+      NextResponse.json({
+        ok: false,
+        message: mapHostingProjectWriteError(existingError, "Nao foi possivel validar a VPS desta compra."),
+      }, { status: 500 }),
     );
   }
 
@@ -583,6 +608,18 @@ export async function POST(request: NextRequest) {
     private: null,
   };
 
+  const githubToken = kind !== "minecraft"
+    ? await readHostingGitHubToken(session.user.id).catch(() => null)
+    : null;
+  const inspectedRepository = kind !== "minecraft" && repository && githubToken
+    ? await inspectHostingRepository({
+        token: githubToken,
+        owner: repository.owner,
+        repo: repository.name,
+        branch: repository.branch || "main",
+      }).catch(() => null)
+    : null;
+
   const baseProvisioningPayload = {
     source: "dashboard_hosting",
     windowsRuntime: "windows-vps",
@@ -593,6 +630,7 @@ export async function POST(request: NextRequest) {
       sourceOrderNumber: order.order_number,
     },
     repository,
+    framework: inspectedRepository?.framework || null,
     minecraft: effectiveMinecraft,
     limits: minecraftLimits,
     ports: minecraftPorts,
@@ -610,18 +648,19 @@ export async function POST(request: NextRequest) {
       hosting_region_id: region.id,
       github_owner: repositoryForProject.owner,
       github_repo: repositoryForProject.name,
-      github_repo_id: repositoryForProject.id,
+      github_repo_id: repositoryForProject.id || `${repositoryForProject.owner}/${repositoryForProject.name}`,
       github_branch: repositoryForProject.branch,
       status: repositoryPending ? "active" : "pending_provision",
       billing_status: "active",
       access_expires_at: accessExpiresAt,
-      runtime_status: repositoryPending ? "offline" : null,
+      windows_runtime: "windows-vps",
+      runtime_status: toPersistableRuntimeStatus(repositoryPending ? "offline" : "deploying", "deploying"),
       runtime_status_payload: repositoryPending
         ? {
             repositoryPending: true,
             repositoryConflictVpsCode: repositoryConflict?.vpsCode || null,
           }
-        : {},
+        : { phase: "provisioning", startedAt: new Date().toISOString() },
       provisioning_payload: withHostingRepositoryPendingFlags(baseProvisioningPayload, {
         pending: repositoryPending,
         conflict: repositoryConflict,
@@ -654,8 +693,44 @@ export async function POST(request: NextRequest) {
     }
 
     return applyNoStoreHeaders(
-      NextResponse.json({ ok: false, message: insertError.message }, { status: 500 }),
+      NextResponse.json({
+        ok: false,
+        message: mapHostingProjectWriteError(insertError, "Nao foi possivel criar a VPS agora. Tente de novo."),
+      }, { status: 500 }),
     );
+  }
+
+  if (kind !== "minecraft") {
+    try {
+      const hostname = await allocateAvailableFlowdeskHostname({
+        preferredLabel: repositoryForProject.name,
+        fallbackLabel: String(project.vps_code).replace(/-/g, "").slice(0, 8),
+        excludeProjectId: project.id,
+      });
+      const record = await ensureFlowdeskSiteRecord(hostname);
+      const currentPayload = project.provisioning_payload && typeof project.provisioning_payload === "object"
+        ? project.provisioning_payload as Record<string, unknown>
+        : {};
+      const nextPayload = {
+        ...currentPayload,
+        vpsSettings: {
+          hostName: repositoryForProject.name,
+          domains: [
+            toManagedDomainRecord(hostname, {
+              cloudflareRecordId: record?.recordId || null,
+              dnsTarget: record?.target || resolveVpsPublicDnsTarget(),
+            }),
+          ],
+        },
+      };
+      await supabase
+        .from("hosting_projects")
+        .update({ provisioning_payload: nextPayload })
+        .eq("id", project.id);
+      project.provisioning_payload = nextPayload;
+    } catch (error) {
+      console.error("[hosting-provision-dns]", error);
+    }
   }
 
   if (repositoryPending) {
@@ -781,18 +856,19 @@ export async function POST(request: NextRequest) {
           if (!repository) {
             throw new Error("Repositorio nao informado para deploy.");
           }
-          const githubToken = await readHostingGitHubToken(session.user.id).catch(() => null);
           const tokenPart = githubToken ? `${encodeURIComponent(githubToken)}@` : "";
           return requestVpsAgent<Record<string, unknown>>({
             project,
             method: "POST",
             path: `/v1/vps/${project.vps_code}/actions/deploy`,
-            body: {
+            body: buildVpsDeployBody({
+              project,
               deploymentId: deployment?.id || null,
               gitUrl: `https://${tokenPart}github.com/${repository.owner}/${repository.name}.git`,
               branch: repository.branch || "main",
-            },
-            timeoutMs: 120_000,
+              framework: inspectedRepository?.framework || null,
+            }),
+            timeoutMs: 180_000,
           });
         })();
     const finalMinecraftPorts = kind === "minecraft"
@@ -825,7 +901,7 @@ export async function POST(request: NextRequest) {
         .from("hosting_projects")
         .update({
           status: "active",
-          runtime_status: kind === "minecraft" ? "offline" : "online",
+          runtime_status: toPersistableRuntimeStatus(kind === "minecraft" ? "offline" : "online"),
           runtime_status_payload:
             kind === "minecraft"
               ? { minecraftProvision: deployPayload, cloudflare: finalMinecraftDns, ports: finalMinecraftPorts }
@@ -864,7 +940,7 @@ export async function POST(request: NextRequest) {
         .from("hosting_projects")
         .update({
           status: "failed",
-          runtime_status: "crashed",
+          runtime_status: toPersistableRuntimeStatus("crashed"),
           runtime_status_payload:
             kind === "minecraft"
               ? { minecraftProvisionError: autoDeployMessage }

@@ -25,8 +25,8 @@ export type WhitelistDbTarget = {
   ssl: boolean;
 };
 
-const CONNECT_TIMEOUT_MS = 8000;
-const QUERY_TIMEOUT_MS = 10000;
+const CONNECT_TIMEOUT_MS = 12_000;
+const QUERY_TIMEOUT_MS = 12_000;
 
 function settleMaybePromise<T>(value: Promise<T> | T | undefined | null) {
   if (value == null || typeof (value as Promise<T>).then !== "function") {
@@ -107,8 +107,8 @@ export function sanitizeDbError(error: unknown) {
     lowered.includes("reading catch")
   ) {
     return {
-      code: "db_error",
-      message: "Falha ao finalizar a conexao com o banco. Tente conectar novamente.",
+      code: "offline",
+      message: "Falha ao finalizar a conexao com o banco. O sistema reconecta automaticamente.",
     };
   }
   return { code: "db_error", message: message.slice(0, 180) || "Nao foi possivel executar a operacao no banco da cidade." };
@@ -182,7 +182,7 @@ async function connectRemoteMysql(target: WhitelistDbTarget) {
   const database = String(target.database || "").replace(/[`\\]/g, "");
   const ports = [...new Set([Number(target.port || 3306), 3306].filter((value) => value >= 1))];
   let lastError: unknown = null;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
     for (const port of ports) {
       try {
         const connection = await mysql.createConnection({
@@ -192,7 +192,7 @@ async function connectRemoteMysql(target: WhitelistDbTarget) {
           password: target.password || "",
           connectTimeout: CONNECT_TIMEOUT_MS,
           enableKeepAlive: true,
-          keepAliveInitialDelay: 0,
+          keepAliveInitialDelay: 10_000,
           insecureAuth: true,
           charset: "utf8mb4",
         });
@@ -209,8 +209,8 @@ async function connectRemoteMysql(target: WhitelistDbTarget) {
         lastError = error;
       }
     }
-    if (attempt < 2) {
-      await new Promise((resolve) => setTimeout(resolve, 150 * 2 ** attempt));
+    if (attempt < 4) {
+      await new Promise((resolve) => setTimeout(resolve, 200 * 2 ** attempt));
     }
   }
   throw lastError instanceof Error ? lastError : new Error("Nao foi possivel abrir o MySQL da cidade.");

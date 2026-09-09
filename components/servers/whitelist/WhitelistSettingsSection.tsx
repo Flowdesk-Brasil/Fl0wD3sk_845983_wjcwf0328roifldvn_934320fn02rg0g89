@@ -498,8 +498,9 @@ export function WhitelistSettingsSection({
                 className={fieldClassName}
               />
               <p className="mt-[8px] text-[12px] leading-[1.5] text-[#6F6F74]">
-                Use {"{nome}"} para o nome do Discord e {"{ID}"} para o identificador liberado.
-                Exemplo: {previewNicknameFormat(draft.nicknameFormat)}
+                O modal do Discord pede o nome do jogador de forma obrigatoria. Use {"{nome}"}{" "}
+                para esse nome e {"{ID}"} para o identificador liberado. Exemplo:{" "}
+                {previewNicknameFormat(draft.nicknameFormat)}
               </p>
             </div>
           </div>

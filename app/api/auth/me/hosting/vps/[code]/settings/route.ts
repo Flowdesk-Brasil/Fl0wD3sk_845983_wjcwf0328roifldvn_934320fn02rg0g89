@@ -35,6 +35,15 @@ import {
   updateCloudflareDnsRecord,
 } from "@/lib/domains/cloudflare";
 import {
+  allocateAvailableFlowdeskHostname,
+  ensureFlowdeskSiteRecord,
+  isFlowdeskHostnameTaken,
+  resolveVpsPublicDnsTarget,
+  toManagedDomainRecord,
+} from "@/lib/hosting/flowdeskDns";
+import { readHostingFramework } from "@/lib/hosting/frameworkDetect";
+import { resolveProjectFramework } from "@/lib/hosting/vpsDeploy";
+import {
   applyNoStoreHeaders,
   ensureSameOriginJsonMutationRequest,
 } from "@/lib/security/http";
@@ -58,6 +67,7 @@ const SETTINGS_ACTIONS = [
   "remove_firewall",
   "repository_remove",
   "repository_update",
+  "check_domain",
 ] as const;
 
 type RepositoryInput = {
@@ -110,14 +120,7 @@ function normalizeDnsTarget(value: unknown) {
 }
 
 function resolveDefaultVpsDnsTarget() {
-  return normalizeDnsTarget(
-    process.env.VPS_DOMAIN_CNAME_TARGET ||
-      process.env.VPS_DNS_TARGET ||
-      process.env.HOSTING_PUBLIC_DNS_TARGET ||
-      process.env.MINECRAFT_DNS_TARGET ||
-      process.env.APP_PUBLIC_HOST ||
-      process.env.NEXT_PUBLIC_APP_URL,
-  );
+  return normalizeDnsTarget(resolveVpsPublicDnsTarget() || "46.202.146.240");
 }
 
 function resolveManagedDnsRecordInput(hostname: string, target: string) {
@@ -348,6 +351,9 @@ function isValidIpRule(value: string) {
 }
 
 async function assertDomainAvailable(hostname: string, currentProjectId: number) {
+  if (isFlowdeskManagedDomain(hostname) && await isFlowdeskHostnameTaken(hostname, currentProjectId)) {
+    throw new Error("Este subdominio ja esta em uso. Escolha outro nome.");
+  }
   const supabase = getSupabaseAdminClientOrThrow();
   const { data: minecraftMatch, error: minecraftError } = await supabase
     .from("hosting_minecraft_servers")
@@ -522,7 +528,49 @@ export async function GET(_request: NextRequest, { params }: RouteProps) {
       NextResponse.json({ ok: false, message: "VPS nao encontrada." }, { status: 404 }),
     );
   }
-  const settings = resolveVpsProjectSettings(loaded.project.provisioning_payload, projectFallback(loaded));
+  let settings = resolveVpsProjectSettings(loaded.project.provisioning_payload, projectFallback(loaded));
+  if (loaded.project.hosting_kind !== "minecraft") {
+    const primary = settings.domains.find((domain) => domain.primary) || settings.domains[0];
+    if (primary && isFlowdeskManagedDomain(primary.hostname) && !primary.cloudflareRecordId) {
+      try {
+        const record = await ensureFlowdeskSiteRecord(primary.hostname, resolveDefaultVpsDnsTarget());
+        if (record?.recordId) {
+          settings = {
+            ...settings,
+            domains: settings.domains.map((domain) =>
+              domain.hostname === primary.hostname
+                ? {
+                    ...domain,
+                    status: "active",
+                    verifiedAt: domain.verifiedAt || new Date().toISOString(),
+                    cloudflareRecordId: record.recordId,
+                    dnsTarget: record.target,
+                  }
+                : domain,
+            ),
+          };
+          await persistSettings(loaded, settings);
+        }
+      } catch {
+        /* keep serving settings even if Cloudflare is temporarily down */
+      }
+    }
+    if (!readHostingFramework(loaded.project.provisioning_payload)) {
+      const framework = await resolveProjectFramework({
+        userId: loaded.session.user.id,
+        project: loaded.project,
+      }).catch(() => null);
+      if (framework) {
+        const currentPayload = loaded.project.provisioning_payload && typeof loaded.project.provisioning_payload === "object"
+          ? loaded.project.provisioning_payload as Record<string, unknown>
+          : {};
+        await getSupabaseAdminClientOrThrow()
+          .from("hosting_projects")
+          .update({ provisioning_payload: { ...currentPayload, framework } })
+          .eq("id", loaded.project.id);
+      }
+    }
+  }
   return applyNoStoreHeaders(NextResponse.json({ ok: true, settings }));
 }
 
@@ -563,6 +611,25 @@ export async function PATCH(request: NextRequest, { params }: RouteProps) {
     let extraUpdate: Record<string, unknown> = {};
     let message = "Settings atualizadas.";
     let resumeRepositoryDeploy = false;
+
+    if (action === "check_domain") {
+      const requested = normalizeRequestedDomainHost(body.hostname, minecraftProject);
+      if (!requested) throw new Error("Dominio invalido.");
+      const taken = await isFlowdeskHostnameTaken(requested, loaded.project.id);
+      const suggestion = taken
+        ? await allocateAvailableFlowdeskHostname({
+            preferredLabel: requested.split(".")[0] || settings.hostName,
+            fallbackLabel: loaded.project.vps_code.replace(/-/g, "").slice(0, 8),
+            excludeProjectId: loaded.project.id,
+          })
+        : requested;
+      return applyNoStoreHeaders(NextResponse.json({
+        ok: true,
+        available: !taken,
+        hostname: requested,
+        suggestion,
+      }));
+    }
 
     if (action === "hostname") {
       const hostName = readText(body.hostName, 64);

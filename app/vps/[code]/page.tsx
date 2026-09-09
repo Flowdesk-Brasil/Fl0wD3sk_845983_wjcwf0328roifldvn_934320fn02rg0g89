@@ -14,6 +14,7 @@ import {
   readHostingRepositoryConflict,
   readHostingRepositoryPending,
 } from "@/lib/hosting/repositoryConflict";
+import { readHostingFramework } from "@/lib/hosting/frameworkDetect";
 import { resolveHostingAccessState, resolveRuntimeStatus } from "@/lib/hosting/vpsRuntime";
 import {
   resolveRuntimeHealth,
@@ -399,6 +400,7 @@ export default async function VpsPanelPage({ params }: VpsPanelPageProps) {
       githubConnected,
       repositorySelectionRequired,
       repositoryConflictVpsCode: repositoryConflict?.vpsCode || null,
+      framework: readHostingFramework(project.provisioning_payload),
       minecraft: minecraftSnapshot,
     },
     metrics: [],

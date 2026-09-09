@@ -1,5 +1,6 @@
 import { readHostingGitHubToken } from "@/lib/hosting/github";
-import { appendVpsEvent, requestVpsAgent, type HostingProjectAccess } from "@/lib/hosting/vpsRuntime";
+import { buildVpsDeployBody, resolveProjectFramework } from "@/lib/hosting/vpsDeploy";
+import { appendVpsEvent, requestVpsAgent, toPersistableRuntimeStatus, type HostingProjectAccess } from "@/lib/hosting/vpsRuntime";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export async function triggerHostingInitialRepositoryDeploy(input: {
@@ -39,16 +40,22 @@ export async function triggerHostingInitialRepositoryDeploy(input: {
   }).catch(() => null);
 
   try {
+    const framework = await resolveProjectFramework({
+      userId: input.userId,
+      project: input.project,
+    });
     const deployPayload = await requestVpsAgent<Record<string, unknown>>({
       project: input.project,
       method: "POST",
       path: `/v1/vps/${input.project.vps_code}/actions/deploy`,
-      body: {
+      body: buildVpsDeployBody({
+        project: input.project,
         deploymentId: deployment?.id || null,
         gitUrl: `https://${tokenPart}github.com/${input.project.github_owner}/${input.project.github_repo}.git`,
         branch: input.project.github_branch || "main",
-      },
-      timeoutMs: 120_000,
+        framework,
+      }),
+      timeoutMs: 180_000,
     });
 
     const finishedAt = new Date().toISOString();
@@ -57,7 +64,7 @@ export async function triggerHostingInitialRepositoryDeploy(input: {
         .from("hosting_projects")
         .update({
           status: "active",
-          runtime_status: "online",
+          runtime_status: toPersistableRuntimeStatus("online"),
           runtime_status_payload: { initialDeploy: deployPayload },
           runtime_last_seen_at: finishedAt,
         })
@@ -96,7 +103,7 @@ export async function triggerHostingInitialRepositoryDeploy(input: {
         .from("hosting_projects")
         .update({
           status: "active",
-          runtime_status: "offline",
+          runtime_status: toPersistableRuntimeStatus("offline"),
           runtime_status_payload: { initialDeployError: message },
           runtime_last_seen_at: finishedAt,
         })

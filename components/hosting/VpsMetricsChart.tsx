@@ -94,8 +94,8 @@ export function VpsMetricsChart({
   }));
 
   return (
-    <div className={className}>
-      <ResponsiveContainer width="100%" height="100%">
+    <div className={`min-h-[240px] min-w-0 ${className}`}>
+      <ResponsiveContainer width="100%" height={240} minWidth={0} minHeight={240}>
         <AreaChart data={data}>
           {variant === "full" ? (
             <defs>

@@ -13,6 +13,7 @@ import {
   resolveVpsProjectSettings,
 } from "@/lib/hosting/vpsSettings";
 import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
+import { readHostingFramework } from "@/lib/hosting/frameworkDetect";
 import { applyNoStoreHeaders } from "@/lib/security/http";
 
 type RouteProps = {
@@ -154,6 +155,7 @@ export async function GET(_request: NextRequest, { params }: RouteProps) {
           connected: settings.repository.connected,
         },
         provisioningPayload: loaded.project.provisioning_payload,
+        framework: readHostingFramework(loaded.project.provisioning_payload),
       },
       metrics: (metricsResult.data || []).reverse(),
       logs: (logsResult.data || []).reverse(),

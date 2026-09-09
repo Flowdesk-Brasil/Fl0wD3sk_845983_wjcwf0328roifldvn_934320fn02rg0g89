@@ -10,6 +10,9 @@ import {
 import { PanelShell } from "@/components/panel-shell/PanelShell";
 import type { PanelQuickLink, PanelSavedAccount } from "@/components/panel-shell/PanelCommandPalette";
 import { fdNavItemClass } from "@/components/panel-shell/panelClasses";
+import { VpsDetailRow, VpsSegmentedNav, VpsStatusPill } from "@/components/hosting/VpsSurface";
+import { FlowdeskVpsOverlay } from "@/components/hosting/FlowdeskVpsOverlay";
+import type { SiteHttpProbe } from "@/lib/hosting/siteHttpProbe";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Activity,
@@ -29,6 +32,7 @@ import {
   Eye,
   File,
   FilePlus2,
+  Fingerprint,
   Folder,
   FolderPlus,
   GitBranch,
@@ -346,6 +350,13 @@ export type VpsWorkspaceSnapshot = {
     githubConnected?: boolean;
     repositorySelectionRequired?: boolean;
     repositoryConflictVpsCode?: string | null;
+    framework?: {
+      id: string;
+      label: string;
+      installCommand?: string | null;
+      buildCommand?: string | null;
+      startCommand?: string | null;
+    } | null;
     minecraft?: {
       serverName: string;
       version: string;
@@ -363,6 +374,7 @@ export type VpsWorkspaceSnapshot = {
   actions: Array<Record<string, unknown>>;
   fileTree: VpsFileNode[];
   settings: VpsProjectSettings;
+  siteHttp?: SiteHttpProbe | null;
 };
 
 type VpsWorkspaceProps = {
@@ -1729,6 +1741,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
   const [minecraftCommand, setMinecraftCommand] = useState("");
   const [settingsHostName, setSettingsHostName] = useState(initialSnapshot.settings.hostName);
   const [settingsDomainInput, setSettingsDomainInput] = useState("");
+  const [domainAvailability, setDomainAvailability] = useState<{ hostname: string; available: boolean; suggestion?: string } | null>(null);
   const [domainSearch, setDomainSearch] = useState("");
   const [domainDrawerOpen, setDomainDrawerOpen] = useState(false);
   const [domainDrawerMode, setDomainDrawerMode] = useState<DomainDrawerMode>("add");
@@ -1886,6 +1899,18 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     };
   }, [fileContextMenu]);
 
+  useEffect(() => {
+    const vpsCode = snapshot.project.vpsCode;
+    void fetch(`/api/auth/me/hosting/vps/${vpsCode}/settings`, { cache: "no-store" })
+      .then((response) => response.json())
+      .then((payload) => {
+        if (payload?.settings) {
+          setSnapshot((current) => ({ ...current, settings: payload.settings }));
+        }
+      })
+      .catch(() => null);
+  }, [snapshot.project.vpsCode]);
+
   const notify = useCallback((tone: NotifyTone, message: string, title = "VPS") => {
     if (tone === "success") notifications.success(message, { title });
     else if (tone === "error") notifications.error(message, { title });
@@ -2022,6 +2047,7 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
           status?: string;
           runtimeHealth?: VpsRuntimeHealth;
         };
+        siteHttp?: SiteHttpProbe | null;
         metric?: VpsMetric | null;
         metricsHistory?: VpsMetric[];
         logs?: VpsLog[];
@@ -2041,16 +2067,14 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
           status: payload.project?.status || current.project.status,
           runtimeHealth: payload.project?.runtimeHealth || current.project.runtimeHealth,
         },
+        siteHttp: payload.siteHttp || current.siteHttp,
         metrics: payload.metricsHistory?.length && current.metrics.length === 0 ? [...payload.metricsHistory, ...(payload.metric ? [payload.metric] : [])].slice(-48) : (payload.metric ? [...current.metrics, payload.metric].slice(-48) : current.metrics),
         logs: logsPaused ? current.logs : mergeUniqueLogs(current.logs, incomingLogs),
         actions: payload.actions || current.actions,
       }));
     });
-    events.addEventListener("error", () => {
-      notify("error", "Conexao em tempo real instavel. Tentando reconectar.");
-    });
     return () => events.close();
-  }, [logsPaused, notify, snapshot.project.vpsCode]);
+  }, [logsPaused, snapshot.project.vpsCode]);
 
   useEffect(() => {
     if (!flowChatOpen) return;
@@ -2292,7 +2316,8 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
     setBusyAction(action);
     const previousStatus = snapshot.project.runtimeStatus;
     const optimisticStatus =
-      action === "start" ? "starting"
+      action === "start"
+        ? previousStatus === "online" ? "starting" : "deploying"
         : action === "restart" ? "restarting"
           : action === "stop" || action === "kill" || action === "reset-world" ? "offline"
             : null;
@@ -2309,7 +2334,13 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, ...extraBody }),
       });
-      const payload = await response.json() as { ok?: boolean; message?: string; status?: RuntimeStatus; runtimeHealth?: VpsRuntimeHealth };
+      const payload = await response.json() as {
+        ok?: boolean;
+        message?: string;
+        status?: RuntimeStatus;
+        runtimeHealth?: VpsRuntimeHealth;
+        autoDeployed?: boolean;
+      };
       if (!response.ok || !payload.ok) throw new Error(payload.message || "Falha na acao.");
       if (payload.status) {
         setSnapshot((current) => ({
@@ -2329,7 +2360,12 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
           },
         }));
       }
-      notify("success", `Acao ${action} enviada para a VPS.`);
+      notify(
+        "success",
+        payload.autoDeployed || (payload.message || "").toLowerCase().includes("deploy")
+          ? payload.message || "Deploy automatico concluido e projeto iniciado."
+          : `Acao ${action} enviada para a VPS.`,
+      );
       if (isMinecraftProject && ["start", "restart", "stop", "kill", "reset-world", "command"].includes(action)) {
         [1200, 4500, 9000, 18000, 32000].forEach((delay) => {
           window.setTimeout(() => {
@@ -3913,7 +3949,35 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                                 {snapshot.settings.hostName}
                               </h2>
                               <div className="mt-[10px] flex flex-wrap items-center gap-[8px] text-[13px] text-[var(--fd-muted)]">
-                                <span className="font-mono text-[var(--fd-soft)]">{primaryDomain?.hostname || snapshot.project.vpsCode}</span>
+                                {primaryDomain?.hostname ? (
+                                  <a
+                                    href={`https://${primaryDomain.hostname}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex items-center gap-[7px] font-mono text-[var(--fd-soft)] underline-offset-2 hover:underline"
+                                  >
+                                    {primaryDomain.hostname}
+                                    {snapshot.siteHttp?.status ? (
+                                      <span className={`rounded-full px-[6px] py-[2px] text-[10px] font-bold ${
+                                        snapshot.siteHttp.status < 400 ? "bg-[#102616] text-[#7DFF9A]" :
+                                        snapshot.siteHttp.status < 500 ? "bg-[#2A1D08] text-[#F5C56A]" :
+                                        "bg-[#2A1010] text-[#FF8A8A]"
+                                      }`}>
+                                        {snapshot.siteHttp.status}
+                                      </span>
+                                    ) : null}
+                                  </a>
+                                ) : (
+                                  <span className="font-mono text-[var(--fd-soft)]">{snapshot.project.vpsCode}</span>
+                                )}
+                                {snapshot.project.framework?.label ? (
+                                  <>
+                                    <span className="text-[var(--fd-line)]">·</span>
+                                    <span className="rounded-full border border-[#1F2F48] bg-[#07111F] px-[8px] py-[3px] text-[11px] font-semibold text-[#9BC2FF]">
+                                      {snapshot.project.framework.label}
+                                    </span>
+                                  </>
+                                ) : null}
                                 <span className="text-[var(--fd-line)]">·</span>
                                 <span>{snapshot.project.planName}</span>
                                 <span className="text-[var(--fd-line)]">·</span>
@@ -3996,6 +4060,9 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                             <p className="mt-[8px] line-clamp-2 text-[15px] font-semibold leading-[1.35] text-white">{latestDeployment?.commit_message || "Aguardando primeiro deploy automatico"}</p>
                             <div className="mt-[12px] space-y-[8px] text-[12px]">
                               {[
+                                ["Framework", snapshot.project.framework?.label || snapshot.project.repository.language || "detectando"],
+                                ["Build", snapshot.project.framework?.buildCommand || "automatico"],
+                                ["Start", snapshot.project.framework?.startCommand || "automatico"],
                                 ["Ready", `${readyDeploymentCount}/${snapshot.deployments.length || 0}`],
                                 ["Falhas", String(failedDeploymentCount)],
                                 ["Branch", latestDeployment?.branch || snapshot.project.repository.branch],
@@ -5821,38 +5888,33 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                 {tab === "settings" ? (
                   <section className="grid gap-[22px] pb-[48px]">
                     <div>
-                      <p className="text-[12px] font-medium tracking-[0.02em] text-[var(--fd-muted)]">VPS</p>
-                      <h1 className="mt-[8px] text-[32px] font-semibold leading-[1.05] tracking-[-0.045em] text-[var(--fd-text)] md:text-[36px]">Configurações</h1>
-                      <p className="mt-[10px] max-w-[720px] text-[14px] leading-[1.6] text-[var(--fd-muted)]">
-                        Identidade, repositório, acesso e segurança desta instância. Alterações entram em vigor imediatamente.
-                      </p>
+                      <div className="mb-[14px] grid h-[40px] w-[40px] place-items-center rounded-[12px] border border-[var(--fd-line)] bg-[#141414] text-[#A1A1AA]">
+                        <Fingerprint className="h-[18px] w-[18px]" strokeWidth={1.7} />
+                      </div>
+                      <p className="text-[12px] font-medium tracking-[0.02em] text-[var(--fd-muted)]">VPS / Configurações</p>
+                      <h1 className="mt-[8px] break-all font-mono text-[28px] font-semibold leading-[1.1] tracking-[-0.04em] text-[var(--fd-text)] md:text-[32px]">
+                        {snapshot.project.vpsCode}
+                      </h1>
+                      <div className="mt-[10px] flex flex-wrap items-center gap-[14px] text-[13px] text-[var(--fd-muted)]">
+                        <span>Projeto {snapshot.settings.hostName}</span>
+                        <VpsStatusPill tone={snapshot.project.runtimeStatus === "online" ? "ok" : "warn"}>
+                          {snapshot.project.runtimeStatus || "offline"}
+                        </VpsStatusPill>
+                      </div>
                     </div>
 
-                    <div className="grid gap-[18px] lg:grid-cols-[220px_minmax(0,1fr)]">
-                    <aside className="lg:sticky lg:top-[8px] lg:self-start">
-                      <div className="flex gap-[4px] overflow-auto rounded-[16px] border border-[var(--fd-line)] bg-[var(--fd-elevated)] p-[6px] lg:flex-col">
-                        {([
-                          ["general", "Geral", Cog],
-                          ["domains", "Domínios", Globe2],
-                          ["git", "Repositório", GitBranch],
-                          ["members", "Membros", Users],
-                          ["security", "Segurança", Lock],
-                          ["danger", "Zona de risco", AlertTriangle],
-                        ] as Array<[string, string, typeof Cog]>).map(([id, label, Icon]) => (
-                          <button
-                            key={String(id)}
-                            type="button"
-                            onClick={() => setSettingsSection(String(id))}
-                            className={fdNavItemClass({ active: settingsSection === id, danger: id === "danger" })}
-                          >
-                            <span className="inline-flex h-[20px] w-[20px] items-center justify-center text-[var(--fd-muted)] group-[.is-active]:text-[var(--fd-text)]">
-                              <Icon className="h-[15px] w-[15px]" strokeWidth={1.9} />
-                            </span>
-                            <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{label}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </aside>
+                    <VpsSegmentedNav
+                      value={settingsSection}
+                      onChange={setSettingsSection}
+                      items={[
+                        { id: "general", label: "Geral" },
+                        { id: "domains", label: "Dominios" },
+                        { id: "git", label: "Repositorio" },
+                        { id: "members", label: "Membros" },
+                        { id: "security", label: "Seguranca" },
+                        { id: "danger", label: "Risco" },
+                      ]}
+                    />
 
                     <div className="grid min-w-0 gap-[14px]">
                       {settingsSection === "general" ? (
@@ -5881,17 +5943,11 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                               </button>
                             </div>
                           </div>
-                          <div className="grid gap-[10px] p-[18px] md:grid-cols-3">
-                            {[
-                              ["Domínio principal", primaryDomain?.hostname || "n/d"],
-                              ["Runtime", snapshot.project.runtime],
-                              ["Cobrança", snapshot.project.paymentAmount],
-                            ].map(([label, value]) => (
-                              <div key={label} className="rounded-[14px] border border-[var(--fd-line)] bg-[#0B0B0B] p-[12px]">
-                                <p className="text-[11px] font-medium text-[var(--fd-muted)]">{label}</p>
-                                <p className="mt-[7px] truncate text-[13px] font-semibold text-[var(--fd-soft)]" title={value}>{value}</p>
-                              </div>
-                            ))}
+                          <div className="px-[6px] pb-[8px]">
+                            <VpsDetailRow label="Dominio principal" value={primaryDomain?.hostname || "n/d"} />
+                            <VpsDetailRow label="Runtime" value={snapshot.project.runtime} />
+                            <VpsDetailRow label="Cobranca" value={snapshot.project.paymentAmount} />
+                            <VpsDetailRow label="Regiao" value={runtimeHealth?.regionLabel || snapshot.project.regionLabel} />
                           </div>
                         </section>
                       ) : null}
@@ -5910,7 +5966,30 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                               <input
                                 value={settingsDomainInput}
                                 onChange={(event) => setSettingsDomainInput(event.target.value.toLowerCase())}
-                                placeholder="meusite.flwdesk.com"
+                                placeholder="test-calcu.flwdesk.com"
+                                onBlur={() => {
+                                  const hostname = settingsDomainInput.trim().toLowerCase();
+                                  if (!hostname) {
+                                    setDomainAvailability(null);
+                                    return;
+                                  }
+                                  void fetch(`/api/auth/me/hosting/vps/${snapshot.project.vpsCode}/settings`, {
+                                    method: "PATCH",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ action: "check_domain", hostname }),
+                                  })
+                                    .then((response) => response.json())
+                                    .then((payload) => {
+                                      if (payload?.hostname) {
+                                        setDomainAvailability({
+                                          hostname: String(payload.hostname),
+                                          available: payload.available === true,
+                                          suggestion: payload.suggestion ? String(payload.suggestion) : undefined,
+                                        });
+                                      }
+                                    })
+                                    .catch(() => null);
+                                }}
                                 className="h-[42px] min-w-0 rounded-[12px] border border-[var(--fd-line)] bg-[#0B0B0B] px-[13px] font-mono text-[13px] text-[var(--fd-text)] outline-none focus:border-[#3A3A3A] sm:w-[280px]"
                               />
                               <button
@@ -5923,6 +6002,13 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                                 Adicionar
                               </button>
                             </div>
+                            {domainAvailability ? (
+                              <p className={`mt-[10px] text-[12px] ${domainAvailability.available ? "text-[#9BE7AC]" : "text-[#FFD28A]"}`}>
+                                {domainAvailability.available
+                                  ? `${domainAvailability.hostname} esta livre.`
+                                  : `${domainAvailability.hostname} ja esta em uso.${domainAvailability.suggestion ? ` Sugestao: ${domainAvailability.suggestion}` : ""}`}
+                              </p>
+                            ) : null}
                           </div>
                           <div className="divide-y divide-[var(--fd-line)]">
                             {snapshot.settings.domains.map((domain) => (
@@ -6145,7 +6231,6 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
                         </section>
                       ) : null}
                     </div>
-                    </div>
                   </section>
                 ) : null}
               </div>
@@ -6153,6 +6238,18 @@ export function VpsWorkspace({ initialSnapshot }: VpsWorkspaceProps) {
           </div>
       </div>
     </PanelShell>
+
+      <FlowdeskVpsOverlay
+        hostname={primaryDomain?.hostname || null}
+        runtimeStatus={snapshot.project.runtimeStatus}
+        frameworkLabel={snapshot.project.framework?.label || snapshot.project.repository.language}
+        regionLabel={runtimeHealth?.regionLabel || snapshot.project.regionLabel}
+        latencyMs={runtimeHealth?.latencyMs || snapshot.siteHttp?.latencyMs || null}
+        siteHttp={snapshot.siteHttp || null}
+        busyAction={busyAction}
+        onAction={(action) => { void runAction(action); }}
+        onOpenTab={(tab) => navigateToTab(tab)}
+      />
 
       {repositorySelectionOpen ? (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/78 px-[18px] backdrop-blur-[8px]">
