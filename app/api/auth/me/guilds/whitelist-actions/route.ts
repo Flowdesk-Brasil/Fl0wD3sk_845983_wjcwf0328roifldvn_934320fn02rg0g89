@@ -130,7 +130,7 @@ export async function POST(request: Request) {
             title: "IP do banco removido",
             message:
               "A conexao persistida foi desligada. Informe o IP publico da VPS para conectar de novo.",
-            hint: "O launcher so ajuda nesta primeira configuracao. Depois a whitelist fica no IP salvo.",
+            hint: "Informe o IP publico e deixe o Launcher Pro v5 aberto na VPS. Ele sobe com o Windows e fala com o MySQL em localhost.",
           },
           { status: 400 },
         ),

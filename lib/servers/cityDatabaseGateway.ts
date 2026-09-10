@@ -356,13 +356,23 @@ export async function runCityWhitelistAction(input: {
     const launcher = await getLauncherStatusForGuild(input.guildId);
     if (launcher.online) {
       try {
-        const first = await runViaVps(
+        let first = await runViaVps(
           input.guildId,
           input.action,
           mapping,
           identifierValue,
           input.target,
         );
+        if (!first.ok && first.code === "vps_timeout") {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          first = await runViaVps(
+            input.guildId,
+            input.action,
+            mapping,
+            identifierValue,
+            input.target,
+          );
+        }
         if (first.ok) return first;
         if (first.code !== "invalid_credentials" && first.code !== "missing_credentials" && input.action !== "test") {
           return first;
@@ -400,8 +410,8 @@ export async function runCityWhitelistAction(input: {
         code: "launcher_offline",
         title: "Abra o launcher na VPS",
         message:
-          "O launcher precisa ficar aberto nesta VPS para falar com o MySQL em localhost. Depois de instalar, ele sobe com o Windows sozinho.",
-        hint: "Instale o Setup na VPS, entre com a Flowdesk e deixe o app na bandeja. Ele liga o XAMPP/MySQL se estiver apagado.",
+          "O Launcher Pro v5 precisa ficar aberto nesta VPS para falar com o MySQL em localhost. Depois de instalar, ele sobe com o Windows sozinho.",
+        hint: "Instale o Setup v5 na VPS, entre com a Flowdesk e deixe o app na bandeja. Ele liga o XAMPP/MySQL se estiver apagado.",
       };
     }
     return {

@@ -18,7 +18,7 @@ const QUERY_MS = 4_000;
 const PORT_PROBE_MS = 700;
 
 export const XAMPP_BIND_HINT =
-  "No XAMPP, o MySQL quase sempre escuta so 127.0.0.1. Em Config > my.ini troque bind-address=127.0.0.1 por bind-address=0.0.0.0, reinicie o MySQL e libere a porta 3306 no firewall do Windows. Ou deixe o launcher aberto so nesta conexao, que ele fala com o banco em localhost.";
+  "Deixe o Launcher Pro v5 aberto na VPS. Ele fala com o XAMPP em localhost e nao precisa abrir a porta 3306. Se quiser acesso direto, no my.ini use bind-address=0.0.0.0 e reinicie o MySQL.";
 
 async function settleMaybePromise(value: unknown) {
   try {

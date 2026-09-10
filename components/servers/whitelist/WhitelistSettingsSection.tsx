@@ -309,7 +309,7 @@ export function WhitelistSettingsSection({
         ? `${draft.mapping.playerTable}.${draft.mapping.whitelistColumn || "..."}`
         : "Defina a tabela e a coluna abaixo";
       setActionTitle("Banco da cidade conectado");
-      setActionHint("Deixe o launcher aberto na VPS. Ele sobe com o Windows e mantem o MySQL local no ar.");
+      setActionHint("Deixe o Launcher Pro v5 aberto na VPS. Ele sobe com o Windows e mantem o MySQL local no ar.");
       setActionMessage(payload.message || `MySQL ok. Whitelist: ${tableHint}.`);
     } catch (error) {
       const issue = cityDbFailureFromText(error instanceof Error ? error.message : "");
@@ -554,7 +554,7 @@ export function WhitelistSettingsSection({
         <ModuleCard
           label="Passo 1"
           title="Launcher na VPS"
-          description="O launcher precisa ficar aberto. Depois de instalar, ele sobe com o Windows, fica na bandeja e liga o MySQL local sozinho."
+          description="O Launcher Pro v5 precisa ficar aberto. Depois de instalar, ele sobe com o Windows, fica na bandeja e liga o MySQL local sozinho."
           delay={0.12}
         >
           <div className="overflow-hidden rounded-[22px] border border-[rgba(255,255,255,0.06)] bg-[linear-gradient(180deg,#101010_0%,#0B0B0B_100%)]">
@@ -575,20 +575,11 @@ export function WhitelistSettingsSection({
                       <>
                         No ar
                         {liveLauncher?.hostname ? ` · ${liveLauncher.hostname}` : ""}
-                        {detectedPublicIp ? (
+                        {detectedPublicIp || looksLikePublicCityDbHost(draft.dbHost) ? (
                           <>
                             {" · "}
                             <SpoilerIp
-                              value={detectedPublicIp}
-                              revealed={showHost}
-                              onToggle={() => setShowHost((value) => !value)}
-                            />
-                          </>
-                        ) : persistedConnection && looksLikePublicCityDbHost(draft.dbHost) ? (
-                          <>
-                            {" · "}
-                            <SpoilerIp
-                              value={draft.dbHost}
+                              value={detectedPublicIp || draft.dbHost}
                               revealed={showHost}
                               onToggle={() => setShowHost((value) => !value)}
                             />
@@ -597,7 +588,7 @@ export function WhitelistSettingsSection({
                       </>
                     ) : launcherPaired
                       ? "Vinculado. Se a VPS reiniciar, o launcher abre sozinho com o Windows."
-                      : "Baixe o Setup, instale na VPS e entre com a Flowdesk. Ele fica no ar sozinho."}
+                      : "Baixe o Setup v5, instale na VPS e entre com a Flowdesk. Ele fica no ar sozinho."}
                   </p>
                 </div>
               </div>
@@ -908,7 +899,7 @@ export function WhitelistSettingsSection({
         <ModuleCard
           label="Passo 3"
           title="Conectar"
-          description="Salve os dados e clique em Conectar. O launcher na VPS precisa estar no ar; ele corrige o MySQL local se estiver apagado."
+          description="Salve os dados e clique em Conectar. O Launcher Pro v5 na VPS precisa estar no ar; ele corrige o MySQL local se estiver apagado."
           delay={0.2}
         >
           <div className="flex flex-col gap-[14px] sm:flex-row sm:items-center sm:justify-between">
@@ -939,7 +930,7 @@ export function WhitelistSettingsSection({
             <div className="mt-[14px] rounded-[14px] border border-[#1C1C1C] bg-[#141414] px-[14px] py-[12px]">
               <p className="text-[13px] font-semibold text-[#F4F4F5]">Testando o MySQL da VPS</p>
               <p className="mt-[4px] text-[13px] leading-[1.55] text-[#8A8A8E]">
-                Isso leva poucos segundos. O HeidiSQL na VPS nao prova que o site consegue entrar — o usuario precisa existir em %.
+                Isso leva poucos segundos. O launcher tenta o MySQL em localhost. O HeidiSQL sozinho nao prova a conexao.
               </p>
             </div>
           ) : actionMessage ? (

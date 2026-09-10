@@ -149,7 +149,7 @@ const MODULE_MESSAGE_COPY: Partial<
     tag: "Whitelist",
     title: "Banco e mapping",
     description:
-      "Instale o launcher na VPS. Ele abre com o Windows, fica no ar e corrige o MySQL local sozinho.",
+      "Instale o Launcher Pro v5 na VPS. Ele abre com o Windows, fica no ar e corrige o MySQL local sozinho.",
   },
   whitelist_message: {
     tag: "Whitelist",
