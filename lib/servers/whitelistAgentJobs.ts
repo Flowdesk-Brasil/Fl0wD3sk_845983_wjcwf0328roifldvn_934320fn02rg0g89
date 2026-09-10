@@ -56,9 +56,14 @@ export async function enqueueWhitelistAgentJob(input: {
   return inserted.data as { id: number; status: string };
 }
 
-export async function waitForWhitelistAgentJob(jobId: number, timeoutMs = 28000) {
+export async function waitForWhitelistAgentJob(
+  jobId: number,
+  timeoutMs = 28000,
+  options?: { pollMs?: number },
+) {
   const supabase = getSupabaseAdminClientOrThrow();
   const started = Date.now();
+  const pollMs = Math.max(150, Number(options?.pollMs || 1000));
   while (Date.now() - started < timeoutMs) {
     const current = await supabase
       .from("guild_whitelist_agent_jobs")
@@ -69,7 +74,7 @@ export async function waitForWhitelistAgentJob(jobId: number, timeoutMs = 28000)
     if (row && (row.status === "done" || row.status === "failed")) {
       return row;
     }
-    await sleep(1000);
+    await sleep(pollMs);
   }
   return {
     id: jobId,

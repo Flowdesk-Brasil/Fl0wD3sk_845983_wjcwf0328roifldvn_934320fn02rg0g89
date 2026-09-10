@@ -872,8 +872,9 @@ export function WhitelistSettingsSection({
           <ol className="mb-[14px] list-decimal space-y-[8px] pl-[18px] text-[13px] leading-[1.55] text-[#8A8A8E]">
             <li>Abra o HeidiSQL com um usuario administrador e selecione o banco informado no campo Nome do banco.</li>
             <li>Abra a aba Consulta e cole o SQL de exemplo. Ele usa o usuario e a senha dos campos acima.</li>
-            <li>Execute o comando. O usuario precisa existir em localhost, 127.0.0.1 e % — sem o % o site nao conecta.</li>
-            <li>Volte ao painel e clique em Conectar banco. Se o HeidiSQL entra e o site nao, rode o SQL de novo e libere a porta 3306.</li>
+            <li>Execute o comando. O usuario precisa existir em localhost, 127.0.0.1 e %.</li>
+            <li>No XAMPP: Config do MySQL → my.ini. Troque bind-address=127.0.0.1 por bind-address=0.0.0.0, clique Stop/Start no MySQL e libere 3306 no firewall do Windows.</li>
+            <li>Volte ao painel e clique em Conectar banco. Se a porta ainda estiver fechada, o launcher na VPS faz essa primeira conexao em localhost.</li>
           </ol>
           <pre className="overflow-x-auto rounded-[14px] border border-[#1C1C1C] bg-[#141414] px-[14px] py-[12px] text-[12px] leading-[1.6] text-[#D1D1D1]">
             {cityDbProvisionSql(
