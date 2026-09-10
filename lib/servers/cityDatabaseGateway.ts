@@ -199,7 +199,7 @@ async function runViaVps(
       code: "vps_timeout",
       message:
         finished.error_message ||
-        "O launcher na VPS nao respondeu a tempo. Na primeira configuracao, deixe o app aberto. Depois a whitelist funciona sem ele.",
+        "O launcher na VPS nao respondeu a tempo. Ele precisa ficar aberto; depois de instalar, sobe com o Windows e corrige o MySQL sozinho.",
     };
   }
   const result = (finished.result || {}) as Record<string, unknown>;
@@ -390,16 +390,30 @@ export async function runCityWhitelistAction(input: {
   }
 
   if (input.action === "test") {
+    const launcher = await getLauncherStatusForGuild(input.guildId);
+    if (!launcher.online) {
+      return {
+        ok: false,
+        via: "vps",
+        host: input.target.host,
+        port: input.target.port,
+        code: "launcher_offline",
+        title: "Abra o launcher na VPS",
+        message:
+          "O launcher precisa ficar aberto nesta VPS para falar com o MySQL em localhost. Depois de instalar, ele sobe com o Windows sozinho.",
+        hint: "Instale o Setup na VPS, entre com a Flowdesk e deixe o app na bandeja. Ele liga o XAMPP/MySQL se estiver apagado.",
+      };
+    }
     return {
-      ok: true,
-      via: "flowdesk",
+      ok: false,
+      via: "vps",
       host: input.target.host,
       port: input.target.port,
-      code: "city_deferred",
-      title: "Flowdesk pronta",
+      code: "offline",
+      title: "O launcher esta corrigindo o MySQL",
       message:
-        "A whitelist do Discord nao depende do MySQL da cidade. A sync do jogo usa o launcher na VPS, sem abrir porta 3306.",
-      hint: "Deixe o launcher na VPS se quiser atualizar vrp_users. Nao precisa bind-address nem firewall.",
+        "A VPS respondeu, mas o MySQL local ainda nao abriu. O launcher tenta ligar o XAMPP e criar o usuario sozinho.",
+      hint: "No launcher, clique em Corrigir MySQL se o banco continuar apagado. Nao precisa abrir a porta 3306 na internet.",
     };
   }
 

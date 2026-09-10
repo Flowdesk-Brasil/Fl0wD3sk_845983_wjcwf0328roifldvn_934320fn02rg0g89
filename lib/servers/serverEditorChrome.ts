@@ -149,7 +149,7 @@ const MODULE_MESSAGE_COPY: Partial<
     tag: "Whitelist",
     title: "Banco e mapping",
     description:
-      "Conecte o banco da cidade uma vez. Depois a whitelist fica no IP salvo, mesmo com o launcher desinstalado.",
+      "Instale o launcher na VPS. Ele abre com o Windows, fica no ar e corrige o MySQL local sozinho.",
   },
   whitelist_message: {
     tag: "Whitelist",

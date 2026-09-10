@@ -309,7 +309,7 @@ export function WhitelistSettingsSection({
         ? `${draft.mapping.playerTable}.${draft.mapping.whitelistColumn || "..."}`
         : "Defina a tabela e a coluna abaixo";
       setActionTitle("Banco da cidade conectado");
-      setActionHint("A whitelist usa esta conexao salva. O launcher pode ficar fechado depois desta etapa.");
+      setActionHint("Deixe o launcher aberto na VPS. Ele sobe com o Windows e mantem o MySQL local no ar.");
       setActionMessage(payload.message || `MySQL ok. Whitelist: ${tableHint}.`);
     } catch (error) {
       const issue = cityDbFailureFromText(error instanceof Error ? error.message : "");
@@ -357,7 +357,7 @@ export function WhitelistSettingsSection({
       link.remove();
       setActionTone("ok");
       setActionMessage(
-        "Download iniciado. Instale o launcher na VPS da cidade, entre com sua conta Flowdesk e use-o na primeira configuracao. Depois disso ele pode ficar fechado.",
+        "Download do Launcher Pro v5 iniciado. Instale na VPS, entre com a Flowdesk e deixe na bandeja. Ele abre com o Windows e corrige o MySQL sozinho.",
       );
     } catch (error) {
       setActionTone("error");
@@ -553,12 +553,8 @@ export function WhitelistSettingsSection({
       <ModulePage>
         <ModuleCard
           label="Passo 1"
-          title="Launcher na VPS (primeira vez)"
-          description={
-            persistedConnection
-              ? "Conexao ja persistida no IP salvo. O launcher pode ficar fechado ou desinstalado. So volta a ser preciso se voce apagar o IP."
-              : "O launcher so e necessario na primeira configuracao, para achar o IP. Depois a whitelist fica no banco direto."
-          }
+          title="Launcher na VPS"
+          description="O launcher precisa ficar aberto. Depois de instalar, ele sobe com o Windows, fica na bandeja e liga o MySQL local sozinho."
           delay={0.12}
         >
           <div className="overflow-hidden rounded-[22px] border border-[rgba(255,255,255,0.06)] bg-[linear-gradient(180deg,#101010_0%,#0B0B0B_100%)]">
@@ -569,30 +565,15 @@ export function WhitelistSettingsSection({
                 </div>
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-[8px]">
-                    <p className="text-[14px] font-semibold text-[#F4F4F5]">Flowdesk Launcher</p>
+                    <p className="text-[14px] font-semibold text-[#F4F4F5]">Flowdesk Launcher Pro v5</p>
                     <span className="rounded-full bg-[#171717] px-[8px] py-[3px] text-[10px] font-semibold tracking-[0.14em] text-[#8A8A8E] uppercase">
                       VPS
                     </span>
                   </div>
                   <p className="mt-[4px] text-[13px] leading-[1.55] text-[#8A8A8E]">
-                    {persistedConnection ? (
+                    {launcherOnline ? (
                       <>
-                        Banco persistido
-                        {looksLikePublicCityDbHost(draft.dbHost) ? (
-                          <>
-                            {" · "}
-                            <SpoilerIp
-                              value={draft.dbHost}
-                              revealed={showHost}
-                              onToggle={() => setShowHost((value) => !value)}
-                            />
-                          </>
-                        ) : null}
-                        {" · launcher opcional"}
-                      </>
-                    ) : launcherOnline ? (
-                      <>
-                        Conectado
+                        No ar
                         {liveLauncher?.hostname ? ` · ${liveLauncher.hostname}` : ""}
                         {detectedPublicIp ? (
                           <>
@@ -603,21 +584,25 @@ export function WhitelistSettingsSection({
                               onToggle={() => setShowHost((value) => !value)}
                             />
                           </>
+                        ) : persistedConnection && looksLikePublicCityDbHost(draft.dbHost) ? (
+                          <>
+                            {" · "}
+                            <SpoilerIp
+                              value={draft.dbHost}
+                              revealed={showHost}
+                              onToggle={() => setShowHost((value) => !value)}
+                            />
+                          </>
                         ) : null}
                       </>
                     ) : launcherPaired
-                      ? "Launcher vinculado. Abra na VPS so nesta primeira configuracao."
-                      : "Opcional: baixe o setup na VPS para detectar o IP na primeira vez."}
+                      ? "Vinculado. Se a VPS reiniciar, o launcher abre sozinho com o Windows."
+                      : "Baixe o Setup, instale na VPS e entre com a Flowdesk. Ele fica no ar sozinho."}
                   </p>
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-[10px] sm:justify-end">
-                {persistedConnection ? (
-                  <span className="inline-flex h-[32px] items-center gap-[6px] rounded-full bg-[rgba(134,239,172,0.08)] px-[10px] text-[12px] font-semibold text-[#86EFAC]">
-                    <Check className="h-[13px] w-[13px]" strokeWidth={2.2} />
-                    Persistido
-                  </span>
-                ) : launcherOnline ? (
+                {launcherOnline ? (
                   <span className="inline-flex h-[32px] items-center gap-[6px] rounded-full bg-[rgba(134,239,172,0.08)] px-[10px] text-[12px] font-semibold text-[#86EFAC]">
                     <Check className="h-[13px] w-[13px]" strokeWidth={2.2} />
                     No ar
@@ -625,11 +610,11 @@ export function WhitelistSettingsSection({
                 ) : launcherPaired ? (
                   <span className="inline-flex h-[32px] items-center gap-[6px] rounded-full bg-[rgba(246,212,138,0.08)] px-[10px] text-[12px] font-semibold text-[#F6D48A]">
                     <TriangleAlert className="h-[13px] w-[13px]" strokeWidth={2} />
-                    Primeira vez
+                    Reabrindo
                   </span>
                 ) : (
                   <span className="inline-flex h-[32px] items-center rounded-full bg-[#141414] px-[10px] text-[12px] font-semibold text-[#9A9A9E]">
-                    Opcional
+                    Obrigatorio
                   </span>
                 )}
                 <button
@@ -639,7 +624,7 @@ export function WhitelistSettingsSection({
                   className="inline-flex h-[36px] items-center gap-[8px] rounded-full bg-white px-[14px] text-[13px] font-semibold text-[#111] transition-transform duration-200 hover:-translate-y-px disabled:opacity-50"
                 >
                   <Download className="h-[15px] w-[15px]" />
-                  {busy === "agent" ? "Baixando..." : "Baixar Setup"}
+                  {busy === "agent" ? "Baixando v5..." : "Baixar Setup v5"}
                 </button>
               </div>
             </div>
@@ -661,11 +646,11 @@ export function WhitelistSettingsSection({
             <LabeledField
               label="IP publico da VPS"
               hint={
-                persistedConnection
-                  ? "IP persistido. Apague o campo para desligar a conexao. O launcher nao e mais necessario."
-                  : detectedPublicIp
-                    ? "Detectado pelo launcher nesta primeira configuracao. Depois fica salvo."
-                    : "Informe o IP publico da VPS. O launcher pode preencher so na primeira vez."
+                detectedPublicIp
+                  ? "Detectado pelo launcher nesta VPS. O app precisa ficar aberto para falar com o MySQL local."
+                  : persistedConnection
+                    ? "IP salvo. O launcher nesta VPS e quem fala com o XAMPP em localhost."
+                    : "Informe o IP publico da VPS. O launcher preenche sozinho quando estiver no ar."
               }
             >
               <div className="relative">
@@ -873,8 +858,8 @@ export function WhitelistSettingsSection({
             <li>Abra o HeidiSQL com um usuario administrador e selecione o banco informado no campo Nome do banco.</li>
             <li>Abra a aba Consulta e cole o SQL de exemplo. Ele usa o usuario e a senha dos campos acima.</li>
             <li>Execute o comando. O usuario precisa existir em localhost, 127.0.0.1 e %.</li>
-            <li>A Flowdesk nao precisa do MySQL aberto na internet. O launcher na VPS fala com o XAMPP em localhost se voce quiser sync do jogo.</li>
-            <li>Clique em Conectar banco. Mesmo se o HeidiSQL for so local, a whitelist do Discord ja fica no ar.</li>
+            <li>Deixe o launcher aberto na VPS. Ele sobe com o Windows e fala com o XAMPP em localhost. Nao precisa abrir a porta 3306 na internet.</li>
+            <li>Clique em Conectar banco. Se o MySQL estiver apagado, o launcher tenta ligar o servico sozinho.</li>
           </ol>
           <pre className="overflow-x-auto rounded-[14px] border border-[#1C1C1C] bg-[#141414] px-[14px] py-[12px] text-[12px] leading-[1.6] text-[#D1D1D1]">
             {cityDbProvisionSql(
@@ -923,11 +908,7 @@ export function WhitelistSettingsSection({
         <ModuleCard
           label="Passo 3"
           title="Conectar"
-          description={
-            persistedConnection
-              ? "A Flowdesk ja esta pronta. O MySQL da cidade e opcional: a sync do jogo vai pelo launcher na VPS, sem abrir porta."
-              : "Salve os dados e clique em Conectar. A whitelist do Discord funciona mesmo se o XAMPP nao estiver na internet."
-          }
+          description="Salve os dados e clique em Conectar. O launcher na VPS precisa estar no ar; ele corrige o MySQL local se estiver apagado."
           delay={0.2}
         >
           <div className="flex flex-col gap-[14px] sm:flex-row sm:items-center sm:justify-between">
