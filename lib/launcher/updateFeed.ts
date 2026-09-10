@@ -44,6 +44,10 @@ function releaseHasLauncherAssets(release: GithubRelease | null) {
   );
 }
 
+function isLauncherV5(release: GithubRelease | null) {
+  return /^v?5(\.|$)/i.test(String(release?.tag_name || ""));
+}
+
 export async function fetchLatestLauncherRelease() {
   const latestResponse = await fetch(
     `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/releases/latest`,
@@ -51,15 +55,19 @@ export async function fetchLatestLauncherRelease() {
   );
   if (latestResponse.ok) {
     const latest = (await latestResponse.json()) as GithubRelease;
-    if (releaseHasLauncherAssets(latest)) return latest;
+    if (releaseHasLauncherAssets(latest) && isLauncherV5(latest)) return latest;
   }
   const listResponse = await fetch(
-    `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/releases?per_page=15`,
+    `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/releases?per_page=20`,
     { headers: githubHeaders(), next: { revalidate: 60 } },
   );
   if (!listResponse.ok) return null;
   const releases = (await listResponse.json()) as GithubRelease[];
-  return releases.find((release) => releaseHasLauncherAssets(release)) || null;
+  return (
+    releases.find((release) => releaseHasLauncherAssets(release) && isLauncherV5(release)) ||
+    releases.find((release) => releaseHasLauncherAssets(release)) ||
+    null
+  );
 }
 
 function findAsset(release: GithubRelease, fileName: string) {

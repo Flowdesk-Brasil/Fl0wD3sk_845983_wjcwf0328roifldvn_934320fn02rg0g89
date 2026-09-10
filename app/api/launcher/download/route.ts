@@ -19,7 +19,7 @@ export async function GET(request: Request) {
         {
           ok: false,
           message:
-            "O instalador ainda esta sendo publicado. O GitHub Actions gera o FlowdeskLauncher-Setup.exe no merge.",
+            "O instalador v5 ainda esta sendo publicado. O GitHub Actions gera o FlowdeskLauncher-Setup.exe no merge.",
         },
         { status: 404 },
       ),

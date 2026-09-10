@@ -2,6 +2,7 @@ import "server-only";
 
 import { getLauncherStatusForGuild } from "@/lib/launcher/auth";
 import { explainCityDbFailure } from "@/lib/servers/cityDbErrors";
+import { XAMPP_BIND_HINT, probeCityDbPort } from "@/lib/servers/cityDbConnect";
 import {
   applyWhitelistState,
   inspectCitySchema,
@@ -27,7 +28,7 @@ export type CityWhitelistAction = "test" | "inspect" | "validate" | "approve" | 
 
 export type CityWhitelistResult = {
   ok: boolean;
-  via: "direct" | "vps";
+  via: "direct" | "vps" | "flowdesk";
   host: string;
   port: number;
   message: string;
@@ -186,7 +187,9 @@ async function runViaVps(
       },
     },
   });
-  const finished = await waitForWhitelistAgentJob(job.id, 28000);
+  const finished = await waitForWhitelistAgentJob(job.id, action === "test" ? 12000 : 28000, {
+    pollMs: action === "test" ? 250 : 1000,
+  });
   if (finished.status !== "done") {
     return {
       ok: false,
@@ -196,7 +199,7 @@ async function runViaVps(
       code: "vps_timeout",
       message:
         finished.error_message ||
-        "O launcher na VPS nao respondeu a tempo. Na primeira configuracao, deixe o app aberto. Depois a whitelist funciona sem ele.",
+        "O launcher na VPS nao respondeu a tempo. Ele precisa ficar aberto; depois de instalar, sobe com o Windows e corrige o MySQL sozinho.",
     };
   }
   const result = (finished.result || {}) as Record<string, unknown>;
@@ -312,6 +315,20 @@ async function runViaVps(
   };
 }
 
+function xamppUnreachable(target: WhitelistDbTarget): CityWhitelistResult {
+  return {
+    ok: false,
+    via: "direct",
+    host: target.host,
+    port: target.port,
+    code: "timeout",
+    title: "O MySQL do XAMPP so aceita conexao local",
+    message:
+      "O servico esta ligado na VPS, mas a porta 3306 nao responde pela internet. O HeidiSQL na propria maquina nao prova o acesso remoto.",
+    hint: XAMPP_BIND_HINT,
+  };
+}
+
 export async function runCityWhitelistAction(input: {
   guildId: string;
   action: CityWhitelistAction;
@@ -322,7 +339,7 @@ export async function runCityWhitelistAction(input: {
 }): Promise<CityWhitelistResult> {
   const mapping = normalizeWhitelistMapping(input.mapping);
   const identifierValue = String(input.identifierValue || "").trim();
-  const persistDirectOnly = input.persistDirectOnly !== false;
+  const allowLauncher = input.persistDirectOnly !== true || input.action === "test";
 
   const finishDirect = async () => {
     const direct = await runDirect(input.action, input.target, mapping, identifierValue);
@@ -335,35 +352,80 @@ export async function runCityWhitelistAction(input: {
     };
   };
 
-  let lastError: unknown = null;
-  try {
-    return await finishDirect();
-  } catch (error) {
-    lastError = error;
-    if (persistDirectOnly || !isUnreachableDbError(error)) {
-      return failureFromError(input.target, "direct", error);
+  if (allowLauncher) {
+    const launcher = await getLauncherStatusForGuild(input.guildId);
+    if (launcher.online) {
+      try {
+        let first = await runViaVps(
+          input.guildId,
+          input.action,
+          mapping,
+          identifierValue,
+          input.target,
+        );
+        if (!first.ok && first.code === "vps_timeout") {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          first = await runViaVps(
+            input.guildId,
+            input.action,
+            mapping,
+            identifierValue,
+            input.target,
+          );
+        }
+        if (first.ok) return first;
+        if (first.code !== "invalid_credentials" && first.code !== "missing_credentials" && input.action !== "test") {
+          return first;
+        }
+      } catch (error) {
+        if (input.action !== "test") return failureFromError(input.target, "vps", error);
+      }
     }
   }
 
-  const launcher = await getLauncherStatusForGuild(input.guildId);
-  if (!launcher.online) {
-    return failureFromError(input.target, "direct", lastError);
+  const probe = await probeCityDbPort(input.target.host, input.target.port, 700);
+  let lastError: unknown = probe.open
+    ? null
+    : new Error(`Porta ${input.target.port} em ${input.target.host} esta fechada.`);
+
+  if (probe.open) {
+    try {
+      return await finishDirect();
+    } catch (error) {
+      lastError = error;
+      if (input.action !== "test" && !isUnreachableDbError(error)) {
+        return failureFromError(input.target, "direct", error);
+      }
+    }
   }
 
-  try {
-    const first = await runViaVps(
-      input.guildId,
-      input.action,
-      mapping,
-      identifierValue,
-      input.target,
-    );
-    if (first.ok || (first.code !== "invalid_credentials" && first.code !== "missing_credentials")) {
-      return first;
+  if (input.action === "test") {
+    const launcher = await getLauncherStatusForGuild(input.guildId);
+    if (!launcher.online) {
+      return {
+        ok: false,
+        via: "vps",
+        host: input.target.host,
+        port: input.target.port,
+        code: "launcher_offline",
+        title: "Abra o launcher na VPS",
+        message:
+          "O Launcher Pro v5 precisa ficar aberto nesta VPS para falar com o MySQL em localhost. Depois de instalar, ele sobe com o Windows sozinho.",
+        hint: "Instale o Setup v5 na VPS, entre com a Flowdesk e deixe o app na bandeja. Ele liga o XAMPP/MySQL se estiver apagado.",
+      };
     }
-    await new Promise((resolve) => setTimeout(resolve, 2500));
-    return await runViaVps(input.guildId, input.action, mapping, identifierValue, input.target);
-  } catch (error) {
-    return failureFromError(input.target, "vps", error);
+    return {
+      ok: false,
+      via: "vps",
+      host: input.target.host,
+      port: input.target.port,
+      code: "offline",
+      title: "O launcher esta corrigindo o MySQL",
+      message:
+        "A VPS respondeu, mas o MySQL local ainda nao abriu. O launcher tenta ligar o XAMPP e criar o usuario sozinho.",
+      hint: "No launcher, clique em Corrigir MySQL se o banco continuar apagado. Nao precisa abrir a porta 3306 na internet.",
+    };
   }
+
+  return lastError ? failureFromError(input.target, "direct", lastError) : xamppUnreachable(input.target);
 }

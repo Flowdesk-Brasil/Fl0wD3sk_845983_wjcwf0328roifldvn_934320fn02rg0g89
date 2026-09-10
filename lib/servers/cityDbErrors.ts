@@ -93,7 +93,7 @@ export function explainCityDbFailure(error: unknown): CityDbFailure {
       code: "missing_grant",
       title: "O usuario do banco nao pode alterar a whitelist",
       message: "O login funciona, mas este usuario nao tem UPDATE na tabela.",
-      hint: "No HeidiSQL, conceda SELECT e UPDATE na tabela da whitelist.",
+      hint: "No HeidiSQL, conceda SELECT e UPDATE na tabela da whitelist. O usuario tambem precisa existir em %, nao so em localhost.",
       retryable: false,
     };
   }
@@ -108,7 +108,7 @@ export function explainCityDbFailure(error: unknown): CityDbFailure {
       code: "invalid_credentials",
       title: "O banco recusou o usuario",
       message: "Usuario ou senha nao conferem com o MySQL da sua VPS.",
-      hint: "Use o mesmo usuario e senha do HeidiSQL. A Flowdesk so envia o que voce salvou no painel.",
+      hint: "Use o mesmo usuario e senha do HeidiSQL. Se o programa na VPS entra e o painel nao, rode o SQL do tutorial — ele libera o host %.",
       retryable: false,
     };
   }
@@ -123,7 +123,7 @@ export function explainCityDbFailure(error: unknown): CityDbFailure {
       code: "timeout",
       title: "O banco da cidade nao respondeu",
       message: "O MySQL/MariaDB da sua VPS nao respondeu a tempo.",
-      hint: `${OWNER_HINT} Confira se o servico esta rodando e se a porta nao esta filtrada.`,
+      hint: "Deixe o Launcher Pro v5 aberto na VPS. Ele sobe com o Windows, liga o XAMPP em localhost e nao precisa abrir a porta 3306 na internet.",
       retryable: true,
     };
   }
@@ -179,7 +179,7 @@ export function explainCityDbFailure(error: unknown): CityDbFailure {
       code: "ip_not_allowed",
       title: "O MySQL recusou o IP remoto",
       message: "O usuario do banco nao pode conectar deste IP.",
-      hint: "Libere o host do usuario no MariaDB (% ou o IP publico) ou use o launcher so na primeira configuracao.",
+      hint: "Rode de novo o SQL do painel. Ele cria o usuario em localhost e em %. Sem o %, o site nao entra; o launcher na VPS ainda fala em localhost.",
       retryable: false,
     };
   }

@@ -1,6 +1,3 @@
-import net from "node:net";
-import mysql from "mysql2/promise";
-import pg from "pg";
 import {
   buildSelectPlayerSql,
   buildUpdateWhitelistSql,
@@ -15,36 +12,16 @@ import {
 import { resolveWhitelistDbPassword } from "@/lib/servers/whitelistSecret";
 import { assertCityDbHost } from "@/lib/servers/whitelistHost";
 import { explainCityDbFailure } from "@/lib/servers/cityDbErrors";
+import {
+  probeCityDbPort,
+  testCityDatabase,
+  withCityDatabase,
+  type CityDbTarget,
+} from "@/lib/servers/cityDbConnect";
 
-export type WhitelistDbTarget = {
-  engine: WhitelistDbEngine;
-  host: string;
-  port: number;
-  database: string;
-  user: string;
-  password: string;
-  ssl: boolean;
-};
+export type WhitelistDbTarget = CityDbTarget & { engine: WhitelistDbEngine };
 
-const CONNECT_TIMEOUT_MS = 12_000;
-const QUERY_TIMEOUT_MS = 12_000;
-
-async function settleMaybePromise(value: unknown) {
-  try {
-    await value;
-  } catch {
-    /* close/release can return void or a thenable without .catch */
-  }
-}
-
-function withQueryTimeout<T>(promise: Promise<T>, label: string) {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => {
-      setTimeout(() => reject(new Error(`${label} excedeu o tempo limite.`)), QUERY_TIMEOUT_MS);
-    }),
-  ]);
-}
+export { probeCityDbPort, testCityDatabase, withCityDatabase };
 
 export function sanitizeDbError(error: unknown) {
   const message = error instanceof Error ? error.message : "Falha na conexao com o banco da cidade.";
@@ -81,111 +58,6 @@ export function sanitizeDbError(error: unknown) {
 export function isUnreachableDbError(error: unknown) {
   const code = sanitizeDbError(error).code;
   return code === "offline" || code === "timeout";
-}
-
-export async function probeCityDbPort(host: string, port: number, timeoutMs = 2500) {
-  const started = Date.now();
-  return new Promise<{ open: boolean; ms: number; error?: string }>((resolve) => {
-    const socket = net.connect({ host, port, timeout: timeoutMs });
-    const finish = (open: boolean, error?: string) => {
-      socket.removeAllListeners();
-      socket.destroy();
-      resolve({ open, ms: Date.now() - started, error });
-    };
-    socket.once("connect", () => finish(true));
-    socket.once("timeout", () => finish(false, "timeout"));
-    socket.once("error", (error) => finish(false, error.message));
-  });
-}
-
-export async function withCityDatabase<T>(
-  target: WhitelistDbTarget,
-  fn: (query: (sql: string, params?: unknown[]) => Promise<Record<string, unknown>[]>) => Promise<T>,
-) {
-  if (target.engine === "postgres") {
-    const client = new pg.Client({
-      host: target.host,
-      port: target.port,
-      database: target.database,
-      user: target.user,
-      password: target.password,
-      ssl: target.ssl ? { rejectUnauthorized: false } : undefined,
-      connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
-      statement_timeout: QUERY_TIMEOUT_MS,
-    });
-    await client.connect();
-    try {
-      return await fn(async (sql, params = []) => {
-        let placeholder = 0;
-        const pgSql = sql.replace(/\?/g, () => `$${++placeholder}`);
-        const result = (await withQueryTimeout(client.query(pgSql, params), "Consulta")) as {
-          rows?: Record<string, unknown>[];
-        };
-        return (result.rows || []) as Record<string, unknown>[];
-      });
-    } finally {
-      await settleMaybePromise(client.end());
-    }
-  }
-
-  const connection = await connectRemoteMysql(target);
-  try {
-    return await fn(async (sql, params = []) => {
-      const [rows] = await withQueryTimeout(
-        connection.query(sql, params as never[]),
-        "Consulta",
-      );
-      return (Array.isArray(rows) ? rows : []) as Record<string, unknown>[];
-    });
-  } finally {
-    await settleMaybePromise(connection.end());
-  }
-}
-
-async function connectRemoteMysql(target: WhitelistDbTarget) {
-  const database = String(target.database || "").replace(/[`\\]/g, "");
-  const ports = [...new Set([Number(target.port || 3306), 3306].filter((value) => value >= 1))];
-  let lastError: unknown = null;
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    for (const port of ports) {
-      try {
-        const connection = await mysql.createConnection({
-          host: target.host,
-          port,
-          user: target.user,
-          password: target.password || "",
-          connectTimeout: CONNECT_TIMEOUT_MS,
-          enableKeepAlive: true,
-          keepAliveInitialDelay: 10_000,
-          insecureAuth: true,
-          charset: "utf8mb4",
-        });
-        if (database) {
-          try {
-            await connection.query(`USE \`${database}\``);
-          } catch (error) {
-            await settleMaybePromise(connection.end());
-            throw error;
-          }
-        }
-        return connection;
-      } catch (error) {
-        lastError = error;
-      }
-    }
-    if (attempt < 4) {
-      await new Promise((resolve) => setTimeout(resolve, 200 * 2 ** attempt));
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error("Nao foi possivel abrir o MySQL da cidade.");
-}
-
-export async function testCityDatabase(target: WhitelistDbTarget) {
-  const started = Date.now();
-  await withCityDatabase(target, async (query) => {
-    await query(target.engine === "postgres" ? "SELECT 1 AS ok" : "SELECT 1 AS ok");
-  });
-  return { ok: true, latencyMs: Date.now() - started };
 }
 
 export async function inspectCitySchema(target: WhitelistDbTarget) {
