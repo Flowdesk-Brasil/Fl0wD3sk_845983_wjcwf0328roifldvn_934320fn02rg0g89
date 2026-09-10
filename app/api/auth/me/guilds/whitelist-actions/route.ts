@@ -137,9 +137,10 @@ export async function POST(request: Request) {
       );
     }
     const persistDirectOnly =
-      hasPersistedCityDbHost(existing.data?.db_host) ||
-      (Boolean(existing.data?.db_password_cipher) &&
-        hasPersistedCityDbHost(requestedHost));
+      action !== "test" &&
+      (hasPersistedCityDbHost(existing.data?.db_host) ||
+        (Boolean(existing.data?.db_password_cipher) &&
+          hasPersistedCityDbHost(requestedHost)));
     const target = settingsToDbTarget({
       guildId,
       engine: (String(body.dbEngine || existing.data?.db_engine || "mysql") as

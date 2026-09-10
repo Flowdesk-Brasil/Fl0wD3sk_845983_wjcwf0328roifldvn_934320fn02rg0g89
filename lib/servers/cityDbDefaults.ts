@@ -31,6 +31,7 @@ export function cityDbProvisionSql(
   return [
     `GRANT ALL PRIVILEGES ON \`${db}\`.* TO '${login}'@'localhost' IDENTIFIED BY '${secret}';`,
     `GRANT ALL PRIVILEGES ON \`${db}\`.* TO '${login}'@'127.0.0.1' IDENTIFIED BY '${secret}';`,
+    `GRANT ALL PRIVILEGES ON \`${db}\`.* TO '${login}'@'%' IDENTIFIED BY '${secret}';`,
     "FLUSH PRIVILEGES;",
   ].join("\n");
 }

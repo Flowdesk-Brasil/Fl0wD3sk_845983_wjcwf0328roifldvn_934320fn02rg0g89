@@ -26,8 +26,8 @@ export type WhitelistDbTarget = {
   ssl: boolean;
 };
 
-const CONNECT_TIMEOUT_MS = 12_000;
-const QUERY_TIMEOUT_MS = 12_000;
+const CONNECT_TIMEOUT_MS = 5_000;
+const QUERY_TIMEOUT_MS = 6_000;
 
 async function settleMaybePromise(value: unknown) {
   try {
@@ -146,35 +146,29 @@ async function connectRemoteMysql(target: WhitelistDbTarget) {
   const database = String(target.database || "").replace(/[`\\]/g, "");
   const ports = [...new Set([Number(target.port || 3306), 3306].filter((value) => value >= 1))];
   let lastError: unknown = null;
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    for (const port of ports) {
-      try {
-        const connection = await mysql.createConnection({
-          host: target.host,
-          port,
-          user: target.user,
-          password: target.password || "",
-          connectTimeout: CONNECT_TIMEOUT_MS,
-          enableKeepAlive: true,
-          keepAliveInitialDelay: 10_000,
-          insecureAuth: true,
-          charset: "utf8mb4",
-        });
-        if (database) {
-          try {
-            await connection.query(`USE \`${database}\``);
-          } catch (error) {
-            await settleMaybePromise(connection.end());
-            throw error;
-          }
-        }
-        return connection;
-      } catch (error) {
-        lastError = error;
+  for (const port of ports) {
+    let connection: Awaited<ReturnType<typeof mysql.createConnection>> | null = null;
+    try {
+      connection = await mysql.createConnection({
+        host: target.host,
+        port,
+        user: target.user,
+        password: target.password || "",
+        database: database || undefined,
+        connectTimeout: CONNECT_TIMEOUT_MS,
+        enableKeepAlive: true,
+        keepAliveInitialDelay: 5_000,
+        insecureAuth: true,
+        charset: "utf8mb4",
+        dateStrings: true,
+      });
+      await withQueryTimeout(connection.query("SELECT 1 AS ok"), "Conexao");
+      return connection;
+    } catch (error) {
+      lastError = error;
+      if (connection) {
+        await settleMaybePromise(connection.end());
       }
-    }
-    if (attempt < 4) {
-      await new Promise((resolve) => setTimeout(resolve, 200 * 2 ** attempt));
     }
   }
   throw lastError instanceof Error ? lastError : new Error("Nao foi possivel abrir o MySQL da cidade.");
