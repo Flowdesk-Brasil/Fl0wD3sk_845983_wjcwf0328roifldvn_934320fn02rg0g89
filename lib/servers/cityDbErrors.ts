@@ -56,6 +56,49 @@ export function explainCityDbFailure(error: unknown): CityDbFailure {
   }
 
   if (
+    lowered.includes("unknown column") ||
+    (lowered.includes("doesn't exist") && lowered.includes("column")) ||
+    errno === "ER_BAD_FIELD_ERROR"
+  ) {
+    return {
+      code: "unknown_column",
+      title: "A coluna da whitelist nao existe",
+      message: "A tabela existe, mas a coluna configurada no painel nao foi encontrada no MySQL.",
+      hint: "Confira a coluna do ID e a da whitelist. O botao Conectar so testa se o banco liga.",
+      retryable: false,
+    };
+  }
+
+  if (
+    lowered.includes("unknown table") ||
+    lowered.includes("doesn't exist") ||
+    errno === "ER_NO_SUCH_TABLE"
+  ) {
+    return {
+      code: "unknown_table",
+      title: "Essa tabela nao existe no banco",
+      message: "A tabela da whitelist configurada no painel nao existe neste MySQL.",
+      hint: "Confira o nome da tabela no HeidiSQL.",
+      retryable: false,
+    };
+  }
+
+  if (
+    lowered.includes("command denied") ||
+    errno === "ER_TABLEACCESS_DENIED_ERROR" ||
+    errno === "ER_COLUMNACCESS_DENIED_ERROR" ||
+    errno === "ER_DBACCESS_DENIED_ERROR"
+  ) {
+    return {
+      code: "missing_grant",
+      title: "O usuario do banco nao pode alterar a whitelist",
+      message: "O login funciona, mas este usuario nao tem UPDATE na tabela.",
+      hint: "No HeidiSQL, conceda SELECT e UPDATE na tabela da whitelist.",
+      retryable: false,
+    };
+  }
+
+  if (
     lowered.includes("access denied") ||
     lowered.includes("er_access_denied") ||
     errno === "ER_ACCESS_DENIED_ERROR" ||
@@ -116,7 +159,12 @@ export function explainCityDbFailure(error: unknown): CityDbFailure {
     };
   }
 
-  if (lowered.includes("plugin") || lowered.includes("caching_sha2") || lowered.includes("auth")) {
+  if (
+    lowered.includes("caching_sha2") ||
+    lowered.includes("auth plugin") ||
+    lowered.includes("authentication plugin") ||
+    errno === "ER_NOT_SUPPORTED_AUTH_MODE"
+  ) {
     return {
       code: "auth_plugin",
       title: "O banco recusou o tipo de autenticacao",
