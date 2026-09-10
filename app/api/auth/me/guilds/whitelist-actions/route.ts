@@ -168,14 +168,17 @@ export async function POST(request: Request) {
       const failedPatch: Record<string, unknown> = {
         last_health_at: new Date().toISOString(),
         last_health_ok: false,
-        last_health_error: result.message,
+        last_health_error: [result.title, result.message, result.hint].filter(Boolean).join(" "),
       };
       if (action === "validate") failedPatch.mapping_status = "invalid";
       await supabase.from("guild_whitelist_settings").update(failedPatch).eq("guild_id", guildId);
       return applyNoStoreHeaders(
         NextResponse.json({
           ok: false,
+          code: result.code || "offline",
+          title: result.title || "O banco da cidade nao esta online",
           message: result.message,
+          hint: result.hint || "Isso nao e um erro da Flowdesk. O MySQL/MariaDB roda na sua VPS.",
           via: result.via,
           host: result.host,
         }),
@@ -219,7 +222,9 @@ export async function POST(request: Request) {
           .update({
             last_health_at: new Date().toISOString(),
             last_health_ok: false,
-            last_health_error: sanitized.message,
+            last_health_error: [sanitized.title, sanitized.message, sanitized.hint]
+              .filter(Boolean)
+              .join(" "),
           })
           .eq("guild_id", guildId);
       } catch {
@@ -230,7 +235,10 @@ export async function POST(request: Request) {
       NextResponse.json(
         {
           ok: false,
-          message: sanitized.message || sanitizeErrorMessage(error, "Falha na acao de whitelist."),
+          code: sanitized.code || "offline",
+          title: sanitized.title || "O banco da cidade nao esta online",
+          message: sanitized.message || sanitizeErrorMessage(error, "O banco da cidade nao esta online agora."),
+          hint: sanitized.hint || "Isso nao e um erro da Flowdesk. O MySQL/MariaDB roda na sua VPS.",
         },
         { status: 400 },
       ),

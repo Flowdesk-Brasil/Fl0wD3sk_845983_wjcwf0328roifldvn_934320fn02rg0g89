@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getLauncherStatusForGuild } from "@/lib/launcher/auth";
+import { explainCityDbFailure } from "@/lib/servers/cityDbErrors";
 import {
   applyWhitelistState,
   inspectCitySchema,
@@ -31,6 +32,8 @@ export type CityWhitelistResult = {
   host: string;
   port: number;
   message: string;
+  title?: string;
+  hint?: string;
   latencyMs?: number;
   hasVrpUsers?: boolean;
   tables?: unknown;
@@ -44,6 +47,25 @@ export type CityWhitelistResult = {
   skipped?: boolean;
   code?: string;
 };
+
+function failureFromError(
+  target: WhitelistDbTarget,
+  via: "direct" | "vps",
+  error: unknown,
+): CityWhitelistResult {
+  const sanitized = sanitizeDbError(error);
+  const issue = explainCityDbFailure(error);
+  return {
+    ok: false,
+    via,
+    host: target.host,
+    port: target.port,
+    code: sanitized.code || issue.code,
+    title: sanitized.title || issue.title,
+    message: sanitized.message || issue.message,
+    hint: sanitized.hint || issue.hint,
+  };
+}
 
 function operationFor(action: CityWhitelistAction, identifierValue: string) {
   if (action === "inspect") return "INSPECT_SCHEMA" as const;
@@ -315,30 +337,45 @@ export async function runCityWhitelistAction(input: {
       };
     } catch (error) {
       if (!launcher.online || !isUnreachableDbError(error)) {
-        const sanitized = sanitizeDbError(error);
-        throw Object.assign(new Error(sanitized.message), { code: sanitized.code });
+        return failureFromError(input.target, "direct", error);
       }
     }
   }
 
   if (!launcher.online) {
-    throw new Error(
-      probe.open
-        ? "O MySQL recusou a conexao direta. Confira usuario, senha e o nome do banco. O launcher e opcional depois da primeira conexao."
-        : `A porta ${input.target.port} em ${input.target.host} esta fechada da internet. Na primeira configuracao, abra o launcher na VPS uma vez para liberar o MySQL. Depois disso ele pode ficar fechado.`,
+    const portClosed = explainCityDbFailure(
+      new Error(probe.open ? "access denied" : "econnrefused"),
     );
+    return {
+      ok: false,
+      via: "direct",
+      host: input.target.host,
+      port: input.target.port,
+      code: probe.open ? "invalid_credentials" : "offline",
+      title: probe.open ? "O banco recusou o usuario" : "O banco da cidade nao esta online",
+      message: probe.open
+        ? "O MySQL da sua VPS recusou usuario ou senha na conexao direta."
+        : `A porta ${input.target.port} em ${input.target.host} esta fechada. O MySQL da sua VPS nao esta acessivel agora.`,
+      hint: probe.open
+        ? "Confira usuario, senha e o nome do banco no HeidiSQL. Isso nao e um erro da Flowdesk."
+        : `${portClosed.hint} Na primeira configuracao, o launcher na VPS pode abrir o MySQL local uma vez.`,
+    };
   }
 
-  const first = await runViaVps(
-    input.guildId,
-    input.action,
-    mapping,
-    identifierValue,
-    input.target,
-  );
-  if (first.ok || (first.code !== "invalid_credentials" && first.code !== "missing_credentials")) {
-    return first;
+  try {
+    const first = await runViaVps(
+      input.guildId,
+      input.action,
+      mapping,
+      identifierValue,
+      input.target,
+    );
+    if (first.ok || (first.code !== "invalid_credentials" && first.code !== "missing_credentials")) {
+      return first;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    return await runViaVps(input.guildId, input.action, mapping, identifierValue, input.target);
+  } catch (error) {
+    return failureFromError(input.target, "vps", error);
   }
-  await new Promise((resolve) => setTimeout(resolve, 2500));
-  return runViaVps(input.guildId, input.action, mapping, identifierValue, input.target);
 }

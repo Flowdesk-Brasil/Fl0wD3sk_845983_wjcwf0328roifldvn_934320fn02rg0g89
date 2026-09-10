@@ -18,6 +18,7 @@ import {
   type WhitelistSettingsDraft,
 } from "@/lib/servers/whitelistSettingsModel";
 import { looksLikePublicCityDbHost } from "@/lib/servers/whitelistHost";
+import { cityDbFailureFromText } from "@/lib/servers/cityDbErrors";
 import { cityDbProvisionSql, resolveCityDbLogin } from "@/lib/servers/cityDbDefaults";
 import { previewNicknameFormat } from "@/lib/servers/whitelistNickname";
 import {
@@ -144,6 +145,8 @@ export function WhitelistSettingsSection({
 }: WhitelistSettingsSectionProps) {
   const [busy, setBusy] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [actionTitle, setActionTitle] = useState<string | null>(null);
+  const [actionHint, setActionHint] = useState<string | null>(null);
   const [actionTone, setActionTone] = useState<"ok" | "error">("ok");
   const [showPassword, setShowPassword] = useState(false);
   const [showHost, setShowHost] = useState(false);
@@ -157,6 +160,7 @@ export function WhitelistSettingsSection({
   } | null>(null);
   const launcherPaired = liveLauncher?.paired ?? draft.agentPaired;
   const launcherOnline = liveLauncher?.online ?? draft.agentOnline;
+  const persistedDbIssue = draft.lastHealthError ? cityDbFailureFromText(draft.lastHealthError) : null;
   const detectedPublicIp =
     liveLauncher?.publicIp ||
     (looksLikePublicCityDbHost(String(draft.agentPublicIp || ""))
@@ -214,6 +218,10 @@ export function WhitelistSettingsSection({
   async function connectDatabase() {
     setBusy("test");
     setActionMessage(null);
+    setActionTitle(null);
+    setActionHint(null);
+    let nextTitle: string | null = null;
+    let nextHint: string | null = null;
     try {
       if (!looksLikePublicCityDbHost(draft.dbHost || detectedPublicIp)) {
         throw new Error(
@@ -257,10 +265,15 @@ export function WhitelistSettingsSection({
       });
       const payload = (await response.json().catch(() => ({}))) as {
         ok?: boolean;
+        title?: string;
         message?: string;
+        hint?: string;
       };
       if (!response.ok || !payload.ok) {
-        throw new Error(payload.message || "Nao foi possivel conectar no MySQL.");
+        const issue = cityDbFailureFromText(payload.message || payload.title || "");
+        nextTitle = payload.title || issue.title;
+        nextHint = payload.hint || issue.hint;
+        throw new Error(payload.message || issue.message);
       }
       onChange({
         mapping: draft.mapping,
@@ -274,10 +287,15 @@ export function WhitelistSettingsSection({
       const tableHint = draft.mapping.playerTable
         ? `${draft.mapping.playerTable}.${draft.mapping.whitelistColumn || "..."}`
         : "Defina a tabela e a coluna abaixo";
-      setActionMessage(payload.message || `Banco conectado. Whitelist: ${tableHint}.`);
+      setActionTitle("Banco da cidade conectado");
+      setActionHint("A whitelist usa esta conexao salva. O launcher pode ficar fechado depois desta etapa.");
+      setActionMessage(payload.message || `MySQL ok. Whitelist: ${tableHint}.`);
     } catch (error) {
+      const issue = cityDbFailureFromText(error instanceof Error ? error.message : "");
       setActionTone("error");
-      setActionMessage(error instanceof Error ? error.message : "Falha ao conectar no banco.");
+      setActionTitle(nextTitle || issue.title);
+      setActionHint(nextHint || issue.hint);
+      setActionMessage(error instanceof Error ? error.message : issue.message);
     } finally {
       setBusy(null);
     }
@@ -514,8 +532,8 @@ export function WhitelistSettingsSection({
       <ModulePage>
         <ModuleCard
           label="Passo 1"
-          title="Launcher na VPS"
-          description="Instale o launcher na VPS da cidade, entre com a conta Flowdesk e mantenha o aplicativo aberto para o painel falar com o banco local."
+          title="Launcher na VPS (primeira vez)"
+          description="O launcher so e necessario na primeira configuracao, para achar o IP e testar o MySQL local. Depois a whitelist usa o banco direto e o app pode ficar fechado."
           delay={0.12}
         >
           <div className="overflow-hidden rounded-[22px] border border-[rgba(255,255,255,0.06)] bg-[linear-gradient(180deg,#101010_0%,#0B0B0B_100%)]">
@@ -854,7 +872,7 @@ export function WhitelistSettingsSection({
           title="Conectar"
           description={
             launcherOnline
-              ? "O launcher testa o banco nesta VPS so na primeira configuracao. Depois a whitelist usa a conexao salva no backend."
+              ? "Testa o MySQL da sua VPS. Se o banco estiver desligado, a Flowdesk avisa — nao e instabilidade da plataforma."
               : "Depois da primeira conexao, o launcher pode ficar fechado. A whitelist continua no banco persistido."
           }
           delay={0.2}
@@ -865,7 +883,7 @@ export function WhitelistSettingsSection({
                 {draft.lastHealthOk
                   ? "Ultima conexao ok"
                   : draft.lastHealthError
-                    ? "Ultima conexao falhou"
+                    ? "Banco da cidade indisponivel"
                     : "Ainda nao testado"}
               </p>
               <p className="mt-[4px] text-[13px] leading-[1.55] text-[#8A8A8E]">
@@ -884,17 +902,37 @@ export function WhitelistSettingsSection({
             </button>
           </div>
           {actionMessage ? (
-            <p
-              className={`mt-[14px] text-[13px] leading-[1.55] ${
-                actionTone === "ok" ? "text-[#7dca97]" : "text-[#d18d8d]"
+            <div
+              className={`mt-[14px] rounded-[14px] border px-[14px] py-[12px] ${
+                actionTone === "ok"
+                  ? "border-[rgba(125,202,151,0.18)] bg-[rgba(125,202,151,0.06)]"
+                  : "border-[rgba(209,141,141,0.22)] bg-[rgba(209,141,141,0.08)]"
               }`}
             >
-              {actionMessage}
-            </p>
-          ) : draft.lastHealthError ? (
-            <p className="mt-[14px] text-[13px] leading-[1.55] text-[#d18d8d]">
-              {draft.lastHealthError}
-            </p>
+              <p
+                className={`text-[13px] font-semibold ${
+                  actionTone === "ok" ? "text-[#7dca97]" : "text-[#E8B4B4]"
+                }`}
+              >
+                {actionTitle || (actionTone === "ok" ? "Conectado" : "O banco da cidade nao esta online")}
+              </p>
+              <p
+                className={`mt-[4px] text-[13px] leading-[1.55] ${
+                  actionTone === "ok" ? "text-[#9CC9AB]" : "text-[#D18D8D]"
+                }`}
+              >
+                {actionMessage}
+              </p>
+              {actionHint ? (
+                <p className="mt-[6px] text-[12px] leading-[1.5] text-[#8A8A8E]">{actionHint}</p>
+              ) : null}
+            </div>
+          ) : persistedDbIssue ? (
+            <div className="mt-[14px] rounded-[14px] border border-[rgba(209,141,141,0.22)] bg-[rgba(209,141,141,0.08)] px-[14px] py-[12px]">
+              <p className="text-[13px] font-semibold text-[#E8B4B4]">{persistedDbIssue.title}</p>
+              <p className="mt-[4px] text-[13px] leading-[1.55] text-[#D18D8D]">{persistedDbIssue.message}</p>
+              <p className="mt-[6px] text-[12px] leading-[1.5] text-[#8A8A8E]">{persistedDbIssue.hint}</p>
+            </div>
           ) : null}
         </ModuleCard>
       </ModulePage>
