@@ -1,11 +1,11 @@
 import "server-only";
 
 import { getLauncherStatusForGuild } from "@/lib/launcher/auth";
+import { explainCityDbFailure } from "@/lib/servers/cityDbErrors";
 import {
   applyWhitelistState,
   inspectCitySchema,
   isUnreachableDbError,
-  probeCityDbPort,
   sampleWhitelistMapping,
   sanitizeDbError,
   testCityDatabase,
@@ -31,6 +31,8 @@ export type CityWhitelistResult = {
   host: string;
   port: number;
   message: string;
+  title?: string;
+  hint?: string;
   latencyMs?: number;
   hasVrpUsers?: boolean;
   tables?: unknown;
@@ -44,6 +46,25 @@ export type CityWhitelistResult = {
   skipped?: boolean;
   code?: string;
 };
+
+function failureFromError(
+  target: WhitelistDbTarget,
+  via: "direct" | "vps",
+  error: unknown,
+): CityWhitelistResult {
+  const sanitized = sanitizeDbError(error);
+  const issue = explainCityDbFailure(error);
+  return {
+    ok: false,
+    via,
+    host: target.host,
+    port: target.port,
+    code: sanitized.code || issue.code,
+    title: sanitized.title || issue.title,
+    message: sanitized.message || issue.message,
+    hint: sanitized.hint || issue.hint,
+  };
+}
 
 function operationFor(action: CityWhitelistAction, identifierValue: string) {
   if (action === "inspect") return "INSPECT_SCHEMA" as const;
@@ -297,48 +318,52 @@ export async function runCityWhitelistAction(input: {
   target: WhitelistDbTarget;
   mapping?: unknown;
   identifierValue?: string;
+  persistDirectOnly?: boolean;
 }): Promise<CityWhitelistResult> {
   const mapping = normalizeWhitelistMapping(input.mapping);
   const identifierValue = String(input.identifierValue || "").trim();
-  const launcher = await getLauncherStatusForGuild(input.guildId);
-  const probe = await probeCityDbPort(input.target.host, input.target.port, 2500);
+  const persistDirectOnly = input.persistDirectOnly !== false;
 
-  if (probe.open) {
-    try {
-      const direct = await runDirect(input.action, input.target, mapping, identifierValue);
-      return {
-        ...direct,
-        via: "direct",
-        host: input.target.host,
-        port: input.target.port,
-        message: viaMessage("direct", direct.message),
-      };
-    } catch (error) {
-      if (!launcher.online || !isUnreachableDbError(error)) {
-        const sanitized = sanitizeDbError(error);
-        throw Object.assign(new Error(sanitized.message), { code: sanitized.code });
-      }
+  const finishDirect = async () => {
+    const direct = await runDirect(input.action, input.target, mapping, identifierValue);
+    return {
+      ...direct,
+      via: "direct" as const,
+      host: input.target.host,
+      port: input.target.port,
+      message: viaMessage("direct", direct.message),
+    };
+  };
+
+  let lastError: unknown = null;
+  try {
+    return await finishDirect();
+  } catch (error) {
+    lastError = error;
+    if (persistDirectOnly || !isUnreachableDbError(error)) {
+      return failureFromError(input.target, "direct", error);
     }
   }
 
+  const launcher = await getLauncherStatusForGuild(input.guildId);
   if (!launcher.online) {
-    throw new Error(
-      probe.open
-        ? "O MySQL recusou a conexao direta. Confira usuario, senha e o nome do banco. O launcher e opcional depois da primeira conexao."
-        : `A porta ${input.target.port} em ${input.target.host} esta fechada da internet. Na primeira configuracao, abra o launcher na VPS uma vez para liberar o MySQL. Depois disso ele pode ficar fechado.`,
-    );
+    return failureFromError(input.target, "direct", lastError);
   }
 
-  const first = await runViaVps(
-    input.guildId,
-    input.action,
-    mapping,
-    identifierValue,
-    input.target,
-  );
-  if (first.ok || (first.code !== "invalid_credentials" && first.code !== "missing_credentials")) {
-    return first;
+  try {
+    const first = await runViaVps(
+      input.guildId,
+      input.action,
+      mapping,
+      identifierValue,
+      input.target,
+    );
+    if (first.ok || (first.code !== "invalid_credentials" && first.code !== "missing_credentials")) {
+      return first;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    return await runViaVps(input.guildId, input.action, mapping, identifierValue, input.target);
+  } catch (error) {
+    return failureFromError(input.target, "vps", error);
   }
-  await new Promise((resolve) => setTimeout(resolve, 2500));
-  return runViaVps(input.guildId, input.action, mapping, identifierValue, input.target);
 }

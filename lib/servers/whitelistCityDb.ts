@@ -14,6 +14,7 @@ import {
 } from "@/lib/servers/whitelistMapping";
 import { resolveWhitelistDbPassword } from "@/lib/servers/whitelistSecret";
 import { assertCityDbHost } from "@/lib/servers/whitelistHost";
+import { explainCityDbFailure } from "@/lib/servers/cityDbErrors";
 
 export type WhitelistDbTarget = {
   engine: WhitelistDbEngine;
@@ -28,11 +29,12 @@ export type WhitelistDbTarget = {
 const CONNECT_TIMEOUT_MS = 12_000;
 const QUERY_TIMEOUT_MS = 12_000;
 
-function settleMaybePromise<T>(value: Promise<T> | T | undefined | null) {
-  if (value == null || typeof (value as Promise<T>).then !== "function") {
-    return Promise.resolve();
+async function settleMaybePromise(value: unknown) {
+  try {
+    await value;
+  } catch {
+    /* close/release can return void or a thenable without .catch */
   }
-  return (value as Promise<T>).catch(() => null);
 }
 
 function withQueryTimeout<T>(promise: Promise<T>, label: string) {
@@ -47,12 +49,6 @@ function withQueryTimeout<T>(promise: Promise<T>, label: string) {
 export function sanitizeDbError(error: unknown) {
   const message = error instanceof Error ? error.message : "Falha na conexao com o banco da cidade.";
   const lowered = message.toLowerCase();
-  if (lowered.includes("unknown database")) {
-    return { code: "unknown_database", message: "O nome do banco nao existe neste MySQL." };
-  }
-  if (lowered.includes("timeout") || lowered.includes("timed out") || lowered.includes("etimedout")) {
-    return { code: "timeout", message: "O banco da cidade nao respondeu a tempo." };
-  }
   if (
     lowered.includes("envelope") ||
     lowered.includes("senha salva") ||
@@ -60,58 +56,26 @@ export function sanitizeDbError(error: unknown) {
   ) {
     return {
       code: "password_envelope",
-      message: "Digite a senha do banco novamente no campo Senha e teste. A senha salva nao pode ser lida.",
+      title: "A senha salva nao pode ser lida",
+      message: "Digite a senha do banco novamente no campo Senha e teste.",
+      hint: "A Flowdesk nao guarda a senha em texto. Isso nao indica instabilidade da plataforma.",
     };
   }
   if (lowered.includes("nao chegaram no launcher") || lowered.includes("digite a senha no painel")) {
     return {
       code: "missing_credentials",
+      title: "Falta a senha do banco",
       message: "Digite a senha do MySQL no painel e clique em Conectar banco.",
+      hint: "Sem a senha da sua VPS a Flowdesk nao consegue autenticar no MariaDB.",
     };
   }
-  if (lowered.includes("plugin") || lowered.includes("caching_sha2") || lowered.includes("not supported auth")) {
-    return {
-      code: "auth_plugin",
-      message: "O MySQL recusou o plugin de autenticacao. No HeidiSQL, altere o usuario para mysql_native_password.",
-    };
-  }
-  if (lowered.includes("access denied") || lowered.includes("er_access_denied")) {
-    return {
-      code: "invalid_credentials",
-      message:
-        "O MySQL recusou o usuario. Use no painel o mesmo usuario e senha do HeidiSQL nesta VPS (muitas vezes e root).",
-    };
-  }
-  if (
-    lowered.includes("enotfound") ||
-    lowered.includes("econnrefused") ||
-    lowered.includes("ehostunreach") ||
-    lowered.includes("eai_again")
-  ) {
-    return {
-      code: "offline",
-      message:
-        "A porta do MySQL esta fechada da internet. Na primeira configuracao, abra o launcher na VPS para liberar o acesso. Depois a whitelist usa o banco direto.",
-    };
-  }
-  if (lowered.includes("not allowed") || lowered.includes("host is not allowed") || lowered.includes("is not allowed to connect")) {
-    return {
-      code: "ip_not_allowed",
-      message:
-        "O MySQL recusou o IP remoto. No modo VPS o launcher usa o banco local da maquina e nao precisa liberar host.",
-    };
-  }
-  if (
-    lowered.includes("reading 'catch'") ||
-    lowered.includes('reading "catch"') ||
-    lowered.includes("reading catch")
-  ) {
-    return {
-      code: "offline",
-      message: "Falha ao finalizar a conexao com o banco. O sistema reconecta automaticamente.",
-    };
-  }
-  return { code: "db_error", message: message.slice(0, 180) || "Nao foi possivel executar a operacao no banco da cidade." };
+  const issue = explainCityDbFailure(error);
+  return {
+    code: issue.code,
+    title: issue.title,
+    message: issue.message,
+    hint: issue.hint,
+  };
 }
 
 export function isUnreachableDbError(error: unknown) {

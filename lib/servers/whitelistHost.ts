@@ -41,19 +41,27 @@ export function looksLikePublicCityDbHost(value: string) {
   }
 }
 
+export function hasPersistedCityDbHost(value?: string | null) {
+  return looksLikePublicCityDbHost(String(value || ""));
+}
+
 export function resolvePublicCityDbHost(input: {
   requested?: string | null;
   saved?: string | null;
   publicIp?: string | null;
+  allowSavedFallback?: boolean;
 }) {
-  const candidates = [input.requested, input.saved, input.publicIp];
+  const allowSaved = input.allowSavedFallback !== false;
+  const candidates = allowSaved
+    ? [input.requested, input.saved, input.publicIp]
+    : [input.requested];
   for (const raw of candidates) {
     const host = normalizeCityDbHost(String(raw || ""));
     if (!looksLikePublicCityDbHost(host)) continue;
     return assertCityDbHost(host);
   }
   throw new Error(
-    "Sem IP publico do banco. Instale o launcher na VPS para detectar o IP, ou informe o host publico no painel.",
+    "Sem IP publico do banco. Informe o IP no painel, ou use o launcher so na primeira configuracao para detectar.",
   );
 }
 

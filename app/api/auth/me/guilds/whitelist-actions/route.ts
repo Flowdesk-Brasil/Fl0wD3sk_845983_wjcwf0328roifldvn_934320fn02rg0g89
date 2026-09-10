@@ -14,13 +14,14 @@ import { getSupabaseAdminClientOrThrow } from "@/lib/supabaseAdmin";
 import { sanitizeDbError, settingsToDbTarget } from "@/lib/servers/whitelistCityDb";
 import { runCityWhitelistAction } from "@/lib/servers/cityDatabaseGateway";
 import { normalizeWhitelistMapping } from "@/lib/servers/whitelistMapping";
-import { resolvePublicCityDbHost } from "@/lib/servers/whitelistHost";
+import { hasPersistedCityDbHost, resolvePublicCityDbHost } from "@/lib/servers/whitelistHost";
 import {
   decryptWhitelistSecret,
   encryptWhitelistSecret,
   resolveWhitelistDbPassword,
 } from "@/lib/servers/whitelistSecret";
 import { resolveCityDbLogin } from "@/lib/servers/cityDbDefaults";
+import { invalidateDashboardSettingsCache } from "@/lib/servers/serverDashboardSettingsCache";
 
 export async function POST(request: Request) {
   const invalid = ensureSameOriginJsonMutationRequest(request);
@@ -107,6 +108,38 @@ export async function POST(request: Request) {
     ) {
       throw new Error("Nao consegui proteger a senha do MySQL. Tente de novo em alguns segundos.");
     }
+    const requestedHost = String(body.dbHost || "");
+    const hostCleared =
+      Object.prototype.hasOwnProperty.call(body, "dbHost") && !hasPersistedCityDbHost(requestedHost);
+    if (hostCleared) {
+      await supabase
+        .from("guild_whitelist_settings")
+        .update({
+          db_host: null,
+          last_health_ok: false,
+          last_health_error: "IP do banco removido. Informe o IP publico para conectar de novo.",
+          last_health_at: new Date().toISOString(),
+        })
+        .eq("guild_id", guildId);
+      invalidateDashboardSettingsCache({ guildId });
+      return applyNoStoreHeaders(
+        NextResponse.json(
+          {
+            ok: false,
+            code: "offline",
+            title: "IP do banco removido",
+            message:
+              "A conexao persistida foi desligada. Informe o IP publico da VPS para conectar de novo.",
+            hint: "O launcher so ajuda nesta primeira configuracao. Depois a whitelist fica no IP salvo.",
+          },
+          { status: 400 },
+        ),
+      );
+    }
+    const persistDirectOnly =
+      hasPersistedCityDbHost(existing.data?.db_host) ||
+      (Boolean(existing.data?.db_password_cipher) &&
+        hasPersistedCityDbHost(requestedHost));
     const target = settingsToDbTarget({
       guildId,
       engine: (String(body.dbEngine || existing.data?.db_engine || "mysql") as
@@ -114,9 +147,9 @@ export async function POST(request: Request) {
         | "mariadb"
         | "postgres"),
       host: resolvePublicCityDbHost({
-        requested: String(body.dbHost || ""),
+        requested: requestedHost,
         saved: existing.data?.db_host,
-        publicIp: existing.data?.agent_public_ip,
+        allowSavedFallback: true,
       }),
       port: Number(body.dbPort || existing.data?.db_port || 3306),
       database: String(body.dbName || existing.data?.db_name || "skips"),
@@ -162,20 +195,24 @@ export async function POST(request: Request) {
       target,
       mapping,
       identifierValue: String(body.identifierValue || ""),
+      persistDirectOnly,
     });
 
     if (!result.ok) {
       const failedPatch: Record<string, unknown> = {
         last_health_at: new Date().toISOString(),
         last_health_ok: false,
-        last_health_error: result.message,
+        last_health_error: [result.title, result.message, result.hint].filter(Boolean).join(" "),
       };
       if (action === "validate") failedPatch.mapping_status = "invalid";
       await supabase.from("guild_whitelist_settings").update(failedPatch).eq("guild_id", guildId);
       return applyNoStoreHeaders(
         NextResponse.json({
           ok: false,
+          code: result.code || "offline",
+          title: result.title || "O banco da cidade nao esta online",
           message: result.message,
+          hint: result.hint || "Isso nao e um erro da Flowdesk. O MySQL/MariaDB roda na sua VPS.",
           via: result.via,
           host: result.host,
         }),
@@ -196,6 +233,7 @@ export async function POST(request: Request) {
       last_health_latency_ms: result.latencyMs || null,
     };
     await supabase.from("guild_whitelist_settings").update(healthPatch).eq("guild_id", guildId);
+    invalidateDashboardSettingsCache({ guildId });
 
     return applyNoStoreHeaders(
       NextResponse.json({
@@ -219,7 +257,9 @@ export async function POST(request: Request) {
           .update({
             last_health_at: new Date().toISOString(),
             last_health_ok: false,
-            last_health_error: sanitized.message,
+            last_health_error: [sanitized.title, sanitized.message, sanitized.hint]
+              .filter(Boolean)
+              .join(" "),
           })
           .eq("guild_id", guildId);
       } catch {
@@ -230,7 +270,10 @@ export async function POST(request: Request) {
       NextResponse.json(
         {
           ok: false,
-          message: sanitized.message || sanitizeErrorMessage(error, "Falha na acao de whitelist."),
+          code: sanitized.code || "offline",
+          title: sanitized.title || "O banco da cidade nao esta online",
+          message: sanitized.message || sanitizeErrorMessage(error, "O banco da cidade nao esta online agora."),
+          hint: sanitized.hint || "Isso nao e um erro da Flowdesk. O MySQL/MariaDB roda na sua VPS.",
         },
         { status: 400 },
       ),
