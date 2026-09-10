@@ -149,7 +149,7 @@ const MODULE_MESSAGE_COPY: Partial<
     tag: "Whitelist",
     title: "Banco e mapping",
     description:
-      "Conecte o banco da cidade, escolha a tabela da whitelist e teste a integracao com o launcher na VPS.",
+      "Conecte o banco da cidade uma vez. Depois a whitelist fica no IP salvo, mesmo com o launcher desinstalado.",
   },
   whitelist_message: {
     tag: "Whitelist",

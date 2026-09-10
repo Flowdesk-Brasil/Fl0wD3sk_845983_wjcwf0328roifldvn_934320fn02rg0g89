@@ -948,12 +948,9 @@ function buildWhitelistPayload(input: {
     dbEngine: String(input.snapshot?.dbEngine ?? input.record?.db_engine ?? "mysql"),
     dbHost: (() => {
       const requested = normalizeCityDbHost(
-        String(input.snapshot?.dbHost ?? input.record?.db_host ?? ""),
+        String((input.record ? input.record.db_host : input.snapshot?.dbHost) ?? ""),
       );
-      const publicIp = normalizeCityDbHost(String(input.record?.agent_public_ip || ""));
-      if (looksLikePublicCityDbHost(requested)) return requested;
-      if (looksLikePublicCityDbHost(publicIp)) return publicIp;
-      return "";
+      return looksLikePublicCityDbHost(requested) ? requested : "";
     })(),
     dbPort: Number(input.snapshot?.dbPort ?? input.record?.db_port ?? 3306) || 3306,
     dbName: String(input.snapshot?.dbName ?? input.record?.db_name ?? ""),
@@ -1473,14 +1470,9 @@ async function withLiveLauncherStatus(
         agentPublicId: settings.agentPublicId || launcher.publicId || null,
         connectionMode: "direct",
         agentPublicIp: launcher.observedIp || settings.agentPublicIp || null,
-        dbHost: (() => {
-          const currentHost = normalizeCityDbHost(String(settings.dbHost || ""));
-          if (looksLikePublicCityDbHost(currentHost)) return currentHost;
-          const detected = normalizeCityDbHost(
-            String(launcher.observedIp || settings.agentPublicIp || ""),
-          );
-          return looksLikePublicCityDbHost(detected) ? detected : "";
-        })(),
+        dbHost: looksLikePublicCityDbHost(String(settings.dbHost || ""))
+          ? normalizeCityDbHost(String(settings.dbHost || ""))
+          : "",
       },
     };
   } catch {

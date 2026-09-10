@@ -90,9 +90,7 @@ export function normalizeWhitelistSettingsDraft(
     ? normalizeCityDbHost(String(input?.agentPublicIp || ""))
     : "";
   const requestedHost = normalizeCityDbHost(String(input?.dbHost || ""));
-  const dbHost = looksLikePublicCityDbHost(requestedHost)
-    ? requestedHost
-    : publicIp;
+  const dbHost = looksLikePublicCityDbHost(requestedHost) ? requestedHost : "";
   const login = resolveCityDbLogin({
     user: input?.dbUser,
     password: input?.dbPassword,

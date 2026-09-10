@@ -139,7 +139,7 @@ export async function POST(request: Request) {
   const pairing = createWhitelistAgentPairing();
   const row = {
     guild_id: guildId,
-    connection_mode: "agent",
+    connection_mode: "direct",
     agent_public_id: pairing.publicId,
     agent_token_hash: pairing.tokenHash,
     configured_by_user_id: access.authUserId,
@@ -164,11 +164,11 @@ export async function POST(request: Request) {
   return applyNoStoreHeaders(
     NextResponse.json({
       ok: true,
-      message: "Agent pareado. Baixe o launcher e mantenha-o aberto na VPS.",
+      message: "Launcher pareado. Use so na primeira configuracao; depois a whitelist fica no banco direto.",
       publicId: pairing.publicId,
       token: pairing.token,
       apiUrl,
-      connectionMode: "agent",
+      connectionMode: "direct",
     }),
   );
 }

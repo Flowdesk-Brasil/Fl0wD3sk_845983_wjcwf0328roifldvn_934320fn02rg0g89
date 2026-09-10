@@ -209,11 +209,32 @@ export function WhitelistSettingsSection({
     };
   }, [guildId]);
 
+  const persistedConnection =
+    looksLikePublicCityDbHost(draft.dbHost) && (draft.hasDbPassword || draft.lastHealthOk);
+
   useEffect(() => {
     if (!detectedPublicIp) return;
     if (looksLikePublicCityDbHost(draft.dbHost)) return;
+    if (draft.lastHealthOk) return;
     onChange({ dbHost: detectedPublicIp, connectionMode: "direct" });
-  }, [detectedPublicIp, draft.dbHost, onChange]);
+  }, [detectedPublicIp, draft.dbHost, draft.lastHealthOk, onChange]);
+
+  async function persistClearedHost() {
+    try {
+      await fetch("/api/auth/me/guilds/whitelist-actions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ guildId, action: "test", dbHost: "" }),
+      });
+    } catch {
+      /* clearing the saved IP is best-effort; the empty field already blocks reconnect */
+    }
+    onChange({
+      dbHost: "",
+      lastHealthOk: false,
+      lastHealthError: "IP do banco removido. Informe o IP publico para conectar de novo.",
+    });
+  }
 
   async function connectDatabase() {
     setBusy("test");
@@ -223,9 +244,9 @@ export function WhitelistSettingsSection({
     let nextTitle: string | null = null;
     let nextHint: string | null = null;
     try {
-      if (!looksLikePublicCityDbHost(draft.dbHost || detectedPublicIp)) {
+      if (!looksLikePublicCityDbHost(draft.dbHost)) {
         throw new Error(
-          "Informe o IP publico da VPS. O launcher pode detectar o IP na primeira configuracao, mas nao precisa ficar aberto depois.",
+          "Informe o IP publico da VPS. Se voce apagou o IP, a conexao precisa ser feita de novo. O launcher so ajuda na primeira vez.",
         );
       }
       const login = resolveCityDbLogin({
@@ -254,7 +275,7 @@ export function WhitelistSettingsSection({
           guildId,
           action: "test",
           dbEngine: draft.dbEngine === "postgres" ? "postgres" : "mysql",
-          dbHost: looksLikePublicCityDbHost(draft.dbHost) ? draft.dbHost : detectedPublicIp,
+          dbHost: looksLikePublicCityDbHost(draft.dbHost) ? draft.dbHost : "",
           dbPort: draft.dbPort || 3306,
           dbName,
           dbUser: login.user,
@@ -278,7 +299,7 @@ export function WhitelistSettingsSection({
       onChange({
         mapping: draft.mapping,
         mappingStatus: "validated",
-        dbHost: looksLikePublicCityDbHost(draft.dbHost) ? draft.dbHost : detectedPublicIp,
+        dbHost: draft.dbHost,
         connectionMode: "direct",
         dbPassword: login.password,
         hasDbPassword: Boolean(login.password),
@@ -533,7 +554,11 @@ export function WhitelistSettingsSection({
         <ModuleCard
           label="Passo 1"
           title="Launcher na VPS (primeira vez)"
-          description="O launcher so e necessario na primeira configuracao, para achar o IP e testar o MySQL local. Depois a whitelist usa o banco direto e o app pode ficar fechado."
+          description={
+            persistedConnection
+              ? "Conexao ja persistida no IP salvo. O launcher pode ficar fechado ou desinstalado. So volta a ser preciso se voce apagar o IP."
+              : "O launcher so e necessario na primeira configuracao, para achar o IP. Depois a whitelist fica no banco direto."
+          }
           delay={0.12}
         >
           <div className="overflow-hidden rounded-[22px] border border-[rgba(255,255,255,0.06)] bg-[linear-gradient(180deg,#101010_0%,#0B0B0B_100%)]">
@@ -550,7 +575,22 @@ export function WhitelistSettingsSection({
                     </span>
                   </div>
                   <p className="mt-[4px] text-[13px] leading-[1.55] text-[#8A8A8E]">
-                    {launcherOnline ? (
+                    {persistedConnection ? (
+                      <>
+                        Banco persistido
+                        {looksLikePublicCityDbHost(draft.dbHost) ? (
+                          <>
+                            {" · "}
+                            <SpoilerIp
+                              value={draft.dbHost}
+                              revealed={showHost}
+                              onToggle={() => setShowHost((value) => !value)}
+                            />
+                          </>
+                        ) : null}
+                        {" · launcher opcional"}
+                      </>
+                    ) : launcherOnline ? (
                       <>
                         Conectado
                         {liveLauncher?.hostname ? ` · ${liveLauncher.hostname}` : ""}
@@ -566,13 +606,18 @@ export function WhitelistSettingsSection({
                         ) : null}
                       </>
                     ) : launcherPaired
-                      ? "Launcher vinculado. Abra o aplicativo na VPS da cidade para continuar."
-                      : "Baixe o instalador, instale na VPS da cidade e entre com sua conta Flowdesk."}
+                      ? "Launcher vinculado. Abra na VPS so nesta primeira configuracao."
+                      : "Opcional: baixe o setup na VPS para detectar o IP na primeira vez."}
                   </p>
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-[10px] sm:justify-end">
-                {launcherOnline ? (
+                {persistedConnection ? (
+                  <span className="inline-flex h-[32px] items-center gap-[6px] rounded-full bg-[rgba(134,239,172,0.08)] px-[10px] text-[12px] font-semibold text-[#86EFAC]">
+                    <Check className="h-[13px] w-[13px]" strokeWidth={2.2} />
+                    Persistido
+                  </span>
+                ) : launcherOnline ? (
                   <span className="inline-flex h-[32px] items-center gap-[6px] rounded-full bg-[rgba(134,239,172,0.08)] px-[10px] text-[12px] font-semibold text-[#86EFAC]">
                     <Check className="h-[13px] w-[13px]" strokeWidth={2.2} />
                     No ar
@@ -580,11 +625,11 @@ export function WhitelistSettingsSection({
                 ) : launcherPaired ? (
                   <span className="inline-flex h-[32px] items-center gap-[6px] rounded-full bg-[rgba(246,212,138,0.08)] px-[10px] text-[12px] font-semibold text-[#F6D48A]">
                     <TriangleAlert className="h-[13px] w-[13px]" strokeWidth={2} />
-                    Abra na VPS
+                    Primeira vez
                   </span>
                 ) : (
                   <span className="inline-flex h-[32px] items-center rounded-full bg-[#141414] px-[10px] text-[12px] font-semibold text-[#9A9A9E]">
-                    Instalar
+                    Opcional
                   </span>
                 )}
                 <button
@@ -616,9 +661,11 @@ export function WhitelistSettingsSection({
             <LabeledField
               label="IP publico da VPS"
               hint={
-                detectedPublicIp
-                  ? "Detectado automaticamente. Clique no olho para ver o IP."
-                  : "Use o IP publico da VPS. O launcher preenche este campo quando estiver online."
+                persistedConnection
+                  ? "IP persistido. Apague o campo para desligar a conexao. O launcher nao e mais necessario."
+                  : detectedPublicIp
+                    ? "Detectado pelo launcher nesta primeira configuracao. Depois fica salvo."
+                    : "Informe o IP publico da VPS. O launcher pode preencher so na primeira vez."
               }
             >
               <div className="relative">
@@ -631,6 +678,11 @@ export function WhitelistSettingsSection({
                   onChange={(event) => {
                     setShowHost(true);
                     onChange({ dbHost: event.currentTarget.value });
+                  }}
+                  onBlur={() => {
+                    if (String(draft.dbHost || "").trim()) return;
+                    if (!draft.lastHealthOk && !draft.hasDbPassword) return;
+                    void persistClearedHost();
                   }}
                   disabled={disabled}
                   className={`${fieldClassName} pr-[46px] ${
@@ -871,9 +923,9 @@ export function WhitelistSettingsSection({
           label="Passo 3"
           title="Conectar"
           description={
-            launcherOnline
-              ? "Testa o MySQL da sua VPS. Se o banco estiver desligado, a Flowdesk avisa — nao e instabilidade da plataforma."
-              : "Depois da primeira conexao, o launcher pode ficar fechado. A whitelist continua no banco persistido."
+            persistedConnection
+              ? "A whitelist usa o IP e a senha salvos. Pode desinstalar o launcher. Se apagar o IP, a conexao pede de novo."
+              : "Na primeira vez o launcher pode achar o IP. Depois a conexao fica persistida no banco direto."
           }
           delay={0.2}
         >

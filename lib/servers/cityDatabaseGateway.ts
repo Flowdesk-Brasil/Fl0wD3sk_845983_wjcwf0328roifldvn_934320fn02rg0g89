@@ -6,7 +6,6 @@ import {
   applyWhitelistState,
   inspectCitySchema,
   isUnreachableDbError,
-  probeCityDbPort,
   sampleWhitelistMapping,
   sanitizeDbError,
   testCityDatabase,
@@ -319,47 +318,36 @@ export async function runCityWhitelistAction(input: {
   target: WhitelistDbTarget;
   mapping?: unknown;
   identifierValue?: string;
+  persistDirectOnly?: boolean;
 }): Promise<CityWhitelistResult> {
   const mapping = normalizeWhitelistMapping(input.mapping);
   const identifierValue = String(input.identifierValue || "").trim();
-  const launcher = await getLauncherStatusForGuild(input.guildId);
-  const probe = await probeCityDbPort(input.target.host, input.target.port, 2500);
+  const persistDirectOnly = input.persistDirectOnly !== false;
 
-  if (probe.open) {
-    try {
-      const direct = await runDirect(input.action, input.target, mapping, identifierValue);
-      return {
-        ...direct,
-        via: "direct",
-        host: input.target.host,
-        port: input.target.port,
-        message: viaMessage("direct", direct.message),
-      };
-    } catch (error) {
-      if (!launcher.online || !isUnreachableDbError(error)) {
-        return failureFromError(input.target, "direct", error);
-      }
+  const finishDirect = async () => {
+    const direct = await runDirect(input.action, input.target, mapping, identifierValue);
+    return {
+      ...direct,
+      via: "direct" as const,
+      host: input.target.host,
+      port: input.target.port,
+      message: viaMessage("direct", direct.message),
+    };
+  };
+
+  let lastError: unknown = null;
+  try {
+    return await finishDirect();
+  } catch (error) {
+    lastError = error;
+    if (persistDirectOnly || !isUnreachableDbError(error)) {
+      return failureFromError(input.target, "direct", error);
     }
   }
 
+  const launcher = await getLauncherStatusForGuild(input.guildId);
   if (!launcher.online) {
-    const portClosed = explainCityDbFailure(
-      new Error(probe.open ? "access denied" : "econnrefused"),
-    );
-    return {
-      ok: false,
-      via: "direct",
-      host: input.target.host,
-      port: input.target.port,
-      code: probe.open ? "invalid_credentials" : "offline",
-      title: probe.open ? "O banco recusou o usuario" : "O banco da cidade nao esta online",
-      message: probe.open
-        ? "O MySQL da sua VPS recusou usuario ou senha na conexao direta."
-        : `A porta ${input.target.port} em ${input.target.host} esta fechada. O MySQL da sua VPS nao esta acessivel agora.`,
-      hint: probe.open
-        ? "Confira usuario, senha e o nome do banco no HeidiSQL. Isso nao e um erro da Flowdesk."
-        : `${portClosed.hint} Na primeira configuracao, o launcher na VPS pode abrir o MySQL local uma vez.`,
-    };
+    return failureFromError(input.target, "direct", lastError);
   }
 
   try {

@@ -267,19 +267,15 @@ export async function POST(request: Request) {
       !incomingMapping.playerTable;
     const explicitDisable =
       draft.enabled !== true && existing.data?.enabled === true && !incomingWipesModule;
+    const requestedHost = String(draft.dbHost || "").trim();
+    const hostCleared = !looksLikePublicCityDbHost(requestedHost);
+    const hostWasPersisted = looksLikePublicCityDbHost(String(existing.data?.db_host || ""));
     let dbHost: string | null = null;
-    try {
+    if (requestedHost) {
       dbHost = resolvePublicCityDbHost({
-        requested: draft.dbHost,
-        saved: existing.data?.db_host,
-        publicIp: existing.data?.agent_public_ip,
+        requested: requestedHost,
+        allowSavedFallback: false,
       });
-    } catch (error) {
-      const typedHost = String(draft.dbHost || "").trim();
-      if (typedHost || incomingPassword) throw error;
-    }
-    if (dbHost && !looksLikePublicCityDbHost(dbHost)) {
-      dbHost = null;
     }
     const nextPanelChannelId = draft.panelChannelId || existing.data?.panel_channel_id || null;
     const previousPanelChannelId =
@@ -325,6 +321,14 @@ export async function POST(request: Request) {
       mapping,
       mapping_status: "validated",
       configured_by_user_id: authUserId,
+      ...(hostCleared && hostWasPersisted
+        ? {
+            last_health_ok: false,
+            last_health_error:
+              "IP do banco removido. Informe o IP publico para conectar de novo.",
+            last_health_at: new Date().toISOString(),
+          }
+        : {}),
     };
 
     let upsert = await supabase
