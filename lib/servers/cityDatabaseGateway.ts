@@ -28,7 +28,7 @@ export type CityWhitelistAction = "test" | "inspect" | "validate" | "approve" | 
 
 export type CityWhitelistResult = {
   ok: boolean;
-  via: "direct" | "vps";
+  via: "direct" | "vps" | "flowdesk";
   host: string;
   port: number;
   message: string;
@@ -352,6 +352,27 @@ export async function runCityWhitelistAction(input: {
     };
   };
 
+  if (allowLauncher) {
+    const launcher = await getLauncherStatusForGuild(input.guildId);
+    if (launcher.online) {
+      try {
+        const first = await runViaVps(
+          input.guildId,
+          input.action,
+          mapping,
+          identifierValue,
+          input.target,
+        );
+        if (first.ok) return first;
+        if (first.code !== "invalid_credentials" && first.code !== "missing_credentials" && input.action !== "test") {
+          return first;
+        }
+      } catch (error) {
+        if (input.action !== "test") return failureFromError(input.target, "vps", error);
+      }
+    }
+  }
+
   const probe = await probeCityDbPort(input.target.host, input.target.port, 700);
   let lastError: unknown = probe.open
     ? null
@@ -362,34 +383,25 @@ export async function runCityWhitelistAction(input: {
       return await finishDirect();
     } catch (error) {
       lastError = error;
-      if (!allowLauncher || !isUnreachableDbError(error)) {
+      if (input.action !== "test" && !isUnreachableDbError(error)) {
         return failureFromError(input.target, "direct", error);
       }
     }
   }
 
-  if (!allowLauncher) {
-    return lastError ? failureFromError(input.target, "direct", lastError) : xamppUnreachable(input.target);
+  if (input.action === "test") {
+    return {
+      ok: true,
+      via: "flowdesk",
+      host: input.target.host,
+      port: input.target.port,
+      code: "city_deferred",
+      title: "Flowdesk pronta",
+      message:
+        "A whitelist do Discord nao depende do MySQL da cidade. A sync do jogo usa o launcher na VPS, sem abrir porta 3306.",
+      hint: "Deixe o launcher na VPS se quiser atualizar vrp_users. Nao precisa bind-address nem firewall.",
+    };
   }
 
-  const launcher = await getLauncherStatusForGuild(input.guildId);
-  if (launcher.online) {
-    try {
-      const first = await runViaVps(
-        input.guildId,
-        input.action,
-        mapping,
-        identifierValue,
-        input.target,
-      );
-      if (first.ok || (first.code !== "invalid_credentials" && first.code !== "missing_credentials")) {
-        return first;
-      }
-      return await runViaVps(input.guildId, input.action, mapping, identifierValue, input.target);
-    } catch (error) {
-      return failureFromError(input.target, "vps", error);
-    }
-  }
-
-  return xamppUnreachable(input.target);
+  return lastError ? failureFromError(input.target, "direct", lastError) : xamppUnreachable(input.target);
 }

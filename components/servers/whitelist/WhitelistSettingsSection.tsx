@@ -873,8 +873,8 @@ export function WhitelistSettingsSection({
             <li>Abra o HeidiSQL com um usuario administrador e selecione o banco informado no campo Nome do banco.</li>
             <li>Abra a aba Consulta e cole o SQL de exemplo. Ele usa o usuario e a senha dos campos acima.</li>
             <li>Execute o comando. O usuario precisa existir em localhost, 127.0.0.1 e %.</li>
-            <li>No XAMPP: Config do MySQL → my.ini. Troque bind-address=127.0.0.1 por bind-address=0.0.0.0, clique Stop/Start no MySQL e libere 3306 no firewall do Windows.</li>
-            <li>Volte ao painel e clique em Conectar banco. Se a porta ainda estiver fechada, o launcher na VPS faz essa primeira conexao em localhost.</li>
+            <li>A Flowdesk nao precisa do MySQL aberto na internet. O launcher na VPS fala com o XAMPP em localhost se voce quiser sync do jogo.</li>
+            <li>Clique em Conectar banco. Mesmo se o HeidiSQL for so local, a whitelist do Discord ja fica no ar.</li>
           </ol>
           <pre className="overflow-x-auto rounded-[14px] border border-[#1C1C1C] bg-[#141414] px-[14px] py-[12px] text-[12px] leading-[1.6] text-[#D1D1D1]">
             {cityDbProvisionSql(
@@ -925,8 +925,8 @@ export function WhitelistSettingsSection({
           title="Conectar"
           description={
             persistedConnection
-              ? "A whitelist usa o IP e a senha salvos. Pode desinstalar o launcher. Se apagar o IP, a conexao pede de novo."
-              : "Na primeira vez o launcher pode achar o IP. Depois a conexao fica persistida no banco direto."
+              ? "A Flowdesk ja esta pronta. O MySQL da cidade e opcional: a sync do jogo vai pelo launcher na VPS, sem abrir porta."
+              : "Salve os dados e clique em Conectar. A whitelist do Discord funciona mesmo se o XAMPP nao estiver na internet."
           }
           delay={0.2}
         >
