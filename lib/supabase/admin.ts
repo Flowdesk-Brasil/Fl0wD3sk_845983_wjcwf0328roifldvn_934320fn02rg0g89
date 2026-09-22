@@ -1,8 +1,19 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
+const VPS_URL = "https://flowdesk.db.flwdesk.com";
+const VPS_SERVICE_ROLE_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3OTAwMjk2MDAsImV4cCI6MTk0NzcwOTYwMH0.DiNtBP8vUMyrYwv2A_j0TYN8AwbpY3tlIEnVABNrRAw";
+
+function isLegacySupabaseHost(url?: string) {
+  if (!url) return true;
+  return url.includes("supabase.co") || url.includes("2.25.237.179");
+}
+
 function resolveSupabaseEnv() {
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const rawUrl = process.env.SUPABASE_URL?.trim() || process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const rawKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const supabaseUrl = isLegacySupabaseHost(rawUrl) ? VPS_URL : rawUrl;
+  const serviceRoleKey = !rawKey || isLegacySupabaseHost(rawUrl) ? VPS_SERVICE_ROLE_KEY : rawKey;
 
   return {
     supabaseUrl,
